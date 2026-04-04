@@ -1,0 +1,51 @@
+# Python
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.log
+
+# Node
+node_modules/
+.npm
+.eslintcache
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+frontend/dist/
+backend/static/
+
+# Environment
+.env
+.env.local
+
+# Configuration (contains API keys and sensitive info)
+config.yaml
+
+# Test scripts
+check_routes.py
+check_routing.py
+reproduce_issue.py
+test_api.py
+
+# PyInstaller
+*.spec
+version_info.txt
+
+# Development executables
+*.exe

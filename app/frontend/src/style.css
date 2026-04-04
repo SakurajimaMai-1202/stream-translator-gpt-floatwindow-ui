@@ -1,0 +1,38 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Native form controls compatibility (QWebEngine / Chromium popup rendering) */
+:root {
+  color-scheme: dark;
+}
+
+select {
+  color-scheme: dark;
+  -webkit-appearance: menulist;
+  appearance: auto;
+}
+
+select option,
+select optgroup {
+  background-color: rgb(31 41 55);
+  color: rgb(241 245 249);
+}
+
+/* Custom Scrollbar */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 2px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.5);
+}

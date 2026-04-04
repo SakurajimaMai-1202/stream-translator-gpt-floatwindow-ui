@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stream-translator-gpt"
+version = "0.0.0"
+authors = [
+  { name="ion", email="ionicbond3@gmail.com" },
+]
+description = "Command line tool to transcribe & translate audio from livestreams in real time"
+readme = "README_PyPI.md"
+requires-python = ">=3.8"
+keywords = [
+    "translator",
+    "translation",
+    "translate",
+    "transcribe",
+    "yt-dlp",
+    "vad",
+    "whisper",
+    "faster-whisper",
+    "whisper-api",
+    "gpt",
+    "gemini",
+]
+classifiers = [
+    "Topic :: Multimedia :: Sound/Audio :: Analysis",
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+  "numpy",
+  "scipy",
+  "yt-dlp>=2025.11.12",
+  "ffmpeg-python>=0.2.0,<0.3",
+  "sounddevice<1.0",
+  "openai-whisper==20250625",
+  "faster-whisper>=1.1.1,<2.0.0",
+  "openai>=2.0,<3.0",
+  "google-genai>=1.0,<2.0",
+  "httpx>=0.26.0,<1.0"
+]
+
+[project.optional-dependencies]
+webui = ["gradio>=5.0,<6.0", "platformdirs>=4.0"]
+
+[project.scripts]
+stream-translator-gpt = "stream_translator_gpt.main:cli"
+stream-translator-gpt-webui = "webui.webui:main"
+
+[project.urls]
+Homepage = "https://github.com/ionic-bond/stream-translator-gpt"
+Issues = "https://github.com/ionic-bond/stream-translator-gpt/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.setuptools.package-data]
+stream_translator_gpt = ["*.jit", "**/*.tiktoken", "**/*.npz"]
+webui = ["*.json", "locales/*.json"]

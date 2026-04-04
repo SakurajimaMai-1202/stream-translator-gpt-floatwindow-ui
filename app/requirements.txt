@@ -1,0 +1,38 @@
+# ============================================================
+# app/requirements.txt — 應用執行所需 Python 相依套件
+# ============================================================
+#
+# 這份清單會安裝：
+# 1) GUI / FastAPI / PyQt6 相關依賴
+# 2) stream-translator-gpt 核心依賴
+# 3) Qwen3-ASR 所需的 Python 套件鏈
+#
+# 不會安裝：
+# - CUDA Toolkit / cuDNN / NVIDIA Driver
+# - CUDA 版 PyTorch（需手動安裝；本專案不提供 CPU 模式文件）
+# - ffmpeg 執行檔
+# - Node.js / npm
+# - llama-server.exe 與其 DLL
+
+# ── 核心引擎依賴（stream-translator-gpt）──────────────────
+-r ../stream-translator-gpt/requirements.txt
+
+# ── GUI / API 層 ───────────────────────────────────────────
+PyQt6>=6.6.0
+PyQt6-WebEngine>=6.6.0
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+httpx>=0.26.0,<1.0
+PyYAML>=6.0
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+
+# ── Qwen3-ASR Python 依賴鏈 ────────────────────────────────
+qwen-asr>=0.0.6
+transformers>=4.57.0,<5.0.0
+accelerate>=1.0,<2.0
+safetensors>=0.7.0,<1.0
+
+# 可選：若要啟用 Qwen3-ASR 4-bit NF4 量化，請另外安裝：
+# bitsandbytes>=0.49,<1.0

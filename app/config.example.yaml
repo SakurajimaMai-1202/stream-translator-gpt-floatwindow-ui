@@ -1,0 +1,169 @@
+general:
+  openai_api_key: YOUR_OPENAI_API_KEY_HERE
+  google_api_key: ''
+  log_level: INFO
+input:
+  input_source: url
+  url: https://www.youtube.com/watch?v=EXAMPLE
+  format: ba/wa*
+  cookies: ''
+  proxy: ''
+  source_type: youtube
+  timeout: 30
+audio_slicing_vad:
+  min_audio_length: 0.5
+  max_audio_length: 8
+  target_audio_length: 5.0
+  continuous_no_speech_threshold: 1.0
+  disable_dynamic_no_speech_threshold: false
+  vad_threshold: 0.35
+  disable_dynamic_vad_threshold: false
+  prefix_retention_length: 0.5
+  chunk_gap_threshold: 0.5
+  vad_enabled: true
+  vad_neg_threshold: 0.35
+  vad_min_speech_duration_ms: 250
+  vad_min_silence_duration_ms: 100
+  vad_window_size_samples: 512
+  vad_speech_pad_ms: 30
+transcription:
+  backend: qwen3-asr
+  model: Qwen/Qwen3-ASR-1.7B
+  language: ja
+  filters: []
+  use_faster_whisper: false
+  use_simul_streaming: false
+  simul_streaming_encoder: whisper
+  use_openai_transcription_api: false
+  use_qwen3_asr: true
+  qwen3_asr_model: Qwen/Qwen3-ASR-1.7B
+  whisper_filters:
+  - emoji_filter
+  - repetition_filter
+  - japanese_stream_filter
+  disable_transcription_context: false
+  transcription_initial_prompt: ''
+  openai_transcription_model: whisper-1
+translation:
+  backend: custom:localllm
+  model: localllm
+  translation_prompt: Translate the following text to English
+  target_language: English
+  history_size: 0
+  timeout: 10
+  gpt_model: localllm
+  gemini_model: ''
+  translation_history_size: 0
+  translation_timeout: 10
+  gpt_base_url: http://127.0.0.1:8080
+  gemini_base_url: null
+  processing_proxy: null
+  use_json_result: false
+  retry_if_translation_fails: true
+  custom_models:
+  - name: localllm
+    base_url: http://127.0.0.1:8080
+    api_key: '114514'
+    model_name: localllm
+  api_key: ''
+  use_smart_prompt: true
+  smart_prompt_enabled: true
+terminology:
+  use_terminology_glossary: false
+  terminology_glossary: {}
+  glossary: ''
+  glossary_list: []
+output:
+  output_file: ''
+  show_timestamp: true
+  hide_transcript: false
+  cqhttp_url: ''
+  cqhttp_token: ''
+  output_dir: ./output
+  output_srt: true
+  output_txt: false
+  output_ass: false
+  max_history: 20
+output_notification:
+  output_proxy: ''
+  discord_enabled: false
+  discord_webhook_url: ''
+  telegram_enabled: false
+  telegram_bot_token: null
+  telegram_chat_id: null
+  output_file_path: ''
+  output_timestamps: true
+  hide_transcribe_result: false
+subtitle_settings:
+  fontSize: 24
+  fontWeight: 700
+  opacity: 100
+  showOriginal: true
+  showTranslated: true
+  showTimestamp: true
+  position: bottom
+  autoScroll: true
+  maxDisplayCount: 30
+  textColor: '#55ffff'
+  translatedColor: '#FFDD00'
+  backgroundColor: '#ffffff'
+  backgroundOpacity: 5
+ui:
+  theme: light
+  transparency: 80
+  font_size: 16
+  font_name: Arial
+  show_timestamp_in_subtitle: true
+  max_history: 50
+  transcript_color: rgba(255, 255, 255, 0.6)
+  translation_color: '#ffffff'
+  background_color:
+    custom: rgba(0, 0, 0, 1)
+  blur_enabled: false
+  bg_opacity: 75
+  windows:
+    home:
+      x: 100
+      y: 100
+      width: 600
+      height: 500
+      visible: true
+    settings:
+      x: 150
+      y: 150
+      width: 800
+      height: 600
+      visible: false
+    floating_subtitle:
+      x: 200
+      y: 200
+      width: 800
+      height: 200
+      visible: true
+      transparency: 80
+llama:
+  model_dir: ./models
+  model_path: ''
+  selected_preset: ''
+  default_preset: ''
+  host: 127.0.0.1
+  port: 8080
+  n_ctx: 2048
+  n_gpu_layers: 0
+  n_threads: 8
+  top_k: 40
+  top_p: 0.9
+  temp: 0.8
+  repeat_penalty: 1.1
+  n_predict: 512
+  flash_attn: false
+  no_mmap: false
+  custom_presets: {}
+  custom_model_series: []
+audio_slicing:
+  min_duration: 0.5
+  max_duration: 30
+  target_duration: 5
+  silence_threshold: 1
+  vad_threshold: 0.35
+  preserve_start_duration: 0.5

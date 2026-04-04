@@ -1,0 +1,19 @@
+{
+  "name": "即時字幕",
+  "short_name": "字幕",
+  "description": "Stream Translator 手機字幕顯示",
+  "start_url": "/mobile",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0a0a0a",
+  "theme_color": "#0a0a0a",
+  "lang": "zh-TW",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='32' fill='%230a0a0a'/%3E%3Crect x='24' y='64' width='144' height='20' rx='10' fill='%236366f1'/%3E%3Crect x='24' y='96' width='110' height='16' rx='8' fill='%23fbbf24'/%3E%3Crect x='24' y='122' width='130' height='16' rx='8' fill='%23fbbf24'/%3E%3C/svg%3E",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

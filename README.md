@@ -99,7 +99,7 @@ floatwindow/
 | 作業系統 | Windows 10 / 11（64-bit） |
 | GPU | NVIDIA CUDA 相容顯示卡 |
 | NVIDIA Driver | ≥ 528（支援 CUDA 12） |
-| CUDA Toolkit | 12.4（建議） |
+| CUDA Toolkit | 12.4以上（建議） |
 | Python | 3.10 – 3.12 |
 | Node.js | ≥ 18（僅前端建構需要） |
 
@@ -184,19 +184,26 @@ PyQt6 視窗會自動開啟主介面。
 
 ## ASR 模型對應顯卡建議
 
-| ASR 模型 | 建議 VRAM | 建議顯卡（起跳） | 使用定位 |
-|------|------|------|------|
-| faster-whisper（tiny / base / small） | 6–8 GB | RTX 3060 12GB / RTX 4060 8GB | 低延遲入門 |
-| faster-whisper（medium / large-v3-turbo） | 8–12 GB | RTX 3060 12GB / RTX 4070 12GB | 平衡速度與品質 |
-| Qwen3-ASR-0.6B（bf16/fp16） | 8–12 GB | RTX 3060 12GB / RTX 4070 12GB | 主力入門推薦 |
-| Qwen3-ASR-1.7B（bf16/fp16） | 12–16 GB | RTX 4070 12GB / RTX 4070 Ti Super 16GB | 品質優先 |
-| Qwen3-ASR-1.7B（4-bit） | 8–12 GB | RTX 3060 12GB / RTX 4070 12GB | 降低 VRAM 需求 |
+> 參數量來源：HuggingFace 模型頁；VRAM 來源：faster-whisper 官方 benchmark（RTX 3070 Ti，CUDA 12.4）& 模型權重估算。
+> Qwen3-ASR 名稱中的 0.6B / 1.7B 為語言模型部分；含音訊編碼器後實際載入參數量分別約 **0.9B** 與 **2B**。
+
+| ASR 模型 | 參數量 / 權重大小 | 建議 VRAM | 建議顯卡（起跳） | 使用定位 |
+|------|------|------|------|------|
+| faster-whisper（tiny / base / small） | 39M–244M / < 0.5 GB | 2–4 GB | GTX 1060 6GB 以上 | 超輕量，延遲最低 |
+| faster-whisper（medium / large-v3-turbo） | 769M–809M / 1.5–1.6 GB fp16 | 3–5 GB | GTX 1070 8GB / RTX 3060 | 速度與品質均衡 |
+| faster-whisper（large-v3） | 1.55B / ~3 GB fp16 | 4–6 GB | RTX 3060 12GB / RTX 4060 8GB | Whisper 品質最高 |
+| Qwen3-ASR-0.6B（bf16/fp16） | 0.9B / ~1.8 GB | 4–5 GB | RTX 3060 12GB / RTX 4060 8GB | 主力入門推薦 |
+| Qwen3-ASR-1.7B（bf16/fp16） | 2B / ~4 GB | 6–8 GB | RTX 3060 12GB / RTX 4070 12GB | 品質優先 |
+| Qwen3-ASR-1.7B（4-bit NF4） | 2B / ~1 GB（量化後） | 3–5 GB | GTX 1070 8GB / RTX 3060 | 低 VRAM，高品質 |
 
 ### 顯卡檔位建議
 
-- **最低可用**：RTX 3060 12GB
-- **甜蜜點**：RTX 4070 / 4070 Super（12GB）
-- **高階穩定**：RTX 4070 Ti Super（16GB）或 RTX 4080（16GB）
+- **最低可用**：GTX 1070 8GB（faster-whisper 全系列 / Qwen3-ASR 4-bit 均可）
+- **甜蜜點**：RTX 3060 12GB / RTX 4060 8GB（覆蓋所有 ASR 模型）
+- **高階穩定**：RTX 4070 12GB 或以上（ASR + 本地 LLM 同機共跑更順）
+
+請注意看VRAM大小即可 目前純ASR其實8GB就能跑,若真的要連LLM翻譯一起跑建議是16G比較適合 上面只是參考建議
+目前測試過主要在用的為qwen3-asr-1.7b-4bit+gemma-4-E4B 目前效果挺不錯的 也很快 
 
 ---
 

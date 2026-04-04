@@ -1,62 +1,45 @@
 # Stream Translator FloatWindow
 
-> 基於 [stream-translator-gpt](https://github.com/ionic-bond/stream-translator-gpt) 開發的桌面圖形介面與浮動字幕前端。  
-> 將即時語音辨識與翻譯流程整合進一個可操作的 GUI，並提供可置頂的浮動字幕視窗。
+<p align="center">
+  <strong>即時語音辨識 × 翻譯 × 浮動字幕</strong><br>
+  基於 <a href="https://github.com/ionic-bond/stream-translator-gpt">stream-translator-gpt</a> 的桌面 GUI 前端
+</p>
 
-## 功能特色
-
-- **多音源支援**：YouTube / Twitch / Bilibili / X 直播 URL、麥克風、系統播放音訊（WASAPI Loopback）、本地音訊檔案
-- **語音辨識（ASR）**：支援 Qwen3-ASR（0.6B / 1.7B，本地 NVIDIA CUDA GPU 推理）、faster-whisper、OpenAI Whisper API
-- **即時翻譯**：支援 GPT / Gemini / 本地 LLM（llama.cpp / Ollama，OpenAI 相容 API）
-- **智慧提示詞**：自動根據轉錄內容動態調整翻譯提示，提升翻譯品質
-- **術語表**：可自定義術語對照，提升專業詞彙識別率
-- **浮動字幕視窗**：獨立置頂視窗，可自訂字體、顏色、位置、透明度
-- **字幕分享**：內建公開端口（Port 8765），可在區網內其他裝置瀏覽即時字幕
-- **字幕輸出**：可輸出 SRT / TXT / ASS 字幕檔
-- **VAD 靜音偵測**：整合 Silero VAD，自動切割有效語音片段，降低無效轉錄
-- **模型下載管理**：內建 Qwen3-ASR / faster-whisper 模型下載介面
+<p align="center">
+  <img src="https://img.shields.io/badge/python-3.10--3.12-blue" alt="Python">
+  <img src="https://img.shields.io/badge/CUDA-12.4-green" alt="CUDA">
+  <img src="https://img.shields.io/badge/platform-Windows-lightgrey" alt="Platform">
+  <img src="https://img.shields.io/badge/license-GPLv3-orange" alt="License">
+</p>
 
 ---
 
-## 相依套件與外部元件，一次講清楚
+## 簡介
 
-這個專案的依賴分成 **Python 套件** 與 **外部元件** 兩類，`requirements.txt` 只能處理前者。
+Stream Translator FloatWindow 將即時語音辨識與翻譯整合進一個可操作的 GUI 應用程式，支援多種音源輸入與辨識 / 翻譯後端。核心亮點包括：
 
-### Python 套件清單
+- 可置頂的**浮動字幕視窗**，支援字體、顏色、透明度等自訂
+- 區網**字幕分享**端口，讓其他裝置也能同步看到字幕
+- 內建**模型下載管理**介面，一鍵取得 Qwen3-ASR / faster-whisper 模型
 
-| 檔案 | 用途 | 目前狀態 |
-|------|------|----------|
-| `app/requirements.txt` | **主應用執行用**；包含 GUI / FastAPI / `stream-translator-gpt` 核心依賴 / Qwen3-ASR Python 依賴鏈 | **已補齊** |
-| `app/requirements_full.txt` | **打包機用完整清單**；額外含 PyInstaller 與完整 ASR 依賴 | **已補齊** |
-| `stream-translator-gpt/requirements.txt` | 核心 CLI / 引擎依賴 | 保留原核心用途 |
-| `stream-translator-gpt/requirements_webui.txt` | 上游舊版 Gradio WebUI 額外依賴 | **本專案主流程不用** |
+> **⚠️ 本專案需要 NVIDIA CUDA GPU，不提供 CPU 模式。**
 
-### `requirements.txt` 不會自動安裝的東西
+---
 
-| 項目 | 是否由 pip 處理 | 說明 |
-|------|------------------|------|
-| **PyTorch** | 否（需手動安裝 CUDA 版） | 因為 PyTorch 必須依 CUDA 版本選對安裝來源，不能硬寫死在 `requirements.txt` |
-| **CUDA Toolkit / cuDNN / NVIDIA Driver** | 否 | 這些是系統層依賴，不是 Python 套件 |
-| **ffmpeg.exe** | 否 | 需自行加入 PATH，或放在 `ffmpeg-8.1-essentials_build/` |
-| **Node.js / npm** | 否 | 只用於建構 `app/frontend/` |
-| **llama-server.exe / llama DLL** | 否 | 這是外部二進位，需自行放到 `llama/` |
+## 功能一覽
 
-### CUDA / GPU 這件事
-
-- **本專案原始碼模式以 NVIDIA CUDA GPU 為必要條件**
-- 不提供 CPU 模式安裝指引，原因是 Qwen3-ASR / faster-whisper / 本地 LLM 在 CPU 上過於吃資源、延遲過高，實務上不適合作為本專案的預設使用方式
-- 原始碼模式至少需要：
-	1. NVIDIA Driver
-	2. 對應 CUDA 環境（本專案目前文件以 **CUDA 12.4** 為主）
-	3. 手動安裝 CUDA 版 PyTorch
-- 如果你要跑 **Qwen3-ASR 4-bit 量化**，還要另外安裝 `bitsandbytes`
-- 如果你是用我另外打包好的版本，CUDA DLL / torch / runtime 可能已隨包攜帶；**原始碼模式不會自動幫你準備這些**
-
-### 目前實際驗證結論
-
-- 目前工作區 `.venv` **已安裝到足以執行本專案的主要 Python 套件**（包含 `torch`、`qwen-asr`、`transformers`、`accelerate`、`faster-whisper`、`openai-whisper`）
-- 但目前環境是 **Python 3.13.12**，而 `app/build_exe.ps1` 的打包流程仍以 **Python 3.10–3.12** 為建議與主要支援範圍
-- `stream-translator-gpt/requirements_webui.txt` 對應的是上游舊 WebUI；它不是 `app/` 主流程必要條件，**不建議拿它當這個專案的安裝入口**
+| 類別 | 說明 |
+|------|------|
+| **音源** | YouTube / Twitch / Bilibili / X 直播 URL、麥克風、系統播放音訊（WASAPI Loopback）、本地音檔 |
+| **語音辨識 (ASR)** | Qwen3-ASR（0.6B / 1.7B）、faster-whisper（tiny → large-v3-turbo）、OpenAI Whisper API |
+| **翻譯** | OpenAI GPT、Google Gemini、本地 LLM（llama.cpp / Ollama，OpenAI 相容 API） |
+| **智慧提示詞** | 根據轉錄內容動態調整翻譯 prompt，提升翻譯品質 |
+| **術語表** | 使用者自定義術語對照，改善專業詞彙翻譯 |
+| **浮動字幕** | 獨立置頂視窗，可自訂字體大小、粗細、顏色、位置、透明度 |
+| **字幕分享** | 內建公開端口（預設 8765），區網內其他裝置可瀏覽即時字幕 |
+| **字幕輸出** | SRT / TXT / ASS 檔案匯出 |
+| **VAD** | 整合 Silero VAD，自動切割有效語音、降低無效轉錄 |
+| **模型管理** | 內建 Qwen3-ASR / faster-whisper 模型下載與管理介面 |
 
 ---
 
@@ -64,131 +47,204 @@
 
 ```
 stream-translator-gpt-floatwindow-ui/
-├── app/                        # 主應用（PyQt6 + FastAPI + Vue 3）
-│   ├── backend/                # FastAPI 後端
-│   │   ├── api/                # REST API 路由
-│   │   ├── core/               # 翻譯、Llama 管理、設定管理等核心邏輯
-│   │   └── models/             # 資料模型
-│   ├── frontend/               # Vue 3 前端（含 Tailwind CSS）
-│   │   └── src/views/          # 頁面：Home、Settings、浮動字幕、桌面字幕
-│   ├── main.py                 # 應用主入口（PyQt6 WebView 容器）
-│   ├── config.example.yaml     # 設定範本
-│   └── requirements.txt        # Python 相依套件
-├── stream-translator-gpt/      # 核心轉錄翻譯引擎（已針對本專案修改）
-│   └── stream_translator_gpt/  # 主要模組
-├── README.md                   # 本文件
-└── USER_GUIDE.md               # 詳細使用說明
+├── app/                            # 主應用程式
+│   ├── main.py                     # 入口（PyQt6 WebView 容器）
+│   ├── windows.py                  # 視窗管理（Home / Settings / FloatingSubtitle）
+│   ├── services.py                 # FastAPI 後端 + 前端靜態檔服務
+│   ├── backend/
+│   │   ├── api/                    # REST API 路由（config / translation / llama / models）
+│   │   ├── core/                   # 翻譯管理、Llama 管理、設定管理、模型下載、系統檢查
+│   │   └── models/                 # 資料模型
+│   ├── frontend/                   # Vue 3 + Tailwind CSS + TypeScript
+│   │   └── src/views/              # HomeView / SettingsView / FloatingSubtitleView / ...
+│   ├── config.example.yaml         # 設定範本
+│   ├── requirements.txt            # 執行用 Python 相依套件
+│   └── requirements_full.txt       # 打包用完整相依套件
+├── stream-translator-gpt/          # 核心轉錄翻譯引擎（fork，已針對本專案修改）
+│   └── stream_translator_gpt/      # 主模組
+├── README.md
+└── USER_GUIDE.md                   # 詳細使用說明
 ```
 
-> **不含於此倉庫，需另外取得：**
-> - `llama/`：llama-server 執行檔與 CUDA 函式庫（從 [llama.cpp Releases](https://github.com/ggerganov/llama.cpp/releases) 下載）
-> - `ffmpeg-8.1-essentials_build/`：ffmpeg 執行檔（從 [ffmpeg.org](https://ffmpeg.org/download.html) 下載，或加入系統 PATH）
-> - Qwen3-ASR 模型：首次啟動時自動從 HuggingFace 下載
+## 必要外部檔案放置示意
+
+> **重點先講：** `llama/` 與 `ffmpeg-8.1-essentials_build/` 都要放在**專案根目錄**，也就是和 `app/` **同一層**。
+
+| 項目 | 來源 | 要放哪裡 |
+|------|------|----------|
+| `llama/` | [llama.cpp Releases](https://github.com/ggerganov/llama.cpp/releases) | 放在專案根目錄，與 `app/` 同層 |
+| `ffmpeg-8.1-essentials_build/` | [ffmpeg.org](https://ffmpeg.org/download.html) | 放在專案根目錄，與 `app/` 同層 |
+| Qwen3-ASR 模型權重 | 首次啟動自動下載 | 不需要手動擺放 |
+
+### 資料夾擺放範例
+
+```text
+floatwindow/
+├── app/
+├── llama/
+├── ffmpeg-8.1-essentials_build/
+├── stream-translator-gpt/
+├── README.md
+└── USER_GUIDE.md
+```
+
+如果 `llama/` 或 `ffmpeg-8.1-essentials_build/` 被放到別的磁碟、別的子資料夾，或塞到 `app/` 裡面，程式通常就會開始進入「找不到你，但我很努力」模式。
 
 ---
 
-## 快速開始（Windows）
+## 系統需求
 
-### 1. 安裝相依套件
+| 項目 | 要求 |
+|------|------|
+| 作業系統 | Windows 10 / 11（64-bit） |
+| GPU | NVIDIA CUDA 相容顯示卡 |
+| NVIDIA Driver | ≥ 528（支援 CUDA 12） |
+| CUDA Toolkit | 12.4（建議） |
+| Python | 3.10 – 3.12 |
+| Node.js | ≥ 18（僅前端建構需要） |
+
+---
+
+## 快速開始
+
+### 1. 先確認資料夾位置
+
+請先確認：
+
+- `app/`
+- `llama/`
+- `ffmpeg-8.1-essentials_build/`
+
+這三者位於同一層。
+
+### 2. 安裝 Python 相依套件
 
 ```powershell
-# 建立虛擬環境（建議）
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 
-# 先安裝 CUDA 版 PyTorch
+# 安裝 CUDA 版 PyTorch（必須先於其他套件）
 pip install torch --extra-index-url https://download.pytorch.org/whl/cu124
 
-# 安裝應用與核心 Python 套件
+# 安裝主應用所有 Python 相依套件
 pip install -r app/requirements.txt
-
-# 若要啟用 Qwen3-ASR 4-bit NF4 量化（可選）
-# pip install bitsandbytes
-
-# 安裝前端套件並建構
-cd app/frontend
-npm install
-npm run build
-cd ../..
 ```
 
-> 若你是要**打包發佈版**，請改用 `app/requirements_full.txt`。
+> 若要使用 Qwen3-ASR 4-bit NF4 量化，可另外安裝 `bitsandbytes`。
 
-### 2. 設定
-
-複製設定範本：
+### 3. 複製設定並啟動
 
 ```powershell
 copy app\config.example.yaml app\config.yaml
-```
-
-用文字編輯器開啟 `app/config.yaml` 填入必要設定（至少設定翻譯後端）。
-
-### 3. 啟動
-
-```powershell
 cd app
 python main.py
 ```
 
-瀏覽器或 PyQt6 視窗會自動開啟主介面。
+編輯 `app/config.yaml`，至少填入翻譯後端設定後即可啟動。
+
+PyQt6 視窗會自動開啟主介面。
+
+> **打包發佈版**請改用 `app/requirements_full.txt`，其中額外包含 PyInstaller。
 
 ---
 
-## 翻譯後端設定
+## 相依套件說明
 
-| 後端 | 說明 | Base URL 範例 |
-|------|------|--------------|
-| `gpt` | OpenAI GPT API | `https://api.openai.com/v1` |
-| `gemini` | Google Gemini API | （留空使用預設） |
-| `gpt`（本地） | llama.cpp / Ollama | `http://127.0.0.1:8080/v1` |
+### pip 可安裝的部分
 
-本地 LLM 啟動方式：
+| 檔案 | 用途 |
+|------|------|
+| `app/requirements.txt` | 主應用執行用：GUI / FastAPI / 核心引擎 / Qwen3-ASR 依賴鏈 |
+| `app/requirements_full.txt` | 打包機用完整清單（含 PyInstaller） |
+| `stream-translator-gpt/requirements.txt` | 核心引擎依賴（由 `app/requirements.txt` 自動引用） |
 
-```powershell
-# llama.cpp
-llama\llama-server.exe -m 模型路徑.gguf --port 8080
+### 需要手動安裝的外部元件
 
-# Ollama
-ollama serve
-```
+| 項目 | 說明 |
+|------|------|
+| **CUDA 版 PyTorch** | 必須依 CUDA 版本選擇正確安裝來源，無法寫死在 requirements.txt |
+| **CUDA Toolkit / cuDNN / NVIDIA Driver** | 系統層依賴，非 Python 套件 |
+| **ffmpeg** | 音訊轉碼處理；加入 PATH，或將 `ffmpeg-8.1-essentials_build/` 放在專案根目錄，與 `app/` 同層 |
+| **Node.js / npm** | 僅前端建構時需要 |
+| **llama-server.exe / DLL** | 使用本地 LLM 時才需要；請放入專案根目錄下的 `llama/` 資料夾，與 `app/` 同層 |
 
 ---
 
-## 語音辨識後端
+## 語音辨識 (ASR) 後端
 
-| 後端 | 需求 | 說明 |
+| 後端 | 模型 | 說明 |
 |------|------|------|
-| faster-whisper | NVIDIA CUDA GPU | 輕量，支援多種模型尺寸（tiny → large-v3-turbo） |
-| Qwen3-ASR | NVIDIA CUDA GPU | 中日英文效果優異，支援 0.6B / 1.7B，可 4-bit 量化 |
-| OpenAI Whisper API | API Key | 雲端辨識，無需本地 GPU |
+| **Qwen3-ASR** | 0.6B / 1.7B | 中日英辨識效果優異；支援 4-bit 量化；首次使用自動下載 |
+| **faster-whisper** | tiny → large-v3-turbo | 輕量快速，多語言支援 |
+| **OpenAI Whisper API** | whisper-1 | 雲端辨識，需 API Key，無需本地 GPU |
+
+所有本地 ASR 後端均需 NVIDIA CUDA GPU。
+
+---
+
+## 翻譯後端
+
+| 後端 | Base URL 範例 | 說明 |
+|------|--------------|------|
+| OpenAI GPT | `https://api.openai.com/v1` | 需 API Key |
+| Google Gemini | （留空使用預設） | 需 API Key |
+| 本地 LLM (llama.cpp) | `http://127.0.0.1:8080/v1` | 需另外自行準備 `llama/` 目錄 |
+| 本地 LLM (Ollama) | `http://127.0.0.1:11434/v1` | 需本機已有可用服務 |
+
+若要使用本地 LLM，請記得把所需的 `llama/` 資料夾放在專案根目錄下，與 `app/` 同一層，讓應用程式能正確找到執行檔與相關 DLL。
 
 ---
 
 ## 常見問題
 
-**為什麼 `requirements.txt` 沒把 CUDA 一起裝好？**  
-因為 CUDA、cuDNN、NVIDIA Driver、CUDA 版 PyTorch 都不是一般 `pip install -r requirements.txt` 能安全統一處理的內容，尤其 PyTorch 必須依你的硬體與 CUDA 版本選對安裝來源。
+<details>
+<summary><strong>有沒有 CPU 模式？</strong></summary>
 
-**有沒有 CPU 模式？**  
-理論上部分元件可以在 CPU 上執行，但**本專案不把 CPU 模式列為支援工作流**。原因是整體資源消耗與延遲都過高，實務上不符合這個專案「即時字幕翻譯」的目標。
+本專案不提供 CPU 模式。即時語音辨識與翻譯的資源消耗和延遲在 CPU 上過高，不符合「即時字幕翻譯」的使用目標。
+</details>
 
-**ffmpeg 未偵測到**  
-啟動後首頁若顯示黃色警告，表示 ffmpeg 不在 PATH。  
-解法：將 ffmpeg 加入 PATH，或將解壓縮後的資料夾放在專案同層目錄命名為 `ffmpeg-8.1-essentials_build/`。
+<details>
+<summary><strong>為什麼 requirements.txt 沒把 PyTorch / CUDA 一起裝好？</strong></summary>
 
-**llama 功能為什麼不能直接用？**  
-因為 `llama-server.exe` 與其 DLL 沒有放進倉庫。若要使用本地 LLM，需自行準備 `llama/` 目錄或使用你另外打包好的版本。
+PyTorch 必須依照你的 CUDA 版本選擇對應安裝來源（`cu118`、`cu121`、`cu124` 等），無法在 requirements.txt 中硬寫死。CUDA Toolkit、cuDNN、NVIDIA Driver 則是系統層依賴，不屬於 Python 套件。
+</details>
 
-**模型載入中卡住**  
-首次使用 Qwen3-ASR 會自動從 HuggingFace 下載（約 1-4 GB），需等待網路傳輸完成。
+<details>
+<summary><strong>ffmpeg 未偵測到</strong></summary>
 
-**翻譯沒有回應**  
-確認 LLM 服務已啟動，且 Settings > Translation > LLM Base URL 填寫正確。
+啟動後首頁若出現黃色警告，表示 ffmpeg 不在 PATH。將 ffmpeg 加入系統 PATH，或將解壓縮後的資料夾放在專案同層目錄並命名為 `ffmpeg-8.1-essentials_build/`。
+</details>
 
-**YouTube 無法讀取音訊**  
-部分影片需要登入憑證，在 Settings > Input > Cookies 填入 `cookies.txt` 路徑。
+<details>
+<summary><strong>llama 功能為什麼無法使用？</strong></summary>
+
+`llama-server.exe` 與相關 DLL 不隨此倉庫提供。請從 [llama.cpp Releases](https://github.com/ggerganov/llama.cpp/releases) 下載對應 CUDA 版本的 binary，並放入專案根目錄下的 `llama/` 目錄，與 `app/` 同層。
+</details>
+
+<details>
+<summary><strong>模型載入卡住</strong></summary>
+
+首次使用 Qwen3-ASR / faster-whisper 模型會自動從 HuggingFace 下載（約 1–4 GB），請確認網路暢通並耐心等待。
+</details>
+
+<details>
+<summary><strong>翻譯沒有回應</strong></summary>
+
+確認 LLM 服務已啟動，並在 Settings → Translation → LLM Base URL 填寫正確的位址。
+</details>
+
+<details>
+<summary><strong>YouTube 無法讀取音訊</strong></summary>
+
+部分影片需要登入憑證。在 Settings → Input → Cookies 填入你的 `cookies.txt` 路徑。
+</details>
 
 ---
 
-詳細功能說明與設定選項，請參閱 [USER_GUIDE.md](USER_GUIDE.md)。
+## 授權
+
+本專案依循上游 [stream-translator-gpt](https://github.com/ionic-bond/stream-translator-gpt) 的授權條款。
+
+---
+
+更完整的操作說明與設定選項，請參閱 [USER_GUIDE.md](USER_GUIDE.md)。

@@ -220,7 +220,7 @@ PyQt6 視窗會自動開啟主介面。
 - **低延遲優先**：Qwen3-ASR-0.6B + hymt 1.5
 - **品質優先**：Qwen3-ASR-1.7B + sakura 模型
 - **泛用多語**：faster-whisper large-v3-turbo + gemma 4
-
+- **私心推薦**: Qwen3-ASR-1.7B（4-bit NF4）+ gemma 4（E4B）
 ---
 
 ## 翻譯後端

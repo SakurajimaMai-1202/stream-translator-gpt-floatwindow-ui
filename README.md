@@ -182,6 +182,40 @@ PyQt6 視窗會自動開啟主介面。
 
 ---
 
+## ASR 模型對應顯卡建議
+
+| ASR 模型 | 建議 VRAM | 建議顯卡（起跳） | 使用定位 |
+|------|------|------|------|
+| faster-whisper（tiny / base / small） | 6–8 GB | RTX 3060 12GB / RTX 4060 8GB | 低延遲入門 |
+| faster-whisper（medium / large-v3-turbo） | 8–12 GB | RTX 3060 12GB / RTX 4070 12GB | 平衡速度與品質 |
+| Qwen3-ASR-0.6B（bf16/fp16） | 8–12 GB | RTX 3060 12GB / RTX 4070 12GB | 主力入門推薦 |
+| Qwen3-ASR-1.7B（bf16/fp16） | 12–16 GB | RTX 4070 12GB / RTX 4070 Ti Super 16GB | 品質優先 |
+| Qwen3-ASR-1.7B（4-bit） | 8–12 GB | RTX 3060 12GB / RTX 4070 12GB | 降低 VRAM 需求 |
+
+### 顯卡檔位建議
+
+- **最低可用**：RTX 3060 12GB
+- **甜蜜點**：RTX 4070 / 4070 Super（12GB）
+- **高階穩定**：RTX 4070 Ti Super（16GB）或 RTX 4080（16GB）
+
+---
+
+## 翻譯模型建議（sakura / hymt 1.5 / gemma 4）
+
+| 翻譯模型 | 建議定位 | 推薦搭配 ASR | 備註 |
+|------|------|------|------|
+| sakura 模型 | 日中翻譯品質優先 | Qwen3-ASR-1.7B / 0.6B | 術語與語氣通常較穩 |
+| hymt 1.5 | 低延遲與可讀性平衡 | Qwen3-ASR-0.6B / faster-whisper medium | 適合即時直播場景 |
+| gemma 4 | 泛用備援 / 多語場景 | faster-whisper large-v3-turbo / Qwen3-ASR-0.6B | 泛用性高，建議先做領域測試 |
+
+### 推薦組合
+
+- **低延遲優先**：Qwen3-ASR-0.6B + hymt 1.5
+- **品質優先**：Qwen3-ASR-1.7B + sakura 模型
+- **泛用多語**：faster-whisper large-v3-turbo + gemma 4
+
+---
+
 ## 翻譯後端
 
 | 後端 | Base URL 範例 | 說明 |
@@ -241,9 +275,8 @@ PyTorch 必須依照你的 CUDA 版本選擇對應安裝來源（`cu118`、`cu12
 
 ---
 
-## 授權
+另行有提供打包完成的版本避免冗長的安裝依賴流程
 
-本專案依循上游 [stream-translator-gpt](https://github.com/ionic-bond/stream-translator-gpt) 的授權條款。
 
 ---
 

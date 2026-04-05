@@ -8,11 +8,92 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 import ffmpeg
 import numpy as np
 
 from .common import SAMPLE_RATE, SAMPLES_PER_FRAME, FRAME_DURATION, LoopWorkerBase, INFO, WARNING, ERROR
+
+
+def _is_twitter_url(url: str) -> bool:
+    """判斷是否為 X/Twitter 相關網址。"""
+    try:
+        hostname = (urlparse(url).hostname or '').lower()
+    except ValueError:
+        return False
+
+    if not hostname:
+        return False
+
+    return hostname in {
+        'x.com',
+        'www.x.com',
+        'twitter.com',
+        'www.twitter.com',
+        'mobile.x.com',
+        'mobile.twitter.com',
+    } or hostname.endswith('.x.com') or hostname.endswith('.twitter.com')
+
+
+def _resolve_cookie_file(url: str, cookies: str | None) -> str | None:
+    """解析 cookies 檔案，缺失或明顯不相干時自動忽略。"""
+    if not cookies:
+        return None
+
+    cookie_path = os.path.expandvars(os.path.expanduser(str(cookies).strip()))
+    if not cookie_path:
+        return None
+
+    if not os.path.isfile(cookie_path):
+        print(f'{WARNING}Cookies 檔案不存在，已忽略：{cookie_path}')
+        return None
+
+    if _is_twitter_url(url):
+        file_name = os.path.basename(cookie_path).lower()
+        if any(marker in file_name for marker in ('youtube', 'youtu')):
+            print(
+                f'{WARNING}偵測到 X/Twitter URL 搭配 YouTube cookies，'
+                '已自動忽略 cookies 以降低 guest token / API 錯誤。'
+            )
+            return None
+
+    return cookie_path
+
+
+def _append_site_specific_ytdlp_args(cmd: list[str], url: str) -> None:
+    """依站點補上較穩定的 yt-dlp 參數。"""
+    if _is_twitter_url(url):
+        # X/Twitter 的 GraphQL / guest token 經常波動；
+        # 官方 issue 建議改走 syndication endpoint 作為 workaround。
+        cmd.extend(['--extractor-args', 'twitter:api=syndication'])
+
+
+def _build_ytdlp_command(url: str,
+                         format: str,
+                         cookies: str,
+                         proxy: str,
+                         *,
+                         ffmpeg_dir: str | None = None,
+                         js_runtime_arg: str | None = None) -> list[str]:
+    """建構 yt-dlp 命令列，方便重用與測試。"""
+    cmd = _resolve_ytdlp_command() + [url, '-f', format, '-o', '-', '-q']
+    _append_site_specific_ytdlp_args(cmd, url)
+
+    if ffmpeg_dir:
+        cmd.extend(['--ffmpeg-location', ffmpeg_dir])
+    if js_runtime_arg:
+        cmd.extend(['--js-runtimes', js_runtime_arg])
+        # 啟用 EJS 挑戰解算元件，降低 YouTube 簽章失敗造成的中斷
+        cmd.extend(['--remote-components', 'ejs:github'])
+
+    resolved_cookies = _resolve_cookie_file(url, cookies)
+    if resolved_cookies:
+        cmd.extend(['--cookies', resolved_cookies])
+    if proxy:
+        cmd.extend(['--proxy', proxy])
+
+    return cmd
 
 
 def _resolve_ytdlp_command() -> list[str]:
@@ -112,17 +193,12 @@ def _open_stream(url: str, format: str, cookies: str, proxy: str, cwd: str):
     ffmpeg_dir = _resolve_ffmpeg_dir()
     js_runtime_arg = _resolve_js_runtime_arg()
 
-    cmd = _resolve_ytdlp_command() + [url, '-f', format, '-o', '-', '-q']
-    if ffmpeg_dir:
-        cmd.extend(['--ffmpeg-location', ffmpeg_dir])
-    if js_runtime_arg:
-        cmd.extend(['--js-runtimes', js_runtime_arg])
-        # 啟用 EJS 挑戰解算元件，降低 YouTube 簽章失敗造成的中斷
-        cmd.extend(['--remote-components', 'ejs:github'])
-    if cookies:
-        cmd.extend(['--cookies', cookies])
-    if proxy:
-        cmd.extend(['--proxy', proxy])
+    cmd = _build_ytdlp_command(url,
+                               format,
+                               cookies,
+                               proxy,
+                               ffmpeg_dir=ffmpeg_dir,
+                               js_runtime_arg=js_runtime_arg)
 
     env = os.environ.copy()
     if ffmpeg_dir:

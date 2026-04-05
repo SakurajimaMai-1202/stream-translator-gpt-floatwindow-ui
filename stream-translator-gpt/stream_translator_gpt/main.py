@@ -12,7 +12,13 @@ if __name__ == '__main__':
     __package__ = "stream_translator_gpt"
 
 from .common import ApiKeyPool, start_daemon_thread, is_url, WARNING, ERROR, INFO
-from .audio_getter import StreamAudioGetter, LocalFileAudioGetter, DeviceAudioGetter
+from .audio_getter import (
+    StreamAudioGetter,
+    LocalFileAudioGetter,
+    DeviceAudioGetter,
+    _append_site_specific_ytdlp_args,
+    _resolve_cookie_file,
+)
 from .audio_slicer import AudioSlicer
 from .audio_transcriber import OpenaiWhisper, FasterWhisper, SimulStreaming, RemoteOpenaiTranscriber, Qwen3ASR
 from .llm_translator import LLMClient, ParallelTranslator, SerialTranslator
@@ -574,8 +580,10 @@ def cli():
             print(f'{ERROR}--list_format 需要指定有效的 URL 參數（不能是 loopback 模式）。')
             sys.exit(1)
         cmd = ['yt-dlp', url, '-F']
-        if args['cookies']:
-            cmd.extend(['--cookies', args['cookies']])
+        _append_site_specific_ytdlp_args(cmd, url)
+        cookie_file = _resolve_cookie_file(url, args['cookies'])
+        if cookie_file:
+            cmd.extend(['--cookies', cookie_file])
         if args['input_proxy']:
             cmd.extend(['--proxy', args['input_proxy']])
         subprocess.run(cmd)

@@ -73,7 +73,7 @@ stream-translator-gpt-floatwindow-ui/
 | 項目 | 來源 | 要放哪裡 |
 |------|------|----------|
 | `llama/` | [llama.cpp Releases](https://github.com/ggerganov/llama.cpp/releases) | 放在專案根目錄，與 `app/` 同層 |
-| `ffmpeg-8.1-essentials_build/` | [ffmpeg.org](https://ffmpeg.org/download.html) | 放在專案根目錄，與 `app/` 同層 |
+| `ffmpeg/` | [ffmpeg.org](https://ffmpeg.org/download.html) | 放在專案根目錄，與 `app/` 同層 |
 | Qwen3-ASR 模型權重 | 首次啟動自動下載 | 不需要手動擺放 |
 
 ### 資料夾擺放範例
@@ -82,13 +82,13 @@ stream-translator-gpt-floatwindow-ui/
 floatwindow/
 ├── app/
 ├── llama/
-├── ffmpeg-8.1-essentials_build/
+├── ffmpeg/
 ├── stream-translator-gpt/
 ├── README.md
 └── USER_GUIDE.md
 ```
 
-如果 `llama/` 或 `ffmpeg-8.1-essentials_build/` 被放到別的磁碟、別的子資料夾，或塞到 `app/` 裡面，程式通常就會開始進入「找不到你，但我很努力」模式。
+如果 `llama/` 或 `ffmpeg/` 被放到別的磁碟、別的子資料夾，或塞到 `app/` 裡面，程式通常就會開始進入「找不到你，但我很努力」模式。
 
 ---
 
@@ -113,7 +113,7 @@ floatwindow/
 
 - `app/`
 - `llama/`
-- `ffmpeg-8.1-essentials_build/`
+- `ffmpeg/`
 
 這三者位於同一層。
 

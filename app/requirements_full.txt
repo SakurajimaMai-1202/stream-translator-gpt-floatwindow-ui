@@ -2,9 +2,12 @@
 # requirements_full.txt — 打包用完整依賴（建構機專用）
 # ============================================================
 #
+# 本檔 = requirements.txt + 打包額外依賴。
+# 目的：避免與 requirements.txt 漂移，並讓打包機安裝流程維持單一來源。
+#
 # 安裝步驟（必須照順序）：
 #
-#   1. 建立 venv（需 Python 3.10–3.12）：
+#   1. 建立 venv（建議 Python 3.10–3.12）：
 #      python -m venv venv
 #
 #   2. 先裝 CUDA 版 PyTorch（必須最先裝，避免抓到錯誤變體）：
@@ -13,41 +16,17 @@
 #   3. 安裝本檔所有依賴：
 #      venv\Scripts\pip install -r requirements_full.txt
 #
-#   4. （可選）若要啟用 Qwen3-ASR 4-bit 量化：
-#      venv\Scripts\pip install bitsandbytes
-#
-#   5. 以 editable 模式安裝魔改版 stream-translator-gpt：
+#   4. （建議）若你也要直接從原始碼執行 app，可另外安裝本地魔改版套件：
 #      venv\Scripts\pip install -e ..\stream-translator-gpt
+#
+#   5. （可選）若要啟用 Qwen3-ASR 4-bit 量化：
+#      venv\Scripts\pip install bitsandbytes
 #
 #   6. 執行打包：
 #      .\build_exe.ps1
-#
-# ── GUI 層 ─────────────────────────────────────────────────
-PyQt6>=6.6.0
-PyQt6-WebEngine>=6.6.0
-fastapi>=0.104.0
-uvicorn[standard]>=0.24.0
-python-multipart>=0.0.6
-httpx>=0.25.0
-PyYAML>=6.0
-pydantic>=2.0.0
-pydantic-settings>=2.0.0
 
-# ── ML / Transcription 層 ───────────────────────────────────
-numpy
-scipy
-yt-dlp>=2025.11.12
-ffmpeg-python>=0.2.0,<0.3
-sounddevice<1.0
-pyaudiowpatch>=0.2.12.5;sys_platform=='win32'
-openai-whisper==20250625
-faster-whisper>=1.1.1,<2.0.0
-qwen-asr>=0.0.6
-transformers>=4.57.0,<5.0.0
-accelerate>=1.0,<2.0
-safetensors>=0.7.0,<1.0
-openai>=2.0,<3.0
-google-genai>=1.0,<2.0
+# ── 先安裝應用執行依賴 ──────────────────────────────────────
+-r requirements.txt
 
 # ── 建構工具 ────────────────────────────────────────────────
 pyinstaller>=6.0.0

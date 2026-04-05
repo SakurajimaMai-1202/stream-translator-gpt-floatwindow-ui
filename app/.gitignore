@@ -49,3 +49,19 @@ version_info.txt
 
 # Development executables
 *.exe
+
+# Vite timestamp cache files
+frontend/vite.config.ts.timestamp-*.mjs
+
+# Internal dev docs (not for end users)
+LLAMA_FRONTEND_GUIDE.md
+LLAMA_INTEGRATION.md
+LLAMA_TESTING_GUIDE.md
+PROJECT_SUMMARY.md
+TESTING.md
+README.md
+README.txt
+
+# Runtime logs
+app.log
+ui2.log

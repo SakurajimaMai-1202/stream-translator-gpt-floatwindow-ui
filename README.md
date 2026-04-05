@@ -15,7 +15,6 @@
 
 > **⚠️ 本專案需要 NVIDIA CUDA GPU，不提供 CPU 模式。**
 >
-> **建議至 [Release](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases) 下載可攜式執行包，免去安裝依賴的麻煩。**
 
 ---
 

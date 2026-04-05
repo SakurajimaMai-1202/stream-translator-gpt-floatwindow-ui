@@ -117,7 +117,7 @@ python main.py
 
 ## 常見工作流程
 
-### YouTube / Twitch 直播翻譯
+### YouTube / Twitch /X 直播翻譯
 
 1. Settings 設好 ASR 與翻譯後端
 2. Home → 選 URL → 貼上直播網址 → Start

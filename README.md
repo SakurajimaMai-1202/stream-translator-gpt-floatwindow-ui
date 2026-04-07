@@ -38,7 +38,7 @@
 
 ### 使用打包版（推薦）
 
-1. 從 [雲端硬碟]([https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases](https://fnosnas.hoshiyomirambo.com:4433/s/a20c42988967453fb0)) 下載壓縮包
+1. 從 [release]([https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases) 下載壓縮包
 2. 解壓後直接執行 `Stream Translator.exe`
 
 ### 從原始碼執行

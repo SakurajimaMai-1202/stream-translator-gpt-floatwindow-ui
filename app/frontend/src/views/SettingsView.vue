@@ -322,7 +322,17 @@ async function handleSave() {
   }
 }
 
-function handleCancel() {
+async function handleCancel() {
+  // 離開前確保待處理的 debounce 變更都被儲存
+  if (_settingsAutoSaveTimer !== null) {
+    clearTimeout(_settingsAutoSaveTimer);
+    _settingsAutoSaveTimer = null;
+    try {
+      await store.saveConfig(localConfig.value);
+    } catch (e) {
+      console.warn('[SettingsView] 離開保存失敗:', e);
+    }
+  }
   router.push('/');
 }
 

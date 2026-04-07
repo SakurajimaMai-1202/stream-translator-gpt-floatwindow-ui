@@ -14,6 +14,13 @@ warnings.filterwarnings('ignore')
 
 def _init_jit_model(model_path: str, device=torch.device('cpu')):
     torch.set_grad_enabled(False)
+    # Silero VAD 是極小的模型，限制 CPU 執行緒數可大幅降低 CPU 占用
+    # 預設 PyTorch 會用所有核心（32 執行緒），造成每次推理時全核短暫爆衝
+    torch.set_num_threads(1)
+    try:
+        torch.set_num_interop_threads(1)
+    except RuntimeError:
+        pass  # 已有其他模組先初始化 PyTorch，此呼叫只能在初始化前執行
     model = torch.jit.load(model_path, map_location=device)
     model.eval()
     return model
@@ -103,10 +110,12 @@ class AudioSlicer(LoopWorkerBase):
             self.speech_count += 1
             return
 
-        # VAD 跳幀優化：非直播音源時可設定 vad_every_n_frames > 1 減少 CPU 佔用
-        # 當在語音狀態中且觸發跳幀時，沿用上一幀的 speech_prob；
-        # 未偵測到語音時不跳幀，確保語音開始能立即被捕捉
-        if self.vad_every_n_frames > 1 and self.speech_count > 0 and self.counter % self.vad_every_n_frames != 0:
+        # VAD 跳幀優化：第一幀仍執行推論，後續連續語音 / 連續靜音都可沿用上一幀結果，
+        # 避免在長時間靜音時仍每 32ms 執行一次 VAD 造成不必要的 CPU 佔用。
+        # 這會讓語音 / 靜音狀態切換的偵測最多延後 N * FRAME_DURATION，
+        # 但在 vad_every_n_frames=3 時額外延遲僅約 64ms，實務上可接受。
+        in_continuous_segment = self.speech_count > 0 or self.no_speech_count > 0
+        if self.vad_every_n_frames > 1 and in_continuous_segment and self.counter % self.vad_every_n_frames != 0:
             speech_prob = self._last_speech_prob
         else:
             speech_prob = self.vad.get_speech_prob(audio)

@@ -60,6 +60,7 @@ export const useTranslationStore = defineStore('translation', () => {
   });
 
   let eventSource: EventSource | null = null;
+  let connectedTaskId = '';
   let broadcastChannel: BroadcastChannel | null = null;
 
   // 初始化 BroadcastChannel
@@ -165,7 +166,37 @@ export const useTranslationStore = defineStore('translation', () => {
     }
   }
 
+  async function syncRunningState() {
+    try {
+      const status = await translationApi.getStatus();
+      const runningTask = status.tasks?.find((task: any) => task.is_running) || null;
+
+      if (runningTask) {
+        isRunning.value = true;
+        currentTaskId.value = runningTask.task_id || '';
+        currentUrl.value = runningTask.url || currentUrl.value;
+
+        if (currentTaskId.value && connectedTaskId !== currentTaskId.value) {
+          connectEventSource(currentTaskId.value);
+        }
+      } else {
+        isRunning.value = false;
+        currentUrl.value = '';
+        currentTaskId.value = '';
+        if (connectedTaskId) {
+          disconnectEventSource();
+        }
+      }
+    } catch (error: any) {
+      console.warn('[TranslationStore] 同步執行狀態失敗:', error?.message || error);
+    }
+  }
+
   function connectEventSource(taskId: string) {
+    if (connectedTaskId === taskId && eventSource) {
+      return;
+    }
+
     if (eventSource) {
       console.log('[SSE] Closing existing EventSource');
       eventSource.close();
@@ -173,6 +204,7 @@ export const useTranslationStore = defineStore('translation', () => {
 
     console.log('[SSE] Creating EventSource for task:', taskId);
     eventSource = translationApi.createEventSource(taskId);
+    connectedTaskId = taskId;
     console.log('[SSE] EventSource created, readyState:', eventSource.readyState);
 
     eventSource.onopen = () => {
@@ -267,6 +299,7 @@ export const useTranslationStore = defineStore('translation', () => {
       eventSource.close();
       eventSource = null;
     }
+    connectedTaskId = '';
   }
 
   function clearError() {
@@ -303,6 +336,7 @@ export const useTranslationStore = defineStore('translation', () => {
     importConfig,
     startTranslation,
     stopTranslation,
+    syncRunningState,
     connectEventSource,
     disconnectEventSource,
     clearError,

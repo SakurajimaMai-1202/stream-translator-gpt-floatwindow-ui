@@ -64,4 +64,5 @@ README.txt
 
 # Runtime logs
 app.log
-ui2.log
+backend.log
+translator_stderr.log

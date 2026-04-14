@@ -3,14 +3,17 @@ import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useTranslationStore } from '../stores/translation';
 import { useModelDownloadStore } from '../stores/modelDownload';
+import { useLlamaStore } from '../stores/llama';
 import LlamaSettings from '../components/LlamaSettings.vue';
 import UiSelect, { type UiSelectOption } from '../components/UiSelect.vue';
 import { useTranscriptionMutex } from '../composables/useTranscriptionMutex';
+import { useAppSyncEvents } from '../composables/useAppSyncEvents';
 
 const router = useRouter();
 const route = useRoute();
 const store = useTranslationStore();
 const modelDownloadStore = useModelDownloadStore();
+const llamaStore = useLlamaStore();
 
 const qwenModels = ['Qwen/Qwen3-ASR-0.6B', 'Qwen/Qwen3-ASR-1.7B'];
 const fasterWhisperModels = ['tiny', 'base', 'small', 'medium', 'large-v2', 'large-v3', 'large-v3-turbo'];
@@ -144,6 +147,7 @@ const localConfig = ref<any>({
 });
 const isSaving = ref(false);
 const activeTab = ref('general');
+const isApplyingRemoteConfig = ref(false);
 
 const translationBackendOptions = computed<UiSelectOption[]>(() => {
   const base: UiSelectOption[] = [
@@ -217,45 +221,75 @@ const filteredGlossary = computed(() => {
 // 互斥邏輯: 轉錄引擎互斥規則
 useTranscriptionMutex(() => localConfig.value.transcription);
 
-onMounted(async () => {
-  await store.loadConfig();
-  // 深度複製並確保所有區段存在
-  const config = store.config || {};
-  
-  // 合併配置，保留預設值
-  const mergeConfig = (defaults: any, loaded: any) => {
-    const result = { ...defaults };
-    for (const key of Object.keys(result)) {
-      if (loaded && loaded[key] !== undefined) {
-        if (typeof result[key] === 'object' && !Array.isArray(result[key])) {
-          result[key] = { ...result[key], ...loaded[key] };
-        } else {
-          result[key] = loaded[key];
-        }
+function mergeConfig(defaults: any, loaded: any) {
+  const result = { ...defaults };
+  for (const key of Object.keys(result)) {
+    if (loaded && loaded[key] !== undefined) {
+      if (typeof result[key] === 'object' && result[key] !== null && !Array.isArray(result[key])) {
+        result[key] = { ...result[key], ...loaded[key] };
+      } else {
+        result[key] = loaded[key];
       }
     }
-    return result;
-  };
-  
-  localConfig.value.general = mergeConfig(localConfig.value.general, config.general);
-  localConfig.value.server = mergeConfig(localConfig.value.server, config.server);
-  localConfig.value.input = mergeConfig(localConfig.value.input, config.input);
-  localConfig.value.audio_slicing_vad = mergeConfig(localConfig.value.audio_slicing_vad, config.audio_slicing_vad);
-  localConfig.value.transcription = mergeConfig(localConfig.value.transcription, config.transcription);
-  localConfig.value.translation = mergeConfig(localConfig.value.translation, config.translation);
-  localConfig.value.terminology = mergeConfig(localConfig.value.terminology, config.terminology);
-  localConfig.value.output = mergeConfig(localConfig.value.output, config.output);
-  localConfig.value.output_notification = mergeConfig(localConfig.value.output_notification, config.output_notification);
-  
-  // Handle custom_models in translation section
-  if (config.translation?.custom_models) {
-      localConfig.value.translation.custom_models = config.translation.custom_models;
-  } else if (config.custom_models) {
-      // Backward compatibility: migrate from root
-      localConfig.value.translation.custom_models = config.custom_models;
   }
-  
-  localConfig.value.ui = mergeConfig(localConfig.value.ui, config.ui);
+  return result;
+}
+
+async function applyStoreConfigToLocalConfig(config?: any, syncLlama = false) {
+  isApplyingRemoteConfig.value = true;
+  try {
+    const loadedConfig = config || store.config || {};
+
+    localConfig.value.general = mergeConfig(localConfig.value.general, loadedConfig.general);
+    localConfig.value.server = mergeConfig(localConfig.value.server, loadedConfig.server);
+    localConfig.value.input = mergeConfig(localConfig.value.input, loadedConfig.input);
+    localConfig.value.audio_slicing_vad = mergeConfig(localConfig.value.audio_slicing_vad, loadedConfig.audio_slicing_vad);
+    localConfig.value.transcription = mergeConfig(localConfig.value.transcription, loadedConfig.transcription);
+    localConfig.value.translation = mergeConfig(localConfig.value.translation, loadedConfig.translation);
+    localConfig.value.terminology = mergeConfig(localConfig.value.terminology, loadedConfig.terminology);
+    localConfig.value.output = mergeConfig(localConfig.value.output, loadedConfig.output);
+    localConfig.value.output_notification = mergeConfig(localConfig.value.output_notification, loadedConfig.output_notification);
+    localConfig.value.ui = mergeConfig(localConfig.value.ui, loadedConfig.ui);
+
+    if (loadedConfig.translation?.custom_models) {
+      localConfig.value.translation.custom_models = loadedConfig.translation.custom_models;
+    } else if (loadedConfig.custom_models) {
+      localConfig.value.translation.custom_models = loadedConfig.custom_models;
+    }
+
+    if (syncLlama) {
+      await llamaStore.loadConfig();
+      await llamaStore.refreshServerStatus();
+    }
+  } finally {
+    isApplyingRemoteConfig.value = false;
+  }
+}
+
+useAppSyncEvents({
+  onConfigUpdated: async (payload) => {
+    await store.loadConfig();
+    await applyStoreConfigToLocalConfig(store.config, payload.section === '*' || payload.section === 'llama');
+  },
+  onConfigReset: async () => {
+    await store.loadConfig();
+    await applyStoreConfigToLocalConfig(store.config, true);
+  },
+  onConfigImported: async () => {
+    await store.loadConfig();
+    await applyStoreConfigToLocalConfig(store.config, true);
+  },
+  onTranslationStarted: async () => {
+    await store.syncRunningState();
+  },
+  onTranslationStopped: async () => {
+    await store.syncRunningState();
+  }
+});
+
+onMounted(async () => {
+  await store.loadConfig();
+  await applyStoreConfigToLocalConfig(store.config, true);
   
   // 從 URL 參數設定 tab
   if (route.query.tab) {
@@ -269,7 +303,10 @@ onMounted(async () => {
 
   // 初始化完成後，延後建立深度 watch 避免初始化誤觸發自動保存
   await nextTick();
-  watch(localConfig, () => debouncedAutoSave(), { deep: true });
+  watch(localConfig, () => {
+    if (isApplyingRemoteConfig.value) return;
+    debouncedAutoSave();
+  }, { deep: true });
 });
 
 onUnmounted(() => {

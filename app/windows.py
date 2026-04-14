@@ -110,10 +110,6 @@ class WebViewWindow(QMainWindow):
         logger.info(f"載入 URL: {self._target_url}")
         self.web_view.setUrl(QUrl(self._target_url))
         self._enforce_zoom_factor()
-        
-        # 修正模糊問題：些微調整視窗大小以觸發重新繪製
-        # 某些 High DPI 縮放與 OpenGL 組合下，首次顯示可能會模糊
-        QTimer.singleShot(1000, self._trigger_redraw)
 
     def _should_block_zoom_key(self, event: QKeyEvent) -> bool:
         """判斷是否為縮放快捷鍵 (Ctrl/Meta + +/-/=0)"""
@@ -150,12 +146,6 @@ class WebViewWindow(QMainWindow):
                 return True
 
         return super().eventFilter(obj, event)
-
-    def _trigger_redraw(self):
-        """觸發重新繪製以修復模糊"""
-        size = self.size()
-        self.resize(size.width() + 1, size.height() + 1)
-        QTimer.singleShot(100, lambda: self.resize(size))
 
 
 class CustomWebPage(QWebEnginePage):

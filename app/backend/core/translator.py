@@ -12,13 +12,55 @@ import re
 import json
 import uuid
 import logging
-from typing import Dict, Any, AsyncGenerator, Optional, List
+from functools import lru_cache
+from typing import Dict, Any, AsyncGenerator, Optional, List, FrozenSet
 from pathlib import Path
 from backend.config import settings
+from backend.core.logging_setup import resolve_log_file
 
 logger = logging.getLogger(__name__)
-# 設定日誌級別為 DEBUG 以便調試
-logger.setLevel(logging.DEBUG)
+
+
+def _extract_supported_cli_args(help_text: str) -> FrozenSet[str]:
+    """從 `stream_translator_gpt --help` 輸出解析可用 CLI 參數。"""
+    if not help_text:
+        return frozenset()
+    return frozenset(re.findall(r'--([a-zA-Z0-9_]+)', help_text))
+
+
+@lru_cache(maxsize=8)
+def _get_supported_cli_args(python_exe: str, cwd: str) -> Optional[FrozenSet[str]]:
+    """偵測目前 Python 執行環境中的 stream_translator_gpt 支援哪些 CLI 參數。"""
+    env = os.environ.copy()
+    env['PYTHONIOENCODING'] = 'utf-8'
+    env['PYTHONUTF8'] = '1'
+    env['PYTHONUNBUFFERED'] = '1'
+
+    try:
+        result = subprocess.run(
+            [python_exe, '-m', 'stream_translator_gpt', '--help'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=cwd,
+            env=env,
+            text=True,
+            encoding='utf-8',
+            errors='replace',
+            timeout=15,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+        )
+    except Exception as exc:
+        logger.warning(f"無法偵測 stream_translator_gpt CLI 參數，將使用內建白名單: {exc}")
+        return None
+
+    help_text = '\n'.join(part for part in (result.stdout, result.stderr) if part)
+    supported_args = _extract_supported_cli_args(help_text)
+    if supported_args:
+        logger.info(f"偵測到 stream_translator_gpt CLI 參數 {len(supported_args)} 個")
+        return supported_args
+
+    logger.warning("stream_translator_gpt --help 未回傳可解析的參數，將使用內建白名單")
+    return None
 
 class TranslationContext:
     """翻譯執行上下文"""
@@ -74,6 +116,7 @@ class TranslationContext:
         """構建 subprocess 命令行參數"""
         # 檢查是否在打包環境中
         is_frozen = getattr(sys, 'frozen', False)
+        cwd = str(settings.BASE_DIR.parent)
         
         if is_frozen:
             # 打包環境：直接使用 Python，因為 stream_translator_gpt 已包含在 exe 中
@@ -130,6 +173,16 @@ class TranslationContext:
             'hide_transcribe_result', 'output_proxy', 'output_file_path', 'cqhttp_url',
             'cqhttp_token', 'discord_webhook_url', 'telegram_token', 'telegram_chat_id'
         }
+
+        runtime_supported_args = _get_supported_cli_args(cmd[0], cwd)
+        if runtime_supported_args:
+            unsupported_runtime_args = sorted(allowed_args - runtime_supported_args)
+            if unsupported_runtime_args:
+                logger.info(
+                    "目前 stream_translator_gpt runtime 不支援部分參數，將自動略過: %s",
+                    ', '.join(unsupported_runtime_args)
+                )
+            allowed_args &= runtime_supported_args
         
         # 複製配置以避免修改原始字典
         config_copy = self.config.copy()
@@ -258,7 +311,7 @@ class TranslationContext:
             
             # 讀取 stderr 的線程
             def read_stderr():
-                log_path = Path(settings.BASE_DIR) / "backend" / "translator_stderr.log"
+                log_path = resolve_log_file("translator_stderr")
                 try:
                     for line in self.process.stderr:
                         line = line.strip()

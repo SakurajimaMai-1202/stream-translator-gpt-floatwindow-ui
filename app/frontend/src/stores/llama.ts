@@ -215,6 +215,7 @@ export const useLlamaStore = defineStore('llama', () => {
 
   // 載入配置
   async function loadConfig() {
+    isApplyingRemoteConfig.value = true;
     try {
       const config = await configApi.getConfig();
       if (config.llama) {
@@ -267,6 +268,8 @@ export const useLlamaStore = defineStore('llama', () => {
       }
     } catch (error: any) {
       console.error('載入 Llama 配置失敗:', error);
+    } finally {
+      isApplyingRemoteConfig.value = false;
     }
   }
 
@@ -494,10 +497,12 @@ export const useLlamaStore = defineStore('llama', () => {
 
   // 初始化旗標：初始化期間暫停自動儲存和 watch 觸發
   const isInitializing = ref(true);
+  // 遠端配置套用旗標：避免 loadConfig 套用後又被 watcher 當成本地修改回存
+  const isApplyingRemoteConfig = ref(false);
 
   // Watch for preset changes（只在非初始化時才響應）
   watch(selectedPreset, (newPreset, oldPreset) => {
-    if (isInitializing.value) return; // 初始化期間不處理
+    if (isInitializing.value || isApplyingRemoteConfig.value) return; // 初始化/遠端套用期間不處理
     if (newPreset && newPreset !== oldPreset) {
       loadPreset(newPreset);
       // 儲存選擇的 preset 到配置
@@ -508,7 +513,7 @@ export const useLlamaStore = defineStore('llama', () => {
   // Watch for changes and auto-save（只在非初始化時才自動儲存）
   let saveTimer: any = null;
   watch([serverConfig], () => {
-    if (isInitializing.value) return; // 初始化期間不儲存
+    if (isInitializing.value || isApplyingRemoteConfig.value) return; // 初始化/遠端套用期間不儲存
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       saveConfig();

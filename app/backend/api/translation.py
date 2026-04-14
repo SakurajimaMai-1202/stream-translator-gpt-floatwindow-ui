@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Request
 from fastapi.responses import StreamingResponse
 import json
 import asyncio
@@ -6,12 +6,13 @@ import copy
 from backend.models.translation import StartTranslationRequest, TranslationTaskResponse, DeviceListResponse, AudioDevice
 from backend.core.translator import active_translations, create_task, get_task, remove_task
 from backend.core.config_manager import ConfigManager
+from backend.core.app_sync import publish_app_event
 
 router = APIRouter(prefix="/translation", tags=["translation"])
 from backend.api.config import get_config_manager
 
 @router.post("/start", response_model=TranslationTaskResponse)
-async def start_translation(request: StartTranslationRequest):
+async def start_translation(request: StartTranslationRequest, http_request: Request):
     """啟動翻譯任務"""
     try:
         if request.audio_source.value in ["url", "file"]:
@@ -81,12 +82,18 @@ async def start_translation(request: StartTranslationRequest):
         if context:
             await context.start()
             
-        return {
+        response = {
             "success": True,
             "task_id": task_id,
             "sse_url": f"/api/translation/stream/{task_id}",
             "message": "Translation started"
         }
+        await publish_app_event("translation.started", {
+            "task_id": task_id,
+            "url": getattr(context, 'url', '') if context else '',
+            "source_client_id": http_request.headers.get("X-Client-Id", ""),
+        })
+        return response
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -169,7 +176,7 @@ async def get_task_status(task_id: str):
     }
 
 @router.delete("/stop/{task_id}")
-async def stop_translation(task_id: str):
+async def stop_translation(task_id: str, request: Request):
     """停止翻譯任務"""
     context = get_task(task_id)
     if not context:
@@ -177,6 +184,10 @@ async def stop_translation(task_id: str):
     
     await context.stop()
     remove_task(task_id)
+    await publish_app_event("translation.stopped", {
+        "task_id": task_id,
+        "source_client_id": request.headers.get("X-Client-Id", ""),
+    })
     
     return {"success": True, "task_id": task_id}
 

@@ -10,13 +10,12 @@ import threading
 
 from backend.api import routes
 from backend.config import settings
+from backend.core.logging_setup import configure_logging
 
 # 設定日誌
-logging.basicConfig(
-    level=logging.DEBUG if settings.DEBUG else logging.WARNING,
-    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'
-)
+LOG_FILE = configure_logging("backend")
 logger = logging.getLogger(__name__)
+logger.info(f"Backend log 檔案: {LOG_FILE}")
 
 
 @asynccontextmanager
@@ -131,4 +130,4 @@ else:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("backend.main:app", host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run("backend.main:app", host="127.0.0.1", port=8000, reload=True, access_log=False)

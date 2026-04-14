@@ -12,18 +12,12 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QIcon
 
+from backend.core.logging_setup import configure_logging
 from services import BackendProcess, FrontendServer
 from windows import HomeWindow, SettingsWindow, FloatingSubtitleWindow
 
 # 設定日誌
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('app.log', encoding='utf-8')
-    ]
-)
+LOG_FILE = configure_logging("app")
 logger = logging.getLogger(__name__)
 
 
@@ -106,6 +100,7 @@ class UI2Application:
         logger.info("=" * 60)
         logger.info("Stream Translator 啟動中...")
         logger.info(f"開發模式: {self.dev_mode}")
+        logger.info(f"App log 檔案: {LOG_FILE}")
         logger.info("=" * 60)
         
         # 啟動後端
@@ -330,7 +325,7 @@ def run_backend_directly(port: int):
     """在打包模式下直接啟動後端"""
     import uvicorn
     from backend.main import app
-    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info", access_log=False)
 
 
 if __name__ == "__main__":

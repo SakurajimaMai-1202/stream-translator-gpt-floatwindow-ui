@@ -2,6 +2,36 @@ import axios from 'axios';
 
 const API_BASE = '/api';
 
+const CLIENT_ID_STORAGE_KEY = 'stream-translator-client-id';
+let cachedClientId = '';
+
+export function getClientId(): string {
+  if (cachedClientId) {
+    return cachedClientId;
+  }
+
+  try {
+    const existing = window.sessionStorage.getItem(CLIENT_ID_STORAGE_KEY);
+    if (existing) {
+      cachedClientId = existing;
+      return cachedClientId;
+    }
+
+    cachedClientId = `client-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    window.sessionStorage.setItem(CLIENT_ID_STORAGE_KEY, cachedClientId);
+    return cachedClientId;
+  } catch {
+    cachedClientId = `client-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    return cachedClientId;
+  }
+}
+
+axios.interceptors.request.use((config) => {
+  config.headers = config.headers || {};
+  config.headers['X-Client-Id'] = getClientId();
+  return config;
+});
+
 export interface Config {
   [key: string]: any;
 }
@@ -76,6 +106,12 @@ export const serverApi = {
   async getInfo(): Promise<ServerInfo> {
     const response = await axios.get(`${API_BASE}/server/info`);
     return response.data;
+  }
+};
+
+export const syncApi = {
+  createEventSource(): EventSource {
+    return new EventSource(`${API_BASE}/sync/events?client_id=${encodeURIComponent(getClientId())}`);
   }
 };
 

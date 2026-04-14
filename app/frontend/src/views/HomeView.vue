@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router';
 import { useTranslationStore } from '../stores/translation';
 import { translationApi, configApi, serverApi, systemApi, type AudioSource, type AudioDevice, type Config, type FfmpegCheckResult } from '../services/api';
 import UiSelect, { type UiSelectOption } from '../components/UiSelect.vue';
+import { useAppSyncEvents } from '../composables/useAppSyncEvents';
 
 const router = useRouter();
 const store = useTranslationStore();
@@ -271,6 +272,52 @@ const translationEnabled = ref(true);  // 🔧 新增: 翻譯開關
 
 // 自動保存 debounce timer
 let _homeAutoSaveTimer: ReturnType<typeof setTimeout> | null = null;
+let _homeConfigSyncTimer: ReturnType<typeof setInterval> | null = null;
+let _homeRunningSyncTimer: ReturnType<typeof setInterval> | null = null;
+const isApplyingExternalConfig = ref(false);
+const lastAppliedHomeConfigSnapshot = ref('');
+
+function getTranscriptionEngineFromConfig(cfg: Config): string {
+  if (cfg.transcription?.use_qwen3_asr) return 'qwen3-asr';
+  if (cfg.transcription?.use_openai_transcription_api) return 'openai-api';
+  if (cfg.transcription?.use_faster_whisper && cfg.transcription?.use_simul_streaming) return 'faster-whisper-simul';
+  if (cfg.transcription?.use_simul_streaming) return 'simul-streaming';
+  return 'faster-whisper';
+}
+
+function buildHomeConfigSnapshotFromConfig(cfg: Config): string {
+  return JSON.stringify({
+    urlInput: cfg.input?.url || '',
+    audioSource: cfg.input?.audio_source || 'url',
+    selectedDeviceIndex: cfg.input?.device_index ?? null,
+    selectedTranscriptionEngine: getTranscriptionEngineFromConfig(cfg),
+    selectedWhisperModel: cfg.transcription?.model || 'base',
+    selectedQwen3AsrModel: cfg.transcription?.qwen3_asr_model || 'Qwen/Qwen3-ASR-1.7B',
+    selectedInputLanguage: cfg.transcription?.language || 'auto',
+    selectedOutputLanguage: cfg.translation?.target_language || 'Traditional Chinese',
+    selectedBackend: cfg.translation?.backend || 'gpt',
+    translationEnabled: cfg.translation?.backend !== 'none',
+    publicPort: cfg.server?.public_port ?? 8765,
+    subtitleSharingEnabled: cfg.server?.enable_subtitle_sharing !== false,
+  });
+}
+
+function buildHomeConfigSnapshotFromRefs(): string {
+  return JSON.stringify({
+    urlInput: urlInput.value,
+    audioSource: audioSource.value,
+    selectedDeviceIndex: selectedDeviceIndex.value,
+    selectedTranscriptionEngine: selectedTranscriptionEngine.value,
+    selectedWhisperModel: selectedWhisperModel.value,
+    selectedQwen3AsrModel: selectedQwen3AsrModel.value,
+    selectedInputLanguage: selectedInputLanguage.value,
+    selectedOutputLanguage: selectedOutputLanguage.value,
+    selectedBackend: selectedBackend.value,
+    translationEnabled: translationEnabled.value,
+    publicPort: publicPort.value,
+    subtitleSharingEnabled: subtitleSharingEnabled.value,
+  });
+}
 
 /** 將 HomeView UI ref 的值逆向映射並批次寫回 config.yaml */
 async function saveHomeConfigToBackend() {
@@ -288,6 +335,7 @@ async function saveHomeConfigToBackend() {
     };
     const inputPatch = {
       ...store.config.input,
+      url: urlInput.value,
       audio_source: audioSource.value,
       device_index: selectedDeviceIndex.value,
     };
@@ -303,6 +351,7 @@ async function saveHomeConfigToBackend() {
     ]);
     // 更新本地 store 快照
     await store.loadConfig();
+    lastAppliedHomeConfigSnapshot.value = buildHomeConfigSnapshotFromConfig(store.config);
   } catch (e) {
     console.warn('[HomeView] 自動保存 config 失敗:', e);
   }
@@ -411,7 +460,7 @@ async function loadDevices() {
     }
     addLog(`已載入 ${availableDevices.value.length} 個設備`);
     // 自動選取預設設備，如果目前未選擇
-    if (selectedDeviceIndex.value === null) {
+    if (selectedDeviceIndex.value === null && !isApplyingExternalConfig.value) {
       const defaultDevice = availableDevices.value.find((d) => d.is_default);
       if (defaultDevice) {
         selectedDeviceIndex.value = defaultDevice.index;
@@ -436,38 +485,79 @@ async function onAudioSourceChange() {
 }
 
 /** 將後端 config 對應至 HomeView 各 ref（僅首次載入時呼叫） */
-function applyConfigToRefs(cfg: Config) {
-  if (cfg.transcription?.model) {
-    selectedWhisperModel.value = cfg.transcription.model;
+async function applyConfigToRefs(cfg: Config) {
+  isApplyingExternalConfig.value = true;
+  try {
+    urlInput.value = cfg.input?.url || '';
+    audioSource.value = cfg.input?.audio_source || 'url';
+    selectedDeviceIndex.value = cfg.input?.device_index ?? null;
+    selectedWhisperModel.value = cfg.transcription?.model || 'base';
+    selectedQwen3AsrModel.value = cfg.transcription?.qwen3_asr_model || 'Qwen/Qwen3-ASR-1.7B';
+    selectedTranscriptionEngine.value = getTranscriptionEngineFromConfig(cfg);
+    selectedInputLanguage.value = cfg.transcription?.language || 'auto';
+    selectedOutputLanguage.value = cfg.translation?.target_language || 'Traditional Chinese';
+    selectedBackend.value = cfg.translation?.backend || 'gpt';
+    translationEnabled.value = cfg.translation?.backend !== 'none';
+    subtitleSharingEnabled.value = cfg.server?.enable_subtitle_sharing !== false;
+    publicPort.value = cfg.server?.public_port ?? publicPort.value;
+
+    if (audioSource.value === 'microphone' || audioSource.value === 'system_audio') {
+      await loadDevices();
+    } else {
+      availableDevices.value = [];
+    }
+
+    lastAppliedHomeConfigSnapshot.value = buildHomeConfigSnapshotFromConfig(cfg);
+  } finally {
+    isApplyingExternalConfig.value = false;
   }
-  if (cfg.transcription?.qwen3_asr_model) {
-    selectedQwen3AsrModel.value = cfg.transcription.qwen3_asr_model;
-  }
-  // 載入轉錄引擎設定
-  if (cfg.transcription?.use_qwen3_asr) {
-    selectedTranscriptionEngine.value = 'qwen3-asr';
-  } else if (cfg.transcription?.use_openai_transcription_api) {
-    selectedTranscriptionEngine.value = 'openai-api';
-  } else if (cfg.transcription?.use_faster_whisper && cfg.transcription?.use_simul_streaming) {
-    selectedTranscriptionEngine.value = 'faster-whisper-simul';
-  } else if (cfg.transcription?.use_simul_streaming) {
-    selectedTranscriptionEngine.value = 'simul-streaming';
-  } else {
-    selectedTranscriptionEngine.value = 'faster-whisper';
-  }
-  if (cfg.transcription?.language) {
-    selectedInputLanguage.value = cfg.transcription.language;
-  }
-  if (cfg.translation?.target_language) {
-    selectedOutputLanguage.value = cfg.translation.target_language;
-  }
-  if (cfg.translation?.backend) {
-    selectedBackend.value = cfg.translation.backend;
-  }
-  // 載入翻譯開關狀態
-  translationEnabled.value = cfg.translation?.backend !== 'none';
-  subtitleSharingEnabled.value = cfg.server?.enable_subtitle_sharing !== false;
 }
+
+async function syncHomeStateFromBackend(force = false, syncLlama = false) {
+  if (!force && _homeAutoSaveTimer !== null) {
+    return;
+  }
+
+  await store.loadConfig();
+  const incomingSnapshot = buildHomeConfigSnapshotFromConfig(store.config);
+
+  if (!force && incomingSnapshot === lastAppliedHomeConfigSnapshot.value) {
+    return;
+  }
+
+  if (!force && buildHomeConfigSnapshotFromRefs() !== lastAppliedHomeConfigSnapshot.value) {
+    return;
+  }
+
+  await applyConfigToRefs(store.config);
+
+  if (syncLlama) {
+    try {
+      await llamaStore.loadConfig();
+      await llamaStore.refreshServerStatus();
+    } catch (error) {
+      console.warn('[HomeView] 同步 Llama 狀態失敗:', error);
+    }
+  }
+}
+
+useAppSyncEvents({
+  onConfigUpdated: async (payload) => {
+    await syncHomeStateFromBackend(true, payload.section === '*' || payload.section === 'llama');
+  },
+  onConfigReset: async () => {
+    await syncHomeStateFromBackend(true, true);
+  },
+  onConfigImported: async () => {
+    await syncHomeStateFromBackend(true, true);
+  },
+  onTranslationStarted: async () => {
+    await store.syncRunningState();
+  },
+  onTranslationStopped: async () => {
+    await store.syncRunningState();
+  }
+});
 
 onMounted(async () => {
   // 載入公開端口資訊
@@ -480,36 +570,21 @@ onMounted(async () => {
 
   if (!store.isConfigInitialized) {
     // 首次開啟：從後端載入配置並套用
-    await store.loadConfig();
-    applyConfigToRefs(store.config);
+    await syncHomeStateFromBackend(true, true);
     store.isConfigInitialized = true;
     addLog('應用程式已初始化');
   } else {
-    // 從設定頁或其他頁返回：先刷新 store.config（確保自動保存的基準是最新的）
-    await store.loadConfig();
-    // 還原使用者先前輸入的狀態
-    const s = store.homeInputState;
-    urlInput.value = s.urlInput;
-    audioSource.value = s.audioSource;
-    selectedDeviceIndex.value = s.selectedDeviceIndex;
-    selectedTranscriptionEngine.value = s.selectedTranscriptionEngine;
-    selectedWhisperModel.value = s.selectedWhisperModel;
-    selectedQwen3AsrModel.value = s.selectedQwen3AsrModel;
-    selectedInputLanguage.value = s.selectedInputLanguage;
-    selectedOutputLanguage.value = s.selectedOutputLanguage;
-    selectedBackend.value = s.selectedBackend;
-    translationEnabled.value = s.translationEnabled;
-    addLog('已還原先前輸入狀態');
-    // 若來源需要設備列表，補充載入
-    if (audioSource.value === 'microphone' || audioSource.value === 'system_audio') {
-      await loadDevices();
-    }
+    await syncHomeStateFromBackend(true, true);
+    addLog('已同步最新設定');
   }
+
+  await store.syncRunningState();
 
   // 初始化完成後，延後建立 watch 避免初始化誤觸發自動保存
   await nextTick();
   watch(
     [
+      urlInput,
       audioSource,
       selectedDeviceIndex,
       selectedTranscriptionEngine,
@@ -520,8 +595,19 @@ onMounted(async () => {
       selectedBackend,
       translationEnabled,
     ],
-    () => debouncedSaveHomeConfig()
+    () => {
+      if (isApplyingExternalConfig.value) return;
+      debouncedSaveHomeConfig();
+    }
   );
+
+  _homeConfigSyncTimer = setInterval(() => {
+    void syncHomeStateFromBackend();
+  }, 2000);
+
+  _homeRunningSyncTimer = setInterval(() => {
+    void store.syncRunningState();
+  }, 1500);
 });
 
 onBeforeUnmount(() => {
@@ -529,6 +615,15 @@ onBeforeUnmount(() => {
   if (_homeAutoSaveTimer !== null) {
     clearTimeout(_homeAutoSaveTimer);
     _homeAutoSaveTimer = null;
+    void saveHomeConfigToBackend();
+  }
+  if (_homeConfigSyncTimer !== null) {
+    clearInterval(_homeConfigSyncTimer);
+    _homeConfigSyncTimer = null;
+  }
+  if (_homeRunningSyncTimer !== null) {
+    clearInterval(_homeRunningSyncTimer);
+    _homeRunningSyncTimer = null;
   }
   // 離開首頁前儲存目前輸入狀態，以便返回時還原
   store.saveHomeInput({
@@ -615,6 +710,7 @@ async function handleStart() {
     addLog('✅ 翻譯系統已啟動');
     addLog(`Task ID: ${result.task_id}`);
     addLog('📡 SSE 連接已建立');
+    await store.syncRunningState();
   } catch (error: any) {
     addLog(`❌ 啟動失敗: ${error.message}`);
     store.errorMessage = error.message;
@@ -630,6 +726,7 @@ async function handleStop() {
   try {
     await store.stopTranslation();
     addLog('✅ 翻譯系統已停止');
+    await store.syncRunningState();
   } catch (error: any) {
     addLog(`❌ 停止失敗: ${error.message}`);
   } finally {

@@ -30,7 +30,9 @@ class ConfigManager:
             'proxy': '',
             'source_type': 'youtube',
             'timeout': 30,
-            'device_recording_interval': 0.5  # 音訊錄音間隔(秒)，建議範圍 0.1~1.0
+            'device_recording_interval': 0.5,  # 音訊錄音間隔(秒)，建議範圍 0.1~1.0
+            'audio_source': 'url',
+            'device_index': None,
         },
         'audio_slicing_vad': {
             'min_audio_length': 0.5,
@@ -41,6 +43,13 @@ class ConfigManager:
             'vad_threshold': 0.35,
             'disable_dynamic_vad_threshold': False,
             'prefix_retention_length': 0.5,
+            'chunk_gap_threshold': 0.5,
+            'vad_enabled': True,
+            'vad_neg_threshold': 0.35,
+            'vad_min_speech_duration_ms': 250,
+            'vad_min_silence_duration_ms': 100,
+            'vad_window_size_samples': 512,
+            'vad_speech_pad_ms': 30,
             'vad_every_n_frames': 2,
             'realtime_processing': False
         },
@@ -57,6 +66,7 @@ class ConfigManager:
             'qwen3_asr_model': 'Qwen/Qwen3-ASR-1.7B',
             'qwen3_dtype': 'bfloat16',
             'qwen3_load_in_4bit': False,
+            'openai_transcription_model': 'whisper-1',
             'whisper_filters': [],
             'disable_transcription_context': False,
             'transcription_initial_prompt': ''
@@ -77,6 +87,9 @@ class ConfigManager:
             'processing_proxy': '',
             'use_json_result': False,
             'retry_if_translation_fails': True,
+            'api_key': '',
+            'use_smart_prompt': True,
+            'smart_prompt_enabled': True,
             'custom_models': [
                 {
                     'name': 'localllm',
@@ -88,14 +101,21 @@ class ConfigManager:
         },
         'terminology': {
             'use_terminology_glossary': False,
-            'terminology_glossary': {}
+            'terminology_glossary': {},
+            'glossary': '',
+            'glossary_list': [],
         },
         'output': {
             'output_file': '',
             'show_timestamp': True,
             'hide_transcript': False,
             'cqhttp_url': '',
-            'cqhttp_token': ''
+            'cqhttp_token': '',
+            'output_dir': './output',
+            'output_srt': True,
+            'output_txt': False,
+            'output_ass': False,
+            'max_history': 20,
         },
         'output_notification': {
             'output_proxy': '',
@@ -147,11 +167,14 @@ class ConfigManager:
         'llama': {
             'model_dir': '',
             'model_path': '',
+            'selected_preset': '',
+            'default_preset': '',
             'host': '127.0.0.1',
             'port': 8080,
             'n_ctx': 2048,
             'n_gpu_layers': 0,
             'n_threads': 4,
+            'n_parallel': 1,
             'top_k': 40,
             'top_p': 0.95,
             'temp': 0.8,
@@ -159,7 +182,8 @@ class ConfigManager:
             'n_predict': 512,
             'flash_attn': True,
             'no_mmap': False,
-            'custom_presets': {}  # 用戶自訂配置
+            'custom_presets': {},  # 用戶自訂配置
+            'custom_model_series': [],
         }
     }
     

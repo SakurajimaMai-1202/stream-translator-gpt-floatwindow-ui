@@ -1,10 +1,11 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from typing import Dict, Any, List
 from backend.core.config_manager import ConfigManager
 from fastapi.responses import Response
 from pydantic import BaseModel
 import yaml
 import io
+from backend.core.app_sync import publish_app_event
 
 router = APIRouter(prefix="/config", tags=["config"])
 
@@ -28,7 +29,7 @@ async def get_config():
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.put("")
-async def update_full_config(data: Dict[str, Any]):
+async def update_full_config(data: Dict[str, Any], request: Request):
     """更新完整配置"""
     try:
         # 更新所有區段
@@ -39,7 +40,13 @@ async def update_full_config(data: Dict[str, Any]):
                 # 特殊處理自訂模型列表
                 get_config_manager().config['translation']['custom_models'] = section_data
                 get_config_manager().save()
-        return {"success": True, "data": get_config_manager().get_config()}
+        updated_config = get_config_manager().get_config()
+        await publish_app_event("config.updated", {
+            "section": "*",
+            "config": updated_config,
+            "source_client_id": request.headers.get("X-Client-Id", ""),
+        })
+        return {"success": True, "data": updated_config}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -49,7 +56,7 @@ async def get_config_status():
     return get_config_manager().get_config_status()
 
 @router.patch("/{section}")
-async def update_section(section: str, data: Dict[str, Any]):
+async def update_section(section: str, data: Dict[str, Any], request: Request):
     """更新配置區段"""
     try:
         # 特殊處理 llama 區段，避免覆蓋 custom_presets
@@ -69,16 +76,27 @@ async def update_section(section: str, data: Dict[str, Any]):
                 logger.info(f"Preserved custom_presets: {list(current_presets.keys())}")
         
         get_config_manager().update_section(section, data)
-        return {"success": True, "data": get_config_manager().get_config().get(section)}
+        full_config = get_config_manager().get_config()
+        await publish_app_event("config.updated", {
+            "section": section,
+            "config": full_config,
+            "source_client_id": request.headers.get("X-Client-Id", ""),
+        })
+        return {"success": True, "data": full_config.get(section)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/reset")
-async def reset_config():
+async def reset_config(request: Request):
     """重置配置"""
     try:
         get_config_manager().reset_to_defaults()
-        return {"success": True, "data": get_config_manager().get_config()}
+        reset_config_data = get_config_manager().get_config()
+        await publish_app_event("config.reset", {
+            "config": reset_config_data,
+            "source_client_id": request.headers.get("X-Client-Id", ""),
+        })
+        return {"success": True, "data": reset_config_data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -102,7 +120,7 @@ async def export_config():
         raise HTTPException(status_code=500, detail=f"匯出配置失敗: {str(e)}")
 
 @router.post("/import")
-async def import_config(file_content: dict):
+async def import_config(file_content: dict, request: Request):
     """匯入 YAML 配置內容 (接收 JSON 包含 content 欄位或直接 YAML 轉換的 dict)"""
     try:
         # 如果接收到的是字典（已經由 FastAPI 透過 JSON 解析）
@@ -133,6 +151,11 @@ async def import_config(file_content: dict):
         # 強制保存
         get_config_manager().save()
             
+        imported_config = get_config_manager().get_config()
+        await publish_app_event("config.imported", {
+            "config": imported_config,
+            "source_client_id": request.headers.get("X-Client-Id", ""),
+        })
         return {"success": True, "message": "配置已成功匯入"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"匯入配置失敗: {str(e)}")
@@ -141,7 +164,7 @@ async def import_config(file_content: dict):
 from fastapi import UploadFile, File
 
 @router.post("/import/file")
-async def import_config_file(file: UploadFile = File(...)):
+async def import_config_file(request: Request, file: UploadFile = File(...)):
     """透過檔案上傳匯入配置"""
     try:
         content = await file.read()
@@ -161,6 +184,11 @@ async def import_config_file(file: UploadFile = File(...)):
         
         get_config_manager().save()
         
+        imported_config = get_config_manager().get_config()
+        await publish_app_event("config.imported", {
+            "config": imported_config,
+            "source_client_id": request.headers.get("X-Client-Id", ""),
+        })
         return {"success": True, "message": "配置檔案已成功匯入"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"匯入檔案失敗: {str(e)}")

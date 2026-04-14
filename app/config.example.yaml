@@ -2,6 +2,9 @@ general:
   openai_api_key: YOUR_OPENAI_API_KEY_HERE
   google_api_key: ''
   log_level: INFO
+server:
+  public_port: 8765
+  enable_subtitle_sharing: true
 input:
   input_source: url
   url: https://www.youtube.com/watch?v=EXAMPLE
@@ -10,6 +13,9 @@ input:
   proxy: ''
   source_type: youtube
   timeout: 30
+  device_recording_interval: 0.5
+  audio_source: url
+  device_index: null
 audio_slicing_vad:
   min_audio_length: 0.5
   max_audio_length: 8
@@ -26,6 +32,8 @@ audio_slicing_vad:
   vad_min_silence_duration_ms: 100
   vad_window_size_samples: 512
   vad_speech_pad_ms: 30
+  vad_every_n_frames: 2
+  realtime_processing: false
 transcription:
   backend: qwen3-asr
   model: Qwen/Qwen3-ASR-1.7B
@@ -37,6 +45,8 @@ transcription:
   use_openai_transcription_api: false
   use_qwen3_asr: true
   qwen3_asr_model: Qwen/Qwen3-ASR-1.7B
+  qwen3_dtype: bfloat16
+  qwen3_load_in_4bit: false
   whisper_filters:
   - emoji_filter
   - repetition_filter
@@ -106,6 +116,7 @@ subtitle_settings:
   maxDisplayCount: 30
   textColor: '#55ffff'
   translatedColor: '#FFDD00'
+  timestampColor: '#888888'
   backgroundColor: '#ffffff'
   backgroundOpacity: 5
 ui:
@@ -151,6 +162,7 @@ llama:
   n_ctx: 2048
   n_gpu_layers: 0
   n_threads: 8
+  n_parallel: 1
   top_k: 40
   top_p: 0.9
   temp: 0.8

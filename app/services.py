@@ -8,11 +8,35 @@ import subprocess
 import socket
 import time
 import logging
+import re
 from pathlib import Path
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QProcess, QTimer, pyqtSignal, QObject
 
 logger = logging.getLogger(__name__)
+
+
+def _classify_process_log_level(line: str, default_level: int) -> int:
+    """根據子程序輸出內容判斷較合理的 log 等級。"""
+    normalized = line.strip().lower()
+    if not normalized:
+        return logging.DEBUG
+
+    if any(keyword in normalized for keyword in ("traceback", "critical", "exception", "error", "fatal")):
+        return logging.ERROR
+    if any(keyword in normalized for keyword in ("warning", "warn")):
+        return logging.WARNING
+    if any(keyword in normalized for keyword in ("watchfiles", "statreload", "detected file change", "reloader")):
+        return logging.DEBUG
+    if re.search(r"\bdebug\b", normalized):
+        return logging.DEBUG
+
+    return default_level
+
+
+def _log_subprocess_output(prefix: str, line: str, default_level: int):
+    level = _classify_process_log_level(line, default_level)
+    logger.log(level, f"[{prefix}] {line}")
 
 class BackendProcess(QObject):
     """FastAPI 後端程序管理器"""
@@ -64,7 +88,8 @@ class BackendProcess(QObject):
                 "backend.main:app",
                 "--host", "0.0.0.0",
                 "--port", str(self.port),
-                "--reload"
+                "--reload",
+                "--no-access-log"
             ])
             logger.info(f"啟動後端 (Dev): {sys.executable} -m uvicorn backend.main:app --host 0.0.0.0 --port {self.port} --reload")
 
@@ -132,7 +157,7 @@ class BackendProcess(QObject):
             data = self.process.readAllStandardOutput().data().decode('utf-8', errors='ignore')
             for line in data.strip().split('\n'):
                 if line:
-                    logger.info(f"[Backend] {line}")
+                    _log_subprocess_output("Backend", line, logging.INFO)
     
     def _on_stderr(self):
         """處理錯誤輸出"""
@@ -140,7 +165,7 @@ class BackendProcess(QObject):
             data = self.process.readAllStandardError().data().decode('utf-8', errors='ignore')
             for line in data.strip().split('\n'):
                 if line:
-                    logger.warning(f"[Backend Error] {line}")
+                    _log_subprocess_output("Backend", line, logging.WARNING)
     
     def _on_finished(self, exit_code, exit_status):
         """程序結束處理"""
@@ -250,7 +275,7 @@ class FrontendServer(QObject):
             data = self.process.readAllStandardOutput().data().decode('utf-8', errors='ignore')
             for line in data.strip().split('\n'):
                 if line:
-                    logger.info(f"[Frontend] {line}")
+                    _log_subprocess_output("Frontend", line, logging.INFO)
     
     def _on_stderr(self):
         """處理錯誤輸出"""
@@ -260,6 +285,6 @@ class FrontendServer(QObject):
                 if line:
                     # Vite 的啟動訊息通常在 stderr
                     if any(keyword in line.lower() for keyword in ['ready', 'local', 'network', 'vite']):
-                        logger.info(f"[Frontend] {line}")
+                        _log_subprocess_output("Frontend", line, logging.INFO)
                     else:
-                        logger.debug(f"[Frontend] {line}")
+                        _log_subprocess_output("Frontend", line, logging.DEBUG)

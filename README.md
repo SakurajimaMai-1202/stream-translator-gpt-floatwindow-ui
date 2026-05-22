@@ -1,10 +1,14 @@
-# Stream Translator FloatWindow
+<div align="center">
+  <h1>Stream Translator FloatWindow</h1>
+  即時語音辨識 × 翻譯 × 浮動字幕
+</div>
+
 
 <p align="center">
   <strong>即時語音辨識 × 翻譯 × 浮動字幕</strong><br>
-  基於 <a href="https://github.com/ionic-bond/stream-translator-gpt">stream-translator-gpt</a> 的桌面 GUI 前端
+基於 <a href="https://github.com/ionic-bond/stream-translator-gpt">stream-translator-gpt</a> 的桌面 GUI 前端<br>
+💡 若需串聯手機端，可搭配使用此專案：<a href="https://github.com/W-Nana/SubtitleOverlay">SubtitleOverlay</a>
 </p>
-
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.10--3.12-blue" alt="Python">
   <img src="https://img.shields.io/badge/CUDA-12.4-green" alt="CUDA">

@@ -166,10 +166,10 @@ python main.py
 
 | 組合 | ASR | 翻譯模型 | 定位 |
 |------|-----|----------|------|
-| 低延遲 | Qwen3-ASR-0.6B | hymt 1.5 | 即時直播 |
+| 低延遲 | Qwen3-ASR-0.6B | hymt2.0 7b | 即時直播 |
 | 品質優先 | Qwen3-ASR-1.7B | sakura | 日中翻譯 |
 | 泛用多語 | faster-whisper large-v3-turbo | gemma 4 | 多語場景 |
-| **私心推薦** | Qwen3-ASR-1.7B 4-bit | gemma 4 E4B | 快又好 |
+| **私心推薦** | Qwen3-ASR-1.7B 4-bit | gemma 4 E4B/hymt2.0 7b | 快又好 |
 
 ---
 

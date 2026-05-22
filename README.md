@@ -5,7 +5,6 @@
 
 
 <p align="center">
-  <strong>即時語音辨識 × 翻譯 × 浮動字幕</strong><br>
 基於 <a href="https://github.com/ionic-bond/stream-translator-gpt">stream-translator-gpt</a> 的桌面 GUI 前端<br>
 💡 若需串聯手機端，可搭配使用此專案：<a href="https://github.com/W-Nana/SubtitleOverlay">SubtitleOverlay</a>
 </p>

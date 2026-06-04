@@ -1,10 +1,13 @@
-# Stream Translator FloatWindow
+<div align="center">
+  <h1>Stream Translator FloatWindow</h1>
+  即時語音辨識 × 翻譯 × 浮動字幕
+</div>
+
 
 <p align="center">
-  <strong>即時語音辨識 × 翻譯 × 浮動字幕</strong><br>
-  基於 <a href="https://github.com/ionic-bond/stream-translator-gpt">stream-translator-gpt</a> 的桌面 GUI 前端
+基於 <a href="https://github.com/ionic-bond/stream-translator-gpt">stream-translator-gpt</a> 的桌面 GUI 前端<br>
+💡 若需串聯手機端，可搭配使用此專案：<a href="https://github.com/W-Nana/SubtitleOverlay">SubtitleOverlay</a>
 </p>
-
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.10--3.12-blue" alt="Python">
   <img src="https://img.shields.io/badge/CUDA-12.4-green" alt="CUDA">
@@ -24,7 +27,7 @@
 |------|------|
 | **音源** | YouTube / Twitch / Bilibili / X 直播 URL、麥克風、系統播放音訊（WASAPI Loopback）、本地音檔 |
 | **語音辨識 (ASR)** | Qwen3-ASR（0.6B / 1.7B）、faster-whisper（tiny → large-v3-turbo）、OpenAI Whisper API |
-| **翻譯** | OpenAI GPT、Google Gemini、本地 LLM（llama.cpp / Ollama） |
+| **翻譯** | OpenAI GPT、Google Gemini、本地 LLM（llama.cpp /lmstudio 等等） |
 | **浮動字幕** | 獨立置頂視窗，可自訂字體、顏色、透明度 |
 | **字幕分享** | 區網內其他裝置可用瀏覽器即時查看字幕（預設 port 8765） |
 | **字幕輸出** | SRT / TXT / ASS 檔案匯出 |
@@ -163,10 +166,10 @@ python main.py
 
 | 組合 | ASR | 翻譯模型 | 定位 |
 |------|-----|----------|------|
-| 低延遲 | Qwen3-ASR-0.6B | hymt 1.5 | 即時直播 |
+| 低延遲 | Qwen3-ASR-0.6B | hymt2.0 7b | 即時直播 |
 | 品質優先 | Qwen3-ASR-1.7B | sakura | 日中翻譯 |
 | 泛用多語 | faster-whisper large-v3-turbo | gemma 4 | 多語場景 |
-| **私心推薦** | Qwen3-ASR-1.7B 4-bit | gemma 4 E4B | 快又好 |
+| **私心推薦** | Qwen3-ASR-1.7B 4-bit | gemma 4 E4B/hymt2.0 7b | 快又好 |
 
 ---
 

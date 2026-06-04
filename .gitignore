@@ -6,6 +6,7 @@
 llama.cpp/
 ffmpeg-8.1-essentials_build/
 Orion-Qwen3.5-2B-SFT-v2603-v1/
+remote-subtitle-window/
 *.gguf
 *.bin
 *.safetensors

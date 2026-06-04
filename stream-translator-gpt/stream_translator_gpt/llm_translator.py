@@ -84,6 +84,10 @@ class LLMClient():
         self.glossary = glossary or {}
         # 依 prompt 內容判斷是否為中文情境（用於決定術語格式）
         self._is_zh = bool(re.search(r'[\u4e00-\u9fff]', prompt))
+        # 依 model 名稱偵測是否為 Hy-MT 翻譯模型
+        model_lower = str(model).lower()
+        self._is_hymt = 'hymt' in model_lower or 'hy-mt' in model_lower
+
 
     def _filter_glossary(self, transcript: str) -> dict:
         """只保留 transcript 中實際出現的術語，並限制最多 _GLOSSARY_MAX_INJECT 條。
@@ -104,19 +108,35 @@ class LLMClient():
         """組合含術語表的 user message。
         
         格式（緊湊、token 友善）：
-          中文情境: "術語參考：A→B, C→D\\n{prompt}：\\n{transcript}"
-          英文情境: "Glossary: A→B, C→D\\n{prompt}:\\n{transcript}"
-        無匹配術語時直接回傳 "{prompt}:\\n{transcript}"（與原始行為相同）。
+          中文情境: "術語參考：A→B, C→D\n{prompt}：\n{transcript}"
+          英文情境: "Glossary: A→B, C→D\n{prompt}:\n{transcript}"
+        無匹配術語時直接回傳 "{prompt}:\n{transcript}"（與原始行為相同）。
         """
         relevant = self._filter_glossary(transcript)
         if relevant:
-            pairs = ', '.join(f'{s}→{t}' for s, t in relevant.items())
-            if self._is_zh:
-                glossary_line = f'術語參考：{pairs}'
+            if self._is_hymt:
+                # 建立換行的 "A 翻译成 B" 列表
+                glossary_lines = []
+                for src, tgt in relevant.items():
+                    glossary_lines.append(f"{src} 翻译成 {tgt}")
+                glossary_block = "\n".join(glossary_lines)
+                
+                # 組合 Hy-MT 專屬的 Instruction Prompt 結構
+                return (
+                    f"参考下面的翻译：\n"
+                    f"{glossary_block}\n\n"
+                    f"{self.prompt}\n\n"
+                    f"{transcript}"
+                )
             else:
-                glossary_line = f'Glossary: {pairs}'
-            return f'{glossary_line}\n{self.prompt}:\n{transcript}'
+                pairs = ', '.join(f'{s}→{t}' for s, t in relevant.items())
+                if self._is_zh:
+                    glossary_line = f'術語參考：{pairs}'
+                else:
+                    glossary_line = f'Glossary: {pairs}'
+                return f'{glossary_line}\n{self.prompt}:\n{transcript}'
         return f'{self.prompt}:\n{transcript}'
+
 
     def _append_history_message(self, user_content: str, assistant_content: str):
         if not user_content or not assistant_content:

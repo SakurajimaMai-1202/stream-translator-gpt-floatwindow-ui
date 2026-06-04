@@ -13,7 +13,7 @@ from backend.config import settings
 from backend.core.logging_setup import configure_logging
 
 # 設定日誌
-LOG_FILE = configure_logging("backend")
+LOG_FILE = configure_logging("backend", reset_log_names=["translator_stderr"])
 logger = logging.getLogger(__name__)
 logger.info(f"Backend log 檔案: {LOG_FILE}")
 

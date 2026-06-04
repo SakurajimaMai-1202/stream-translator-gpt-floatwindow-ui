@@ -9,7 +9,7 @@ import logging
 import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 import yaml
 
@@ -19,6 +19,7 @@ from backend.config import settings
 DEFAULT_LOG_LEVEL_NAME = "INFO"
 LOG_MAX_BYTES = 5 * 1024 * 1024
 LOG_BACKUP_COUNT = 5
+_RESETTED_LOG_FILES: set[Path] = set()
 
 
 def resolve_log_dir() -> Path:
@@ -59,6 +60,49 @@ def _build_formatter() -> logging.Formatter:
     )
 
 
+def _iter_log_family_paths(log_file: Path):
+    yield log_file
+
+    prefix = f"{log_file.name}."
+    try:
+        for candidate in log_file.parent.iterdir():
+            if not candidate.is_file():
+                continue
+            if not candidate.name.startswith(prefix):
+                continue
+            suffix = candidate.name[len(prefix):]
+            if suffix.isdigit():
+                yield candidate
+    except FileNotFoundError:
+        return
+
+
+def _reset_log_path(log_file: Path):
+    seen: set[Path] = set()
+    for candidate in _iter_log_family_paths(log_file):
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        try:
+            candidate.unlink(missing_ok=True)
+        except TypeError:
+            if candidate.exists():
+                candidate.unlink()
+        except FileNotFoundError:
+            pass
+        except Exception:
+            pass
+
+
+def _reset_log_targets(log_names: Sequence[str]):
+    for log_name in dict.fromkeys(log_names):
+        log_file = resolve_log_file(log_name)
+        if log_file in _RESETTED_LOG_FILES:
+            continue
+        _reset_log_path(log_file)
+        _RESETTED_LOG_FILES.add(log_file)
+
+
 def _close_handlers(logger: logging.Logger):
     for handler in list(logger.handlers):
         logger.removeHandler(handler)
@@ -88,7 +132,13 @@ def _install_exception_hook():
     sys.excepthook = _handle_exception
 
 
-def configure_logging(log_name: str, config_path: Optional[Path] = None, *, console: bool = True) -> Path:
+def configure_logging(
+    log_name: str,
+    config_path: Optional[Path] = None,
+    *,
+    console: bool = True,
+    reset_log_names: Optional[Sequence[str]] = None,
+) -> Path:
     """設定 root logger，回傳實際 log 檔路徑。"""
     log_dir = resolve_log_dir()
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -96,6 +146,11 @@ def configure_logging(log_name: str, config_path: Optional[Path] = None, *, cons
     log_level = get_configured_log_level(config_path)
     formatter = _build_formatter()
     log_file = resolve_log_file(log_name)
+
+    log_names_to_reset = [log_name]
+    if reset_log_names:
+        log_names_to_reset.extend(reset_log_names)
+    _reset_log_targets(log_names_to_reset)
 
     file_handler = RotatingFileHandler(
         log_file,

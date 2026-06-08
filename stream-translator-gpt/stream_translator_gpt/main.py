@@ -37,7 +37,7 @@ def main(url, proxy, openai_api_key, google_api_key, format, cookies, input_prox
          retry_if_translation_fails, output_timestamps, hide_transcribe_result, output_proxy, output_file_path,
          cqhttp_url, cqhttp_token, discord_webhook_url, telegram_token, telegram_chat_id,
          translation_glossary=None, loopback=False,
-         vad_every_n_frames: int = 1, realtime_processing: bool = False):
+         vad_every_n_frames: int = 1, realtime_processing: bool = False, qwen3_rms_threshold: float = 0.005):
     if gpt_base_url:
         os.environ['OPENAI_BASE_URL'] = gpt_base_url
 
@@ -109,7 +109,8 @@ def main(url, proxy, openai_api_key, google_api_key, format, cookies, input_prox
             }
             if use_qwen3_asr:
                 return Qwen3ASR(model=model, language=language, context=qwen3_context,
-                                dtype=qwen3_dtype, load_in_4bit=qwen3_load_in_4bit, **common_args)
+                                dtype=qwen3_dtype, load_in_4bit=qwen3_load_in_4bit,
+                                rms_threshold=qwen3_rms_threshold, **common_args)
             elif use_simul_streaming:
                 return SimulStreaming(model=model,
                                       language=language,
@@ -396,6 +397,12 @@ def cli():
         '--qwen3_load_in_4bit',
         action='store_true',
         help='Load Qwen3-ASR model in 4-bit quantization using bitsandbytes (NF4). Reduces VRAM from ~3.5GB to ~1.3GB. Requires: pip install bitsandbytes'
+    )
+    parser.add_argument(
+        '--qwen3_rms_threshold',
+        type=float,
+        default=0.005,
+        help='RMS volume threshold for Qwen3-ASR silence filtering. Audio segments with RMS below this will be ignored to prevent hallucinations.'
     )
     parser.add_argument(
         '--openai_transcription_model',

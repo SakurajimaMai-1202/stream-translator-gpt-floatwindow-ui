@@ -66,6 +66,7 @@ class ConfigManager:
             'qwen3_asr_model': 'Qwen/Qwen3-ASR-1.7B',
             'qwen3_dtype': 'bfloat16',
             'qwen3_load_in_4bit': False,
+            'qwen3_rms_threshold': 0.005,
             'openai_transcription_model': 'whisper-1',
             'whisper_filters': [],
             'disable_transcription_context': False,
@@ -463,6 +464,7 @@ class ConfigManager:
             'transcription_initial_prompt': config['transcription'].get('transcription_initial_prompt', ''),
             'qwen3_dtype': config['transcription'].get('qwen3_dtype', 'bfloat16'),
             'qwen3_load_in_4bit': config['transcription'].get('qwen3_load_in_4bit', False),
+            'qwen3_rms_threshold': config['transcription'].get('qwen3_rms_threshold', 0.005),
         }
         
         # Qwen3-ASR 語言格式轉換：短碼 → 完整名稱
@@ -483,27 +485,13 @@ class ConfigManager:
             normalized_lang = raw_lang.lower()
             args['language'] = qwen3_lang_map.get(normalized_lang, raw_lang)
         
-        # Qwen3-ASR 上下文處理 (術語表整合)
-        if transcription_backend == 'qwen3-asr':
-            use_glossary = config.get('terminology', {}).get('use_terminology_glossary', False)
-            terminology_config = config.get('terminology', {})
-            glossary = terminology_config.get('terminology_glossary', {})
-            glossary_list = terminology_config.get('glossary_list', [])
-            # 相容前端 glossary_list array 格式
-            if not glossary and glossary_list:
-                glossary = {item['original']: item['translated']
-                            for item in glossary_list
-                            if item.get('original') and item.get('translated')}
-            
-            if use_glossary and glossary:
-                # 將術語表轉換為上下文文本
-                # 格式: "原文: 翻譯\n原文2: 翻譯2"
-                context_lines = [f"{source}: {target}" for source, target in glossary.items()]
-                args['qwen3_context'] = "\n".join(context_lines)
-            else:
-                args['qwen3_context'] = None
-        else:
-            args['qwen3_context'] = None
+        # Qwen3-ASR 上下文 (context) 說明：
+        # 術語表不再注入至 ASR 的 context 參數，原因如下：
+        #   當音訊品質差（唱歌、雜音、突然靜音），Qwen3-ASR 的 audio attention 大幅下降，
+        #   模型會轉而仰賴 context token 進行解碼，導致整個術語表被直接「複製」輸出為幻覺文字。
+        # 術語對照功能完全由翻譯層的 _filter_glossary() 承擔（只注入原文中有出現的術語），
+        # 這樣可以保留翻譯準確性，同時消除 ASR 幻覺風險。
+        args['qwen3_context'] = None
         
         translation_config = config.get('translation', {})
         resolved_api_keys = self._resolve_translation_api_keys(config)

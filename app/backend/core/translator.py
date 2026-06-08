@@ -166,7 +166,7 @@ class TranslationContext:
             'model', 'language', 'use_faster_whisper', 'use_simul_streaming',
             'use_openai_transcription_api', 'use_qwen3_asr', 'openai_transcription_model', 'whisper_filters',
             'transcription_initial_prompt', 'disable_transcription_context', 'qwen3_context',
-            'qwen3_load_in_4bit', 'qwen3_dtype',
+            'qwen3_load_in_4bit', 'qwen3_dtype', 'qwen3_rms_threshold',
             'gpt_model', 'gemini_model', 'translation_prompt', 'translation_glossary', 'translation_history_size',
             'translation_timeout', 'gpt_base_url', 'gemini_base_url', 'processing_proxy',
             'use_json_result', 'retry_if_translation_fails', 'output_timestamps',
@@ -348,8 +348,37 @@ class TranslationContext:
                         # 移除 ANSI 顏色碼
                         clean_line = re.sub(r'\x1b\[[0-9;]*m', '', line)
                         
-                        # 過濾日誌行
+                        # 處理並過濾日誌行
                         if any(marker in clean_line for marker in ['[INFO]', '[ERROR]', '[WARNING]', '[DEBUG]']):
+                            if '[INFO]' in clean_line:
+                                msg = clean_line.replace('[INFO]', '').strip()
+                                # 篩選出載入與就緒相關的重要狀態日誌，並廣播給前端
+                                if any(kw in msg for kw in ['Loading', 'loaded', 'Initialization', 'quantization', 'Attention', 'device', 'VAD', 'detected', 'complete', 'context enabled']):
+                                    # 簡單的英文日誌中文化映射，提升使用者體驗
+                                    zh_msg = msg
+                                    if 'Loading Qwen3-ASR model' in msg:
+                                        zh_msg = "正在載入 Qwen3-ASR 語音辨識模型 (預估 10~30 秒)..."
+                                    elif 'Loading Faster-Whisper model' in msg:
+                                        model_name = msg.split(':')[-1].strip() if ':' in msg else ''
+                                        zh_msg = f"正在載入 Faster-Whisper 語音辨識模型 ({model_name})..."
+                                    elif 'Loading Whisper model' in msg:
+                                        model_name = msg.split(':')[-1].strip() if ':' in msg else ''
+                                        zh_msg = f"正在載入 Whisper 語音辨識模型 ({model_name})..."
+                                    elif 'Initialization complete' in msg:
+                                        zh_msg = "語音辨識系統初始化完成，開始接收音訊 🎙️"
+                                    elif 'FlashAttention-2 detected' in msg:
+                                        zh_msg = "偵測到 FlashAttention-2，已啟用 GPU 硬體加速推論"
+                                    elif 'Using PyTorch SDPA' in msg:
+                                        zh_msg = "已啟用 PyTorch SDPA 加速推論"
+                                    elif 'Enabling 4-bit quantization' in msg:
+                                        zh_msg = "已啟用 4-bit 量化 (NF4) 以節省顯存使用"
+                                    elif 'Qwen3-ASR context enabled' in msg:
+                                        zh_msg = "已載入術語對照表 (ASR Context)"
+                                    
+                                    self._broadcast({
+                                        "type": "status",
+                                        "data": {"message": zh_msg}
+                                    })
                             continue
 
                         # 將實際輸出寫入後端終端,方便確認有無輸出

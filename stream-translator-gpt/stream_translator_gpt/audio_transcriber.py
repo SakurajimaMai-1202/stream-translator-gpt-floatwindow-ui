@@ -79,7 +79,13 @@ class AudioTranscriber(LoopWorkerBase):
             is_repetitive = False
             if len(text) > 10:
                 zlib_ratio = compression_ratio(text)
-                unique_ratio = len(set(tokens)) / len(tokens) if tokens else 1.0
+                if tokens:
+                    unique_ratio = len(set(tokens)) / len(tokens)
+                else:
+                    # Fallback to character-level unique ratio for models like Qwen3-ASR that don't return tokens
+                    # We extract alphanumeric characters to avoid punctuation/space bias
+                    clean_text = "".join(c for c in text if c.isalnum())
+                    unique_ratio = len(set(clean_text)) / len(clean_text) if clean_text else 1.0
 
                 if zlib_ratio > 2.0 or unique_ratio < 0.4:
                     self.reset_context()
@@ -248,7 +254,7 @@ class RemoteOpenaiTranscriber(AudioTranscriber):
 class Qwen3ASR(AudioTranscriber):
     """Qwen3-ASR 語音識別引擎"""
 
-    def __init__(self, model: str, language: str, context: str = None, dtype: str = 'bfloat16', load_in_4bit: bool = False, **kwargs) -> None:
+    def __init__(self, model: str, language: str, context: str = None, dtype: str = 'bfloat16', load_in_4bit: bool = False, rms_threshold: float = 0.005, **kwargs) -> None:
         super().__init__(**kwargs)
         import torch
         from qwen_asr import Qwen3ASRModel
@@ -262,6 +268,15 @@ class Qwen3ASR(AudioTranscriber):
         elif dtype == 'float32':
             torch_dtype = torch.float32
 
+        # 檢測並啟用 SDPA / FlashAttention-2 加速
+        attn_implementation = "sdpa"
+        try:
+            import flash_attn
+            attn_implementation = "flash_attention_2"
+            print(f'{INFO}FlashAttention-2 detected, using it for Qwen3-ASR')
+        except ImportError:
+            print(f'{INFO}Using PyTorch SDPA (Scaled Dot-Product Attention) for Qwen3-ASR')
+
         # 準備額外參數
         model_kwargs = {
             "dtype": torch_dtype,
@@ -269,6 +284,7 @@ class Qwen3ASR(AudioTranscriber):
             "max_inference_batch_size": 1,  # 串流模式使用 batch_size=1
             "max_new_tokens": 128,  # 5-8 秒語音最多 ~80 tokens，128 已足夠且減少無謂解碼步驟
             "num_beams": 1,  # greedy decoding，避免 beam search 的倍數計算開銷
+            "attn_implementation": attn_implementation,
         }
 
         # 處理 4-bit 量化 (bitsandbytes)
@@ -289,6 +305,7 @@ class Qwen3ASR(AudioTranscriber):
         self.model = Qwen3ASRModel.from_pretrained(model, **model_kwargs)
         self.language = language if language else None  # None 為自動檢測
         self.context = context  # 儲存上下文文本(用於術語表等)
+        self.rms_threshold = rms_threshold  # 儲存靜音過濾臨界值
         
         if self.context:
             print(f'{INFO}Qwen3-ASR context enabled (length: {len(self.context)} chars)')
@@ -306,7 +323,7 @@ class Qwen3ASR(AudioTranscriber):
         """
         # 靜音過濾：若音頻 RMS 能量過低，直接跳過推論避免幻覺輸出
         rms = float(np.sqrt(np.mean(audio.astype(np.float32) ** 2)))
-        if rms < 0.005:
+        if rms < self.rms_threshold:
             return "", None
 
         # Qwen3-ASR 接受 (np.ndarray, sample_rate) 元組

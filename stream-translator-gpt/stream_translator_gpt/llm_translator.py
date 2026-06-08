@@ -114,6 +114,8 @@ class LLMClient():
         """
         relevant = self._filter_glossary(transcript)
         if relevant:
+            import sys
+            print(f"[Glossary Match] Input: '{transcript}' -> Matched: {relevant}", file=sys.stderr, flush=True)
             if self._is_hymt:
                 # 建立換行的 "A 翻译成 B" 列表
                 glossary_lines = []

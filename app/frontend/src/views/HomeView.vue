@@ -559,6 +559,19 @@ useAppSyncEvents({
   }
 });
 
+// 監聽並將後端狀態及錯誤日誌輸出至介面日誌面板
+watch(() => store.statusMessage, (newVal) => {
+  if (newVal && newVal !== '已複製分享連結' && !newVal.startsWith('字幕分享已')) {
+    addLog(`ℹ️ ${newVal}`);
+  }
+});
+
+watch(() => store.errorMessage, (newVal) => {
+  if (newVal) {
+    addLog(`❌ ${newVal}`);
+  }
+});
+
 onMounted(async () => {
   // 載入公開端口資訊
   await fetchPublicPort();

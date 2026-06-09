@@ -76,8 +76,8 @@ def build_asr_config(options: dict[str, Any]) -> ASRConfig:
     model = options.get("model")
     if backend in {"openai_api", "qwen3", "nemo"}:
         model = None
-    openai_transcription_model = options.get("openai_transcription_model") if backend == "openai_api" else None
-    qwen3_asr_model = options.get("qwen3_asr_model") if backend == "qwen3" else None
+    openai_transcription_model = (options.get("openai_transcription_model") or options.get("model")) if backend == "openai_api" else None
+    qwen3_asr_model = (options.get("qwen3_asr_model") or options.get("model")) if backend == "qwen3" else None
     qwen3_asr_dtype = options.get("qwen3_asr_dtype") if backend == "qwen3" else None
     qwen3_asr_device_map = options.get("qwen3_asr_device_map") if backend == "qwen3" else None
     qwen3_asr_max_new_tokens = options.get("qwen3_asr_max_new_tokens") if backend == "qwen3" else None
@@ -85,7 +85,7 @@ def build_asr_config(options: dict[str, Any]) -> ASRConfig:
     qwen3_asr_bnb_4bit_quant_type = options.get("qwen3_asr_bnb_4bit_quant_type") if backend == "qwen3" else None
     qwen3_asr_bnb_4bit_use_double_quant = (
         bool(options.get("qwen3_asr_bnb_4bit_use_double_quant")) if backend == "qwen3" else False)
-    nemo_asr_model = options.get("nemo_asr_model") if backend == "nemo" else None
+    nemo_asr_model = (options.get("nemo_asr_model") or options.get("model")) if backend == "nemo" else None
     nemo_asr_device = options.get("nemo_asr_device") if backend == "nemo" else None
     nemo_asr_decoding = options.get("nemo_asr_decoding") if backend == "nemo" else None
 

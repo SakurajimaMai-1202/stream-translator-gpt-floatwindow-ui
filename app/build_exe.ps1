@@ -216,7 +216,9 @@ try {
 
     $zipPath = Join-Path $distDir "$appName.zip"
     Write-Host "[9/9] Create zip archive" -ForegroundColor Yellow
-    Compress-Archive -Path $outputDir -DestinationPath $zipPath -Force
+    if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
+    Set-Location $distDir
+    & tar.exe -a -c -f "$appName.zip" "$appName"
     Write-Host "  OK zip created: $zipPath" -ForegroundColor Green
 
     Write-Host ""

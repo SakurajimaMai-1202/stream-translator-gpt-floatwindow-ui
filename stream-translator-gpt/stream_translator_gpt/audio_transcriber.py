@@ -45,9 +45,10 @@ def _apply_hf_proxy(proxy: str):
 
 class AudioTranscriber(LoopWorkerBase):
 
-    def __init__(self, whisper_filters: str, print_result: bool, output_timestamps: bool,
-                 disable_transcription_context: bool, transcription_initial_prompt: str):
-        self.whisper_filters = whisper_filters
+    def __init__(self, whisper_filters: str = None, print_result: bool = False, output_timestamps: bool = False,
+                 disable_transcription_context: bool = False, transcription_initial_prompt: str = None,
+                 transcription_filters: str = None):
+        self.whisper_filters = whisper_filters or transcription_filters or ""
         self.print_result = print_result
         self.output_timestamps = output_timestamps
         self.disable_transcription_context = disable_transcription_context

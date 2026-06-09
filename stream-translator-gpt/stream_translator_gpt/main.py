@@ -414,7 +414,7 @@ def _run_preloaded_task(url: str, args: dict, manager: PreloadedTranscriberManag
 def run_preloaded_cli(url: str, args: dict) -> None:
     manager = PreloadedTranscriberManager()
     config = build_asr_config(args)
-    print(manager.preload(config))
+    print(f"{INFO}{manager.preload(config)}")
 
     keep_loaded = bool(args.get("keep_asr_loaded"))
     share_server = None
@@ -438,7 +438,7 @@ def run_preloaded_cli(url: str, args: dict) -> None:
     finally:
         if share_server is not None:
             share_server.stop()
-        print(manager.unload())
+        print(f"{INFO}{manager.unload()}")
 
 
 def cli():
@@ -669,8 +669,6 @@ def cli():
         type=int,
         default=10,
         help='If the GPT / Gemini translation exceeds this number of seconds, the translation will be discarded.')
-    parser.add_argument('--gpt_base_url', type=str, default=None, help='Customize the API endpoint of GPT.')
-    parser.add_argument('--gemini_base_url', type=str, default=None, help='Customize the API endpoint of Gemini.')
     parser.add_argument(
         '--processing_proxy',
         type=str,
@@ -911,6 +909,7 @@ def cli():
     keep_asr_loaded = args.pop('keep_asr_loaded', False)
     if preload_asr_model:
         args['keep_asr_loaded'] = keep_asr_loaded
+        args['loopback'] = loopback
         run_preloaded_cli(url, args)
         return
 

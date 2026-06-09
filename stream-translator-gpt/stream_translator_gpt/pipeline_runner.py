@@ -31,11 +31,17 @@ class PipelineController:
 
 
 def create_audio_getter(url: str, options: dict):
+    if options.get("loopback") or url.lower() == "loopback":
+        return DeviceAudioGetter(
+            device_index=options.get("device_index"),
+            recording_interval=options.get("device_recording_interval"),
+            use_loopback=True,
+        )
     if url.lower() == "device":
         return DeviceAudioGetter(
             device_index=options.get("device_index"),
-            use_mic=bool(options.get("mic")),
-            interval=options.get("device_recording_interval"),
+            recording_interval=options.get("device_recording_interval"),
+            use_loopback=False,
         )
     if is_url(url):
         return StreamAudioGetter(

@@ -21,6 +21,38 @@
 
 ---
 
+## 下載
+
+### 給一般使用者
+
+建議提供一個完整壓縮包，放在 NAS、雲端硬碟或其他大檔下載空間：
+
+- NAS 鏡像：`StreamTranslator-v1.2.0-win64-portable.zip`（連結待補）
+- GitHub Release：<https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest>
+
+NAS 單檔完整包最適合一般使用者，下載後直接解壓並執行 `Stream Translator.exe`。GitHub Release 因為單檔容量較大，提供的是分割壓縮包，適合當公開備用鏡像。
+
+完整包資訊：
+
+- 檔名：`StreamTranslator-v1.2.0-win64-portable.zip`
+- 大小：約 4.63 GB
+- SHA256：`57e752df794f92b2508d0878ce4af2880bc9edd8a9a76924a9f05a439a98ae1a`
+
+### GitHub 分割包使用方式
+
+從 GitHub Release 下載下列檔案，放在同一個資料夾：
+
+- `StreamTranslator-v1.2.0-win64-portable.zip.001`
+- `StreamTranslator-v1.2.0-win64-portable.zip.002`
+- `StreamTranslator-v1.2.0-win64-portable.zip.003`
+- `extract-and-start.bat`
+- `README-first-use.txt`
+- `SHA256SUMS.txt`
+
+下載完成後執行 `extract-and-start.bat`，或用 7-Zip 從 `.001` 開始解壓。
+
+---
+
 ## 功能一覽
 
 | 類別 | 說明 |
@@ -42,8 +74,9 @@
 
 ### 使用打包版（推薦）
 
-1. 從 [release]([https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases) 下載壓縮包
-2. 解壓後直接執行 `Stream Translator.exe`
+1. 優先下載 NAS 單檔完整包，或從 [GitHub Release](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest) 下載分割包
+2. 解壓後執行 `Stream Translator.exe`
+3. 首次啟動後依需要設定音源、ASR 模型與翻譯後端
 
 ### 從原始碼執行
 

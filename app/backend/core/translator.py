@@ -171,7 +171,11 @@ class TranslationContext:
             'translation_timeout', 'gpt_base_url', 'gemini_base_url', 'processing_proxy',
             'use_json_result', 'retry_if_translation_fails', 'output_timestamps',
             'hide_transcribe_result', 'output_proxy', 'output_file_path', 'cqhttp_url',
-            'cqhttp_token', 'discord_webhook_url', 'telegram_token', 'telegram_chat_id'
+            'cqhttp_token', 'discord_webhook_url', 'telegram_token', 'telegram_chat_id',
+            'vad_backend', 'firered_vad_model_path', 'preload_asr_model', 'keep_asr_loaded',
+            'use_hf_asr', 'use_nemo_asr', 'nemo_asr_model', 'nemo_asr_device', 'nemo_asr_decoding',
+            'qwen3_asr_model', 'qwen3_asr_dtype', 'qwen3_asr_device_map', 'qwen3_asr_max_new_tokens',
+            'qwen3_asr_quantization', 'qwen3_asr_bnb_4bit_quant_type', 'qwen3_asr_bnb_4bit_use_double_quant'
         }
 
         runtime_supported_args = _get_supported_cli_args(cmd[0], cwd)
@@ -277,28 +281,64 @@ class TranslationContext:
             except:
                 logger.info(f"Full command (fallback): {cmd}")
             
-            try:
-                self.process = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,  # 分開捕獲 stderr
-                    cwd=str(cwd),
-                    env=env,
-                    bufsize=1,  # 行緩衝
-                    text=True,
-                    encoding='utf-8',
-                    errors='replace',
-                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
-                )
-                logger.info(f"Subprocess created successfully, PID: {self.process.pid}")
-            except FileNotFoundError as e:
-                logger.error(f"Failed to create subprocess - File not found: {e}")
-                raise
-            except Exception as e:
-                import traceback
-                logger.error(f"Failed to create subprocess: {type(e).__name__}: {e}")
-                logger.error(f"Traceback: {traceback.format_exc()}")
-                raise
+            url = cmd[-1] if cmd else ""
+            config_args = cmd[:-1] if cmd else []
+
+            global persistent_process, persistent_config_args
+            reused = False
+            
+            if persistent_process is not None:
+                if persistent_process.poll() is None and persistent_config_args == config_args:
+                    logger.info(f"Reusing persistent ASR subprocess (PID: {persistent_process.pid})")
+                    self.process = persistent_process
+                    persistent_process = None
+                    persistent_config_args = None
+                    reused = True
+                    try:
+                        self.process.stdin.write(url + "\n")
+                        self.process.stdin.flush()
+                    except Exception as e:
+                        logger.error(f"Failed to write URL to persistent stdin: {e}")
+                        reused = False
+                
+                if not reused:
+                    logger.info("Persistent process exists but config changed or process died. Terminating old process.")
+                    try:
+                        if persistent_process.poll() is None:
+                            persistent_process.terminate()
+                            persistent_process.wait(timeout=2.0)
+                    except Exception as e:
+                        logger.error(f"Failed to terminate old persistent process: {e}")
+                    persistent_process = None
+                    persistent_config_args = None
+
+            if not reused:
+                try:
+                    creationflags = 0
+                    if os.name == 'nt':
+                        creationflags = subprocess.CREATE_NO_WINDOW | 0x00000200 # CREATE_NEW_PROCESS_GROUP
+                    self.process = subprocess.Popen(
+                        cmd,
+                        stdin=subprocess.PIPE,  # 必須開啟 stdin 以寫入後續的 URL
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        cwd=str(cwd),
+                        env=env,
+                        bufsize=1,
+                        text=True,
+                        encoding='utf-8',
+                        errors='replace',
+                        creationflags=creationflags
+                    )
+                    logger.info(f"Subprocess created successfully, PID: {self.process.pid}")
+                except FileNotFoundError as e:
+                    logger.error(f"Failed to create subprocess - File not found: {e}")
+                    raise
+                except Exception as e:
+                    import traceback
+                    logger.error(f"Failed to create subprocess: {type(e).__name__}: {e}")
+                    logger.error(f"Traceback: {traceback.format_exc()}")
+                    raise
             
             self._broadcast({
                 "type": "status", 
@@ -441,14 +481,24 @@ class TranslationContext:
             
             # 等待進程結束（在背景）
             def wait_process():
-                return_code = self.process.wait()
-                logger.info(f"Process exited with code: {return_code}")
-                status = "completed" if return_code == 0 else "error"
-                self._broadcast({
-                    "type": "status",
-                    "data": {"status": status, "code": return_code}
-                })
-                self.running = False
+                while True:
+                    if self.stop_requested and self.process is None:
+                        # Reused / persistent process was detached, exit thread safely
+                        break
+                    
+                    # If process has exited
+                    if self.process is not None and self.process.poll() is not None:
+                        return_code = self.process.poll()
+                        logger.info(f"Process exited with code: {return_code}")
+                        status = "completed" if return_code == 0 else "error"
+                        self._broadcast({
+                            "type": "status",
+                            "data": {"status": status, "code": return_code}
+                        })
+                        self.running = False
+                        break
+                    
+                    time.sleep(0.5)
             
             wait_thread = threading.Thread(target=wait_process, daemon=True)
             wait_thread.start()
@@ -559,16 +609,45 @@ class TranslationContext:
         """停止任務"""
         self.stop_requested = True
         self.running = False
-        if self.process and self.process.poll() is None:
-            self.process.terminate()
+        
+        keep_asr_loaded = self.config.get('keep_asr_loaded', False)
+        
+        global persistent_process, persistent_config_args
+        
+        if keep_asr_loaded and self.process and self.process.poll() is None:
+            logger.info(f"Stopping current stream but keeping ASR process loaded (PID: {self.process.pid})")
             try:
-                self.process.wait(timeout=3.0)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-        logger.info(f"Task {self.task_id} stopped")
+                if os.name == 'nt':
+                    import signal
+                    os.kill(self.process.pid, signal.CTRL_C_EVENT)
+                else:
+                    self.process.send_signal(subprocess.signal.SIGINT)
+                
+                # Save to global persistent variables
+                persistent_process = self.process
+                cmd = self._build_command()
+                persistent_config_args = cmd[:-1] if cmd else []
+                # Detach from context
+                self.process = None
+            except Exception as e:
+                logger.error(f"Failed to send interrupt to ASR process: {e}")
+                if self.process and self.process.poll() is None:
+                    self.process.terminate()
+        else:
+            if self.process and self.process.poll() is None:
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=3.0)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+            logger.info(f"Task {self.task_id} stopped and process terminated")
 
 # 全域管理器 (簡單字典實作)
 active_translations: Dict[str, TranslationContext] = {}
+
+# 全域持續化 ASR 進程管理
+persistent_process = None
+persistent_config_args = None
 
 def get_task(task_id: str) -> Optional[TranslationContext]:
     return active_translations.get(task_id)

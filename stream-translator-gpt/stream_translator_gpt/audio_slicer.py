@@ -8,8 +8,12 @@ import warnings
 import numpy as np
 
 from .common import TranslationTask, SAMPLE_RATE, FRAME_DURATION, LoopWorkerBase
+from .torch_setup import disable_nnpack
 
+disable_nnpack(torch)
 warnings.filterwarnings('ignore')
+
+FIRERED_FRAME_LENGTH = 160
 
 
 def _init_jit_model(model_path: str, device=torch.device('cpu')):
@@ -26,7 +30,7 @@ def _init_jit_model(model_path: str, device=torch.device('cpu')):
     return model
 
 
-class VAD:
+class SileroVADAdapter:
 
     def __init__(self):
         current_dir = os.path.dirname(__file__)
@@ -38,12 +42,63 @@ class VAD:
         if not torch.is_tensor(audio):
             try:
                 audio = torch.Tensor(audio)
-            except:
-                raise TypeError('Audio cannot be casted to tensor. Cast it manually')
+            except Exception as e:
+                raise TypeError('Audio cannot be casted to tensor. Cast it manually') from e
         return self.model(audio, SAMPLE_RATE).item()
 
     def reset_states(self):
         self.model.reset_states()
+
+
+class FireRedVADAdapter:
+
+    def __init__(self, threshold: float, model_path: str | None = None):
+        try:
+            from omnivad import OmniStreamVAD
+        except ImportError as e:
+            raise RuntimeError(
+                'FireRedVAD backend requires OmniVAD. Install it with: '
+                'pip install stream-translator-gpt[firered_vad]') from e
+
+        model_path = model_path.strip() if isinstance(model_path, str) else model_path
+        if model_path == '' or model_path == 'auto':
+            model_path = None
+        self.model = OmniStreamVAD(model_path=model_path, threshold=threshold)
+        self.audio_buffer = np.array([], dtype=np.float32)
+        self.last_speech_prob = 0.0
+
+    def get_speech_prob(self, audio: np.array):
+        audio = np.asarray(audio, dtype=np.float32).flatten()
+        if len(audio) == 0:
+            return self.last_speech_prob
+
+        audio = np.clip(audio, -1.0, 1.0)
+        self.audio_buffer = np.concatenate((self.audio_buffer, audio))
+        probs = []
+        while len(self.audio_buffer) >= FIRERED_FRAME_LENGTH:
+            chunk = np.ascontiguousarray(self.audio_buffer[:FIRERED_FRAME_LENGTH], dtype=np.float32)
+            self.audio_buffer = self.audio_buffer[FIRERED_FRAME_LENGTH:]
+            result = self.model.process(chunk)
+            if result is not None:
+                probs.append(float(getattr(result, 'smoothed_prob', getattr(result, 'confidence', 0.0))))
+
+        if probs:
+            self.last_speech_prob = max(probs)
+        return self.last_speech_prob
+
+    def reset_states(self):
+        self.model.reset()
+        self.audio_buffer = np.array([], dtype=np.float32)
+        self.last_speech_prob = 0.0
+
+
+def create_vad_adapter(vad_backend: str, vad_threshold: float, firered_vad_model_path: str | None = None):
+    vad_backend = (vad_backend or 'silero').strip().lower()
+    if vad_backend == 'silero':
+        return SileroVADAdapter()
+    if vad_backend == 'firered':
+        return FireRedVADAdapter(threshold=vad_threshold, model_path=firered_vad_model_path)
+    raise ValueError(f'Unsupported VAD backend: {vad_backend}')
 
 
 def _get_neg_threshold(threshold: float):
@@ -68,7 +123,8 @@ class AudioSlicer(LoopWorkerBase):
     def __init__(self, min_audio_length: float, max_audio_length: float, target_audio_length: float,
                  continuous_no_speech_threshold: float, dynamic_no_speech_threshold: bool,
                  prefix_retention_length: float, vad_threshold: float, dynamic_vad_threshold: bool,
-                 disable_vad: bool = False, vad_every_n_frames: int = 1):
+                 disable_vad: bool = False, vad_every_n_frames: int = 1,
+                 vad_backend: str = 'silero', firered_vad_model_path: str | None = None):
         self.min_audio_length = min_audio_length
         self.max_audio_length = max_audio_length
         self.prefix_retention_count = round(prefix_retention_length / FRAME_DURATION)
@@ -88,7 +144,7 @@ class AudioSlicer(LoopWorkerBase):
 
         self.disable_vad = disable_vad
         if not self.disable_vad:
-            self.vad = VAD()
+            self.vad = create_vad_adapter(vad_backend, vad_threshold, firered_vad_model_path)
             self.vad_threshold = vad_threshold
             self.vad_neg_threshold = _get_neg_threshold(vad_threshold)
             self.vad_every_n_frames = max(1, int(vad_every_n_frames))

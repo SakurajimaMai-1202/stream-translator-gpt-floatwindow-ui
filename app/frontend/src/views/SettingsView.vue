@@ -86,7 +86,9 @@ const localConfig = ref<any>({
     vad_window_size_samples: 512,
     vad_speech_pad_ms: 30,
     vad_every_n_frames: 2,
-    realtime_processing: false
+    realtime_processing: false,
+    vad_backend: 'silero',
+    firered_vad_model_path: ''
   },
   transcription: {
     model: 'base',
@@ -380,7 +382,7 @@ function resetToDefault() {
       general: { openai_api_key: '', google_api_key: '', log_level: 'INFO' },
       server: { public_port: 8765, enable_subtitle_sharing: true },
       input: { url: '', source_type: 'youtube', format: 'ba/wa*', cookies: '', proxy: '', timeout: 30 },
-      audio_slicing_vad: { min_audio_length: 3.0, max_audio_length: 30.0, chunk_gap_threshold: 0.5, vad_enabled: true, vad_threshold: 0.5, vad_neg_threshold: 0.35, vad_min_speech_duration_ms: 250, vad_min_silence_duration_ms: 100, vad_window_size_samples: 512, vad_speech_pad_ms: 30 },
+      audio_slicing_vad: { min_audio_length: 3.0, max_audio_length: 30.0, chunk_gap_threshold: 0.5, vad_enabled: true, vad_threshold: 0.5, vad_neg_threshold: 0.35, vad_min_speech_duration_ms: 250, vad_min_silence_duration_ms: 100, vad_window_size_samples: 512, vad_speech_pad_ms: 30, vad_backend: 'silero', firered_vad_model_path: '' },
       transcription: { model: 'base', language: 'auto', transcription_initial_prompt: '', disable_transcription_context: false, use_faster_whisper: false, use_simul_streaming: false, use_openai_transcription_api: false, use_qwen3_asr: false, qwen3_asr_model: 'Qwen/Qwen3-ASR-1.7B', qwen3_dtype: 'bfloat16', qwen3_load_in_4bit: false, openai_transcription_model: 'whisper-1', whisper_filters: ['emoji_filter', 'repetition_filter'] },
       translation: { backend: 'gpt', target_language: 'Traditional Chinese', llm_model: 'gpt-4o-mini', api_base: '', api_key: '', temperature: 0.3, top_p: 1.0, max_tokens: 2048, use_smart_prompt: true, translation_prompt: '', custom_models: [] },
       terminology: { use_terminology_glossary: false, glossary: '', glossary_list: [] },
@@ -702,6 +704,19 @@ async function handleFileChange(event: Event) {
               </div>
               
               <div v-if="localConfig.audio_slicing_vad.vad_enabled" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div>
+                  <label class="block text-white/70 text-sm mb-1 font-semibold">VAD 演算法</label>
+                  <UiSelect v-model="localConfig.audio_slicing_vad.vad_backend" :options="[
+                    { value: 'silero', label: 'Silero VAD' },
+                    { value: 'firered', label: 'FireRed VAD' }
+                  ]" />
+                </div>
+                <div v-if="localConfig.audio_slicing_vad.vad_backend === 'firered'">
+                  <label class="block text-white/70 text-sm mb-1 font-semibold">FireRed VAD 模型路徑</label>
+                  <input v-model="localConfig.audio_slicing_vad.firered_vad_model_path" type="text" placeholder="留空或填寫 auto"
+                    class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
+                  <p class="text-white/30 text-xs mt-1">預設使用內建模型</p>
+                </div>
                 <div>
                   <label class="block text-white/70 text-sm mb-1">語音閾值</label>
                   <input v-model.number="localConfig.audio_slicing_vad.vad_threshold" type="number" step="0.05" min="0" max="1"

@@ -3,6 +3,9 @@ import io
 import sys
 import queue
 import re
+import time
+import logging
+import contextlib
 from abc import abstractmethod
 from scipy.io.wavfile import write as write_audio
 
@@ -11,6 +14,13 @@ import numpy as np
 from . import filters
 from .common import TranslationTask, SAMPLE_RATE, LoopWorkerBase, sec2str, ApiKeyPool, INFO, WARNING
 from .simul_streaming.simul_whisper.whisper.utils import compression_ratio
+from .torch_setup import disable_nnpack
+
+try:
+    import torch
+    disable_nnpack(torch)
+except ImportError:
+    pass
 
 
 def _filter_text(text: str, whisper_filters: str):
@@ -21,6 +31,16 @@ def _filter_text(text: str, whisper_filters: str):
             raise Exception('Unknown filter: %s' % filter_name)
         text = filter(text)
     return text
+
+
+def _apply_hf_proxy(proxy: str):
+    try:
+        import huggingface_hub
+        session = huggingface_hub.utils.get_session()
+        session.proxies = {'http': proxy, 'https': proxy}
+        session.verify = False
+    except Exception:
+        pass
 
 
 class AudioTranscriber(LoopWorkerBase):
@@ -47,6 +67,10 @@ class AudioTranscriber(LoopWorkerBase):
         """Override in subclass to reset model context when repetition is detected."""
         pass
 
+    def prepare_for_reuse(self):
+        """Reset per-run state before reusing a preloaded transcriber."""
+        self.reset_context()
+
     def loop(self, input_queue: queue.SimpleQueue[TranslationTask], output_queue: queue.SimpleQueue[TranslationTask]):
         previous_text = ""
 
@@ -70,7 +94,9 @@ class AudioTranscriber(LoopWorkerBase):
             if not initial_prompt:
                 initial_prompt = None
 
+            asr_started_at = time.perf_counter()
             text, tokens = self.transcribe(task.audio, initial_prompt=initial_prompt)
+            task.asr_latency_ms = (time.perf_counter() - asr_started_at) * 1000
 
             if self.constant_prompt and text.strip().rstrip(',') == self.constant_prompt.strip().rstrip(','):
                 text = ""
@@ -128,15 +154,25 @@ class OpenaiWhisper(AudioTranscriber):
 
 class FasterWhisper(AudioTranscriber):
 
-    def __init__(self, model: str, language: str, **kwargs) -> None:
+    def __init__(self, model: str, language: str, proxy: str = None, **kwargs) -> None:
         super().__init__(**kwargs)
         from faster_whisper import WhisperModel
 
+        if proxy:
+            _apply_hf_proxy(proxy)
         print(f'{INFO}Loading Faster-Whisper model: {model}')
         self._whisper_model_class = WhisperModel
         self._model_name = model
         self._cpu_fallback_applied = False
-        self.model = WhisperModel(model, device='auto', compute_type='auto')
+        try:
+            self.model = WhisperModel(model, device='auto', compute_type='auto')
+        except RuntimeError as e:
+            err = str(e).lower()
+            if 'cublas64_12.dll' in err or 'cublas' in err:
+                self.model = WhisperModel(model, device='cpu', compute_type='int8')
+                self._cpu_fallback_applied = True
+            else:
+                raise
         self.language = language
 
     def _fallback_to_cpu(self):
@@ -166,7 +202,7 @@ class FasterWhisper(AudioTranscriber):
 
 class SimulStreaming(AudioTranscriber):
 
-    def __init__(self, model: str, language: str, use_faster_whisper: bool, **kwargs) -> None:
+    def __init__(self, model: str, language: str, use_faster_whisper: bool, proxy: str = None, **kwargs) -> None:
         super().__init__(**kwargs)
         from .simul_streaming.simulstreaming_whisper import SimulWhisperASR, SimulWhisperOnline
 
@@ -174,6 +210,8 @@ class SimulStreaming(AudioTranscriber):
         if use_faster_whisper:
             print(f'{INFO}Loading Faster-Whisper as encoder for SimulStreaming: {model}')
             from faster_whisper import WhisperModel
+            if proxy:
+                _apply_hf_proxy(proxy)
             try:
                 fw_encoder = WhisperModel(model, device='auto', compute_type='auto')
             except RuntimeError as e:
@@ -216,11 +254,13 @@ class SimulStreaming(AudioTranscriber):
         self.asr_online.model.refresh_segment(complete=True)
         self.asr_online.unicode_buffer = []
 
+    def prepare_for_reuse(self):
+        self.asr_online.init()
+
 
 class RemoteOpenaiTranscriber(AudioTranscriber):
-    # https://platform.openai.com/docs/api-reference/audio/createTranscription?lang=python
 
-    def __init__(self, model: str, language: str, proxy: str, **kwargs) -> None:
+    def __init__(self, model: str, language: str, proxy: str = None, **kwargs) -> None:
         super().__init__(**kwargs)
         print(f'{INFO}Using {model} API as transcription engine.')
         self.model = model
@@ -251,22 +291,163 @@ class RemoteOpenaiTranscriber(AudioTranscriber):
         return result, None
 
 
-class Qwen3ASR(AudioTranscriber):
-    """Qwen3-ASR 語音識別引擎"""
+class HFTranscriber(AudioTranscriber):
 
-    def __init__(self, model: str, language: str, context: str = None, dtype: str = 'bfloat16', load_in_4bit: bool = False, rms_threshold: float = 0.005, **kwargs) -> None:
+    def __init__(self, model: str, language: str, proxy: str = None, **kwargs) -> None:
         super().__init__(**kwargs)
-        import torch
-        from qwen_asr import Qwen3ASRModel
+        from transformers import pipeline
 
-        print(f'{INFO}Loading Qwen3-ASR model: {model}')
-        
-        # 處理 dtype
-        torch_dtype = torch.bfloat16
-        if dtype == 'float16':
-            torch_dtype = torch.float16
-        elif dtype == 'float32':
-            torch_dtype = torch.float32
+        if proxy:
+            _apply_hf_proxy(proxy)
+
+        if not os.path.exists(model):
+            try:
+                from huggingface_hub import model_info
+                info = model_info(model)
+                tag = info.pipeline_tag
+                if tag and tag != 'automatic-speech-recognition':
+                    raise ValueError(
+                        f'Model "{model}" has pipeline_tag="{tag}", not "automatic-speech-recognition". '
+                        f'It is not compatible with --use_hf_asr. '
+                        f'Please choose a model with pipeline_tag="automatic-speech-recognition" on HuggingFace Hub.')
+            except ImportError:
+                pass
+
+        print(f'{INFO}Loading HuggingFace ASR model: {model}')
+        self.language = language
+        self.pipe = pipeline('automatic-speech-recognition', model=model, device_map='auto')
+
+    def transcribe(self, audio: np.array, initial_prompt: str = None) -> tuple[str, list | None]:
+        generate_kwargs = {}
+        if self.language:
+            generate_kwargs['language'] = self.language
+        result = self.pipe(
+            {
+                'array': audio,
+                'sampling_rate': SAMPLE_RATE
+            },
+            generate_kwargs=generate_kwargs,
+        )
+        return result['text'], None
+
+
+class NemoASRTranscriber(AudioTranscriber):
+
+    def __init__(self, *args, **kwargs) -> None:
+        raise ImportError(
+            "Nvidia NeMo Parakeet ASR is not supported in this build to prevent heavy and unstable Python dependencies on Windows."
+        )
+
+    def transcribe(self, audio: np.array, initial_prompt: str = None) -> tuple[str, list | None]:
+        return "", None
+
+
+def _load_qwen3_asr_model_class():
+    # qwen_asr imports the forced aligner eagerly, but plain ASR does not need it.
+    # Avoid importing nagisa/dynet here because some older CPUs hit SIGILL in dynet wheels.
+    module_name = 'qwen_asr.inference.qwen3_forced_aligner'
+    if module_name not in sys.modules:
+        import types
+        forced_aligner_stub = types.ModuleType(module_name)
+
+        class Qwen3ForcedAligner:
+
+            @classmethod
+            def from_pretrained(cls, *args, **kwargs):
+                raise RuntimeError('Qwen3 forced alignment is not available in this transcription backend.')
+
+        forced_aligner_stub.Qwen3ForcedAligner = Qwen3ForcedAligner
+        sys.modules[module_name] = forced_aligner_stub
+
+    from qwen_asr import Qwen3ASRModel
+    return Qwen3ASRModel
+
+
+class _TransformersPadTokenLogFilter(logging.Filter):
+
+    def filter(self, record):
+        return 'Setting `pad_token_id` to `eos_token_id`' not in record.getMessage()
+
+
+def _install_transformers_pad_token_log_filter():
+    logger = logging.getLogger('transformers.generation.utils')
+    if any(isinstance(filter_, _TransformersPadTokenLogFilter) for filter_ in logger.filters):
+        return
+    logger.addFilter(_TransformersPadTokenLogFilter())
+
+
+def _parse_torch_cuda_arch(arch: str) -> tuple[int, int] | None:
+    match = re.fullmatch(r'sm_(\d+)(\d)', arch)
+    if not match:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
+class Qwen3ASRTranscriber(AudioTranscriber):
+    LANGUAGE_NAMES = {
+        'ar': 'Arabic',
+        'cs': 'Czech',
+        'da': 'Danish',
+        'de': 'German',
+        'el': 'Greek',
+        'en': 'English',
+        'es': 'Spanish',
+        'fa': 'Persian',
+        'fi': 'Finnish',
+        'fil': 'Filipino',
+        'fr': 'French',
+        'hi': 'Hindi',
+        'hu': 'Hungarian',
+        'id': 'Indonesian',
+        'it': 'Italian',
+        'ja': 'Japanese',
+        'ko': 'Korean',
+        'mk': 'Macedonian',
+        'ms': 'Malay',
+        'nl': 'Dutch',
+        'pl': 'Polish',
+        'pt': 'Portuguese',
+        'ro': 'Romanian',
+        'ru': 'Russian',
+        'sv': 'Swedish',
+        'th': 'Thai',
+        'tl': 'Filipino',
+        'tr': 'Turkish',
+        'vi': 'Vietnamese',
+        'yue': 'Cantonese',
+        'zh': 'Chinese',
+        'zh-cn': 'Chinese',
+        'zh-hans': 'Chinese',
+        'zh-hant': 'Chinese',
+        'zh-tw': 'Chinese',
+    }
+    SUPPORTED_LANGUAGE_NAMES = set(LANGUAGE_NAMES.values())
+
+    def __init__(self, model: str, language: str, proxy: str = None, dtype: str = 'bfloat16',
+                 device_map: str = 'auto', max_new_tokens: int = 128, quantization: str = 'none',
+                 bnb_4bit_quant_type: str = 'nf4', bnb_4bit_use_double_quant: bool = False,
+                 rms_threshold: float = 0.005, **kwargs) -> None:
+        super().__init__(**kwargs)
+
+        try:
+            import torch
+            Qwen3ASRModel = _load_qwen3_asr_model_class()
+        except ImportError as e:
+            raise ImportError(
+                'Qwen3-ASR support requires the qwen_asr extra. Install it with: '
+                'pip install "stream-translator-gpt[qwen_asr]"'
+            ) from e
+
+        if proxy:
+            _apply_hf_proxy(proxy)
+
+        self._validate_device_map(torch, device_map)
+
+        dtype_obj = torch.bfloat16
+        if dtype:
+            dtype_obj = getattr(torch, dtype, None)
+            if not isinstance(dtype_obj, torch.dtype):
+                raise ValueError(f'Unsupported Qwen3-ASR dtype: {dtype}')
 
         # 檢測並啟用 SDPA / FlashAttention-2 加速
         attn_implementation = "sdpa"
@@ -277,74 +458,146 @@ class Qwen3ASR(AudioTranscriber):
         except ImportError:
             print(f'{INFO}Using PyTorch SDPA (Scaled Dot-Product Attention) for Qwen3-ASR')
 
-        # 準備額外參數
         model_kwargs = {
-            "dtype": torch_dtype,
-            "device_map": "auto",  # 自動選擇設備
-            "max_inference_batch_size": 1,  # 串流模式使用 batch_size=1
-            "max_new_tokens": 128,  # 5-8 秒語音最多 ~80 tokens，128 已足夠且減少無謂解碼步驟
-            "num_beams": 1,  # greedy decoding，避免 beam search 的倍數計算開銷
-            "attn_implementation": attn_implementation,
+            'dtype': dtype_obj,
+            'device_map': device_map or 'auto',
+            'max_new_tokens': max_new_tokens or 128,
+            'max_inference_batch_size': 1,
+            'num_beams': 1,
+            'attn_implementation': attn_implementation,
         }
 
-        # 處理 4-bit 量化 (bitsandbytes)
-        if load_in_4bit:
+        # 處理 4-bit/8-bit 量化
+        quantization = (quantization or 'none').strip().lower()
+        if quantization in {'bnb_4bit', '4bit'} or kwargs.get('load_in_4bit', False):
             from transformers import BitsAndBytesConfig
             print(f'{INFO}Enabling 4-bit quantization (NF4) for Qwen3-ASR')
             bnb_config = BitsAndBytesConfig(
                 load_in_4bit=True,
-                bnb_4bit_quant_type="nf4",
-                bnb_4bit_compute_dtype=torch_dtype,
-                bnb_4bit_use_double_quant=True,
+                bnb_4bit_quant_type=bnb_4bit_quant_type or 'nf4',
+                bnb_4bit_compute_dtype=dtype_obj,
+                bnb_4bit_use_double_quant=bool(bnb_4bit_use_double_quant),
             )
             model_kwargs['quantization_config'] = bnb_config
-            # 啟用量化時不能同時指定 dtype（由 BitsAndBytesConfig 控制）
+            model_kwargs.pop('dtype', None)
+        elif quantization in {'bnb_8bit', '8bit'}:
+            from transformers import BitsAndBytesConfig
+            print(f'{INFO}Enabling 8-bit quantization for Qwen3-ASR')
+            model_kwargs['quantization_config'] = BitsAndBytesConfig(load_in_8bit=True)
             model_kwargs.pop('dtype', None)
 
-        # 初始化 Qwen3-ASR 模型
+        print(f'{INFO}Loading Qwen3-ASR model: {model}')
         self.model = Qwen3ASRModel.from_pretrained(model, **model_kwargs)
-        self.language = language if language else None  # None 為自動檢測
-        self.context = context  # 儲存上下文文本(用於術語表等)
-        self.rms_threshold = rms_threshold  # 儲存靜音過濾臨界值
-        
-        if self.context:
-            print(f'{INFO}Qwen3-ASR context enabled (length: {len(self.context)} chars)')
+        self._set_generation_pad_token_id()
+        _install_transformers_pad_token_log_filter()
+
+        self.language = self._normalize_language(language)
+        self.rms_threshold = rms_threshold
+
+    @classmethod
+    def _normalize_language(cls, language: str | None) -> str | None:
+        if language is None:
+            return None
+        language = str(language).strip()
+        if not language or language.lower() == 'auto':
+            return None
+
+        language_key = language.lower().replace('_', '-')
+        if language_key in cls.LANGUAGE_NAMES:
+            return cls.LANGUAGE_NAMES[language_key]
+
+        language_name = language[:1].upper() + language[1:].lower()
+        if language_name in cls.SUPPORTED_LANGUAGE_NAMES:
+            return language_name
+
+        supported = ', '.join(sorted(cls.LANGUAGE_NAMES.keys()))
+        raise ValueError(
+            f'Qwen3-ASR does not support language "{language}". '
+            f'Use "auto" or one of these language codes: {supported}.')
+
+    @classmethod
+    def _validate_device_map(cls, torch, device_map: str | None) -> None:
+        device_map = str(device_map or 'auto').strip() or 'auto'
+        if device_map == 'cpu':
+            return
+        if device_map == 'auto':
+            if not torch.cuda.is_available() or cls._cuda_has_supported_device(torch):
+                return
+            raise RuntimeError(
+                'Current PyTorch CUDA build does not support the available GPU(s) for Qwen3-ASR. '
+                'Install a PyTorch build that supports your GPU compute capability, or explicitly use '
+                '--qwen3_asr_device_map cpu.')
+        if device_map.startswith('cuda'):
+            if cls._cuda_has_supported_device(torch):
+                return
+            raise RuntimeError(
+                'Current PyTorch CUDA build does not support the available GPU(s) for Qwen3-ASR. '
+                'Install a PyTorch build that supports your GPU compute capability, or explicitly use '
+                '--qwen3_asr_device_map cpu.')
+
+    @staticmethod
+    def _cuda_has_supported_device(torch) -> bool:
+        if not torch.cuda.is_available():
+            return False
+        supported_caps = []
+        for arch in torch.cuda.get_arch_list():
+            capability = _parse_torch_cuda_arch(arch)
+            if capability is not None:
+                supported_caps.append(capability)
+        if not supported_caps:
+            return True
+        min_cap = min(supported_caps)
+        for index in range(torch.cuda.device_count()):
+            if torch.cuda.get_device_capability(index) >= min_cap:
+                return True
+        return False
+
+    def _set_generation_pad_token_id(self) -> None:
+        hf_model = getattr(self.model, 'model', None)
+        generation_config = getattr(hf_model, 'generation_config', None)
+        model_config = getattr(hf_model, 'config', None)
+        pad_token_id = getattr(generation_config, 'pad_token_id', None)
+        if pad_token_id is None:
+            pad_token_id = getattr(model_config, 'pad_token_id', None)
+        if pad_token_id is None:
+            pad_token_id = getattr(generation_config, 'eos_token_id', None)
+            if pad_token_id is None:
+                pad_token_id = getattr(model_config, 'eos_token_id', None)
+            if isinstance(pad_token_id, (list, tuple)):
+                pad_token_id = pad_token_id[0] if pad_token_id else None
+            if pad_token_id is None:
+                return
+
+        if generation_config is not None:
+            generation_config.pad_token_id = pad_token_id
+        if model_config is not None:
+            model_config.pad_token_id = pad_token_id
+        self._wrap_generate_with_pad_token_id(hf_model, pad_token_id)
+
+    @staticmethod
+    def _wrap_generate_with_pad_token_id(hf_model, pad_token_id) -> None:
+        if hf_model is None or getattr(hf_model, '_stream_translator_pad_token_wrapped', False):
+            return
+        original_generate = getattr(hf_model, 'generate', None)
+        if original_generate is None:
+            return
+
+        def generate_with_pad_token_id(*args, **kwargs):
+            kwargs.setdefault('pad_token_id', pad_token_id)
+            return original_generate(*args, **kwargs)
+
+        hf_model.generate = generate_with_pad_token_id
+        hf_model._stream_translator_pad_token_wrapped = True
 
     def transcribe(self, audio: np.array, initial_prompt: str = None) -> tuple[str, list | None]:
-        """
-        使用 Qwen3-ASR 轉錄音頻
-        
-        Args:
-            audio: numpy array 音頻數據 (16kHz, float32)
-            initial_prompt: 初始提示詞(Qwen3-ASR 使用 context 代替,此參數保留以兼容接口)
-            
-        Returns:
-            (text, None): 轉錄文本和 None(Qwen3-ASR 不返回 tokens)
-        """
-        # 靜音過濾：若音頻 RMS 能量過低，直接跳過推論避免幻覺輸出
         rms = float(np.sqrt(np.mean(audio.astype(np.float32) ** 2)))
         if rms < self.rms_threshold:
             return "", None
 
-        # Qwen3-ASR 接受 (np.ndarray, sample_rate) 元組
-        audio_input = (audio, SAMPLE_RATE)
-        
-        # 構建轉錄參數
-        transcribe_kwargs = {
-            'audio': audio_input,
-            'language': self.language,  # None 為自動檢測
-        }
-        
-        # 如果有上下文,通過 context 參數傳遞
-        # 上下文可以包含術語表、專業詞彙等,幫助模型更準確地識別
-        if self.context:
-            transcribe_kwargs['context'] = self.context
-        
-        # 執行轉錄
-        results = self.model.transcribe(**transcribe_kwargs)
-        
-        # 提取文本
-        text = results[0].text if results else ""
-        
-        return text, None  # Qwen3-ASR 不提供 tokens
-
+        results = self.model.transcribe(audio=(audio, SAMPLE_RATE), context=initial_prompt or '', language=self.language)
+        result = results[0] if results else None
+        if result is None:
+            return '', None
+        if isinstance(result, dict):
+            return result.get('text', ''), None
+        return getattr(result, 'text', ''), None

@@ -51,7 +51,9 @@ class ConfigManager:
             'vad_window_size_samples': 512,
             'vad_speech_pad_ms': 30,
             'vad_every_n_frames': 2,
-            'realtime_processing': False
+            'realtime_processing': False,
+            'vad_backend': 'silero',
+            'firered_vad_model_path': ''
         },
         'transcription': {
             'backend': 'qwen3-asr',
@@ -450,6 +452,10 @@ class ConfigManager:
             'prefix_retention_length': config.get('audio_slicing_vad', {}).get('prefix_retention_length', 0.5),
             'vad_every_n_frames': config.get('audio_slicing_vad', {}).get('vad_every_n_frames', 2),
             'realtime_processing': config.get('audio_slicing_vad', {}).get('realtime_processing', False),
+            'vad_backend': config.get('audio_slicing_vad', {}).get('vad_backend', 'silero'),
+            'firered_vad_model_path': config.get('audio_slicing_vad', {}).get('firered_vad_model_path', ''),
+            'preload_asr_model': transcription_backend in ['qwen3-asr', 'faster-whisper', 'whisper'],
+            'keep_asr_loaded': transcription_backend in ['qwen3-asr', 'faster-whisper', 'whisper'],
             
             # 語音轉文字
             'model': transcription_model,

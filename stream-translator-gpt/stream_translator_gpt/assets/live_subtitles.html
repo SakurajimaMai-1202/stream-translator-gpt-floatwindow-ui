@@ -1,0 +1,1395 @@
+<!DOCTYPE html>
+<html lang="zh-Hant" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>即時字幕分享</title>
+    <style>
+        :root {
+            /* Light Mode */
+            --bg-color: #f0f2f5;
+            --panel-bg: #ffffff;
+            --border-color: #e4e4e4;
+            --text-main: #111111;
+            --text-muted: #666666;
+            --accent: #111111;
+            --accent-hover: #333333;
+            --accent-text: #ffffff;
+            --ok: #111111;
+            --warn: #999999;
+
+            --card-bg: #ffffff;
+            --card-border: #e4e4e4;
+
+            --subtitle-font-size: 32px;
+            --subtitle-line-height: 1.4;
+            --transcript-color: #000000;
+            --translation-color: #555555;
+            --latency-color: #888888;
+        }
+
+        :root[data-theme="dark"] {
+            --bg-color: #0d0d0d;
+            --panel-bg: #1a1a1a;
+            --border-color: #333333;
+            --text-main: #f0f0f0;
+            --text-muted: #a0a0a0;
+            --accent: #ffffff;
+            --accent-hover: #cccccc;
+            --accent-text: #000000;
+            --ok: #ffffff;
+            --warn: #555555;
+
+            --card-bg: #1c1c1c;
+            --card-border: #2d2d2d;
+
+            --transcript-color: #ffffff;
+            --translation-color: #aaaaaa;
+            --latency-color: #777777;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            height: 100vh;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+            color: var(--text-main);
+            background: var(--bg-color);
+            overflow: hidden;
+            transition: background-color 0.3s, color 0.3s;
+        }
+
+        #customCss {
+            display: none;
+        }
+
+        .stage {
+            position: relative;
+            height: 100vh;
+            width: 100vw;
+        }
+
+        .overlay {
+            position: absolute;
+            inset: 24px 24px auto;
+            z-index: 5;
+            display: flex;
+            justify-content: flex-end;
+            align-items: center;
+            gap: 12px;
+            pointer-events: none;
+        }
+
+        .overlay-chrome {
+            pointer-events: none;
+            opacity: 0;
+            transform: translateY(-6px);
+            transition: opacity 0.18s ease, transform 0.18s ease;
+        }
+
+        .stage:hover .overlay-chrome,
+        .overlay-chrome.force-visible {
+            opacity: 1;
+            transform: translateY(0);
+            pointer-events: auto;
+        }
+
+        .pill {
+            pointer-events: auto;
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            min-height: 38px;
+            padding: 0 16px;
+            border-radius: 99px;
+            background: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            color: var(--text-main);
+            font-size: 13px;
+            font-weight: 600;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.05);
+            transition: background-color 0.3s, border-color 0.3s, box-shadow 0.3s;
+        }
+
+        .status-group {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            white-space: nowrap;
+        }
+
+        :root[data-theme="dark"] .pill {
+            box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+        }
+
+        
+        .custom-select-container {
+            position: relative;
+        }
+
+        .theme-select {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            margin: -1px;
+            padding: 0;
+            border: 0;
+            overflow: hidden;
+            clip: rect(0 0 0 0);
+            clip-path: inset(50%);
+            white-space: nowrap;
+        }
+
+        .custom-select-trigger {
+            display: inline-flex;
+            align-items: center;
+            min-height: 28px;
+            padding: 4px 28px 4px 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            background: var(--bg-color);
+            color: var(--text-main);
+            font: inherit;
+            font-size: 12px;
+            font-weight: 600;
+            line-height: 1.2;
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+            transition: border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .custom-select-trigger::after {
+            content: "";
+            position: absolute;
+            top: 50%;
+            right: 10px;
+            width: 14px;
+            height: 14px;
+            transform: translateY(-50%);
+            background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+            background-repeat: no-repeat;
+            background-position: center;
+            background-size: 14px;
+            pointer-events: none;
+            transition: transform 0.2s ease;
+        }
+
+        .custom-select-trigger:hover,
+        .custom-select-container.open .custom-select-trigger {
+            border-color: var(--text-muted);
+        }
+
+        .custom-select-container.open .custom-select-trigger::after {
+            transform: translateY(-50%) rotate(180deg);
+        }
+
+        :root[data-theme="dark"] .custom-select-trigger::after {
+            background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23f0f0f0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+        }
+
+        .custom-select-options {
+            position: absolute;
+            top: calc(100% + 8px);
+            left: 0;
+            min-width: 100%;
+            padding: 6px;
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            background: var(--panel-bg);
+            box-shadow: 0 12px 28px rgba(0,0,0,0.12);
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(-6px);
+            pointer-events: none;
+            transition: opacity 0.18s ease, transform 0.18s ease, visibility 0.18s ease;
+            z-index: 20;
+        }
+
+        .custom-select-container.open .custom-select-options {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+            pointer-events: auto;
+        }
+
+        .custom-option {
+            display: block;
+            padding: 8px 10px;
+            border-radius: 8px;
+            color: var(--text-main);
+            font-size: 12px;
+            font-weight: 600;
+            line-height: 1.2;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        .custom-option:hover,
+        .custom-option.selected {
+            background: color-mix(in srgb, var(--accent) 12%, transparent);
+        }
+
+        .scroll-to-bottom {
+            position: fixed;
+            bottom: 32px;
+            left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            z-index: 10;
+            background: var(--accent);
+            color: var(--accent-text);
+            border: none;
+            border-radius: 99px;
+            padding: 10px 20px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            opacity: 0;
+            pointer-events: none;
+            transition: transform 0.3s cubic-bezier(0.2, 0.9, 0.2, 1), opacity 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .scroll-to-bottom.visible {
+            transform: translateX(-50%) translateY(0);
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .scroll-to-bottom:hover {
+            background: var(--accent-hover);
+        }
+
+        .scroll-to-bottom svg {
+            width: 16px;
+            height: 16px;
+        }
+
+
+        .pill button {
+            height: 26px;
+            padding: 0 12px;
+            border-radius: 99px;
+            border: none;
+            background: var(--accent);
+            color: var(--accent-text);
+            font: inherit;
+            font-weight: 600;
+            font-size: 12px;
+            cursor: pointer;
+            transition: background 0.2s ease;
+        }
+
+        .pill button:hover {
+            background: var(--accent-hover);
+        }
+
+        .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--warn);
+        }
+
+        .dot.live {
+            background: var(--ok);
+            animation: flatPulse 1.5s infinite;
+        }
+
+        .corner-status {
+            position: absolute;
+            right: 20px;
+            bottom: 20px;
+            z-index: 8;
+            pointer-events: none;
+        }
+
+        .corner-status .dot {
+            box-shadow: 0 0 0 0 rgba(0,0,0,0.12);
+        }
+
+        .corner-status .dot.live {
+            box-shadow: 0 0 10px rgba(255,255,255,0.28);
+        }
+
+        a {
+            color: inherit;
+            text-decoration: underline;
+            text-underline-offset: 4px;
+        }
+
+        a:hover {
+            color: var(--text-muted);
+        }
+
+        .wall {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            background: transparent;
+            border: none;
+        }
+
+        .track {
+            position: relative;
+            z-index: 1;
+            flex: 1;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            padding: 90px 32px 32px 32px;
+            overflow-y: auto;
+            overflow-x: hidden;
+            -webkit-overflow-scrolling: touch;
+            overscroll-behavior: contain;
+            scrollbar-gutter: stable;
+            touch-action: pan-y;
+            pointer-events: auto;
+            scroll-behavior: smooth;
+        }
+
+        .stack-item {
+            padding: 20px 24px;
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 16px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04);
+            transform-origin: center bottom;
+            will-change: transform;
+            flex-shrink: 0;
+            transition: background-color 0.3s, border-color 0.3s, box-shadow 0.3s;
+        }
+
+        :root[data-theme="dark"] .stack-item {
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+        }
+
+        /* Forces items to stick to the bottom if container isn't full */
+        .stack-item:first-of-type {
+            margin-top: auto;
+        }
+
+        .stack-item.enter {
+            animation: riseIn 260ms ease;
+        }
+
+        .latency {
+            display: block;
+            margin-bottom: 8px;
+            color: var(--latency-color);
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+        }
+
+        .line {
+            display: block;
+            font-size: var(--subtitle-font-size);
+            line-height: var(--subtitle-line-height);
+            font-weight: 600;
+            white-space: pre-wrap;
+            letter-spacing: -0.01em;
+        }
+
+        .line.transcript {
+            color: var(--transcript-color);
+        }
+
+        .line.translation {
+            color: var(--translation-color);
+            margin-top: 8px;
+        }
+
+        .empty {
+            margin-top: auto;
+            padding: 32px 0;
+            color: var(--text-muted);
+            line-height: 1.7;
+            text-align: center;
+            font-size: 14px;
+        }
+
+        .modal {
+            position: fixed;
+            inset: 0;
+            z-index: 50;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+        }
+
+        .modal.open {
+            display: flex;
+        }
+
+        .backdrop {
+            position: absolute;
+            inset: 0;
+            background: rgba(255, 255, 255, 0.6);
+            backdrop-filter: blur(8px);
+            transition: background-color 0.3s;
+        }
+
+        :root[data-theme="dark"] .backdrop {
+            background: rgba(0, 0, 0, 0.7);
+        }
+
+        .dialog {
+            position: relative;
+            width: min(980px, calc(100vw - 48px));
+            max-height: min(820px, calc(100vh - 48px));
+            overflow: auto;
+            border-radius: 16px;
+            background: var(--panel-bg);
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+            border: 1px solid var(--border-color);
+            padding: 32px;
+            transition: background-color 0.3s, border-color 0.3s;
+        }
+
+        :root[data-theme="dark"] .dialog {
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+        }
+
+        .dialog h2 {
+            margin: 0;
+            font-size: 24px;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            color: var(--text-main);
+        }
+
+        .dialog p {
+            margin: 8px 0 0;
+            color: var(--text-muted);
+            line-height: 1.6;
+            font-size: 14px;
+        }
+
+        .dlg-head {
+            display: flex;
+            align-items: start;
+            justify-content: space-between;
+            gap: 16px;
+            padding-bottom: 24px;
+            border-bottom: 1px solid var(--border-color);
+            margin-bottom: 24px;
+        }
+
+        .dlg-head button {
+            height: 32px;
+            padding: 0 16px;
+            border-radius: 99px;
+            border: 1px solid var(--border-color);
+            background: transparent;
+            color: var(--text-main);
+            font: inherit;
+            font-weight: 600;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .dlg-head button:hover {
+            background: var(--bg-color);
+        }
+
+        .form {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+            gap: 20px;
+        }
+
+        .row {
+            display: grid;
+            gap: 8px;
+        }
+
+        .row.full {
+            grid-column: 1 / -1;
+        }
+
+        .row label {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-main);
+        }
+
+        .row input[type="text"],
+        .row input[type="number"],
+        .row textarea {
+            width: 100%;
+            padding: 12px 16px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            background: var(--bg-color);
+            color: var(--text-main);
+            font: inherit;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.2s ease, background-color 0.3s;
+        }
+
+        .row input[type="text"]:focus,
+        .row input[type="number"]:focus,
+        .row textarea:focus {
+            border-color: var(--text-main);
+            background: var(--panel-bg);
+        }
+
+        .row textarea {
+            min-height: 140px;
+            resize: vertical;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+
+        .checks {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            padding-top: 4px;
+        }
+
+        .check {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 16px;
+            border-radius: 8px;
+            background: var(--bg-color);
+            border: 1px solid var(--border-color);
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-main);
+        }
+
+        .dlg-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-top: 32px;
+            padding-top: 24px;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .dlg-actions button {
+            border: none;
+            border-radius: 99px;
+            padding: 12px 24px;
+            font: inherit;
+            font-weight: 600;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .dlg-actions button.primary {
+            background: var(--accent);
+            color: var(--accent-text);
+        }
+
+        .dlg-actions button.primary:hover {
+            background: var(--accent-hover);
+        }
+
+        .dlg-actions button.secondary {
+            background: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--text-main);
+        }
+
+        .dlg-actions button.secondary:hover {
+            background: var(--bg-color);
+        }
+
+        @keyframes riseIn {
+            from {
+                transform: translateY(16px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        @keyframes flatPulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.3; }
+            100% { opacity: 1; }
+        }
+
+        @media (max-width: 720px) {
+            .overlay {
+                inset: 16px 16px auto;
+                flex-wrap: wrap;
+            }
+
+            .track {
+                padding: 90px 16px 16px 16px;
+            }
+
+            .line {
+                font-size: max(18px, calc(var(--subtitle-font-size) - 10px));
+            }
+
+            .form {
+                grid-template-columns: 1fr;
+            }
+
+            .dialog {
+                padding: 24px;
+            }
+        }
+    </style>
+    <style id="customCss"></style>
+</head>
+<body>
+    <div class="stage">
+        <div class="overlay">
+            <div class="pill overlay-chrome" id="overlayChrome">
+                <div class="custom-select-container" id="themeSelectContainer">
+                    <select id="themeSelect" class="theme-select" title="主題設定">
+                        <option value="auto">系統模式</option>
+                        <option value="light">淺色模式</option>
+                        <option value="dark">深色模式</option>
+                    </select>
+                    <div class="custom-select-trigger" id="themeSelectTrigger">系統模式</div>
+                    <div class="custom-select-options" id="themeSelectOptions">
+                        <div class="custom-option" data-value="auto">系統模式</div>
+                        <div class="custom-option" data-value="light">淺色模式</div>
+                        <div class="custom-option" data-value="dark">深色模式</div>
+                    </div>
+                </div>
+                <button id="settingsBtn" type="button">設定</button>
+            </div>
+        </div>
+
+        <div class="corner-status">
+            <span id="statusDot" class="dot" title="未連接"></span>
+        </div>
+
+        <div class="wall">
+            <div id="track" class="track"></div>
+        </div>
+    </div>
+
+
+    <button id="scrollToBottomBtn" class="scroll-to-bottom" aria-label="回到最新訊息">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><polyline points="19 12 12 19 5 12"></polyline></svg>
+        最新訊息
+    </button>
+
+    <div id="settingsModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="dlgTitle">
+        <div id="backdrop" class="backdrop"></div>
+        <div class="dialog">
+            <div class="dlg-head">
+                <div>
+                    <h2 id="dlgTitle">顯示設定</h2>
+                    <p>調整後按「儲存並套用」。顏色欄位可填任何 CSS color（例如 `#fff1bf`、`rgb(...)`、`hsl(...)`）。</p>
+                </div>
+                <button id="closeBtn" type="button">關閉</button>
+            </div>
+
+            <div class="form">
+                <div class="row full">
+                    <label for="endpoint">SSE Endpoint（留空自動連接目前任務）</label>
+                    <input id="endpoint" type="text" placeholder="留空自動連接 /api/translation/active-task">
+                </div>
+
+                <div class="row">
+                    <label for="maxLines">保留行數（可滾動）</label>
+                    <input id="maxLines" type="number" min="1" max="500" step="1">
+                </div>
+
+                <div class="row">
+                    <label for="subtitleFontSizePx">字體大小（px）</label>
+                    <input id="subtitleFontSizePx" type="number" min="12" max="96" step="1">
+                </div>
+
+                <div class="row">
+                    <label for="subtitleLineHeight">行高（倍數）</label>
+                    <input id="subtitleLineHeight" type="number" min="1" max="2" step="0.01">
+                </div>
+
+                <div class="row">
+                    <label for="transcriptColor">轉錄文字顏色</label>
+                    <input id="transcriptColor" type="text" placeholder="留空隨主題切換 (例: #000000)">
+                </div>
+
+                <div class="row">
+                    <label for="translationColor">翻譯文字顏色</label>
+                    <input id="translationColor" type="text" placeholder="留空隨主題切換 (例: #555555)">
+                </div>
+
+                <div class="row">
+                    <label for="timeColor">延遲顏色</label>
+                    <input id="timeColor" type="text" placeholder="留空隨主題切換 (例: #888888)">
+                </div>
+
+                <div class="row full">
+                    <label for="customCssInput">自訂 CSS（可選）</label>
+                    <textarea id="customCssInput" spellcheck="false" placeholder="例如：
+:root { --subtitle-font-size: 40px; }
+.track { padding: 20px; }
+"></textarea>
+                </div>
+            </div>
+
+            <div class="dlg-actions">
+                <button id="saveBtn" class="primary" type="button">儲存並套用</button>
+                <button id="resetBtn" class="secondary" type="button">還原預設</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const SETTINGS_KEY = "stg_share_live_subtitles_settings_v1";
+        const THEME_KEY = "stg_live_subtitles_theme";
+
+        const DEFAULTS = {
+            endpoint: "",
+            maxLines: 60,
+            subtitleFontSizePx: 32,
+            subtitleLineHeight: 1.4,
+            transcriptColor: "",
+            translationColor: "",
+            latencyColor: "",
+            customCss: ""
+        };
+
+        let source = null;
+        const mergedTasks = new Map();
+        const stackItems = [];
+        const itemEls = new Map();
+        let settings = { ...DEFAULTS };
+        let sessionEpoch = 0;
+        let awaitingFreshSession = false;
+
+        let renderQueued = false;
+        let pendingAnimate = false;
+        let stickToBottom = true;
+
+        const statusDot = document.getElementById("statusDot");
+        const overlayChrome = document.getElementById("overlayChrome");
+        const track = document.getElementById("track");
+        const customCssEl = document.getElementById("customCss");
+        const themeSelect = document.getElementById("themeSelect");
+
+        const settingsBtn = document.getElementById("settingsBtn");
+        const settingsModal = document.getElementById("settingsModal");
+        const backdrop = document.getElementById("backdrop");
+        const closeBtn = document.getElementById("closeBtn");
+        const saveBtn = document.getElementById("saveBtn");
+        const resetBtn = document.getElementById("resetBtn");
+
+        const endpointInput = document.getElementById("endpoint");
+        const maxLinesInput = document.getElementById("maxLines");
+        const subtitleFontSizePxInput = document.getElementById("subtitleFontSizePx");
+        const subtitleLineHeightInput = document.getElementById("subtitleLineHeight");
+        const transcriptColorInput = document.getElementById("transcriptColor");
+        const translationColorInput = document.getElementById("translationColor");
+        const timeColorInput = document.getElementById("timeColor");
+        const customCssInput = document.getElementById("customCssInput");
+
+
+        // === THEME MANAGEMENT ===
+        const themeSelectContainer = document.getElementById("themeSelectContainer");
+        const themeSelectTrigger = document.getElementById("themeSelectTrigger");
+        const themeSelectOptions = document.getElementById("themeSelectOptions");
+        const customOptions = document.querySelectorAll(".custom-option");
+
+        function updateTheme(val, isInit = false) {
+            localStorage.setItem(THEME_KEY, val);
+            themeSelect.value = val;
+            
+            // Update trigger text
+            const selectedText = Array.from(customOptions).find(opt => opt.dataset.value === val).textContent;
+            themeSelectTrigger.textContent = selectedText;
+            
+            // Update selected class
+            customOptions.forEach(opt => {
+                opt.classList.toggle("selected", opt.dataset.value === val);
+            });
+
+            if (val === "auto") {
+                const isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+                document.documentElement.setAttribute("data-theme", isDark ? "dark" : "light");
+            } else {
+                document.documentElement.setAttribute("data-theme", val);
+            }
+        }
+
+        // Custom Dropdown Interactions
+        themeSelectTrigger.addEventListener("click", function(e) {
+            e.stopPropagation();
+            themeSelectContainer.classList.toggle("open");
+        });
+
+        customOptions.forEach(option => {
+            option.addEventListener("click", function(e) {
+                e.stopPropagation();
+                updateTheme(this.dataset.value);
+                themeSelectContainer.classList.remove("open");
+            });
+        });
+
+        // Close dropdown when clicking outside
+        document.addEventListener("click", function(e) {
+            if (!themeSelectContainer.contains(e.target)) {
+                themeSelectContainer.classList.remove("open");
+            }
+        });
+
+        // Native select sync (fallback/logic connection)
+        themeSelect.addEventListener("change", function(e) {
+            updateTheme(e.target.value);
+        });
+
+        const initialTheme = localStorage.getItem(THEME_KEY) || "auto";
+        updateTheme(initialTheme, true);
+        
+        window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function() {
+            if (themeSelect.value === "auto") {
+                updateTheme("auto");
+            }
+        });
+
+
+        // === APP LOGIC ===
+        function setStatus(text, connected) {
+            statusDot.classList.toggle("live", connected);
+            statusDot.title = text;
+            if (text === "連線中") {
+                statusDot.style.background = '#facc15';
+            } else if (text === "連線異常") {
+                statusDot.style.background = '#f87171';
+            } else if (text === "未連接") {
+                statusDot.style.background = '#9ca3af';
+            } else {
+                statusDot.style.background = '';
+            }
+        }
+
+        function escapeHtml(text) {
+            return String(text)
+                .replaceAll("&", "&amp;")
+                .replaceAll("<", "&lt;")
+                .replaceAll(">", "&gt;")
+                .replaceAll('"', "&quot;")
+                .replaceAll("'", "&#39;");
+        }
+
+        function stageLabel(stage) {
+            if (stage === "translation") return "translation";
+            if (stage === "transcript") return "transcript";
+            if (stage === "complete") return "complete";
+            return "unknown";
+        }
+
+        function loadSettings() {
+            try {
+                const raw = localStorage.getItem(SETTINGS_KEY);
+                if (!raw) {
+                    settings = { ...DEFAULTS };
+                    return;
+                }
+                const parsed = JSON.parse(raw);
+                settings = { ...DEFAULTS, ...parsed };
+            } catch {
+                settings = { ...DEFAULTS };
+            }
+        }
+
+        function applySettings() {
+            document.documentElement.style.setProperty("--subtitle-font-size", String(settings.subtitleFontSizePx) + "px");
+            document.documentElement.style.setProperty("--subtitle-line-height", String(settings.subtitleLineHeight));
+            
+            if (settings.transcriptColor) document.documentElement.style.setProperty("--transcript-color", settings.transcriptColor);
+            else document.documentElement.style.removeProperty("--transcript-color");
+            
+            if (settings.translationColor) document.documentElement.style.setProperty("--translation-color", settings.translationColor);
+            else document.documentElement.style.removeProperty("--translation-color");
+            
+            if (settings.latencyColor) document.documentElement.style.setProperty("--latency-color", settings.latencyColor);
+            else document.documentElement.style.removeProperty("--latency-color");
+            
+            customCssEl.textContent = settings.customCss || "";
+        }
+
+        function saveSettings() {
+            localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+        }
+
+        function parseNumber(value, fallback) {
+            const num = Number(value);
+            return Number.isFinite(num) ? num : fallback;
+        }
+
+        function syncSettingsToForm() {
+            endpointInput.value = settings.endpoint;
+            maxLinesInput.value = String(settings.maxLines);
+            subtitleFontSizePxInput.value = String(settings.subtitleFontSizePx);
+            subtitleLineHeightInput.value = String(settings.subtitleLineHeight);
+            transcriptColorInput.value = settings.transcriptColor || "";
+            translationColorInput.value = settings.translationColor || "";
+            timeColorInput.value = settings.latencyColor || "";
+            customCssInput.value = settings.customCss || "";
+        }
+
+        function readSettingsFromForm() {
+            settings = {
+                ...DEFAULTS,
+                ...settings,
+                endpoint: endpointInput.value.trim() || DEFAULTS.endpoint,
+                maxLines: Math.max(1, Math.min(500, Math.floor(parseNumber(maxLinesInput.value, DEFAULTS.maxLines)))),
+                subtitleFontSizePx: Math.max(12, Math.min(96, parseNumber(subtitleFontSizePxInput.value, DEFAULTS.subtitleFontSizePx))),
+                subtitleLineHeight: Math.max(1, Math.min(2, parseNumber(subtitleLineHeightInput.value, DEFAULTS.subtitleLineHeight))),
+                transcriptColor: transcriptColorInput.value.trim(),
+                translationColor: translationColorInput.value.trim(),
+                latencyColor: timeColorInput.value.trim(),
+                customCss: customCssInput.value || ""
+            };
+        }
+
+        function openSettings() {
+            loadSettings();
+            applySettings();
+            syncSettingsToForm();
+            overlayChrome.classList.add("force-visible");
+            settingsModal.classList.add("open");
+        }
+
+        function closeSettings() {
+            settingsModal.classList.remove("open");
+            overlayChrome.classList.remove("force-visible");
+        }
+
+        function msOrNull(value) {
+            const num = Number(value);
+            return Number.isFinite(num) ? num : null;
+        }
+
+        function computeLatencyMs(payload) {
+            const direct = msOrNull(payload.latencyMs);
+            if (direct != null) return direct;
+
+            const asr = msOrNull(payload.asr_latency_ms);
+            const llm = msOrNull(payload.llm_latency_ms);
+            if (llm != null) return llm;
+            if (asr != null) return asr;
+
+            const timing = payload.timing || {};
+            const legacyAsr = msOrNull(timing.transcription_duration_ms);
+            const legacyTranslation = msOrNull(timing.translation_duration_ms);
+            if (payload.output_stage === "translation") return legacyTranslation;
+            if (payload.output_stage === "transcript") return legacyAsr;
+            return legacyTranslation ?? legacyAsr;
+        }
+
+        function subtitleEventToPayload(payload) {
+            const taskId = payload.timestamp || (String(Date.now()) + ":" + String(stackItems.length));
+            return {
+                task_id: taskId,
+                transcript: payload.original || "",
+                translation: payload.translated || "",
+                translation_failed: false,
+                latencyMs: computeLatencyMs(payload)
+            };
+        }
+
+        function taskKey(taskId, epoch = sessionEpoch) {
+            return `${epoch}:${taskId}`;
+        }
+
+        function beginNewSession() {
+            sessionEpoch += 1;
+            awaitingFreshSession = false;
+        }
+
+        function mergeTask(payload) {
+            const key = taskKey(payload.task_id);
+            const previous = mergedTasks.get(key) || {
+                transcript: "",
+                translation: "",
+                failed: false,
+                latencyMs: null
+            };
+
+            const latencyMs = computeLatencyMs(payload);
+            const merged = {
+                transcript: payload.transcript || previous.transcript,
+                translation: payload.translation || previous.translation,
+                failed: Boolean(payload.translation_failed) || previous.failed,
+                latencyMs: latencyMs == null ? previous.latencyMs : latencyMs
+            };
+
+            mergedTasks.set(key, merged);
+            return { key, merged };
+        }
+
+        function scheduleRender() {
+            if (renderQueued) return;
+            renderQueued = true;
+            requestAnimationFrame(function () {
+                renderQueued = false;
+                renderSubtitleStack();
+            });
+        }
+
+        function pushOrUpdateSubtitle(payload) {
+            const { key, merged } = mergeTask(payload);
+
+            const idx = stackItems.findIndex((x) => x.key === key);
+            if (idx >= 0) {
+                stackItems[idx] = { key, taskId: payload.task_id, sessionEpoch, ...merged };
+            } else {
+                stackItems.push({ key, taskId: payload.task_id, sessionEpoch, ...merged });
+                pendingAnimate = true;
+            }
+
+            const limit = Math.max(1, Number(settings.maxLines) || DEFAULTS.maxLines);
+            const hadTrim = stackItems.length > limit;
+            while (stackItems.length > limit) {
+                stackItems.shift();
+            }
+            if (hadTrim) {
+                pendingAnimate = true;
+            }
+
+            scheduleRender();
+        }
+
+        function renderItem(el, item) {
+            const latencyEl = el.querySelector(".latency");
+            const transcriptEl = el.querySelector(".line.transcript");
+            const translationEl = el.querySelector(".line.translation");
+
+            const latencyText = item.latencyMs == null ? "" : ("delay " + String(item.latencyMs) + "ms");
+            latencyEl.textContent = latencyText;
+            latencyEl.hidden = !latencyText;
+
+            const transcriptText = item.transcript || "";
+            const translationText = item.translation || "";
+
+            if (!transcriptText && !translationText && item.failed) {
+                transcriptEl.textContent = "[翻譯失敗]";
+                transcriptEl.hidden = false;
+                translationEl.textContent = "";
+                translationEl.hidden = true;
+                return;
+            }
+
+            transcriptEl.textContent = transcriptText;
+            transcriptEl.hidden = !transcriptText;
+
+            translationEl.textContent = translationText;
+            translationEl.hidden = !translationText;
+        }
+
+        function renderSubtitleStack() {
+            if (stackItems.length === 0) {
+                track.innerHTML = '<div class="empty">等待即時字幕...</div>';
+                itemEls.clear();
+                return;
+            }
+
+            for (const n of Array.from(track.querySelectorAll(".empty"))) {
+                n.remove();
+            }
+
+            const doAnimate = pendingAnimate;
+            pendingAnimate = false;
+
+            const isNearBottom = (track.scrollHeight - track.scrollTop - track.clientHeight) < 40;
+            const shouldStick = stickToBottom && isNearBottom;
+
+            const firstTops = new Map();
+            if (doAnimate) {
+                for (const child of Array.from(track.children)) {
+                    if (child.classList && child.classList.contains("stack-item")) {
+                        firstTops.set(child, child.getBoundingClientRect().top);
+                    }
+                }
+            }
+
+            const wanted = new Set(stackItems.map((x) => x.key));
+            for (const [key, el] of Array.from(itemEls.entries())) {
+                if (!wanted.has(key)) {
+                    el.remove();
+                    itemEls.delete(key);
+                }
+            }
+
+            const children = Array.from(track.children).filter((n) => n.classList && n.classList.contains("stack-item"));
+
+            for (let i = 0; i < stackItems.length; i += 1) {
+                const item = stackItems[i];
+                let el = itemEls.get(item.key);
+                const isNew = !el;
+                if (!el) {
+                    el = document.createElement("div");
+                    el.className = "stack-item";
+                    el.dataset.key = item.key;
+                    el.innerHTML = ""
+                        + '<span class="latency" hidden></span>'
+                        + '<span class="line transcript" hidden></span>'
+                        + '<span class="line translation" hidden></span>';
+                    itemEls.set(item.key, el);
+                }
+                renderItem(el, item);
+
+                const current = children[i];
+                if (current !== el) {
+                    if (current) {
+                        track.insertBefore(el, current);
+                    } else {
+                        track.appendChild(el);
+                    }
+                }
+
+                if (isNew) {
+                    el.classList.add("enter");
+                    el.addEventListener("animationend", function () {
+                        el.classList.remove("enter");
+                    }, { once: true });
+                }
+            }
+
+            const lastTops = new Map();
+            if (doAnimate) {
+                for (const child of Array.from(track.children)) {
+                    if (child.classList && child.classList.contains("stack-item")) {
+                        lastTops.set(child, child.getBoundingClientRect().top);
+                    }
+                }
+            }
+
+            if (doAnimate) {
+                for (const [el, firstTop] of Array.from(firstTops.entries())) {
+                    const lastTop = lastTops.get(el);
+                    if (lastTop == null) continue;
+                    const delta = firstTop - lastTop;
+                    if (!delta) continue;
+                    el.style.transition = "transform 0s";
+                    el.style.transform = "translateY(" + String(delta) + "px)";
+                    requestAnimationFrame(function () {
+                        el.style.transition = "transform 360ms cubic-bezier(0.2, 0.9, 0.2, 1)";
+                        el.style.transform = "";
+                    });
+                }
+            }
+
+            if (shouldStick) {
+                track.scrollTop = track.scrollHeight;
+            }
+        }
+
+
+        const scrollToBottomBtn = document.getElementById("scrollToBottomBtn");
+
+        function updateStickToBottomFromScroll() {
+            const isNearBottom = (track.scrollHeight - track.scrollTop - track.clientHeight) < 40;
+            stickToBottom = isNearBottom;
+            
+            if (!stickToBottom && stackItems.length > 0) {
+                scrollToBottomBtn.classList.add("visible");
+            } else {
+                scrollToBottomBtn.classList.remove("visible");
+            }
+        }
+
+        scrollToBottomBtn.addEventListener("click", function() {
+            stickToBottom = true;
+            track.scrollTo({
+                top: track.scrollHeight,
+                behavior: 'smooth'
+            });
+            scrollToBottomBtn.classList.remove("visible");
+        });
+
+
+        function resetView() {
+            mergedTasks.clear();
+            stackItems.length = 0;
+            itemEls.clear();
+            sessionEpoch = 0;
+            awaitingFreshSession = false;
+            renderSubtitleStack();
+        }
+
+        let reconnectTimer = null;
+
+        function closeSource() {
+            if (reconnectTimer) {
+                clearTimeout(reconnectTimer);
+                reconnectTimer = null;
+            }
+            if (source) {
+                source.close();
+                source = null;
+            }
+            setStatus("未連接", false);
+        }
+
+        function scheduleReconnect(delayMs = 3000) {
+            if (reconnectTimer) return;
+            reconnectTimer = window.setTimeout(function () {
+                reconnectTimer = null;
+                connect();
+            }, delayMs);
+        }
+
+        async function resolveEndpoint() {
+            const manualEndpoint = (settings.endpoint || "").trim();
+            if (manualEndpoint) return manualEndpoint;
+
+            const response = await fetch("/api/translation/active-task", { cache: "no-store" });
+            if (!response.ok) {
+                throw new Error("subtitle sharing is disabled or no task endpoint is available");
+            }
+            const payload = await response.json();
+            if (!payload || !payload.success || !payload.task_id) {
+                throw new Error("no active subtitle task");
+            }
+            return "/api/translation/stream/" + encodeURIComponent(payload.task_id);
+        }
+
+        async function connect() {
+            closeSource();
+            loadSettings();
+            applySettings();
+            resetView();
+
+            setStatus("連線中", false);
+            let endpoint = "";
+            try {
+                endpoint = await resolveEndpoint();
+            } catch (error) {
+                setStatus("等待任務", false);
+                awaitingFreshSession = true;
+                scheduleReconnect();
+                return;
+            }
+
+            source = new EventSource(endpoint);
+
+            source.onopen = function () {
+                setStatus("已連接", true);
+                if (awaitingFreshSession) {
+                    beginNewSession();
+                }
+            };
+
+            source.onerror = function () {
+                setStatus("連線異常", false);
+                awaitingFreshSession = true;
+                scheduleReconnect();
+            };
+
+            source.addEventListener("status", function (event) {
+                const payload = JSON.parse(event.data || "{}");
+                if (payload.status === "completed") {
+                    setStatus("任務已結束", false);
+                    awaitingFreshSession = true;
+                    scheduleReconnect();
+                } else if (payload.status) {
+                    setStatus("字幕流接收中", true);
+                }
+            });
+
+            source.addEventListener("subtitle", function (event) {
+                const payload = subtitleEventToPayload(JSON.parse(event.data));
+                pushOrUpdateSubtitle(payload);
+                setStatus("字幕流接收中", true);
+            });
+
+            source.addEventListener("error", function (event) {
+                if (event.data) {
+                    setStatus("連線異常", false);
+                    awaitingFreshSession = true;
+                    scheduleReconnect();
+                }
+            });
+
+            source.addEventListener("lifecycle", function (event) {
+                const payload = JSON.parse(event.data);
+                if (payload && payload.status === "stopped") {
+                    awaitingFreshSession = true;
+                }
+            });
+
+            source.addEventListener("result", function (event) {
+                const payload = JSON.parse(event.data);
+                pushOrUpdateSubtitle(payload);
+                setStatus("字幕流接收中", true);
+            });
+        }
+
+        window.addEventListener("storage", function (e) {
+            if (e.key !== SETTINGS_KEY) return;
+            loadSettings();
+            applySettings();
+            renderSubtitleStack();
+        });
+
+        settingsBtn.addEventListener("click", function () {
+            openSettings();
+        });
+
+        backdrop.addEventListener("click", function () {
+            closeSettings();
+        });
+
+        closeBtn.addEventListener("click", function () {
+            closeSettings();
+        });
+
+        window.addEventListener("keydown", function (e) {
+            if (e.key === "Escape" && settingsModal.classList.contains("open")) {
+                closeSettings();
+            }
+        });
+
+        track.addEventListener("scroll", function () {
+            updateStickToBottomFromScroll();
+        }, { passive: true });
+
+        saveBtn.addEventListener("click", function () {
+            const prevEndpoint = settings.endpoint;
+            readSettingsFromForm();
+            applySettings();
+            saveSettings();
+            renderSubtitleStack();
+            closeSettings();
+            if (settings.endpoint !== prevEndpoint) {
+                connect();
+            }
+        });
+
+        resetBtn.addEventListener("click", function () {
+            settings = { ...DEFAULTS };
+            applySettings();
+            saveSettings();
+            syncSettingsToForm();
+            renderSubtitleStack();
+        });
+
+        loadSettings();
+        applySettings();
+        renderSubtitleStack();
+        connect();
+    </script>
+</body>
+</html>

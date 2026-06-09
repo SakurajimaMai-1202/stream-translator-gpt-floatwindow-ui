@@ -275,12 +275,17 @@ class LLMClient():
             self._append_history_message(user_content, translation_task.translation)
 
     def translate(self, translation_task: TranslationTask):
-        if self.llm_type == self.LLM_TYPE.GPT:
-            self._translate_by_gpt(translation_task)
-        elif self.llm_type == self.LLM_TYPE.GEMINI:
-            self._translate_by_gemini(translation_task)
-        else:
-            raise ValueError(f'Unknow LLM type: {self.llm_type}')
+        llm_started_at = time.perf_counter()
+        translation_task._llm_latency_started_at = llm_started_at
+        try:
+            if self.llm_type == self.LLM_TYPE.GPT:
+                self._translate_by_gpt(translation_task)
+            elif self.llm_type == self.LLM_TYPE.GEMINI:
+                self._translate_by_gemini(translation_task)
+            else:
+                raise ValueError(f'Unknow LLM type: {self.llm_type}')
+        finally:
+            translation_task.llm_latency_ms = (time.perf_counter() - llm_started_at) * 1000
 
 
 class ParallelTranslator(LoopWorkerBase):
@@ -296,6 +301,7 @@ class ParallelTranslator(LoopWorkerBase):
         if not translation_task.start_time:
             translation_task.start_time = datetime.now(timezone.utc)
         translation_task.translation_failed = False
+        translation_task.llm_latency_ms = None
         thread = threading.Thread(target=self.llm_client.translate, args=(translation_task,))
         thread.daemon = True
         thread.start()
@@ -307,14 +313,20 @@ class ParallelTranslator(LoopWorkerBase):
                 print(f'Translation failed: {task.transcript}')
                 time.sleep(1)
 
+    def _mark_timeout_latency(self, task: TranslationTask):
+        if task.llm_latency_ms is None and task._llm_latency_started_at is not None:
+            task.llm_latency_ms = (time.perf_counter() - task._llm_latency_started_at) * 1000
+
     def _get_results(self):
         results = []
         while self.processing_queue and (
-                self.processing_queue[0].translation or _is_task_timeout(self.processing_queue[0], self.timeout) or
-            (self.processing_queue[0].translation_failed and not self.retry_if_translation_fails)):
+                (self.processing_queue[0].translation and self.processing_queue[0].llm_latency_ms is not None) or
+                _is_task_timeout(self.processing_queue[0], self.timeout) or
+                (self.processing_queue[0].translation_failed and self.processing_queue[0].llm_latency_ms is not None and not self.retry_if_translation_fails)):
             task = self.processing_queue.popleft()
             if not task.translation:
                 if _is_task_timeout(task, self.timeout):
+                    self._mark_timeout_latency(task)
                     print(f'Translation timeout: {task.transcript}')
                 else:
                     print(f'Translation failed: {task.transcript}')
@@ -354,6 +366,7 @@ class SerialTranslator(LoopWorkerBase):
         if not translation_task.start_time:
             translation_task.start_time = datetime.now(timezone.utc)
         translation_task.translation_failed = False
+        translation_task.llm_latency_ms = None
         thread = threading.Thread(target=self.llm_client.translate, args=(translation_task,))
         thread.daemon = True
         thread.start()
@@ -362,10 +375,13 @@ class SerialTranslator(LoopWorkerBase):
         current_task = None
         while True:
             if current_task:
-                if (current_task.translation or current_task.translation_failed or
+                if ((current_task.translation and current_task.llm_latency_ms is not None) or
+                        (current_task.translation_failed and current_task.llm_latency_ms is not None) or
                         _is_task_timeout(current_task, self.timeout)):
                     if not current_task.translation:
                         if _is_task_timeout(current_task, self.timeout):
+                            if current_task.llm_latency_ms is None and current_task._llm_latency_started_at is not None:
+                                current_task.llm_latency_ms = (time.perf_counter() - current_task._llm_latency_started_at) * 1000
                             print(f'Translation timeout: {current_task.transcript}')
                         else:
                             print(f'Translation failed: {current_task.transcript}')

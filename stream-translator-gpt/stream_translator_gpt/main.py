@@ -5,6 +5,9 @@ import signal
 import sys
 import time
 import subprocess
+import shutil
+import platform
+import threading
 from concurrent.futures import ThreadPoolExecutor
 
 if __name__ == '__main__':
@@ -20,28 +23,121 @@ from .audio_getter import (
     _resolve_cookie_file,
 )
 from .audio_slicer import AudioSlicer
-from .audio_transcriber import OpenaiWhisper, FasterWhisper, SimulStreaming, RemoteOpenaiTranscriber, Qwen3ASR
+from .audio_transcriber import OpenaiWhisper, FasterWhisper, SimulStreaming, RemoteOpenaiTranscriber, Qwen3ASRTranscriber, HFTranscriber, NemoASRTranscriber
 from .llm_translator import LLMClient, ParallelTranslator, SerialTranslator
 from .result_exporter import ResultExporter
+from .subtitle_sharing import DEFAULT_PUBLIC_HOST, DEFAULT_PUBLIC_PORT, SubtitleShareServer, create_task_id
+from .asr_preload import PreloadedTranscriberManager, build_asr_config
+from .pipeline_runner import PipelineController, run_inprocess_pipeline
 from . import __version__
 
 
-def main(url, proxy, openai_api_key, google_api_key, format, cookies, input_proxy, device_index,
-         device_recording_interval, min_audio_length, max_audio_length, target_audio_length,
-         continuous_no_speech_threshold, disable_dynamic_no_speech_threshold, prefix_retention_length, vad_threshold,
-         disable_dynamic_vad_threshold, model, language, use_faster_whisper, use_simul_streaming,
-         use_openai_transcription_api, use_qwen3_asr, openai_transcription_model, whisper_filters, disable_transcription_context,
-         transcription_initial_prompt, qwen3_context, qwen3_dtype, qwen3_load_in_4bit,
-         translation_prompt, translation_history_size, gpt_model, gemini_model,
-         translation_timeout, gpt_base_url, gemini_base_url, processing_proxy, use_json_result,
-         retry_if_translation_fails, output_timestamps, hide_transcribe_result, output_proxy, output_file_path,
-         cqhttp_url, cqhttp_token, discord_webhook_url, telegram_token, telegram_chat_id,
-         translation_glossary=None, loopback=False,
-         vad_every_n_frames: int = 1, realtime_processing: bool = False, qwen3_rms_threshold: float = 0.005):
+def main(url, **kwargs):
+    # Extract args
+    loopback = kwargs.get('loopback', False)
+    device_index = kwargs.get('device_index')
+    device_recording_interval = kwargs.get('device_recording_interval', 0.5)
+    format = kwargs.get('format', 'ba/wa*')
+    cookies = kwargs.get('cookies')
+    input_proxy = kwargs.get('input_proxy')
+    realtime_processing = kwargs.get('realtime_processing', False)
+    min_audio_length = kwargs.get('min_audio_length', 0.5)
+    max_audio_length = kwargs.get('max_audio_length', 30.0)
+    target_audio_length = kwargs.get('target_audio_length', 5.0)
+    continuous_no_speech_threshold = kwargs.get('continuous_no_speech_threshold', 1.0)
+    disable_dynamic_no_speech_threshold = kwargs.get('disable_dynamic_no_speech_threshold', False)
+    prefix_retention_length = kwargs.get('prefix_retention_length', 0.5)
+    vad_threshold = kwargs.get('vad_threshold', 0.35)
+    disable_dynamic_vad_threshold = kwargs.get('disable_dynamic_vad_threshold', False)
+    vad_every_n_frames = kwargs.get('vad_every_n_frames', 1)
+    vad_backend = kwargs.get('vad_backend', 'silero')
+    firered_vad_model_path = kwargs.get('firered_vad_model_path')
+
+    whisper_filters = kwargs.get('whisper_filters', 'emoji_filter,repetition_filter')
+    transcription_filters = kwargs.get('transcription_filters')
+    if transcription_filters:
+        whisper_filters = transcription_filters
+    hide_transcribe_result = kwargs.get('hide_transcribe_result', False)
+    output_timestamps = kwargs.get('output_timestamps', False)
+    show_latency_log = kwargs.get('show_latency_log', False)
+    disable_transcription_context = kwargs.get('disable_transcription_context', False)
+    transcription_initial_prompt = kwargs.get('transcription_initial_prompt')
+
+    use_qwen3_asr = kwargs.get('use_qwen3_asr', False)
+    qwen3_asr_model = kwargs.get('qwen3_asr_model')
+    qwen3_asr_dtype = kwargs.get('qwen3_asr_dtype', 'bfloat16')
+    qwen3_asr_device_map = kwargs.get('qwen3_asr_device_map', 'auto')
+    qwen3_asr_max_new_tokens = kwargs.get('qwen3_asr_max_new_tokens', 128)
+    qwen3_asr_quantization = kwargs.get('qwen3_asr_quantization', 'none')
+    qwen3_asr_bnb_4bit_quant_type = kwargs.get('qwen3_asr_bnb_4bit_quant_type', 'nf4')
+    qwen3_asr_bnb_4bit_use_double_quant = kwargs.get('qwen3_asr_bnb_4bit_use_double_quant', False)
+
+    qwen3_context = kwargs.get('qwen3_context')
+    qwen3_dtype = kwargs.get('qwen3_dtype', 'bfloat16')
+    qwen3_load_in_4bit = kwargs.get('qwen3_load_in_4bit', False)
+    qwen3_rms_threshold = kwargs.get('qwen3_rms_threshold', 0.005)
+
+    use_hf_asr = kwargs.get('use_hf_asr', False)
+    use_nemo_asr = kwargs.get('use_nemo_asr', False)
+    nemo_asr_model = kwargs.get('nemo_asr_model')
+    nemo_asr_device = kwargs.get('nemo_asr_device')
+    nemo_asr_decoding = kwargs.get('nemo_asr_decoding')
+
+    model = kwargs.get('model', 'turbo')
+    language = kwargs.get('language')
+    use_faster_whisper = kwargs.get('use_faster_whisper', False)
+    use_simul_streaming = kwargs.get('use_simul_streaming', False)
+    use_openai_transcription_api = kwargs.get('use_openai_transcription_api', False)
+    openai_transcription_model = kwargs.get('openai_transcription_model', 'gpt-4o-mini-transcribe')
+    processing_proxy = kwargs.get('processing_proxy')
+    openai_api_key = kwargs.get('openai_api_key')
+    google_api_key = kwargs.get('google_api_key')
+
+    translation_prompt = kwargs.get('translation_prompt')
+    gemini_model = kwargs.get('gemini_model', 'gemini-2.5-flash-lite')
+    gpt_model = kwargs.get('gpt_model', 'gpt-5-nano')
+    translation_history_size = kwargs.get('translation_history_size', 0)
+    use_json_result = kwargs.get('use_json_result', False)
+    gemini_base_url = kwargs.get('gemini_base_url')
+    gpt_base_url = kwargs.get('gpt_base_url')
+    openai_base_url = kwargs.get('openai_base_url')
+    google_base_url = kwargs.get('google_base_url')
+    if openai_base_url and not gpt_base_url:
+        gpt_base_url = openai_base_url
+    if google_base_url and not gemini_base_url:
+        gemini_base_url = google_base_url
+
+    translation_glossary = kwargs.get('translation_glossary')
+    translation_timeout = kwargs.get('translation_timeout', 10)
+    retry_if_translation_fails = kwargs.get('retry_if_translation_fails', False)
+
+    output_file_path = kwargs.get('output_file_path')
+    output_proxy = kwargs.get('output_proxy')
+    cqhttp_url = kwargs.get('cqhttp_url')
+    cqhttp_token = kwargs.get('cqhttp_token')
+    discord_webhook_url = kwargs.get('discord_webhook_url')
+    telegram_token = kwargs.get('telegram_token')
+    telegram_chat_id = kwargs.get('telegram_chat_id')
+
     if gpt_base_url:
         os.environ['OPENAI_BASE_URL'] = gpt_base_url
 
     ApiKeyPool.init(openai_api_key=openai_api_key, google_api_key=google_api_key)
+
+    # Init Subtitle Sharing Server if enabled
+    managed_subtitle_share_server = None
+    managed_subtitle_share_task_id = None
+    subtitle_share_push_url = None
+    subtitle_share_token = None
+    if kwargs.get("enable_subtitle_sharing"):
+        managed_subtitle_share_server = _start_subtitle_share_server(
+            kwargs.get("subtitle_share_host", DEFAULT_PUBLIC_HOST),
+            kwargs.get("subtitle_share_public_port", DEFAULT_PUBLIC_PORT)
+        )
+        managed_subtitle_share_task_id = create_task_id()
+        managed_subtitle_share_server.begin_task(managed_subtitle_share_task_id, os.getpid())
+        subtitle_share_push_url = f'http://127.0.0.1:{managed_subtitle_share_server.port}/api/translation/push/{managed_subtitle_share_task_id}'
+        subtitle_share_token = managed_subtitle_share_server.push_token
 
     # Init queues
     getter_to_slicer_queue = queue.SimpleQueue()
@@ -53,7 +149,7 @@ def main(url, proxy, openai_api_key, google_api_key, format, cookies, input_prox
     with ThreadPoolExecutor() as executor:
 
         def init_audio_getter():
-            # 自動模式：使用 --loopback 或 URL="loopback" 時自動捕獲系統音頻
+            # 自動模式
             if loopback or url.lower() == 'loopback':
                 import sys
                 if sys.platform == 'win32':
@@ -61,7 +157,7 @@ def main(url, proxy, openai_api_key, google_api_key, format, cookies, input_prox
                     return DeviceAudioGetter(
                         device_index=device_index,
                         recording_interval=device_recording_interval,
-                        use_loopback=True,  # 自動啟用 loopback
+                        use_loopback=True,
                     )
                 else:
                     print(f'{ERROR}WASAPI Loopback 僅支援 Windows 平台。')
@@ -71,7 +167,7 @@ def main(url, proxy, openai_api_key, google_api_key, format, cookies, input_prox
                 return DeviceAudioGetter(
                     device_index=device_index,
                     recording_interval=device_recording_interval,
-                    use_loopback=False,  # device 模式預設不使用 loopback
+                    use_loopback=False,
                 )
             elif is_url(url):
                 return StreamAudioGetter(
@@ -96,7 +192,9 @@ def main(url, proxy, openai_api_key, google_api_key, format, cookies, input_prox
             vad_threshold=vad_threshold,
             dynamic_vad_threshold=not disable_dynamic_vad_threshold,
             vad_every_n_frames=vad_every_n_frames,
-            disable_vad=False,  # 所有 ASR 引擎都應使用 VAD 過濾靜音，避免幻覺輸出
+            disable_vad=False,
+            vad_backend=vad_backend,
+            firered_vad_model_path=firered_vad_model_path,
         )
 
         def init_transcriber():
@@ -108,9 +206,16 @@ def main(url, proxy, openai_api_key, google_api_key, format, cookies, input_prox
                 'transcription_initial_prompt': transcription_initial_prompt,
             }
             if use_qwen3_asr:
-                return Qwen3ASR(model=model, language=language, context=qwen3_context,
-                                dtype=qwen3_dtype, load_in_4bit=qwen3_load_in_4bit,
-                                rms_threshold=qwen3_rms_threshold, **common_args)
+                qwen_model = qwen3_asr_model or model
+                qwen_dtype = qwen3_asr_dtype or qwen3_dtype
+                qwen_quant = qwen3_asr_quantization or ('bnb_4bit' if qwen3_load_in_4bit else 'none')
+                return Qwen3ASRTranscriber(model=qwen_model, language=language,
+                                          dtype=qwen_dtype, quantization=qwen_quant,
+                                          rms_threshold=qwen3_rms_threshold, **common_args)
+            elif use_hf_asr:
+                return HFTranscriber(model=model, language=language, proxy=processing_proxy, **common_args)
+            elif use_nemo_asr:
+                return NemoASRTranscriber(**common_args)
             elif use_simul_streaming:
                 return SimulStreaming(model=model,
                                       language=language,
@@ -131,7 +236,6 @@ def main(url, proxy, openai_api_key, google_api_key, format, cookies, input_prox
         def init_translator():
             if not translation_prompt:
                 return None
-            # 解析術語表 JSON 字串（來自 --translation_glossary）
             import json as _json
             glossary = {}
             if translation_glossary:
@@ -187,6 +291,9 @@ def main(url, proxy, openai_api_key, google_api_key, format, cookies, input_prox
             proxy=output_proxy,
             output_whisper_result=not hide_transcribe_result,
             output_timestamps=output_timestamps,
+            subtitle_share_push_url=subtitle_share_push_url,
+            subtitle_share_token=subtitle_share_token,
+            show_latency_log=show_latency_log,
         )
 
         audio_getter = audio_getter_future.result()
@@ -223,9 +330,115 @@ def main(url, proxy, openai_api_key, google_api_key, format, cookies, input_prox
         input_queue=translator_to_exporter_queue,
     )
 
-    while exporter_thread.is_alive():
-        time.sleep(1)
+    try:
+        while exporter_thread.is_alive():
+            time.sleep(1)
+    finally:
+        if managed_subtitle_share_server:
+            if managed_subtitle_share_task_id:
+                managed_subtitle_share_server.finish_task(managed_subtitle_share_task_id, 0)
+                time.sleep(0.2)
+            managed_subtitle_share_server.stop()
     print(f'{INFO}All processing completed, program exits.')
+
+
+def _start_subtitle_share_server(host: str, port: int):
+    server = SubtitleShareServer(host=host, port=port, enabled=True)
+    server.start()
+    print(f'{INFO}Subtitle sharing server started on {host}:{server.port}')
+    print(f'{INFO}Subtitle sharing API: http://127.0.0.1:{server.port}/api/server/info')
+    print(f'{INFO}Live subtitles page: http://127.0.0.1:{server.port}/')
+    return server
+
+
+def _run_preloaded_task(url: str, args: dict, manager: PreloadedTranscriberManager,
+                        share_server: SubtitleShareServer | None = None) -> int:
+    config = build_asr_config(args)
+    transcriber = manager.get_for_run(config)
+    controller = PipelineController()
+    result = {"code": 0, "error": None}
+    local_share_server = None
+    task_id = None
+    push_url = None
+    push_token = None
+
+    try:
+        active_share_server = share_server
+        if active_share_server is None and args.get("enable_subtitle_sharing"):
+            active_share_server = _start_subtitle_share_server(args.get("subtitle_share_host", DEFAULT_PUBLIC_HOST),
+                                                               args.get("subtitle_share_public_port", DEFAULT_PUBLIC_PORT))
+            local_share_server = active_share_server
+
+        if active_share_server is not None:
+            task_id = create_task_id()
+            active_share_server.begin_task(task_id, os.getpid())
+            push_url = f'http://127.0.0.1:{active_share_server.port}/api/translation/push/{task_id}'
+            push_token = active_share_server.push_token
+            print(f'{INFO}Subtitle sharing task ID: {task_id}')
+
+        def worker():
+            try:
+                result["code"] = run_inprocess_pipeline(url,
+                                                        args,
+                                                        transcriber,
+                                                        controller=controller,
+                                                        subtitle_share_push_url=push_url,
+                                                        subtitle_share_token=push_token)
+            except Exception as e:
+                result["error"] = e
+                result["code"] = 1
+
+        thread = threading.Thread(target=worker)
+        thread.daemon = True
+        thread.start()
+        while thread.is_alive():
+            try:
+                thread.join(timeout=0.2)
+            except KeyboardInterrupt:
+                print(f'{WARNING}Stopping current task. The preloaded ASR model will stay loaded.')
+                controller.request_stop()
+        if result["error"] is not None:
+            raise result["error"]
+        return int(result["code"] or 0)
+    finally:
+        if share_server is not None and task_id:
+            share_server.finish_task(task_id, result["code"])
+        if local_share_server is not None:
+            if task_id:
+                local_share_server.finish_task(task_id, result["code"])
+                time.sleep(0.2)
+            local_share_server.stop()
+        manager.release()
+
+
+def run_preloaded_cli(url: str, args: dict) -> None:
+    manager = PreloadedTranscriberManager()
+    config = build_asr_config(args)
+    print(manager.preload(config))
+
+    keep_loaded = bool(args.get("keep_asr_loaded"))
+    share_server = None
+    try:
+        if keep_loaded and args.get("enable_subtitle_sharing"):
+            share_server = _start_subtitle_share_server(args.get("subtitle_share_host", DEFAULT_PUBLIC_HOST),
+                                                        args.get("subtitle_share_public_port", DEFAULT_PUBLIC_PORT))
+
+        next_url = url
+        while next_url:
+            _run_preloaded_task(next_url, args, manager, share_server=share_server)
+            if not keep_loaded:
+                break
+            try:
+                next_url = input("Next URL> ").strip()
+            except KeyboardInterrupt:
+                print()
+                break
+            if not next_url or next_url.lower() == "exit":
+                break
+    finally:
+        if share_server is not None:
+            share_server.stop()
+        print(manager.unload())
 
 
 def cli():
@@ -234,15 +447,9 @@ def cli():
     parser.add_argument(
         'URL',
         type=str,
-        nargs='?',
-        default='loopback',
         help=
-        'The URL of the stream. If a local file path is filled in, it will be used as input. If fill in "device", the input will be obtained from your PC device. If not provided or use "loopback", will auto-capture system audio using WASAPI loopback (Windows only).'
+        'The URL of the stream. If a local file path is filled in, it will be used as input. If fill in "device", the input will be obtained from your PC device.'
     )
-    parser.add_argument('--proxy',
-                        type=str,
-                        default=None,
-                        help='Used to set the proxy for all --*_proxy flags if they are not specifically set.')
     parser.add_argument(
         '--openai_api_key',
         type=str,
@@ -257,12 +464,26 @@ def cli():
         help=
         'Google API key if using Gemini translation. If you have multiple keys, you can separate them with \",\" and each key will be used in turn.'
     )
+    parser.add_argument('--openai_base_url',
+                        type=str,
+                        default=None,
+                        help='Customize the API endpoint of OpenAI (Affects GPT translation & OpenAI Transcription).')
+    parser.add_argument('--google_base_url',
+                        type=str,
+                        default=None,
+                        help='Customize the API endpoint of Google (Affects Gemini translation).')
+    parser.add_argument('--gpt_base_url', type=str, default=None, help='(Deprecated) Use --openai_base_url instead.')
+    parser.add_argument('--gemini_base_url', type=str, default=None, help='(Deprecated) Use --google_base_url instead.')
+    parser.add_argument('--proxy',
+                        type=str,
+                        default=None,
+                        help='Used to set the proxy for all --*_proxy flags if they are not specifically set.')
     parser.add_argument(
         '--format',
         type=str,
         default='ba/wa*',
         help=
-        'Stream format code, this parameter will be passed directly to yt-dlp. You can get the list of available format codes by \"yt-dlp \{url\} -F\"'
+        'Stream format code, this parameter will be passed directly to yt-dlp. You can get the list of available format codes by \"yt-dlp {url} -F\"'
     )
     parser.add_argument('--list_format', action='store_true', help='Print all available formats then exit.')
     parser.add_argument('--cookies',
@@ -273,8 +494,7 @@ def cli():
     parser.add_argument('--input_proxy',
                         type=str,
                         default=None,
-                        help='Use the specified HTTP/HTTPS/SOCKS proxy for yt-dlp, '
-                        'e.g. http://127.0.0.1:7890.')
+                        help='Use the specified HTTP/HTTPS/SOCKS proxy for yt-dlp, e.g. http://127.0.0.1:7890.')
     parser.add_argument(
         '--device_index',
         type=int,
@@ -282,13 +502,6 @@ def cli():
         help=
         'The index of the device that needs to be recorded. If not set, the system default recording device will be used.'
     )
-    parser.add_argument('--list_devices', action='store_true', help='Print all audio devices info then exit.')
-    parser.add_argument(
-        '--loopback',
-        action='store_true',
-        help='Auto-capture system audio using WASAPI loopback (Windows only, requires pyaudiowpatch). Equivalent to not providing URL or URL="loopback". This allows capturing audio without enabling "Stereo Mix".'
-    )
-
     parser.add_argument(
         '--device_recording_interval',
         type=float,
@@ -296,6 +509,10 @@ def cli():
         help=
         'The shorter the recording interval, the lower the latency, but it will increase CPU usage. It is recommended to set it between 0.1 and 1.0.'
     )
+    parser.add_argument('--list_devices', action='store_true', help='Print all audio devices info then exit.')
+    parser.add_argument('--mic', action='store_true', help='Use microphone instead of system audio (loopback).')
+    parser.add_argument('--loopback', action='store_true', help='Directly capture system audio output (Windows WASAPI loopback).')
+
     parser.add_argument('--min_audio_length', type=float, default=0.5, help='Minimum slice audio length in seconds.')
     parser.add_argument('--max_audio_length', type=float, default=30.0, help='Maximum slice audio length in seconds.')
     parser.add_argument(
@@ -324,31 +541,24 @@ def cli():
         type=float,
         default=0.35,
         help=
-        'Range 0~1. the higher this value, the stricter the speech judgment. If dynamic VAD threshold is enabled (enabled by default), this threshold will be adjusted dynamically based on the input speech\'s VAD results.'
+        'Range 0~1. the higher this value, the stricter the speech judgment. If dynamic VAD threshold is enabled (enabled by default), this threshold will be adjusted dynamically based on this value.'
     )
     parser.add_argument('--disable_dynamic_vad_threshold',
                         action='store_true',
                         help='Set this flag to disable dynamic VAD threshold.')
-    parser.add_argument(
-        '--vad_every_n_frames',
-        type=int,
-        default=1,
-        help=
-        'Run VAD inference only once every N audio frames (default: 1 = every frame). '
-        'For non-live sources (local files / non-live URLs) set to 2 or 3 to cut VAD CPU usage roughly in half or to one-third. '
-        'Frames that are skipped reuse the previous frame\'s speech probability, so transitions from speech → silence are detected up to N×32 ms later (barely noticeable).'
-    )
-    parser.add_argument(
-        '--realtime_processing',
-        action='store_true',
-        help=
-        'Throttle audio reading to real-time speed for local files / non-live URLs. '
-        'This caps CPU usage to the same level as live streaming but processing will not finish faster than the audio duration.'
-    )
+    parser.add_argument('--vad_backend',
+                        type=str,
+                        choices=['silero', 'firered'],
+                        default='silero',
+                        help='VAD backend used for audio slicing. FireRedVAD requires the omnivad library.')
+    parser.add_argument('--firered_vad_model_path',
+                        type=str,
+                        default=None,
+                        help='Optional OmniVAD FireRedVAD .omnivad model path. If omitted, the bundled OmniVAD model is used.')
     parser.add_argument(
         '--model',
         type=str,
-        default='small',
+        default='turbo',
         help=
         'Select Whisper/Faster-Whisper/Simul Streaming model size. See https://github.com/openai/whisper#available-models-and-languages for available models.'
     )
@@ -376,45 +586,47 @@ def cli():
                         action='store_true',
                         help='Set this flag to use OpenAI transcription API instead of the original local Whipser.')
     parser.add_argument(
-        '--use_qwen3_asr',
-        action='store_true',
-        help='Set this flag to use Qwen3-ASR instead of Whisper.'
-    )
-    parser.add_argument(
-        '--qwen3_context',
+        '--openai_transcription_model',
         type=str,
-        default=None,
-        help='Context text for Qwen3-ASR (e.g., terminology glossary, technical terms). This will be passed via system message to improve transcription accuracy.'
-    )
-    parser.add_argument(
-        '--qwen3_dtype',
-        type=str,
-        default='bfloat16',
-        choices=['bfloat16', 'float16', 'float32'],
-        help='Data type for Qwen3-ASR model weights.'
-    )
-    parser.add_argument(
-        '--qwen3_load_in_4bit',
-        action='store_true',
-        help='Load Qwen3-ASR model in 4-bit quantization using bitsandbytes (NF4). Reduces VRAM from ~3.5GB to ~1.3GB. Requires: pip install bitsandbytes'
-    )
+        default='gpt-4o-mini-transcribe',
+        help='OpenAI\'s transcription model name, whisper-1 / gpt-4o-mini-transcribe / gpt-4o-transcribe')
+    parser.add_argument('--use_qwen3_asr', action='store_true', help='Set this flag to use Qwen3-ASR.')
+    parser.add_argument('--qwen3_context', type=str, default=None, help='Initial context / terms for Qwen3-ASR.')
+    parser.add_argument('--qwen3_dtype', type=str, default='bfloat16', help='Dtype for Qwen3-ASR.')
+    parser.add_argument('--qwen3_load_in_4bit', action='store_true', help='Load Qwen3-ASR model in 4-bit.')
     parser.add_argument(
         '--qwen3_rms_threshold',
         type=float,
         default=0.005,
         help='RMS volume threshold for Qwen3-ASR silence filtering. Audio segments with RMS below this will be ignored to prevent hallucinations.'
     )
+
+    parser.add_argument('--use_hf_asr', action='store_true', help='Set this flag to use a HuggingFace ASR model specified by --model.')
+    parser.add_argument('--use_nemo_asr', action='store_true', help='Set this flag to use NVIDIA NeMo ASR.')
+    parser.add_argument('--nemo_asr_model', type=str, default='nvidia/parakeet-tdt_ctc-0.6b-ja', help='NeMo ASR model name.')
+    parser.add_argument('--nemo_asr_device', type=str, default='auto', help='Device used when running NeMo ASR.')
+    parser.add_argument('--nemo_asr_decoding', type=str, choices=['tdt', 'ctc'], default='tdt', help='Decoding mode for NeMo ASR.')
+
+    parser.add_argument('--qwen3_asr_model', type=str, default=None, help='Override --model for Qwen3-ASR.')
+    parser.add_argument('--qwen3_asr_dtype', type=str, default=None, help='Override --qwen3_dtype.')
+    parser.add_argument('--qwen3_asr_device_map', type=str, default=None, help='Override device map for Qwen3-ASR.')
+    parser.add_argument('--qwen3_asr_max_new_tokens', type=int, default=None, help='Override max new tokens for Qwen3-ASR.')
+    parser.add_argument('--qwen3_asr_quantization', type=str, choices=['none', 'bnb_8bit', 'bnb_4bit'], default=None, help='Quantization for Qwen3-ASR.')
+    parser.add_argument('--qwen3_asr_bnb_4bit_quant_type', type=str, choices=['nf4', 'fp4'], default=None, help='4-bit quant type.')
+    parser.add_argument('--qwen3_asr_bnb_4bit_use_double_quant', action='store_true', help='Double quant for Qwen3-ASR.')
+
     parser.add_argument(
-        '--openai_transcription_model',
-        type=str,
-        default='gpt-4o-mini-transcribe',
-        help='OpenAI\'s transcription model name, whisper-1 / gpt-4o-mini-transcribe / gpt-4o-transcribe')
-    parser.add_argument(
-        '--whisper_filters',
+        '--transcription_filters',
         type=str,
         default='emoji_filter,repetition_filter',
         help=
-        'Filters apply to whisper results, separated by ",". We provide emoji_filter, repetition_filter and japanese_stream_filter.'
+        'Filters apply to transcription results, separated by ",". We provide emoji_filter, repetition_filter and japanese_stream_filter.'
+    )
+    parser.add_argument(
+        '--whisper_filters',
+        type=str,
+        default=None,
+        help='(Deprecated) Use --transcription_filters instead.'
     )
     parser.add_argument(
         '--transcription_initial_prompt',
@@ -443,9 +655,7 @@ def cli():
         '--translation_glossary',
         type=str,
         default=None,
-        help='Terminology glossary as a JSON string, e.g. \'{"FPS":"每秒幀數","CPU":"中央處理器"}\'. '
-             'Only terms that appear in the current transcript are injected into the prompt, '
-             'saving tokens when the glossary is large.'
+        help='Terminology glossary as a JSON string, e.g. \'{"FPS":"每秒幀數","CPU":"中央處理器"}\'.'
     )
     parser.add_argument(
         '--translation_history_size',
@@ -477,6 +687,9 @@ def cli():
     parser.add_argument('--output_timestamps',
                         action='store_true',
                         help='Output the timestamp of the text when outputting the text.')
+    parser.add_argument('--show_latency_log',
+                        action='store_true',
+                        help='Print ASR and LLM latency in terminal logs.')
     parser.add_argument('--hide_transcribe_result', action='store_true', help='Hide the result of Whisper transcribe.')
     parser.add_argument(
         '--output_proxy',
@@ -505,11 +718,35 @@ def cli():
         type=int,
         default=None,
         help='If set, will send the result text to this Telegram chat. Needs to be used with \"--telegram_token\".')
+    parser.add_argument('--enable_subtitle_sharing',
+                        action='store_true',
+                        help='Start a public SSE subtitle sharing server from the CLI process.')
+    parser.add_argument('--subtitle_share_public_port',
+                        type=int,
+                        default=DEFAULT_PUBLIC_PORT,
+                        help='Public subtitle sharing port used with --enable_subtitle_sharing.')
+    parser.add_argument('--subtitle_share_host',
+                        type=str,
+                        default=DEFAULT_PUBLIC_HOST,
+                        help='Host/IP to bind the subtitle sharing server. Defaults to 0.0.0.0.')
+    parser.add_argument('--preload_asr_model',
+                        action='store_true',
+                        help='Preload the selected local ASR model before running.')
+    parser.add_argument('--keep_asr_loaded',
+                        action='store_true',
+                        help='Keep the preloaded ASR model loaded and prompt for the next URL after each task.')
 
     args = parser.parse_args().__dict__
 
     url = args.pop('URL')
     loopback = args.pop('loopback', False)
+
+    if url.lower() != 'device' and loopback is False and url.lower() != 'loopback' and not shutil.which('ffmpeg'):
+        if platform.system() == 'Windows':
+            print(f'{ERROR}ffmpeg not found. Please install it with: winget install ffmpeg')
+        else:
+            print(f'{ERROR}ffmpeg not found. Please install it with: sudo apt install ffmpeg')
+        sys.exit(1)
 
     if args['proxy']:
         os.environ['http_proxy'] = args['proxy']
@@ -525,13 +762,11 @@ def cli():
 
     # 處理 loopback 模式的前置檢查
     if loopback or url.lower() == 'loopback':
-        import sys
         if sys.platform != 'win32':
             print(f'{ERROR}WASAPI Loopback 僅支援 Windows 平台。')
             print(f'{INFO}請提供 URL、檔案路徑或使用以下指令查看設備：')
             print(f'  python -m stream_translator_gpt device --list_devices')
             sys.exit(1)
-        # 檢查 pyaudiowpatch 是否可用
         try:
             import pyaudiowpatch
             print(f'{INFO}已啟用 WASAPI Loopback 模式，將捕獲系統音頻輸出。')
@@ -542,44 +777,26 @@ def cli():
             sys.exit(1)
     
     if args['list_devices']:
-        import sys
-        import sounddevice as sd
-        
-        print("=== SoundDevice 設備列表 ===")
-        print(sd.query_devices())
-        
-        # 如果是 Windows 且 pyaudiowpatch 可用，顯示 loopback 設備
-        if sys.platform == 'win32':
+        if platform.system() == 'Windows':
+            import pyaudiowpatch as pa
+        else:
             try:
-                import pyaudiowpatch as pyaudio
-                p = pyaudio.PyAudio()
-                
-                print("\n=== WASAPI Loopback 設備（系統音頻捕獲） ===")
-                try:
-                    wasapi_info = p.get_host_api_info_by_type(pyaudio.paWASAPI)
-                    loopback_found = False
-                    
-                    for i in range(wasapi_info.get('deviceCount')):
-                        device = p.get_device_info_by_host_api_device_index(
-                            wasapi_info.get('index'), i
-                        )
-                        if device.get('maxInputChannels') > 0:
-                            # 檢查是否為 loopback
-                            is_loopback = 'loopback' in device.get('name', '').lower()
-                            if is_loopback or device.get('maxOutputChannels') == 0:
-                                print(f"  [{device.get('index')}] {device.get('name')} (Loopback)")
-                                loopback_found = True
-                    
-                    if not loopback_found:
-                        print("  未找到 loopback 設備。請確保系統有音頻輸出設備。")
-                except Exception as e:
-                    print(f"  查詢 WASAPI 設備時發生錯誤：{e}")
-                finally:
-                    p.terminate()
+                import pyaudio as pa
             except ImportError:
-                print("\n提示：安裝 pyaudiowpatch 可啟用 WASAPI loopback 功能：")
-                print("  pip install pyaudiowpatch")
-        
+                print("PyAudio is not installed. Unable to list devices.")
+                print("Debian/Ubuntu/Colab: apt install portaudio19-dev && pip install pyaudio")
+                exit(1)
+        pyaudio = pa.PyAudio()
+        print("Available audio devices:")
+        for i in range(pyaudio.get_device_count()):
+            dev = pyaudio.get_device_info_by_index(i)
+            if dev.get('maxInputChannels') > 0:
+                print(f"{dev['index']}: {dev['name']}")
+        if platform.system() == 'Windows':
+            print("\nLoopback devices (for system audio):")
+            for loopback_dev in pyaudio.get_loopback_device_info_generator():
+                print(f"{loopback_dev['index']}: {loopback_dev['name']}")
+        pyaudio.terminate()
         exit(0)
 
     if args['list_format']:
@@ -600,7 +817,7 @@ def cli():
         if args['model'] == 'large.en':
             print(
                 f'{ERROR}English model does not have large model, please choose from {{tiny.en, small.en, medium.en}}')
-            sys.exit(0)
+            sys.exit(1)
         if args['language'] != 'English' and args['language'] != 'en':
             if args['language'] == 'auto':
                 print(f'{WARNING}Using .en model, setting language from auto to English')
@@ -609,7 +826,7 @@ def cli():
                 print(
                     f'{ERROR}English model cannot be used to detect non english language, please choose a non .en model'
                 )
-                sys.exit(0)
+                sys.exit(1)
 
     transcription_encoder_flag_num = 0
     transcription_decoder_flag_num = 0
@@ -623,26 +840,80 @@ def cli():
     if args['use_qwen3_asr']:
         transcription_encoder_flag_num += 1
         transcription_decoder_flag_num += 1
+    if args['use_hf_asr']:
+        transcription_encoder_flag_num += 1
+        transcription_decoder_flag_num += 1
+    if args['use_nemo_asr']:
+        transcription_encoder_flag_num += 1
+        transcription_decoder_flag_num += 1
+
     if transcription_encoder_flag_num > 1:
-        print(f'{ERROR}Cannot use Faster Whisper, OpenAI Transcription API, or Qwen3-ASR at the same time')
-        sys.exit(0)
+        print(f'{ERROR}Cannot use multiple transcription encoder backends at the same time')
+        sys.exit(1)
     if transcription_decoder_flag_num > 1:
-        print(f'{ERROR}Cannot use Simul Streaming, OpenAI Transcription API, or Qwen3-ASR at the same time')
-        sys.exit(0)
+        print(f'{ERROR}Cannot use multiple transcription decoder backends at the same time')
+        sys.exit(1)
 
     if args['use_openai_transcription_api'] and not args['openai_api_key']:
         print(f'{ERROR}Please fill in the OpenAI API key when enabling OpenAI Transcription API')
-        sys.exit(0)
+        sys.exit(1)
+
+    if args['keep_asr_loaded'] and not args['preload_asr_model']:
+        print(f'{ERROR}--keep_asr_loaded requires --preload_asr_model')
+        sys.exit(1)
+
+    if args['preload_asr_model'] and args['use_openai_transcription_api']:
+        print(f'{ERROR}OpenAI Transcription API is remote and does not need ASR preloading')
+        sys.exit(1)
 
     if args['translation_prompt'] and not (args['openai_api_key'] or args['google_api_key']):
         print(f'{ERROR}Please fill in the OpenAI / Google API key when enabling LLM translation')
-        sys.exit(0)
+        sys.exit(1)
+
+    if args['gpt_base_url'] is not None:
+        print(
+            f'{WARNING}--gpt_base_url is deprecated and will be removed in future versions. Please use --openai_base_url instead.'
+        )
+        if args['openai_base_url'] is None:
+            args['openai_base_url'] = args['gpt_base_url']
+
+    if args['gemini_base_url'] is not None:
+        print(
+            f'{WARNING}--gemini_base_url is deprecated and will be removed in future versions. Please use --google_base_url instead.'
+        )
+        if args['google_base_url'] is None:
+            args['google_base_url'] = args['gemini_base_url']
+
+    args.pop('gpt_base_url', None)
+    args.pop('gemini_base_url', None)
 
     if args['language'] == 'auto':
         args['language'] = None
 
+    if args['whisper_filters'] is not None:
+        print(
+            f'{WARNING}--whisper_filters is deprecated and will be removed in future versions. Please use --transcription_filters instead.'
+        )
+        if args['transcription_filters'] == 'emoji_filter,repetition_filter':
+            args['transcription_filters'] = args['whisper_filters']
+    args.pop('whisper_filters', None)
+
     args.pop('list_format', None)
     args.pop('list_devices', None)
+
+    if args['output_file_path']:
+        output_dir = os.path.dirname(os.path.abspath(args['output_file_path']))
+        if not os.path.isdir(output_dir):
+            print(f'{ERROR}Output directory does not exist: {output_dir}')
+            sys.exit(1)
+
+    preload_asr_model = args.pop('preload_asr_model', False)
+    keep_asr_loaded = args.pop('keep_asr_loaded', False)
+    if preload_asr_model:
+        args['keep_asr_loaded'] = keep_asr_loaded
+        run_preloaded_cli(url, args)
+        return
+
     main(url, loopback=loopback, **args)
 
 

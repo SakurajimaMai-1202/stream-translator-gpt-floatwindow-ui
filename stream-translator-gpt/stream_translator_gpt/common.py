@@ -31,6 +31,9 @@ class TranslationTask:
         self.time_range = time_range
         self.start_time = None
         self.translation_failed = False
+        self.asr_latency_ms = None
+        self.llm_latency_ms = None
+        self._llm_latency_started_at = None
 
 
 class LoopWorkerBase(ABC):

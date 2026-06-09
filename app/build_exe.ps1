@@ -6,6 +6,7 @@ $scriptDir   = $PSScriptRoot
 $frontendDir = Join-Path $scriptDir "frontend"
 $backendDir  = Join-Path $scriptDir "backend"
 $pythonCandidates = @(
+    (Join-Path $scriptDir ".venv-rocm-build\Scripts\python.exe"),
     (Join-Path $scriptDir "..\.venv\Scripts\python.exe"),
     (Join-Path $scriptDir "venv\Scripts\python.exe")
 )
@@ -16,9 +17,9 @@ foreach ($candidate in $pythonCandidates) {
         break
     }
 }
-$distDir     = Join-Path $scriptDir "dist"
-$buildDir    = Join-Path $scriptDir "build"
-$appName     = "Stream Translator"
+$distDir     = Join-Path $scriptDir "dist-rocm"
+$buildDir    = Join-Path $scriptDir "build-rocm"
+$appName     = "Stream Translator ROCm"
 
 Write-Host "=== Stream Translator - Portable Build ===" -ForegroundColor Cyan
 Write-Host ""
@@ -49,9 +50,8 @@ try {
     Write-Host "[2b/9] Validate ML packages" -ForegroundColor Yellow
     $missingPkgs = @()
     $checkPkgs = @(
-        @{ name = 'torch';          import = 'torch' },
-        @{ name = 'faster_whisper'; import = 'faster_whisper' },
-        @{ name = 'openai_whisper'; import = 'whisper' }
+        @{ name = 'torch';    import = 'torch' },
+        @{ name = 'qwen_asr'; import = 'qwen_asr' }
     )
     foreach ($pkg in $checkPkgs) {
         & $venvPython -c "import $($pkg.import)" 2>&1 | Out-Null
@@ -68,8 +68,8 @@ try {
         $missingPkgs | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red }
         Write-Host ""
         Write-Host "Install dependencies first:" -ForegroundColor Yellow
-        Write-Host "  venv\Scripts\pip install torch --extra-index-url https://download.pytorch.org/whl/cu124" -ForegroundColor Gray
-        Write-Host "  venv\Scripts\pip install -r requirements_full.txt" -ForegroundColor Gray
+        Write-Host "  .venv-rocm-build\Scripts\pip install <ROCm PyTorch wheel>" -ForegroundColor Gray
+        Write-Host "  .venv-rocm-build\Scripts\pip install -r requirements_full.txt" -ForegroundColor Gray
         exit 1
     }
 
@@ -101,7 +101,7 @@ try {
     Write-Host "  OK clean done" -ForegroundColor Green
 
     Write-Host "[5/9] Run PyInstaller (onedir)" -ForegroundColor Yellow
-    & $venvPython -m PyInstaller --clean "stream-translator-llm-gui.spec"
+    & $venvPython -m PyInstaller --clean --distpath "$distDir" --workpath "$buildDir" "stream-translator-llm-gui.spec"
     if ($LASTEXITCODE -ne 0) {
         throw "PyInstaller failed"
     }
@@ -197,22 +197,8 @@ try {
         Write-Host "  OK ffmpeg copied: $ffmpegDst" -ForegroundColor Green
     }
 
-    Write-Host "[8/9] Copy llama binaries" -ForegroundColor Yellow
-    $llamaSrc = Join-Path $scriptDir "..\llama"
-    $llamaDst = Join-Path $outputDir "llama"
-    if (-not (Test-Path $llamaSrc)) {
-        Write-Host "  WARN: llama source not found: $llamaSrc" -ForegroundColor Yellow
-        Write-Host "  llama copy skipped (llama features unavailable)" -ForegroundColor Yellow
-    } else {
-        New-Item -ItemType Directory -Force -Path $llamaDst | Out-Null
-        Get-ChildItem $llamaSrc -File | ForEach-Object {
-            if ($_.Extension -in @('.exe', '.dll') -or $_.Name -like 'llama*') {
-                Copy-Item $_.FullName $llamaDst
-                Write-Host "  Copied: $($_.Name)" -ForegroundColor Gray
-            }
-        }
-        Write-Host "  OK llama copied: $llamaDst" -ForegroundColor Green
-    }
+    Write-Host "[8/9] Skip llama binaries (ROCm ASR-only build)" -ForegroundColor Yellow
+    Write-Host "  ROCm package only targets Qwen3-ASR + VAD. Local LLM runtime is not included." -ForegroundColor Gray
 
     $zipPath = Join-Path $distDir "$appName.zip"
     Write-Host "[9/9] Create zip archive" -ForegroundColor Yellow
@@ -235,9 +221,9 @@ try {
     Write-Host "  3. Run Stream Translator.exe"
     Write-Host ""
     Write-Host "Notes:" -ForegroundColor Yellow
-    Write-Host "  - Llama model files (.gguf) are not included."
-    Write-Host "  - GPU acceleration needs NVIDIA driver >= 550.x."
-    Write-Host "  - CPU mode works without GPU."
+    Write-Host "  - Local LLM runtime and .gguf model files are not included."
+    Write-Host "  - GPU acceleration needs an AMD ROCm PyTorch compatible driver/runtime."
+    Write-Host "  - This is an experimental ROCm ASR-only build."
 
 } catch {
     Write-Host ""

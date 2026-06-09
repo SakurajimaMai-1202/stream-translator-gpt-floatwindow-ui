@@ -4,6 +4,7 @@ PyQt6 + WebView 整合層
 """
 
 import sys
+import os
 import subprocess
 import socket
 import time
@@ -83,15 +84,18 @@ class BackendProcess(QObject):
             # 開發模式：使用 uvicorn 模組並從專案根目錄啟動
             self.process.setWorkingDirectory(str(self.backend_dir.parent))
             self.process.setProgram(sys.executable)
-            self.process.setArguments([
+            args = [
                 "-m", "uvicorn",
                 "backend.main:app",
                 "--host", "0.0.0.0",
                 "--port", str(self.port),
-                "--reload",
                 "--no-access-log"
-            ])
-            logger.info(f"啟動後端 (Dev): {sys.executable} -m uvicorn backend.main:app --host 0.0.0.0 --port {self.port} --reload")
+            ]
+            if os.environ.get("STREAM_TRANSLATOR_BACKEND_RELOAD") == "1":
+                args.append("--reload")
+            self.process.setArguments(args)
+            reload_note = " --reload" if "--reload" in args else ""
+            logger.info(f"啟動後端 (Dev): {sys.executable} -m uvicorn backend.main:app --host 0.0.0.0 --port {self.port}{reload_note}")
 
         if getattr(sys, 'frozen', False):
             self.process.setWorkingDirectory(str(self.backend_dir))

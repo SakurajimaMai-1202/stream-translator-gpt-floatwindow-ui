@@ -52,12 +52,16 @@ def resolve_app_icon() -> QIcon:
 class UI2Application:
     """UI2 應用程式管理器"""
     
-    def __init__(self, dev_mode: bool = True):
+    def __init__(self, dev_mode: bool = True, disable_gpu: bool = False):
         self.dev_mode = dev_mode
-        # 設定 OpenGL 上下文共享，解決 WebView 閃爍問題
-        QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
-        # 針對某些環境的 GPU 加速優化
-        QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseDesktopOpenGL)
+        self.disable_gpu = disable_gpu
+        if self.disable_gpu:
+            logger.info("停用語音網頁硬體加速 (AA_ShareOpenGLContexts, AA_UseDesktopOpenGL)")
+        else:
+            # 設定 OpenGL 上下文共享，解決 WebView 閃爍問題
+            QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
+            # 針對某些環境的 GPU 加速優化
+            QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseDesktopOpenGL)
         
         self.app = QApplication(sys.argv)
         self.app.setApplicationName("Stream Translator")
@@ -155,7 +159,9 @@ class UI2Application:
         self.base_url = base_url
         
         logger.info(f"建立主視窗 (Base URL: {base_url})")
-        self.home_window = HomeWindow(base_url, on_open_subtitle=self.open_subtitle_window)
+        from backend.core.config_manager import ConfigManager
+        config_manager = ConfigManager()
+        self.home_window = HomeWindow(base_url, config_manager=config_manager, on_open_subtitle=self.open_subtitle_window)
         
         # 連接視窗關閉信號到 cleanup
         self.home_window.destroyed.connect(self.cleanup)
@@ -301,6 +307,11 @@ def main():
         default=8010,
         help='後端埠號（內部使用）'
     )
+    parser.add_argument(
+        '--disable-gpu',
+        action='store_true',
+        help='停用 GPU 網頁硬體加速（解決某些顯示卡閃爍或黑屏問題）'
+    )
     args = parser.parse_args()
 
     if args.backend:
@@ -310,7 +321,13 @@ def main():
     try:
         is_frozen = getattr(sys, 'frozen', False)
         dev_mode = (not args.prod) and (not is_frozen)
-        app = UI2Application(dev_mode=dev_mode)
+        
+        if args.disable_gpu:
+            import os
+            os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu --disable-gpu-compositing"
+            logger.info("已設定 Chromium 旗標以停用 GPU 加速")
+            
+        app = UI2Application(dev_mode=dev_mode, disable_gpu=args.disable_gpu)
         exit_code = app.run()
         app.cleanup()
         sys.exit(exit_code)

@@ -24,6 +24,8 @@ const backgroundOpacity = ref(50);
 
 // 初始化旗標：防止 watch 在設定載入完成前覆蓋正確值
 const isInitializing = ref(true);
+const isApplyingExternalSettings = ref(false);
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
 // 字幕歷史
 const subtitleHistory = ref<Array<{
@@ -128,7 +130,7 @@ function initSettingsChannel() {
       const settings = event.data;
       if (settings) {
         console.log('從設定視窗收到更新:', settings);
-        applySettings(settings);
+        applySettings(settings, true);
       }
     };
     console.log('設定 BroadcastChannel 已初始化');
@@ -137,7 +139,10 @@ function initSettingsChannel() {
   }
 }
 
-function applySettings(settings: any) {
+function applySettings(settings: any, external = false) {
+  if (external) {
+    isApplyingExternalSettings.value = true;
+  }
   fontSize.value = settings.fontSize ?? fontSize.value;
   fontWeight.value = settings.fontWeight ?? fontWeight.value;
   opacity.value = settings.opacity ?? opacity.value;
@@ -152,6 +157,11 @@ function applySettings(settings: any) {
   timestampColor.value = settings.timestampColor ?? timestampColor.value;
   backgroundColor.value = settings.backgroundColor ?? backgroundColor.value;
   backgroundOpacity.value = settings.backgroundOpacity ?? backgroundOpacity.value;
+  if (external) {
+    queueMicrotask(() => {
+      isApplyingExternalSettings.value = false;
+    });
+  }
   console.log('設定已即時更新，原文顏色:', textColor.value, '翻譯顏色:', translatedColor.value, '時間碼顏色:', timestampColor.value);
 }
 
@@ -211,6 +221,25 @@ function formatTimestamp(date: Date): string {
 }
 
 // 儲存設定到 localStorage
+function buildSettings() {
+  return {
+    fontSize: fontSize.value,
+    fontWeight: fontWeight.value,
+    opacity: opacity.value,
+    showOriginal: showOriginal.value,
+    showTranslated: showTranslated.value,
+    showTimestamp: showTimestamp.value,
+    position: position.value,
+    autoScroll: autoScroll.value,
+    maxDisplayCount: maxDisplayCount.value,
+    textColor: textColor.value,
+    translatedColor: translatedColor.value,
+    timestampColor: timestampColor.value,
+    backgroundColor: backgroundColor.value,
+    backgroundOpacity: backgroundOpacity.value
+  };
+}
+
 async function saveSettings() {
   const settings = {
     fontSize: fontSize.value,
@@ -241,6 +270,17 @@ async function saveSettings() {
   console.log('💾 已儲存字幕設定');
 }
 
+function scheduleSaveSettings() {
+  localStorage.setItem('subtitleSettings', JSON.stringify(buildSettings()));
+  if (saveTimer !== null) {
+    clearTimeout(saveTimer);
+  }
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    void saveSettings();
+  }, 350);
+}
+
 async function loadSettingsFromBackend() {
   try {
     const response = await fetch('/api/config');
@@ -249,7 +289,7 @@ async function loadSettingsFromBackend() {
     const settings = config?.subtitle_settings;
     if (!settings) return false;
 
-    applySettings(settings);
+    applySettings(settings, true);
     return true;
   } catch (e) {
     console.error('讀取字幕設定失敗:', e);
@@ -322,6 +362,11 @@ onMounted(async () => {
 onUnmounted(() => {
   // 移除事件監聽器
   window.removeEventListener('storage', handleStorageChange);
+  if (saveTimer !== null) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    void saveSettings();
+  }
   // 關閉 BroadcastChannel
   if (subtitleChannel) {
     subtitleChannel.close();
@@ -336,7 +381,7 @@ function handleStorageChange(e: StorageEvent) {
   if (e.key === 'subtitleSettings' && e.newValue) {
     try {
       const settings = JSON.parse(e.newValue);
-      applySettings(settings);
+      applySettings(settings, true);
       console.log('從 StorageEvent 更新設定');
     } catch (e) {
       console.error('即時更新設定失敗:', e);
@@ -346,8 +391,8 @@ function handleStorageChange(e: StorageEvent) {
 
 // 自動儲存設定（初始化完成後才觸發）
 watch([fontSize, fontWeight, opacity, showOriginal, showTranslated, showTimestamp, position, autoScroll, maxDisplayCount, textColor, translatedColor, timestampColor, backgroundColor, backgroundOpacity], () => {
-  if (!isInitializing.value) {
-    saveSettings();
+  if (!isInitializing.value && !isApplyingExternalSettings.value) {
+    scheduleSaveSettings();
   }
 });
 

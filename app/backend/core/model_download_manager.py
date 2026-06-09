@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 SUPPORTED_QWEN3_MODELS = {
     "Qwen/Qwen3-ASR-0.6B",
     "Qwen/Qwen3-ASR-1.7B",
+    "neosophie/Qwen3-ASR-1.7B-JA",
 }
 
 SUPPORTED_FASTER_WHISPER_MODELS = {
@@ -188,7 +189,7 @@ class ModelDownloadManager:
                 size_bytes = int(getattr(repo, "size_on_disk", 0) or 0)
                 cache_path = str(getattr(repo, "repo_path", ""))
 
-                if repo_id.startswith("Qwen/Qwen3-ASR-"):
+                if repo_id in SUPPORTED_QWEN3_MODELS or repo_id.startswith("Qwen/Qwen3-ASR-"):
                     models.append(
                         DownloadedModelInfo(
                             engine="qwen3-asr",
@@ -239,7 +240,7 @@ class ModelDownloadManager:
             except OSError:
                 pass
 
-            if repo_id.startswith("Qwen/Qwen3-ASR-"):
+            if repo_id in SUPPORTED_QWEN3_MODELS or repo_id.startswith("Qwen/Qwen3-ASR-"):
                 models.append(
                     DownloadedModelInfo(
                         engine="qwen3-asr",

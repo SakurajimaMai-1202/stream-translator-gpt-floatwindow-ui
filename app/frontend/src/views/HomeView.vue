@@ -2,13 +2,13 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
 import { useTranslationStore } from '../stores/translation';
+import { useLlamaStore } from '../stores/llama';
 import { translationApi, configApi, serverApi, systemApi, type AudioSource, type AudioDevice, type Config, type FfmpegCheckResult } from '../services/api';
 import UiSelect, { type UiSelectOption } from '../components/UiSelect.vue';
 import { useAppSyncEvents } from '../composables/useAppSyncEvents';
 
 const router = useRouter();
 const store = useTranslationStore();
-import { useLlamaStore } from '../stores/llama';
 const llamaStore = useLlamaStore();
 
 // 公開端口（分享用）
@@ -161,6 +161,7 @@ async function toggleSubtitleSharing() {
 // 基本控制
 const urlInput = ref('');
 const isLoading = ref(false);
+const showAdvancedConfig = ref(true);
 
 // 音訊來源選擇
 const audioSource = ref<AudioSource>('url');
@@ -172,7 +173,8 @@ const isLoadingDevices = ref(false);
 const whisperModels = ['tiny', 'base', 'small', 'medium', 'large-v2', 'large-v3', 'large-v3-turbo'];
 const qwen3AsrModels = [
   { value: 'Qwen/Qwen3-ASR-1.7B', label: 'Qwen3-ASR-1.7B (推薦)' },
-  { value: 'Qwen/Qwen3-ASR-0.6B', label: 'Qwen3-ASR-0.6B (更快)' }
+  { value: 'Qwen/Qwen3-ASR-0.6B', label: 'Qwen3-ASR-0.6B (更快)' },
+  { value: 'neosophie/Qwen3-ASR-1.7B-JA', label: 'Qwen3-ASR-1.7B-JA (Japanese fine-tune)' }
 ];
 const inputLanguages = [
   { value: 'auto', label: '自動偵測' },
@@ -190,12 +192,13 @@ const outputLanguages = [
 ];
 
 const deviceOptions = computed<UiSelectOption[]>(() => {
-  const defaultDevice = availableDevices.value.find((d) => d.is_default);
+  const list = availableDevices.value || [];
+  const defaultDevice = list.find((d) => d?.is_default);
   const nullLabel = defaultDevice
     ? `⭐ 預設: ${defaultDevice.name} (${defaultDevice.sample_rate}Hz)`
     : '自動選擇預設設備';
   const base: UiSelectOption[] = [{ value: null, label: nullLabel }];
-  const deviceItems = availableDevices.value.map((device) => ({
+  const deviceItems = list.map((device) => ({
     value: device.index,
     label: `[${device.index}] ${device.name} (${device.sample_rate}Hz)`
   }));
@@ -230,15 +233,18 @@ const backendOptions = computed<UiSelectOption[]>(() => {
   const base: UiSelectOption[] = [
     { value: 'none', label: '不翻譯' },
     { value: 'gpt', label: 'OpenAI GPT' },
-    { value: 'gemini', label: 'Google Gemini' }
+    { value: 'gemini', label: 'Google Gemini' },
+    { value: 'llama', label: '🦙 Llama (本地)' }
   ];
 
-  const customModels = store.config.translation?.custom_models || [];
-  const custom = customModels.map((model) => ({
-    value: `custom:${model.name}`,
-    label: model.name,
-    group: '自訂模型'
-  }));
+  const customModels = store.config?.translation?.custom_models || [];
+  const custom = customModels
+    .filter((model: any) => model && model.name)
+    .map((model: any) => ({
+      value: `custom:${model.name}`,
+      label: model.name,
+      group: '自訂模型'
+    }));
 
   return [...base, ...custom];
 });
@@ -246,13 +252,13 @@ const backendOptions = computed<UiSelectOption[]>(() => {
 const llamaPresetOptions = computed<UiSelectOption[]>(() => {
   const options: UiSelectOption[] = [{ value: '', label: '-- 自訂參數 (未保存) --' }];
 
-  const system = Object.keys(llamaStore.systemPresets).map((name) => ({
+  const system = Object.keys(llamaStore.systemPresets || {}).map((name) => ({
     value: name,
     label: name,
     group: '系統預設'
   }));
 
-  const custom = Object.keys(llamaStore.customPresets).map((name) => ({
+  const custom = Object.keys(llamaStore.customPresets || {}).map((name) => ({
     value: `custom:${name}`,
     label: `📦 ${name}`,
     group: '我的配置'
@@ -375,9 +381,10 @@ interface ConfigWarning {
 const configWarnings = computed<ConfigWarning[]>(() => {
   const warnings: ConfigWarning[] = [];
   const config = store.config;
+  if (!config) return warnings;
   
   const requiresUrlInput = audioSource.value === 'url' || audioSource.value === 'file';
-  if (requiresUrlInput && !urlInput.value.trim()) {
+  if (requiresUrlInput && !(urlInput.value || '').trim()) {
     warnings.push({
       level: 'warning',
       message: audioSource.value === 'url' ? '未設定直播 URL' : '未設定檔案路徑',
@@ -386,7 +393,7 @@ const configWarnings = computed<ConfigWarning[]>(() => {
   }
 
   const requiresDeviceSelection = audioSource.value === 'microphone' || audioSource.value === 'system_audio';
-  if (requiresDeviceSelection && availableDevices.value.length === 0 && isLoadingDevices.value === false) {
+  if (requiresDeviceSelection && (availableDevices.value || []).length === 0 && isLoadingDevices.value === false) {
     warnings.push({
       level: 'warning',
       message: '設備列表尚未載入，將使用系統預設設備'
@@ -412,12 +419,12 @@ const configWarnings = computed<ConfigWarning[]>(() => {
   return warnings;
 });
 
-const hasErrors = computed(() => configWarnings.value.some(w => w.level === 'error'));
+const hasErrors = computed(() => (configWarnings.value || []).some(w => w.level === 'error'));
 const isConfigReady = computed(() => {
   if (hasErrors.value) return false;
 
   if (audioSource.value === 'url' || audioSource.value === 'file') {
-    return !!urlInput.value.trim();
+    return !!(urlInput.value || '').trim();
   }
 
   if (audioSource.value === 'microphone' || audioSource.value === 'system_audio') {
@@ -509,7 +516,9 @@ async function applyConfigToRefs(cfg: Config) {
 
     lastAppliedHomeConfigSnapshot.value = buildHomeConfigSnapshotFromConfig(cfg);
   } finally {
-    isApplyingExternalConfig.value = false;
+    nextTick(() => {
+      isApplyingExternalConfig.value = false;
+    });
   }
 }
 
@@ -569,6 +578,20 @@ watch(() => store.statusMessage, (newVal) => {
 watch(() => store.errorMessage, (newVal) => {
   if (newVal) {
     addLog(`❌ ${newVal}`);
+  }
+});
+
+watch(translationEnabled, (newVal) => {
+  if (newVal && selectedBackend.value === 'none') {
+    selectedBackend.value = 'gpt';
+  }
+});
+
+watch(selectedBackend, (newVal) => {
+  if (newVal === 'none') {
+    translationEnabled.value = false;
+  } else {
+    translationEnabled.value = true;
   }
 });
 
@@ -771,316 +794,352 @@ function getFileName(path: string): string {
   if (!path) return '';
   return path.split(/[\\/]/).pop() || path;
 }
+
+function clearLogs() {
+  logs.value = [];
+}
 </script>
 
 <template>
-  <div class="min-h-screen bg-gradient-to-br from-slate-900 via-cyan-900 to-slate-900 p-6">
-    <div class="max-w-5xl mx-auto">
-      <!-- Header -->
-      <div class="text-center mb-8">
-        <h1 class="text-4xl font-bold text-white mb-2 tracking-wide">
-          🎙️ Stream Translator
-        </h1>
-        <p class="text-blue-300 text-lg">即時字幕翻譯系統</p>
+  <div class="p-4 sm:p-5 h-full max-w-7xl mx-auto flex flex-col justify-between">
+    <div>
+      <!-- Header Status Bar -->
+      <div class="flex items-center justify-between mb-4 border-b border-white/5 pb-2.5 gap-3">
+        <div class="flex items-center gap-3">
+          <!-- Status dot -->
+          <div class="flex items-center gap-1.5 bg-white/5 px-2.5 py-0.5 rounded-full border border-white/10 text-[10px]">
+            <div :class="[
+              'w-1.5 h-1.5 rounded-full',
+              store.isRunning ? 'bg-green-400 animate-pulse shadow shadow-green-400/50' : 'bg-gray-500'
+            ]"></div>
+            <span class="text-white/70 font-semibold">
+              {{ store.isRunning ? '即時轉譯中' : '系統閒置' }}
+            </span>
+          </div>
+
+          <!-- Configuration Status dot -->
+          <div class="flex items-center gap-1.5 bg-white/5 px-2.5 py-0.5 rounded-full border border-white/10 text-[10px]">
+            <div :class="[
+              'w-1.5 h-1.5 rounded-full',
+              hasErrors ? 'bg-red-400 animate-pulse' : (configWarnings.length > 0 ? 'bg-yellow-400 animate-pulse' : 'bg-green-400')
+            ]"></div>
+            <span class="text-white/70 font-semibold">
+              {{ hasErrors ? '配置錯誤' : (configWarnings.length > 0 ? '配置警告' : '配置正常') }}
+            </span>
+          </div>
+        </div>
+        <div v-if="store.currentUrl" class="text-white/40 text-[10px] truncate max-w-xs sm:max-w-md font-mono bg-white/5 px-2.5 py-0.5 rounded-lg border border-white/5">
+          {{ store.currentUrl }}
+        </div>
       </div>
 
-      <div v-if="showFfmpegWarning" class="mb-4 p-4 bg-yellow-500/20 border border-yellow-500/50 text-yellow-200 rounded-xl flex justify-between items-start gap-3">
-        <div>
-          <div class="font-semibold">⚠️ 未偵測到 ffmpeg</div>
-          <p class="text-sm text-yellow-100/90 mt-1">
+      <!-- System notification blocks -->
+      <div v-if="showFfmpegWarning" class="mb-4 p-3.5 bg-yellow-500/10 border border-yellow-500/30 text-yellow-200 rounded-xl flex justify-between items-start gap-3 backdrop-blur-xl">
+        <div class="flex-1">
+          <div class="font-bold text-sm">⚠️ 未偵測到 ffmpeg</div>
+          <p class="text-xs text-yellow-100/70 mt-1 leading-relaxed">
             目前系統找不到 ffmpeg，可先安裝或確認路徑。這不會阻止 UI 啟動，但音訊處理可能失敗。
           </p>
         </div>
-        <button @click="ffmpegWarningDismissed = true" class="hover:text-white font-bold text-xl leading-none">✕</button>
+        <button @click="ffmpegWarningDismissed = true" class="text-yellow-400/60 hover:text-white transition font-bold text-lg leading-none p-1">✕</button>
       </div>
 
-      <!-- 配置警告面板 -->
-      <div v-if="configWarnings.length > 0" class="mb-6 p-4 rounded-xl backdrop-blur-xl"
-        :class="hasErrors ? 'bg-red-500/20 border border-red-500/50' : 'bg-yellow-500/20 border border-yellow-500/50'">
+      <!-- 配置警告面板 (僅在有警告/錯誤時動態顯示) -->
+      <div v-if="configWarnings.length > 0" class="mb-4 p-4 rounded-xl backdrop-blur-xl bg-slate-900/60 border"
+        :class="hasErrors ? 'border-red-500/30 bg-red-500/10' : 'border-yellow-500/30 bg-yellow-500/10'">
         <div class="flex items-center gap-2 mb-2">
-          <span class="text-xl">{{ hasErrors ? '❌' : '⚠️' }}</span>
-          <span class="font-semibold text-white">配置檢查</span>
+          <span class="text-base">{{ hasErrors ? '❌' : '⚠️' }}</span>
+          <span class="font-bold text-white text-xs tracking-wider uppercase">配置檢查</span>
         </div>
-        <ul class="space-y-1">
+        <ul class="space-y-1.5">
           <li v-for="(warning, idx) in configWarnings" :key="idx" 
-            class="flex items-center justify-between text-sm"
-            :class="warning.level === 'error' ? 'text-red-300' : 'text-yellow-300'">
-            <span>{{ warning.message }}</span>
+            class="flex items-center justify-between text-xs"
+            :class="warning.level === 'error' ? 'text-red-300/90' : 'text-yellow-300/90'">
+            <span class="flex items-center gap-2">
+              <span class="w-1.5 h-1.5 rounded-full" :class="warning.level === 'error' ? 'bg-red-400' : 'bg-yellow-400'"></span>
+              {{ warning.message }}
+            </span>
             <button v-if="warning.page" @click="goToWarningPage(warning.page)"
-              class="px-3 py-1 bg-white/10 hover:bg-white/20 rounded text-xs transition">
+              class="px-2 py-0.5 bg-white/10 hover:bg-white/20 text-white rounded text-[10px] transition border border-white/5">
               前往設定
             </button>
           </li>
         </ul>
       </div>
 
-      <div v-else class="mb-6 p-4 rounded-xl backdrop-blur-xl bg-green-500/20 border border-green-500/50">
-        <div class="flex items-center gap-2">
-          <span class="text-xl">✅</span>
-          <span class="font-semibold text-green-300">配置正常，可以啟動</span>
-        </div>
-      </div>
-
       <!-- Error/Status Messages -->
-      <div v-if="store.errorMessage" class="mb-4 p-4 bg-red-500/30 backdrop-blur-xl border border-red-500/50 text-red-200 rounded-xl flex justify-between items-center">
-        <span>{{ store.errorMessage }}</span>
-        <button @click="store.clearError()" class="hover:text-white font-bold text-xl">✕</button>
+      <div v-if="store.errorMessage" class="mb-4 p-3.5 bg-red-500/20 backdrop-blur-xl border border-red-500/30 text-red-200 rounded-xl flex justify-between items-center text-sm">
+        <span class="flex items-center gap-2"><span>❌</span> {{ store.errorMessage }}</span>
+        <button @click="store.clearError()" class="text-red-400 hover:text-white transition font-bold text-lg p-1">✕</button>
       </div>
 
-      <div v-if="store.statusMessage" class="mb-4 p-4 bg-green-500/30 backdrop-blur-xl border border-green-500/50 text-green-200 rounded-xl flex justify-between items-center">
-        <span>{{ store.statusMessage }}</span>
-        <button @click="store.clearStatus()" class="hover:text-white font-bold text-xl">✕</button>
+      <div v-if="store.statusMessage" class="mb-4 p-3.5 bg-green-500/20 backdrop-blur-xl border border-green-500/30 text-green-200 rounded-xl flex justify-between items-center text-sm">
+        <span class="flex items-center gap-2"><span>ℹ️</span> {{ store.statusMessage }}</span>
+        <button @click="store.clearStatus()" class="text-green-400 hover:text-white transition font-bold text-lg p-1">✕</button>
       </div>
 
-      <!-- Main Control Panel -->
-      <div class="bg-slate-900/90 rounded-2xl border border-white/20 shadow-2xl p-6 mb-6">
-        <!-- 音訊來源選擇 -->
-        <div class="mb-6">
-          <label class="block text-white/80 font-semibold mb-3">🎵 音訊來源</label>
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <button
-              @click="audioSource = 'url'; onAudioSourceChange()"
-              :disabled="store.isRunning"
-              :class="[
-                'px-4 py-3 rounded-xl font-medium transition-all',
-                audioSource === 'url' 
-                  ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/30' 
-                  : 'bg-white/5 text-white/70 hover:bg-white/10 border border-white/20',
-                store.isRunning ? 'opacity-50 cursor-not-allowed' : ''
-              ]"
-            >
-              🌐 URL 串流
-            </button>
-            <button
-              @click="audioSource = 'file'; onAudioSourceChange()"
-              :disabled="store.isRunning"
-              :class="[
-                'px-4 py-3 rounded-xl font-medium transition-all',
-                audioSource === 'file' 
-                  ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/30' 
-                  : 'bg-white/5 text-white/70 hover:bg-white/10 border border-white/20',
-                store.isRunning ? 'opacity-50 cursor-not-allowed' : ''
-              ]"
-            >
-              📁 本地檔案
-            </button>
-            <button
-              @click="audioSource = 'microphone'; onAudioSourceChange()"
-              :disabled="store.isRunning"
-              :class="[
-                'px-4 py-3 rounded-xl font-medium transition-all',
-                audioSource === 'microphone' 
-                  ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/30' 
-                  : 'bg-white/5 text-white/70 hover:bg-white/10 border border-white/20',
-                store.isRunning ? 'opacity-50 cursor-not-allowed' : ''
-              ]"
-            >
-              🎤 麥克風
-            </button>
-            <button
-              @click="audioSource = 'system_audio'; onAudioSourceChange()"
-              :disabled="store.isRunning"
-              :class="[
-                'px-4 py-3 rounded-xl font-medium transition-all',
-                audioSource === 'system_audio' 
-                  ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/30' 
-                  : 'bg-white/5 text-white/70 hover:bg-white/10 border border-white/20',
-                store.isRunning ? 'opacity-50 cursor-not-allowed' : ''
-              ]"
-            >
-              🔊 系統音訊
-            </button>
-          </div>
-        </div>
-
-        <!-- URL/檔案輸入 -->
-        <div v-if="audioSource === 'url' || audioSource === 'file'" class="mb-6">
-          <label class="block text-white/80 font-semibold mb-2">
-            {{ audioSource === 'url' ? '直播 URL' : '檔案路徑' }}
-          </label>
-          <input
-            v-model="urlInput"
-            type="text"
-            spellcheck="false"
-            :placeholder="audioSource === 'url' ? 'https://www.youtube.com/watch?v=... 或 Twitch/X 等' : 'C:\\path\\to\\video.mp4'"
-            :disabled="store.isRunning"
-            class="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-white/40 focus:outline-none focus:border-blue-400 disabled:opacity-50 disabled:cursor-not-allowed transition"
-          />
-        </div>
-
-        <!-- 設備選擇 -->
-        <div v-if="audioSource === 'microphone' || audioSource === 'system_audio'" class="mb-6">
-          <label class="block text-white/80 font-semibold mb-2">
-            {{ audioSource === 'microphone' ? '🎤 選擇麥克風' : '🔊 選擇系統音訊設備' }}
-          </label>
-          <div class="flex gap-3">
-            <UiSelect
-              v-model="selectedDeviceIndex"
-              :options="deviceOptions"
-              :disabled="store.isRunning || isLoadingDevices"
-              button-class="flex-1 px-4 py-3 border-2 border-white/20 rounded-xl"
-            />
-            <button
-              @click="loadDevices()"
-              :disabled="store.isRunning || isLoadingDevices"
-              class="px-4 py-3 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl transition border border-white/20"
-              title="重新整理設備列表"
-            >
-              {{ isLoadingDevices ? '⏳' : '🔄' }}
-            </button>
-          </div>
-          <p v-if="availableDevices.length > 0" class="text-white/50 text-sm mt-2">
-            找到 {{ availableDevices.length }} 個設備
-          </p>
-        </div>
-
-        <!-- 🔧 新增: 翻譯開關 -->
-        <div class="mb-6 p-4 bg-white/5 rounded-xl border border-white/20">
-          <div class="flex items-center justify-between">
-            <div>
-              <label class="block text-white font-semibold mb-1">🌐 翻譯功能</label>
-              <p class="text-white/50 text-sm">關閉後僅顯示轉錄文字,不進行翻譯</p>
-            </div>
-            <button
-              @click="translationEnabled = !translationEnabled"
-              :disabled="store.isRunning"
-              type="button"
-              :class="[
-                'relative inline-flex h-8 w-16 items-center rounded-full transition-colors',
-                translationEnabled ? 'bg-blue-500' : 'bg-gray-600',
-                store.isRunning ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
-              ]"
-            >
-              <span
-                :class="[
-                  'inline-block h-6 w-6 transform rounded-full bg-white transition-transform',
-                  translationEnabled ? 'translate-x-9' : 'translate-x-1'
-                ]"
-              />
-            </button>
-          </div>
-        </div>
-
-        <!-- 基本設定 -->
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-          <!-- 轉錄引擎 -->
-          <div>
-            <label class="block text-white/70 text-sm mb-1">轉錄引擎</label>
-            <UiSelect
-              v-model="selectedTranscriptionEngine"
-              :options="transcriptionEngineOptions"
-              :disabled="store.isRunning"
-            />
-          </div>
-
-          <!-- 模型選擇 (根據引擎動態顯示) -->
-          <div>
-            <label class="block text-white/70 text-sm mb-1">模型選擇</label>
-            <!-- Whisper 模型 (Faster-Whisper, SimulStreaming, 組合模式) -->
-            <UiSelect
-              v-if="selectedTranscriptionEngine === 'faster-whisper' || selectedTranscriptionEngine === 'simul-streaming' || selectedTranscriptionEngine === 'faster-whisper-simul'"
-              v-model="selectedWhisperModel"
-              :options="whisperModelOptions"
-              :disabled="store.isRunning"
-            />
-            <!-- Qwen3-ASR 模型 -->
-            <UiSelect
-              v-else-if="selectedTranscriptionEngine === 'qwen3-asr'"
-              v-model="selectedQwen3AsrModel"
-              :options="qwen3AsrModelOptions"
-              :disabled="store.isRunning"
-            />
-            <!-- OpenAI API 模型 -->
-            <input v-else-if="selectedTranscriptionEngine === 'openai-api'" 
-              value="whisper-1" disabled
-              class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white/50 cursor-not-allowed">
-          </div>
-
-          <!-- 輸入語言 -->
-          <div>
-            <label class="block text-white/70 text-sm mb-1">輸入語言</label>
-            <UiSelect
-              v-model="selectedInputLanguage"
-              :options="inputLanguageOptions"
-              :disabled="store.isRunning"
-            />
-          </div>
-
-          <!-- 翻譯後端 (保持不變,但移到第4列) -->
-          <div>
-            <label class="block text-white/70 text-sm mb-1">翻譯模型</label>
-            <UiSelect
-              v-model="selectedBackend"
-              :options="backendOptions"
-              :disabled="store.isRunning || !translationEnabled"
-            />
-          </div>
-        </div>
-
-        <!-- 目標語言 (移到獨立一行) -->
-        <div class="grid grid-cols-1 gap-4 mb-6">
-          <div>
-            <label class="block text-white/70 text-sm mb-1">目標語言</label>
-            <UiSelect
-              v-model="selectedOutputLanguage"
-              :options="outputLanguageOptions"
-              :disabled="store.isRunning || !translationEnabled"
-            />
-          </div>
-        </div>
-
-        <!-- 控制按鈕 -->
-        <div class="flex flex-wrap gap-3 mb-6">
-          <button
-            v-if="!store.isRunning"
-            @click="handleStart"
-            :disabled="isLoading || !isConfigReady"
-            class="flex-1 min-w-[200px] bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 disabled:from-gray-500 disabled:to-gray-600 text-white font-bold py-4 px-6 rounded-xl transition-all shadow-lg shadow-green-500/30"
-          >
-            {{ isLoading ? '⏳ 啟動中...' : '▶️ 啟動轉譯' }}
-          </button>
-
-          <button
-            v-else
-            @click="handleStop"
-            :disabled="isLoading"
-            class="flex-1 min-w-[200px] bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 disabled:from-gray-500 disabled:to-gray-600 text-white font-bold py-4 px-6 rounded-xl transition-all shadow-lg shadow-red-500/30"
-          >
-            {{ isLoading ? '⏳ 停止中...' : '⏹️ 停止翻譯' }}
-          </button>
-
-          <button
-            @click="goToSettings"
-            class="bg-white/10 hover:bg-white/20 text-white font-bold py-4 px-6 rounded-xl transition border border-white/20"
-          >
-            ⚙️ 設定
-          </button>
-
-          <button
-            @click="openSubtitleWindow"
-            class="bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white font-bold py-4 px-6 rounded-xl transition-all shadow-lg shadow-blue-500/30"
-          >
-            🪟 字幕視窗
-          </button>
-
-        </div>
+      <!-- Dashboard Grid Layout -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         
-        <!-- Llama 伺服器控制 (獨立區域) -->
-        <div class="mb-6 p-4 bg-slate-800/50 rounded-xl border border-white/10">
-          <div class="flex items-center justify-between mb-3">
-            <div class="flex items-center gap-3">
+        <!-- Left Column: Controls & Configuration (col-span-7 or 8) -->
+        <div class="lg:col-span-7 xl:col-span-8 space-y-6">
+          
+          <!-- Main Control Card -->
+          <div class="bg-slate-950/40 backdrop-blur-xl rounded-2xl border border-white/10 shadow-2xl p-5">
+            
+            <!-- 音訊來源選擇 -->
+            <div class="mb-5">
+              <label class="block text-white/80 font-bold mb-2.5 text-xs tracking-wider uppercase">🎵 音訊來源</label>
+              <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <button
+                  @click="audioSource = 'url'; onAudioSourceChange()"
+                  :disabled="store.isRunning"
+                  type="button"
+                  :class="[
+                    'flex flex-col items-center justify-center p-3 rounded-xl border text-center transition-all duration-200 group relative overflow-hidden',
+                    audioSource === 'url' 
+                      ? 'border-blue-500/80 bg-gradient-to-b from-blue-500/20 to-blue-500/5 text-white shadow-lg shadow-blue-500/10' 
+                      : 'bg-white/5 border-white/10 hover:border-white/20 text-white/70 hover:text-white',
+                    store.isRunning ? 'opacity-50 cursor-not-allowed' : 'hover:scale-[1.02] active:scale-[0.98]'
+                  ]"
+                >
+                  <span class="text-2xl mb-1.5 transition-transform group-hover:scale-110 duration-200">🌐</span>
+                  <span class="font-bold text-xs">URL 串流</span>
+                  <span class="text-[9px] text-white/40 mt-1 hidden sm:inline-block leading-tight">播放網路直播流</span>
+                </button>
+                <button
+                  @click="audioSource = 'file'; onAudioSourceChange()"
+                  :disabled="store.isRunning"
+                  type="button"
+                  :class="[
+                    'flex flex-col items-center justify-center p-3 rounded-xl border text-center transition-all duration-200 group relative overflow-hidden',
+                    audioSource === 'file' 
+                      ? 'border-blue-500/80 bg-gradient-to-b from-blue-500/20 to-blue-500/5 text-white shadow-lg shadow-blue-500/10' 
+                      : 'bg-white/5 border-white/10 hover:border-white/20 text-white/70 hover:text-white',
+                    store.isRunning ? 'opacity-50 cursor-not-allowed' : 'hover:scale-[1.02] active:scale-[0.98]'
+                  ]"
+                >
+                  <span class="text-2xl mb-1.5 transition-transform group-hover:scale-110 duration-200">📁</span>
+                  <span class="font-bold text-xs">本地檔案</span>
+                  <span class="text-[9px] text-white/40 mt-1 hidden sm:inline-block leading-tight">轉譯本機影音檔</span>
+                </button>
+                <button
+                  @click="audioSource = 'microphone'; onAudioSourceChange()"
+                  :disabled="store.isRunning"
+                  type="button"
+                  :class="[
+                    'flex flex-col items-center justify-center p-3 rounded-xl border text-center transition-all duration-200 group relative overflow-hidden',
+                    audioSource === 'microphone' 
+                      ? 'border-blue-500/80 bg-gradient-to-b from-blue-500/20 to-blue-500/5 text-white shadow-lg shadow-blue-500/10' 
+                      : 'bg-white/5 border-white/10 hover:border-white/20 text-white/70 hover:text-white',
+                    store.isRunning ? 'opacity-50 cursor-not-allowed' : 'hover:scale-[1.02] active:scale-[0.98]'
+                  ]"
+                >
+                  <span class="text-2xl mb-1.5 transition-transform group-hover:scale-110 duration-200">🎤</span>
+                  <span class="font-bold text-xs">麥克風</span>
+                  <span class="text-[9px] text-white/40 mt-1 hidden sm:inline-block leading-tight">錄製麥克風輸入</span>
+                </button>
+                <button
+                  @click="audioSource = 'system_audio'; onAudioSourceChange()"
+                  :disabled="store.isRunning"
+                  type="button"
+                  :class="[
+                    'flex flex-col items-center justify-center p-3 rounded-xl border text-center transition-all duration-200 group relative overflow-hidden',
+                    audioSource === 'system_audio' 
+                      ? 'border-blue-500/80 bg-gradient-to-b from-blue-500/20 to-blue-500/5 text-white shadow-lg shadow-blue-500/10' 
+                      : 'bg-white/5 border-white/10 hover:border-white/20 text-white/70 hover:text-white',
+                    store.isRunning ? 'opacity-50 cursor-not-allowed' : 'hover:scale-[1.02] active:scale-[0.98]'
+                  ]"
+                >
+                  <span class="text-2xl mb-1.5 transition-transform group-hover:scale-110 duration-200">🔊</span>
+                  <span class="font-bold text-xs">系統音訊</span>
+                  <span class="text-[9px] text-white/40 mt-1 hidden sm:inline-block leading-tight">捕獲系統播放音</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- URL/檔案輸入 -->
+            <div v-if="audioSource === 'url' || audioSource === 'file'" class="mb-5">
+              <label class="block text-white/80 font-bold mb-1.5 text-xs tracking-wider uppercase">
+                {{ audioSource === 'url' ? '🔗 直播 URL' : '📁 檔案路徑' }}
+              </label>
+              <input
+                v-model="urlInput"
+                type="text"
+                spellcheck="false"
+                :placeholder="audioSource === 'url' ? 'https://www.youtube.com/watch?v=... 或 Twitch/X 等' : 'C:\\path\\to\\video.mp4'"
+                :disabled="store.isRunning"
+                class="w-full px-4 py-2.5 bg-white/5 border border-white/15 rounded-xl text-white placeholder-white/30 focus:outline-none focus:border-blue-500/80 focus:ring-1 focus:ring-blue-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition duration-200 text-sm"
+              />
+            </div>
+
+            <!-- 設備選擇 -->
+            <div v-if="audioSource === 'microphone' || audioSource === 'system_audio'" class="mb-5">
+              <label class="block text-white/80 font-bold mb-1.5 text-xs tracking-wider uppercase">
+                {{ audioSource === 'microphone' ? '🎤 麥克風設備' : '🔊 系統音訊設備' }}
+              </label>
+              <div class="flex gap-2">
+                <UiSelect
+                  v-model="selectedDeviceIndex"
+                  :options="deviceOptions"
+                  :disabled="store.isRunning || isLoadingDevices"
+                  class="flex-1 min-w-0"
+                  button-class="flex-1 px-4 py-2.5 bg-white/5 border border-white/15 rounded-xl text-sm text-left hover:bg-white/10 transition"
+                />
+                <button
+                  @click="loadDevices()"
+                  :disabled="store.isRunning || isLoadingDevices"
+                  class="px-4 py-2.5 bg-white/5 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl transition border border-white/15 text-sm flex items-center justify-center min-w-[46px]"
+                  title="重新整理設備列表"
+                >
+                  {{ isLoadingDevices ? '⏳' : '🔄' }}
+                </button>
+              </div>
+              <p v-if="availableDevices.length > 0" class="text-white/40 text-[10px] mt-1.5 tracking-wide">
+                ✓ 偵測到 {{ availableDevices.length }} 個音訊裝置
+              </p>
+            </div>
+
+            <!-- 快速設定 (輸入語言, 啟用翻譯, 目標語言) -->
+            <div class="grid grid-cols-2 gap-4 mb-4">
+              <!-- 輸入語言 -->
+              <div class="flex flex-col">
+                <label class="text-white/60 text-[10px] font-bold tracking-wider uppercase mb-1.5">🎙️ 輸入語言</label>
+                <UiSelect
+                  v-model="selectedInputLanguage"
+                  :options="inputLanguageOptions"
+                  :disabled="store.isRunning"
+                  button-class="bg-white/5 border border-white/15 hover:bg-white/10 text-xs rounded-xl"
+                />
+              </div>
+
+              <!-- 啟用翻譯與目標語言 -->
+              <div class="flex flex-col">
+                <div class="flex items-center justify-between mb-1.5">
+                  <label class="text-white/60 text-[10px] font-bold tracking-wider uppercase">🌐 目標語言</label>
+                  <label class="flex items-center gap-1 cursor-pointer text-[10px] text-white/45 hover:text-white/80 transition">
+                    <input type="checkbox" v-model="translationEnabled" :disabled="store.isRunning" class="w-3 h-3 accent-blue-500 rounded bg-white/5 border-white/15" />
+                    <span>翻譯</span>
+                  </label>
+                </div>
+                <UiSelect
+                  v-model="selectedOutputLanguage"
+                  :options="outputLanguageOptions"
+                  :disabled="store.isRunning || !translationEnabled"
+                  button-class="bg-white/5 border border-white/15 hover:bg-white/10 text-xs rounded-xl disabled:opacity-40"
+                />
+              </div>
+            </div>
+
+            <!-- 進階配置摺疊區 (轉錄引擎、模型選擇、翻譯後端) -->
+            <div class="mb-5">
+              <button
+                @click="showAdvancedConfig = !showAdvancedConfig"
+                type="button"
+                class="text-[10px] text-indigo-400 hover:text-indigo-300 transition flex items-center gap-1 font-semibold"
+              >
+                <span>{{ showAdvancedConfig ? '▼ 收起進階配置' : '▶ 展開進階配置 (引擎與模型)' }}</span>
+              </button>
+
+              <Transition name="fade-slide">
+                <div v-show="showAdvancedConfig" class="grid grid-cols-2 gap-4 mt-3 p-3 bg-white/5 rounded-xl border border-white/5">
+                  <!-- 轉錄引擎 -->
+                  <div class="flex flex-col">
+                    <label class="text-white/50 text-[9px] font-bold tracking-wider mb-1">轉錄引擎</label>
+                    <UiSelect
+                      v-model="selectedTranscriptionEngine"
+                      :options="transcriptionEngineOptions"
+                      :disabled="store.isRunning"
+                      button-class="bg-white/5 border border-white/10 text-[10px] rounded-lg"
+                    />
+                  </div>
+
+                  <!-- 模型選擇 -->
+                  <div class="flex flex-col">
+                    <label class="text-white/50 text-[9px] font-bold tracking-wider mb-1">模型選擇</label>
+                    <UiSelect
+                      v-if="selectedTranscriptionEngine === 'faster-whisper' || selectedTranscriptionEngine === 'simul-streaming' || selectedTranscriptionEngine === 'faster-whisper-simul'"
+                      v-model="selectedWhisperModel"
+                      :options="whisperModelOptions"
+                      :disabled="store.isRunning"
+                      button-class="bg-white/5 border border-white/10 text-[10px] rounded-lg"
+                    />
+                    <UiSelect
+                      v-else-if="selectedTranscriptionEngine === 'qwen3-asr'"
+                      v-model="selectedQwen3AsrModel"
+                      :options="qwen3AsrModelOptions"
+                      :disabled="store.isRunning"
+                      button-class="bg-white/5 border border-white/10 text-[10px] rounded-lg"
+                    />
+                    <input v-else-if="selectedTranscriptionEngine === 'openai-api'" 
+                      value="whisper-1" disabled
+                      class="w-full px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-white/40 cursor-not-allowed text-[10px]"
+                    />
+                  </div>
+
+                  <!-- 翻譯後端 -->
+                  <div class="flex flex-col col-span-2">
+                    <label class="text-white/50 text-[9px] font-bold tracking-wider mb-1">翻譯後端</label>
+                    <UiSelect
+                      v-model="selectedBackend"
+                      :options="backendOptions"
+                      :disabled="store.isRunning || !translationEnabled"
+                      button-class="bg-white/5 border border-white/10 text-[10px] rounded-lg disabled:opacity-40"
+                    />
+                  </div>
+                </div>
+              </Transition>
+            </div>
+
+            <!-- 控制按鈕 (啟動/停止 與 字幕視窗) -->
+            <div class="flex gap-3">
+              <!-- 啟動/停止按鈕 -->
+              <button
+                v-if="!store.isRunning"
+                @click="handleStart"
+                :disabled="isLoading || !isConfigReady"
+                class="flex-1 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:via-indigo-500 hover:to-purple-500 disabled:from-slate-800 disabled:to-slate-900 disabled:text-white/40 disabled:border-white/5 disabled:shadow-none text-white font-bold py-3.5 px-5 rounded-xl transition-all duration-200 active:scale-[0.98] shadow-lg shadow-indigo-600/20 flex items-center justify-center gap-2"
+              >
+                <span class="text-sm font-semibold">{{ isLoading ? '⏳ 啟動中...' : '▶️ 啟動即時轉譯' }}</span>
+              </button>
+
+              <button
+                v-else
+                @click="handleStop"
+                :disabled="isLoading"
+                class="flex-1 bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 disabled:from-slate-800 disabled:to-slate-900 disabled:text-white/40 disabled:border-white/5 disabled:shadow-none text-white font-bold py-3.5 px-5 rounded-xl transition-all duration-200 active:scale-[0.98] shadow-lg shadow-red-600/20 flex items-center justify-center gap-2"
+              >
+                <span class="text-sm font-semibold">{{ isLoading ? '⏳ 停止中...' : '⏹️ 停止即時轉譯' }}</span>
+              </button>
+
+              <!-- 字幕視窗按鈕 -->
+              <button
+                @click="openSubtitleWindow"
+                class="px-5 py-3.5 bg-gradient-to-r from-cyan-600/90 to-teal-600/90 hover:from-cyan-500 hover:to-teal-500 text-white font-semibold rounded-xl transition-all shadow-md shadow-cyan-600/10 flex items-center justify-center gap-1.5 text-sm"
+                title="開啟字幕懸浮視窗"
+              >
+                🪟 <span class="hidden sm:inline">字幕視窗</span>
+              </button>
+            </div>
+
+          </div>
+
+          <!-- Llama 伺服器狀態列 (精簡版) -->
+          <div v-if="selectedBackend === 'llama' || llamaStore.isServerRunning" class="p-3 bg-slate-950/40 rounded-2xl border border-white/5 backdrop-blur-md flex items-center justify-between gap-3">
+            <div class="flex items-center gap-2.5 min-w-0">
               <div :class="[
-                'w-3 h-3 rounded-full',
-                llamaStore.isServerReady ? 'bg-green-400 shadow-lg shadow-green-400/50' : 
+                'w-2 h-2 rounded-full relative flex-shrink-0',
+                llamaStore.isServerReady ? 'bg-green-400 shadow-md shadow-green-400/50' : 
                 llamaStore.isServerRunning ? 'bg-orange-400 animate-pulse' : 'bg-gray-500'
-              ]"></div>
-              <div>
-                <h3 class="text-white font-bold">🦙 Llama 伺服器</h3>
-                <p class="text-white/50 text-xs">
+              ]">
+                <span v-if="llamaStore.isServerRunning && !llamaStore.isServerReady" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75"></span>
+              </div>
+              <div class="min-w-0">
+                <h3 class="text-white/80 text-[10px] font-bold tracking-wide">Llama 本地翻譯伺服器</h3>
+                <p class="text-white/40 text-[9px] truncate font-mono">
                   {{ 
                     llamaStore.isServerReady ? `就緒 (${llamaStore.currentModel || '未知模型'})` : 
-                    llamaStore.isServerRunning ? '啟動中...' : 
-                    `已停止${llamaStore.selectedModelPath ? ` (設定: ${getFileName(llamaStore.selectedModelPath)})` : ''}` 
+                    llamaStore.isServerRunning ? '正在啟動服務...' : '已停止' 
                   }}
                 </p>
               </div>
@@ -1090,111 +1149,136 @@ function getFileName(path: string): string {
               v-if="!llamaStore.isServerRunning"
               @click="llamaStore.startServer()"
               :disabled="!llamaStore.selectedModelPath || llamaStore.isLoading"
-              class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white rounded-lg transition font-medium text-sm flex items-center gap-2"
-              :title="!llamaStore.selectedModelPath ? '請先在設定中選擇模型' : ''"
+              class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-white/40 disabled:cursor-not-allowed text-white rounded-lg transition font-bold text-[10px] flex items-center gap-1 shadow-sm"
             >
-              {{ llamaStore.isLoading ? '⏳' : '🚀' }} 啟動伺服器
+              {{ llamaStore.isLoading ? '⏳' : '🚀' }} 啟動
             </button>
             
             <button
               v-else
               @click="llamaStore.stopServer()"
               :disabled="llamaStore.isLoading"
-              class="px-4 py-2 bg-red-600/80 hover:bg-red-700 text-white rounded-lg transition font-medium text-sm"
+              class="px-3 py-1.5 bg-red-600/80 hover:bg-red-500 text-white rounded-lg transition font-bold text-[10px] shadow-sm"
             >
-              ⏹️ 停止伺服器
+              ⏹️ 停止
             </button>
           </div>
 
-          <div class="mt-3">
-            <label class="block text-white/60 text-xs mb-1">⚡ 快速切換配置</label>
-            <UiSelect
-              v-model="llamaStore.selectedPreset"
-              :options="llamaPresetOptions"
-              :disabled="llamaStore.isServerRunning"
-              button-class="text-sm"
-            />
-            <div class="flex justify-between items-center mt-1">
-              <p v-if="llamaStore.selectedPreset" class="text-white/40 text-xs">
-                已選擇: {{ llamaStore.selectedPreset.startsWith('custom:') ? llamaStore.selectedPreset.substring(7) : llamaStore.selectedPreset }}
-              </p>
-              <p v-if="llamaStore.defaultPreset && llamaStore.defaultPreset === llamaStore.selectedPreset" class="text-yellow-400/60 text-xs">
-                ⭐ 預設啟動
-              </p>
-            </div>
-          </div>
         </div>
 
-        <!-- 狀態顯示 -->
-        <div class="flex items-center justify-between p-4 bg-white/5 rounded-xl border border-white/10">
-          <div class="flex items-center gap-3">
-            <div :class="[
-              'w-3 h-3 rounded-full',
-              store.isRunning ? 'bg-green-400 animate-pulse shadow-lg shadow-green-400/50' : 'bg-gray-500'
-            ]"></div>
-            <span class="text-white font-medium">
-              狀態: {{ store.isRunning ? '🟢 執行中' : '⚪ 閒置' }}
-            </span>
-          </div>
-          <div v-if="store.currentUrl" class="text-white/50 text-sm truncate max-w-md">
-            {{ store.currentUrl }}
-          </div>
-        </div>
-      </div>
-
-      <!-- 執行日誌 -->
-      <div class="bg-slate-900/90 rounded-2xl border border-white/20 shadow-2xl p-6 mb-6">
-        <h2 class="text-xl font-bold text-white mb-4">📋 執行日誌</h2>
-        <div ref="logContainer" class="h-48 overflow-y-auto bg-black/30 rounded-lg p-4 font-mono text-sm">
-          <div v-for="(log, idx) in logs" :key="idx" class="text-green-400/80 leading-relaxed">{{ log }}</div>
-          <div v-if="logs.length === 0" class="text-white/30">等待執行...</div>
-        </div>
-      </div>
-
-      <!-- 🌐 公開分享連結 -->
-      <div class="bg-slate-900/90 rounded-2xl border border-indigo-500/30 shadow-2xl p-6">
-        <div class="flex items-center justify-between mb-1">
-          <h2 class="text-xl font-bold text-white">🌐 分享字幕連結</h2>
-          <button @click="toggleSubtitleSharing" :disabled="isUpdatingSubtitleSharing"
-            class="px-3 py-1 text-xs rounded-lg transition font-medium"
-            :class="subtitleSharingEnabled
-              ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-              : 'bg-red-600 hover:bg-red-700 text-white'">
-            {{ isUpdatingSubtitleSharing ? '更新中...' : (subtitleSharingEnabled ? '分享已啟用' : '分享已關閉') }}
-          </button>
-        </div>
-        <div v-if="subtitleSharingEnabled">
-          <p class="text-white/40 text-sm mb-4">公開端口 {{ publicPort }}，僅暴露字幕顯示功能，不含管理設定</p>
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div class="flex items-center gap-3 bg-white/5 rounded-xl p-3 border border-white/10">
-              <span class="text-2xl">🖥️</span>
-              <div class="flex-1 min-w-0">
-                <div class="text-white/70 text-xs mb-0.5">電腦版字幕</div>
-                <div class="text-white/50 text-xs truncate font-mono">{{ getPublicBase() }}/desktop</div>
-              </div>
-              <button @click="copyLink('/desktop')"
-                class="flex-shrink-0 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm rounded-lg transition font-medium">
-                {{ activeCopyPath === '/desktop' ? '✅' : '複製' }}
+        <!-- Right Column: Monitoring & Sharing (col-span-5 or 4) -->
+        <div class="lg:col-span-5 xl:col-span-4 space-y-6">
+          
+          <!-- 執行日誌 -->
+          <div class="bg-slate-950/40 backdrop-blur-xl rounded-2xl border border-white/10 shadow-2xl p-4 flex flex-col h-[270px]">
+            <div class="flex items-center justify-between mb-2.5">
+              <h2 class="text-xs font-bold text-white tracking-widest uppercase flex items-center gap-1.5">
+                <span class="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
+                📋 系統執行日誌
+              </h2>
+              <button 
+                @click="clearLogs"
+                class="text-[10px] text-white/40 hover:text-white/80 transition-colors flex items-center gap-1 px-2.5 py-1 bg-white/5 hover:bg-white/10 rounded-lg border border-white/5"
+              >
+                🗑️ 清除
               </button>
             </div>
-            <div class="flex items-center gap-3 bg-white/5 rounded-xl p-3 border border-white/10">
-              <span class="text-2xl">📱</span>
-              <div class="flex-1 min-w-0">
-                <div class="text-white/70 text-xs mb-0.5">手機版字幕</div>
-                <div class="text-white/50 text-xs truncate font-mono">{{ getPublicBase() }}/mobile</div>
-              </div>
-              <button @click="copyLink('/mobile')"
-                class="flex-shrink-0 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm rounded-lg transition font-medium">
-                {{ activeCopyPath === '/mobile' ? '✅' : '複製' }}
-              </button>
+            <div ref="logContainer" class="flex-1 overflow-y-auto bg-black/40 rounded-xl p-3 font-mono text-[11px] leading-relaxed custom-scrollbar border border-white/5">
+              <div v-for="(log, idx) in logs" :key="idx" class="text-green-400/80 mb-1 last:mb-0">{{ log }}</div>
+              <div v-if="logs.length === 0" class="text-white/20 h-full flex items-center justify-center italic">暫無執行日誌，等待啟動...</div>
             </div>
           </div>
-          <p class="text-white/30 text-xs mt-3">💡 確保防火牆已開放端口 {{ publicPort }} 以允許區網存取</p>
+
+          <!-- 🌐 公開分享連結 -->
+          <div class="bg-slate-950/40 backdrop-blur-xl rounded-2xl border border-indigo-500/20 shadow-2xl p-4">
+            <div class="flex items-center justify-between mb-2.5">
+              <h2 class="text-xs font-bold text-white tracking-widest uppercase flex items-center gap-1.5">
+                <span class="w-1.5 h-1.5 rounded-full bg-indigo-400"></span>
+                🌐 字幕分享服務
+              </h2>
+              <button @click="toggleSubtitleSharing" :disabled="isUpdatingSubtitleSharing"
+                class="px-2 py-1 text-[10px] rounded-lg transition duration-200 border"
+                :class="subtitleSharingEnabled
+                  ? 'bg-emerald-600/80 hover:bg-emerald-600 border-emerald-500/30 text-white'
+                  : 'bg-rose-600/80 hover:bg-rose-600 border-rose-500/30 text-white'">
+                {{ isUpdatingSubtitleSharing ? '同步中...' : (subtitleSharingEnabled ? '分享啟用' : '分享關閉') }}
+              </button>
+            </div>
+            
+            <div v-if="subtitleSharingEnabled" class="space-y-2.5">
+              <p class="text-white/40 text-[9px] leading-tight">廣播服務已運行於連接埠 {{ publicPort }}。此連結僅顯示字幕，無設定權限。</p>
+              
+              <div class="space-y-2">
+                <!-- 電腦版 -->
+                <div class="flex items-center gap-2.5 bg-white/5 rounded-xl p-2.5 border border-white/5 group hover:bg-white/10 transition duration-200">
+                  <span class="text-lg">🖥️</span>
+                  <div class="flex-1 min-w-0">
+                    <div class="text-white/60 text-[10px] font-bold">電腦端字幕</div>
+                    <div class="text-white/35 text-[9px] truncate font-mono mt-0.5">{{ getPublicBase() }}/desktop</div>
+                  </div>
+                  <button @click="copyLink('/desktop')"
+                    class="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs rounded-lg transition-all font-semibold shadow-sm shadow-indigo-600/10">
+                    {{ activeCopyPath === '/desktop' ? '✓' : '複製' }}
+                  </button>
+                </div>
+                
+                <!-- 手機版 -->
+                <div class="flex items-center gap-2.5 bg-white/5 rounded-xl p-2.5 border border-white/5 group hover:bg-white/10 transition duration-200">
+                  <span class="text-lg">📱</span>
+                  <div class="flex-1 min-w-0">
+                    <div class="text-white/60 text-[10px] font-bold">行動端字幕</div>
+                    <div class="text-white/35 text-[9px] truncate font-mono mt-0.5">{{ getPublicBase() }}/mobile</div>
+                  </div>
+                  <button @click="copyLink('/mobile')"
+                    class="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs rounded-lg transition-all font-semibold shadow-sm shadow-indigo-600/10">
+                    {{ activeCopyPath === '/mobile' ? '✓' : '複製' }}
+                  </button>
+                </div>
+              </div>
+              <p class="text-white/30 text-[9px] text-center tracking-wide mt-1">💡 請確保本機防火牆允許對外存取此連接埠</p>
+            </div>
+            
+            <div v-else class="p-3 rounded-xl border border-rose-500/20 bg-rose-500/5 text-rose-300 text-[10px] leading-relaxed text-center">
+              🚫 字幕廣播服務目前已關閉，外部裝置將無法存取字幕網頁。
+            </div>
+          </div>
+
         </div>
-        <div v-else class="mt-3 p-3 rounded-lg border border-red-500/40 bg-red-500/10 text-red-200 text-sm">
-          字幕分享功能已停用。外部裝置將無法存取 /desktop、/mobile 以及公開字幕 API。
-        </div>
+
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+/* Target language fade-slide animation */
+.fade-slide-enter-active,
+.fade-slide-leave-active {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  max-height: 80px;
+  opacity: 1;
+  overflow: hidden;
+}
+.fade-slide-enter-from,
+.fade-slide-leave-to {
+  opacity: 0;
+  max-height: 0px;
+  transform: translateY(-8px);
+  margin-bottom: 0px;
+}
+
+/* Custom Scrollbar for Logs */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 9999px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.35);
+}
+</style>

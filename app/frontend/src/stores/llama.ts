@@ -3,7 +3,7 @@
  * 管理 Llama 伺服器狀態和配置
  */
 import { defineStore } from 'pinia';
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, nextTick } from 'vue';
 import { llamaApi, type ModelInfo, type ServerConfig, type ServerStatus } from '../services/llamaApi';
 import { configApi } from '../services/api';
 
@@ -68,10 +68,10 @@ export const useLlamaStore = defineStore('llama', () => {
   });
 
   // Computed
-  const isServerRunning = computed(() => serverStatus.value.is_running);
-  const isServerReady = computed(() => serverStatus.value.is_ready);
-  const currentModel = computed(() => serverStatus.value.current_model);
-  const hasModels = computed(() => models.value.length > 0);
+  const isServerRunning = computed(() => serverStatus.value?.is_running ?? false);
+  const isServerReady = computed(() => serverStatus.value?.is_ready ?? false);
+  const currentModel = computed(() => serverStatus.value?.current_model ?? null);
+  const hasModels = computed(() => (models.value || []).length > 0);
 
   // Actions
   async function loadModels(directory?: string) {
@@ -269,7 +269,9 @@ export const useLlamaStore = defineStore('llama', () => {
     } catch (error: any) {
       console.error('載入 Llama 配置失敗:', error);
     } finally {
-      isApplyingRemoteConfig.value = false;
+      nextTick(() => {
+        isApplyingRemoteConfig.value = false;
+      });
     }
   }
 
@@ -553,7 +555,9 @@ export const useLlamaStore = defineStore('llama', () => {
         await loadModels(modelDirectory.value);
       }
     } finally {
-      isInitializing.value = false; // 初始化完成，恢復 watch
+      nextTick(() => {
+        isInitializing.value = false; // 初始化完成，恢復 watch
+      });
     }
   }
 

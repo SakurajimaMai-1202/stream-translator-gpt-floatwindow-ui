@@ -1,5 +1,9 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue';
+import { ref, onMounted, onUnmounted, watch, computed } from 'vue';
+import { useRoute } from 'vue-router';
+
+const route = useRoute();
+const isStandalone = computed(() => route.path === '/subtitle-settings');
 
 // 基本顯示設定
 const fontSize = ref(24);
@@ -20,6 +24,7 @@ const backgroundOpacity = ref(50);
 
 // BroadcastChannel 用於跨視窗通訊
 let settingsChannel: BroadcastChannel | null = null;
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
 function buildSettings() {
   return {
@@ -60,6 +65,24 @@ async function saveSettings() {
   }
   
   console.log('設定已儲存');
+}
+
+function scheduleSaveSettings() {
+  const settings = buildSettings();
+  localStorage.setItem('subtitleSettings', JSON.stringify(settings));
+
+  if (settingsChannel) {
+    settingsChannel.postMessage(settings);
+    console.log('設定已廣播到字幕視窗');
+  }
+
+  if (saveTimer !== null) {
+    clearTimeout(saveTimer);
+  }
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    void saveSettings();
+  }, 350);
 }
 
 function hexToRgb(hex: string): string {
@@ -134,33 +157,44 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  if (saveTimer !== null) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    void saveSettings();
+  }
   if (settingsChannel) {
     settingsChannel.close();
   }
 });
 
 watch([fontSize, fontWeight, showOriginal, showTranslated, showTimestamp, position, autoScroll, maxDisplayCount, textColor, translatedColor, timestampColor, backgroundColor, backgroundOpacity], () => {
-  saveSettings();
+  scheduleSaveSettings();
 });
 
 const activeTab = ref<'display' | 'color'>('display');
 </script>
 
 <template>
-  <div class="w-full h-full bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 p-6 overflow-y-auto">
-    <div class="max-w-2xl mx-auto">
-      <h1 class="text-2xl font-bold text-white mb-6">字幕設定</h1>
+  <div :class="[
+    isStandalone ? 'min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950/80 p-4 sm:p-6 overflow-y-auto' : 'p-4 sm:p-5 max-w-3xl mx-auto'
+  ]">
+    <!-- Header -->
+    <div class="flex items-center justify-between mb-5 border-b border-white/5 pb-2.5">
+      <h1 class="text-base font-bold text-white tracking-wide">🎨 字幕外觀設定</h1>
+    </div>
 
+    <!-- Content Card -->
+    <div class="bg-slate-950/40 backdrop-blur-xl rounded-2xl border border-white/10 shadow-2xl p-6">
       <!-- 分頁標籤 -->
-      <div class="flex border-b border-white/20 mb-6">
+      <div class="flex border-b border-white/10 mb-6">
         <button
           @click="activeTab = 'display'"
-          :class="['flex-1 py-3 text-sm font-semibold transition', activeTab === 'display' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-white/60 hover:text-white']"
-        >顯示</button>
+          :class="['flex-1 py-2 text-xs font-semibold transition', activeTab === 'display' ? 'text-blue-400 border-b-2 border-blue-400 font-bold' : 'text-white/60 hover:text-white']"
+        >顯示配置</button>
         <button
           @click="activeTab = 'color'"
-          :class="['flex-1 py-3 text-sm font-semibold transition', activeTab === 'color' ? 'text-blue-400 border-b-2 border-blue-400' : 'text-white/60 hover:text-white']"
-        >顏色</button>
+          :class="['flex-1 py-2 text-xs font-semibold transition', activeTab === 'color' ? 'text-blue-400 border-b-2 border-blue-400 font-bold' : 'text-white/60 hover:text-white']"
+        >色彩與預覽</button>
       </div>
 
       <!-- 顯示設定 -->

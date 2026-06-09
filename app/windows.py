@@ -5,6 +5,7 @@ PyQt6 視窗管理器
 
 import sys
 from pathlib import Path
+from time import monotonic
 from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QApplication
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings, QWebEngineScript
@@ -78,6 +79,9 @@ class WebViewWindow(QMainWindow):
         # 建立 WebView
         self.web_view = QWebEngineView()
         self.web_view.setPage(CustomWebPage(self.web_view))
+        self._render_reload_attempts = 0
+        self._last_render_reload_at = 0.0
+        self.web_view.page().renderProcessTerminated.connect(self._on_render_process_terminated)
         self.web_view.setZoomFactor(1.0)
         # 設定 WebView 背景也為深色 (會被頁面 CSS 覆蓋，但防止空頁面閃爍)
         self.web_view.setStyleSheet("background-color: #0f172a;")
@@ -124,6 +128,27 @@ class WebViewWindow(QMainWindow):
             Qt.Key.Key_0,
         )
 
+    def _on_render_process_terminated(self, terminationStatus, exitCode):
+        """處理網頁渲染程序異常終止 (如 GPU 崩潰、記憶體不足)，嘗試自動重新整理"""
+        status_str = "Unknown"
+        try:
+            status_str = terminationStatus.name
+        except Exception:
+            status_str = str(terminationStatus)
+        logger.error(f"[WebView] 網頁渲染程序異常終止 (Status: {status_str}, Exit Code: {exitCode})")
+
+        now = monotonic()
+        if now - self._last_render_reload_at > 30:
+            self._render_reload_attempts = 0
+        self._last_render_reload_at = now
+        self._render_reload_attempts += 1
+
+        if self._render_reload_attempts > 2:
+            logger.error("[WebView] Render process keeps terminating; automatic reload paused to avoid flicker")
+            return
+
+        QTimer.singleShot(1200, self.web_view.reload)
+
     def _enforce_zoom_factor(self):
         """強制保持縮放倍率為 1，避免原生下拉/彈窗層改動頁面縮放"""
         current = self.web_view.zoomFactor()
@@ -165,13 +190,32 @@ class CustomWebPage(QWebEnginePage):
 class HomeWindow(WebViewWindow):
     """主視窗（首頁）"""
 
-    def __init__(self, base_url: str = "http://localhost:5173", on_open_subtitle=None):
+    def __init__(self, base_url: str = "http://localhost:5173", config_manager=None, on_open_subtitle=None):
+        self.config_manager = config_manager
+        width, height = 1000, 700
+        x, y = None, None
+        
+        if config_manager:
+            try:
+                ui_config = config_manager.get_config().get('ui', {})
+                windows_config = ui_config.get('windows', {})
+                main_config = windows_config.get('main_window', {})
+                width = main_config.get('width', 1000)
+                height = main_config.get('height', 700)
+                x = main_config.get('x', None)
+                y = main_config.get('y', None)
+            except Exception as e:
+                logger.error(f"讀取主視窗配置失敗: {e}")
+
         super().__init__(
             title="Stream Translator",
             url=f"{base_url}/",
-            width=1000,
-            height=700
+            width=width,
+            height=height
         )
+
+        if x is not None and y is not None:
+            self.move(x, y)
 
         self._on_open_subtitle = on_open_subtitle
 
@@ -185,6 +229,37 @@ class HomeWindow(WebViewWindow):
             self.bridge.openSubtitleWindowRequested.connect(self._handle_open_subtitle)
 
         self._inject_home_webchannel_scripts()
+
+    def closeEvent(self, event):
+        """關閉視窗時儲存大小與位置"""
+        self._save_window_geometry()
+        super().closeEvent(event)
+
+    def _save_window_geometry(self):
+        """儲存主視窗位置和大小到配置"""
+        if not self.config_manager:
+            return
+        
+        try:
+            geometry = self.geometry()
+            window_config = {
+                'x': geometry.x(),
+                'y': geometry.y(),
+                'width': geometry.width(),
+                'height': geometry.height()
+            }
+            
+            config = self.config_manager.get_config()
+            if 'ui' not in config:
+                config['ui'] = {}
+            if 'windows' not in config['ui']:
+                config['ui']['windows'] = {}
+            
+            config['ui']['windows']['main_window'] = window_config
+            self.config_manager.save()
+            logger.info(f"已儲存主視窗配置: {window_config}")
+        except Exception as e:
+            logger.error(f"儲存主視窗配置失敗: {e}")
 
     def _handle_open_subtitle(self):
         if callable(self._on_open_subtitle):
@@ -329,6 +404,9 @@ class FloatingSubtitleWindow(WebViewWindow):
         # 建立 WebView
         self.web_view = QWebEngineView()
         self.web_view.setPage(CustomWebPage(self.web_view))
+        self._render_reload_attempts = 0
+        self._last_render_reload_at = 0.0
+        self.web_view.page().renderProcessTerminated.connect(self._on_render_process_terminated)
         self.web_view.setZoomFactor(1.0)
         self.web_view.setStyleSheet("background:transparent;")
         self.web_view.page().setBackgroundColor(Qt.GlobalColor.transparent)

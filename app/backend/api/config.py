@@ -192,3 +192,51 @@ async def import_config_file(request: Request, file: UploadFile = File(...)):
         return {"success": True, "message": "配置檔案已成功匯入"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"匯入檔案失敗: {str(e)}")
+
+class TestConnectionRequest(BaseModel):
+    backend: str
+    api_key: str
+    base_url: str | None = None
+    proxy: str | None = None
+
+@router.post("/test-connection")
+async def test_connection(request: TestConnectionRequest):
+    """測試 API 金鑰與連線"""
+    backend = request.backend.lower()
+    api_key = request.api_key.strip() if request.api_key else ""
+    base_url = request.base_url.strip() if request.base_url else None
+    proxy = request.proxy.strip() if request.proxy else None
+    
+    if not api_key:
+        return {"success": False, "message": "請輸入 API 金鑰"}
+        
+    if backend == "gpt":
+        try:
+            from openai import OpenAI
+            import httpx
+            
+            client_kwargs = {"api_key": api_key, "timeout": 10.0}
+            if base_url:
+                client_kwargs["base_url"] = base_url
+            if proxy:
+                client_kwargs["http_client"] = httpx.Client(proxy=proxy)
+                
+            client = OpenAI(**client_kwargs)
+            client.models.list()
+            return {"success": True, "message": "連線測試成功！API 金鑰有效。"}
+        except Exception as e:
+            return {"success": False, "message": f"OpenAI 連線測試失敗: {str(e)}"}
+            
+    elif backend == "gemini":
+        try:
+            import google.generativeai as genai
+            
+            genai.configure(api_key=api_key)
+            list(genai.list_models())
+            return {"success": True, "message": "連線測試成功！API 金鑰有效。"}
+        except Exception as e:
+            return {"success": False, "message": f"Gemini 連線測試失敗: {str(e)}"}
+            
+    else:
+        return {"success": False, "message": f"不支援的測試後端: {backend}"}
+

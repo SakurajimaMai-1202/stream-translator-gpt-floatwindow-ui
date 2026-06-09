@@ -47,7 +47,7 @@ def _get_supported_cli_args(python_exe: str, cwd: str) -> Optional[FrozenSet[str
             text=True,
             encoding='utf-8',
             errors='replace',
-            timeout=15,
+            timeout=45,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
         )
     except Exception as exc:
@@ -163,7 +163,6 @@ class TranslationContext:
             'min_audio_length', 'max_audio_length', 'target_audio_length',
             'continuous_no_speech_threshold', 'disable_dynamic_no_speech_threshold',
             'prefix_retention_length', 'vad_threshold', 'disable_dynamic_vad_threshold',
-            'vad_every_n_frames', 'realtime_processing',
             'model', 'language', 'use_faster_whisper', 'use_simul_streaming',
             'use_openai_transcription_api', 'use_qwen3_asr', 'openai_transcription_model', 'whisper_filters',
             'transcription_initial_prompt', 'disable_transcription_context', 'qwen3_context',
@@ -607,41 +606,44 @@ class TranslationContext:
             self._unsubscribe(my_queue)
     
     async def stop(self):
-        """停止任務"""
+        """停止任務 - 直接終止子進程確保完全停止"""
         self.stop_requested = True
         self.running = False
         
-        keep_asr_loaded = self.config.get('keep_asr_loaded', False)
-        
         global persistent_process, persistent_config_args
         
-        if keep_asr_loaded and self.process and self.process.poll() is None:
-            logger.info(f"Stopping current stream but keeping ASR process loaded (PID: {self.process.pid})")
+        # 清理可能殘留的持久化進程
+        if persistent_process is not None:
             try:
-                if os.name == 'nt':
-                    import signal
-                    os.kill(self.process.pid, signal.CTRL_C_EVENT)
-                else:
-                    self.process.send_signal(subprocess.signal.SIGINT)
-                
-                # Save to global persistent variables
-                persistent_process = self.process
-                cmd = self._build_command()
-                persistent_config_args = cmd[:-1] if cmd else []
-                # Detach from context
-                self.process = None
+                if persistent_process.poll() is None:
+                    logger.info(f"Terminating stale persistent process (PID: {persistent_process.pid})")
+                    persistent_process.terminate()
+                    try:
+                        persistent_process.wait(timeout=3.0)
+                    except subprocess.TimeoutExpired:
+                        persistent_process.kill()
             except Exception as e:
-                logger.error(f"Failed to send interrupt to ASR process: {e}")
-                if self.process and self.process.poll() is None:
-                    self.process.terminate()
-        else:
-            if self.process and self.process.poll() is None:
+                logger.error(f"Failed to terminate persistent process: {e}")
+            persistent_process = None
+            persistent_config_args = None
+        
+        # 直接終止主進程
+        if self.process and self.process.poll() is None:
+            pid = self.process.pid
+            logger.info(f"Terminating translation subprocess (PID: {pid})")
+            try:
                 self.process.terminate()
                 try:
-                    self.process.wait(timeout=3.0)
+                    self.process.wait(timeout=5.0)
+                    logger.info(f"Process {pid} terminated cleanly")
                 except subprocess.TimeoutExpired:
+                    logger.warning(f"Process {pid} did not terminate in 5s, killing forcefully")
                     self.process.kill()
-            logger.info(f"Task {self.task_id} stopped and process terminated")
+                    self.process.wait(timeout=2.0)
+            except Exception as e:
+                logger.error(f"Failed to terminate process {pid}: {e}")
+        
+        logger.info(f"Task {self.task_id} stopped")
 
 # 全域管理器 (簡單字典實作)
 active_translations: Dict[str, TranslationContext] = {}

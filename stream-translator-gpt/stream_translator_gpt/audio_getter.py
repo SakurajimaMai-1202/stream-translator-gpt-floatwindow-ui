@@ -240,6 +240,20 @@ class StreamAudioGetter(LoopWorkerBase):
         self.ffmpeg_process = None
         self.ytdlp_process = None
         self.byte_size = round(SAMPLES_PER_FRAME * 4)  # Factor 4 comes from float32 (4 bytes per sample)
+        self.running = True
+
+    def stop(self) -> None:
+        self.running = False
+        if self.ffmpeg_process and self.ffmpeg_process.poll() is None:
+            try:
+                self.ffmpeg_process.terminate()
+            except Exception:
+                pass
+        if self.ytdlp_process and self.ytdlp_process.poll() is None:
+            try:
+                self.ytdlp_process.terminate()
+            except Exception:
+                pass
 
     def __del__(self):
         if hasattr(self, 'temp_dir') and os.path.exists(self.temp_dir):
@@ -260,9 +274,9 @@ class StreamAudioGetter(LoopWorkerBase):
                                                                self.temp_dir)
         frame_count = 0
         start_time = time.monotonic()
-        while self.ffmpeg_process.poll() is None:
+        while self.running and self.ffmpeg_process.poll() is None:
             in_bytes = self.ffmpeg_process.stdout.read(self.byte_size)
-            if not in_bytes:
+            if not self.running or not in_bytes:
                 break
             if len(in_bytes) != self.byte_size:
                 continue
@@ -301,6 +315,15 @@ class LocalFileAudioGetter(LoopWorkerBase):
         self.realtime_throttle = realtime_throttle
         self.ffmpeg_process = None
         self.byte_size = round(SAMPLES_PER_FRAME * 4)  # Factor 4 comes from float32 (4 bytes per sample)
+        self.running = True
+
+    def stop(self) -> None:
+        self.running = False
+        if self.ffmpeg_process and self.ffmpeg_process.poll() is None:
+            try:
+                self.ffmpeg_process.terminate()
+            except Exception:
+                pass
 
     def _exit_handler(self, signum, frame):
         if self.ffmpeg_process:
@@ -322,9 +345,9 @@ class LocalFileAudioGetter(LoopWorkerBase):
 
         frame_count = 0
         start_time = time.monotonic()
-        while self.ffmpeg_process.poll() is None:
+        while self.running and self.ffmpeg_process.poll() is None:
             in_bytes = self.ffmpeg_process.stdout.read(self.byte_size)
-            if not in_bytes:
+            if not self.running or not in_bytes:
                 break
             if len(in_bytes) != self.byte_size:
                 continue
@@ -353,6 +376,7 @@ class DeviceAudioGetter(LoopWorkerBase):
         self.remaining_audio = np.array([], dtype=np.float32)
         self.backend = 'sounddevice'  # 預設後端
         self.total_reads = 0
+        self.running = True
         
         # 嘗試使用 PyAudioWPatch loopback (僅 Windows)
         if use_loopback:
@@ -373,6 +397,9 @@ class DeviceAudioGetter(LoopWorkerBase):
                     self._init_sounddevice(device_index)
         else:
             self._init_sounddevice(device_index)
+
+    def stop(self) -> None:
+        self.running = False
     
     def _init_sounddevice(self, device_index: int) -> None:
         """初始化 SoundDevice 後端"""
@@ -477,6 +504,8 @@ class DeviceAudioGetter(LoopWorkerBase):
         import sounddevice as sd
 
         def audio_callback(indata: np.ndarray, frames: int, time_info, status) -> None:
+            if not self.running:
+                return
             if status:
                 print(status)
 
@@ -498,8 +527,8 @@ class DeviceAudioGetter(LoopWorkerBase):
                             channels=1,
                             dtype=np.float32,
                             callback=audio_callback):
-            while True:
-                time.sleep(5)
+            while self.running:
+                time.sleep(0.1)
         output_queue.put(None)
     
     def _loop_pyaudiowpatch(self, output_queue: queue.SimpleQueue[np.array]):
@@ -550,10 +579,12 @@ class DeviceAudioGetter(LoopWorkerBase):
                 frames_per_buffer=frames_per_buffer
             )
 
-            while True:
+            while self.running:
                 try:
                     # exception_on_overflow=False：略過溢出警告，避免 Python 例外開銷
                     data = stream.read(frames_per_buffer, exception_on_overflow=False)
+                    if not self.running:
+                        break
                     self.total_reads += 1
 
                     audio = np.frombuffer(data, dtype=np.float32)

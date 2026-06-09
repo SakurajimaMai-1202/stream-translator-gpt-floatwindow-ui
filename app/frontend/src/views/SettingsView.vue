@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
+import axios from 'axios';
 import { useTranslationStore } from '../stores/translation';
 import { useModelDownloadStore } from '../stores/modelDownload';
 import { useLlamaStore } from '../stores/llama';
@@ -9,13 +10,20 @@ import UiSelect, { type UiSelectOption } from '../components/UiSelect.vue';
 import { useTranscriptionMutex } from '../composables/useTranscriptionMutex';
 import { useAppSyncEvents } from '../composables/useAppSyncEvents';
 
+const testingGpt = ref(false);
+const testingGemini = ref(false);
+
+const autoSaveStatus = ref<'idle' | 'saving' | 'saved' | 'error'>('idle');
+let autoSaveStatusTimeout: ReturnType<typeof setTimeout> | null = null;
+
+
 const router = useRouter();
 const route = useRoute();
 const store = useTranslationStore();
 const modelDownloadStore = useModelDownloadStore();
 const llamaStore = useLlamaStore();
 
-const qwenModels = ['Qwen/Qwen3-ASR-0.6B', 'Qwen/Qwen3-ASR-1.7B'];
+const qwenModels = ['Qwen/Qwen3-ASR-0.6B', 'Qwen/Qwen3-ASR-1.7B', 'neosophie/Qwen3-ASR-1.7B-JA'];
 const fasterWhisperModels = ['tiny', 'base', 'small', 'medium', 'large-v2', 'large-v3', 'large-v3-turbo'];
 
 const logLevelOptions: UiSelectOption[] = [
@@ -34,6 +42,7 @@ const whisperModelSelectOptions: UiSelectOption[] = fasterWhisperModels.map(m =>
 const qwen3AsrModelOptions: UiSelectOption[] = [
   { value: 'Qwen/Qwen3-ASR-1.7B', label: 'Qwen3-ASR-1.7B (推薦)' },
   { value: 'Qwen/Qwen3-ASR-0.6B', label: 'Qwen3-ASR-0.6B (更快)' },
+  { value: 'neosophie/Qwen3-ASR-1.7B-JA', label: 'Qwen3-ASR-1.7B-JA (Japanese fine-tune)' },
 ];
 const qwen3DtypeOptions: UiSelectOption[] = [
   { value: 'bfloat16', label: 'bfloat16 (推薦)' },
@@ -171,15 +180,66 @@ const translationBackendOptions = computed<UiSelectOption[]>(() => {
 let _settingsAutoSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
 function debouncedAutoSave() {
+  autoSaveStatus.value = 'saving';
   if (_settingsAutoSaveTimer !== null) clearTimeout(_settingsAutoSaveTimer);
   _settingsAutoSaveTimer = setTimeout(async () => {
     _settingsAutoSaveTimer = null;
     try {
       await store.saveConfig(localConfig.value);
+      autoSaveStatus.value = 'saved';
+      if (autoSaveStatusTimeout) clearTimeout(autoSaveStatusTimeout);
+      autoSaveStatusTimeout = setTimeout(() => {
+        autoSaveStatus.value = 'idle';
+      }, 3000);
     } catch (e) {
       console.warn('[SettingsView] 自動保存失敗:', e);
+      autoSaveStatus.value = 'error';
     }
   }, 1000);
+}
+
+async function testConnection(backend: 'gpt' | 'gemini') {
+  const isGpt = backend === 'gpt';
+  if (isGpt) {
+    testingGpt.value = true;
+  } else {
+    testingGemini.value = true;
+  }
+  
+  try {
+    const apiKey = isGpt 
+      ? (localConfig.value.translation.api_key || localConfig.value.general.openai_api_key)
+      : (localConfig.value.translation.api_key || localConfig.value.general.google_api_key);
+      
+    const baseUrl = isGpt ? localConfig.value.translation.gpt_base_url : localConfig.value.translation.gemini_base_url;
+    const proxy = localConfig.value.translation.processing_proxy || localConfig.value.input.proxy;
+
+    if (!apiKey) {
+      alert(`請先輸入 ${isGpt ? 'OpenAI' : 'Gemini'} API 金鑰`);
+      return;
+    }
+
+    const res = await axios.post('/api/config/test-connection', {
+      backend,
+      api_key: apiKey,
+      base_url: baseUrl || null,
+      proxy: proxy || null
+    });
+    
+    if (res.data && res.data.success) {
+      alert(`✓ ${isGpt ? 'OpenAI' : 'Gemini'} 連線測試成功！`);
+    } else {
+      alert(`❌ 連線測試失敗：${res.data?.message || '未知錯誤'}`);
+    }
+  } catch (err: any) {
+    alert(`❌ 連線測試發生異常：${err.response?.data?.detail || err.message}`);
+  } finally {
+    if (isGpt) {
+      testingGpt.value = false;
+    } else {
+      testingGemini.value = false;
+    }
+  }
 }
 
 // 術語表
@@ -197,17 +257,33 @@ const customModelForm = ref({
   model_name: ''
 });
 
-const tabs = [
-  { id: 'general', name: '一般設定', icon: '⚙️' },
-  { id: 'input', name: '輸入選項', icon: '📥' },
-  { id: 'audio_vad', name: '音訊切片/VAD', icon: '🔊' },
-  { id: 'transcription', name: '轉錄選項', icon: '🎤' },
-  { id: 'model_management', name: '模型管理', icon: '📦' },
-  { id: 'translation', name: '翻譯選項', icon: '🌐' },
-  { id: 'llama', name: 'Llama 設定', icon: '🦙' },
-  { id: 'terminology', name: '術語表', icon: '📖' },
-  { id: 'output', name: '輸出與通知', icon: '📤' }
+const categorizedTabs = [
+  {
+    groupName: '系統與輸入',
+    items: [
+      { id: 'general', name: '一般設定', icon: '⚙️' },
+      { id: 'input', name: '輸入選項', icon: '📥' },
+      { id: 'output', name: '輸出與通知', icon: '📤' }
+    ]
+  },
+  {
+    groupName: '語音辨識與切片',
+    items: [
+      { id: 'audio_vad', name: '音訊切片/VAD', icon: '🔊' },
+      { id: 'transcription', name: '轉錄選項', icon: '🎤' },
+      { id: 'model_management', name: '模型管理', icon: '📦' }
+    ]
+  },
+  {
+    groupName: '翻譯與術語',
+    items: [
+      { id: 'translation', name: '翻譯選項', icon: '🌐' },
+      { id: 'llama', name: 'Llama 設定', icon: '🦙' },
+      { id: 'terminology', name: '術語表', icon: '📖' }
+    ]
+  }
 ];
+
 
 // 過濾後的術語表
 const filteredGlossary = computed(() => {
@@ -286,6 +362,12 @@ useAppSyncEvents({
   },
   onTranslationStopped: async () => {
     await store.syncRunningState();
+  }
+});
+
+watch(() => route.query.tab, (newTab) => {
+  if (newTab) {
+    activeTab.value = newTab as string;
   }
 });
 
@@ -531,62 +613,61 @@ async function handleFileChange(event: Event) {
 </script>
 
 <template>
-  <div class="min-h-screen bg-gradient-to-br from-slate-900 via-cyan-900 to-slate-900 p-6">
-    <div class="max-w-7xl mx-auto">
-      <!-- Header -->
-      <div class="flex items-center justify-between mb-6">
-        <div>
-          <h1 class="text-3xl font-bold text-white mb-1">⚙️ 設定</h1>
-          <p class="text-blue-300">配置翻譯引擎參數</p>
-        </div>
-        <div class="flex gap-4">
-          <button @click="handleImportClick" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition text-sm flex items-center gap-2">
-            📥 匯入設定
-          </button>
-          <button @click="handleExportClick" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg transition text-sm flex items-center gap-2">
-            📤 匯出設定
-          </button>
-          <button @click="handleCancel" class="bg-white/10 hover:bg-white/20 text-white font-bold py-2 px-6 rounded-lg transition border border-white/20">
-            ← 返回
-          </button>
+  <div class="p-4 sm:p-5 max-w-7xl mx-auto">
+    <!-- Header -->
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-5 gap-3 border-b border-white/5 pb-2.5">
+      <div>
+        <div class="flex items-center gap-3">
+          <h1 class="text-base font-bold text-white tracking-wide">⚙️ 系統設定</h1>
+          <!-- Auto-save Status Badge -->
+          <div class="flex items-center gap-2 transition-all duration-300 bg-white/5 border border-white/10 px-2.5 py-0.5 rounded-full">
+            <span v-if="autoSaveStatus === 'saving'" class="text-blue-300 flex items-center gap-1 text-[10px] font-semibold">
+              <span class="inline-block w-2.5 h-2.5 border-2 border-blue-300 border-t-transparent rounded-full animate-spin"></span>
+              儲存中...
+            </span>
+            <span v-else-if="autoSaveStatus === 'saved'" class="text-emerald-400 font-semibold flex items-center gap-0.5 text-[10px]">
+              ✓ 已自動儲存
+            </span>
+            <span v-else-if="autoSaveStatus === 'error'" class="text-rose-400 font-semibold flex items-center gap-0.5 text-[10px]">
+              ⚠️ 儲存失敗
+            </span>
+            <span v-else class="text-white/40 text-[10px] font-semibold">
+              ✓ 已儲存
+            </span>
+          </div>
         </div>
       </div>
       
-      <!-- 隱藏的檔案輸入框 -->
-      <input type="file" ref="fileInput" accept=".yaml,.yml" class="hidden" @change="handleFileChange" />
-
-      <!-- Error/Status Messages -->
-      <div v-if="store.errorMessage" class="mb-4 p-4 bg-red-500/30 backdrop-blur-xl border border-red-500/50 text-red-200 rounded-xl flex justify-between items-center">
-        <span>{{ store.errorMessage }}</span>
-        <button @click="store.clearError()" class="hover:text-white font-bold text-xl">✕</button>
+      <!-- Import/Export & Reset Buttons -->
+      <div class="flex flex-wrap gap-2">
+        <button @click="handleImportClick" class="bg-blue-600/85 hover:bg-blue-600 text-white font-semibold py-1.5 px-3 rounded-lg transition text-xs flex items-center gap-1.5 shadow-sm">
+          📥 匯入
+        </button>
+        <button @click="handleExportClick" class="bg-emerald-600/85 hover:bg-emerald-600 text-white font-semibold py-1.5 px-3 rounded-lg transition text-xs flex items-center gap-1.5 shadow-sm">
+          📤 匯出
+        </button>
+        <button @click="resetToDefault" class="bg-yellow-600/20 hover:bg-yellow-600/30 text-yellow-300 border border-yellow-500/20 font-semibold py-1.5 px-3 rounded-lg transition text-xs flex items-center gap-1.5">
+          🔄 重置預設值
+        </button>
       </div>
+    </div>
+    
+    <!-- 隱藏的檔案輸入框 -->
+    <input type="file" ref="fileInput" accept=".yaml,.yml" class="hidden" @change="handleFileChange" />
 
-      <div v-if="store.statusMessage" class="mb-4 p-4 bg-green-500/30 backdrop-blur-xl border border-green-500/50 text-green-200 rounded-xl flex justify-between items-center">
-        <span>{{ store.statusMessage }}</span>
-        <button @click="store.clearStatus()" class="hover:text-white font-bold text-xl">✕</button>
-      </div>
+    <!-- Error/Status Messages -->
+    <div v-if="store.errorMessage" class="mb-4 p-3 bg-red-500/20 border border-red-500/30 text-red-200 rounded-xl flex justify-between items-center text-xs backdrop-blur-xl">
+      <span>{{ store.errorMessage }}</span>
+      <button @click="store.clearError()" class="hover:text-white font-bold text-lg leading-none p-1">✕</button>
+    </div>
 
-      <!-- Tabs -->
-      <div class="bg-slate-900/90 rounded-2xl border border-white/20 shadow-2xl overflow-hidden">
-        <div class="flex border-b border-white/10 bg-black/20 overflow-x-auto">
-          <button
-            v-for="tab in tabs"
-            :key="tab.id"
-            @click="activeTab = tab.id"
-            :class="[
-              'flex-shrink-0 py-3 px-5 font-semibold text-center transition-all whitespace-nowrap',
-              activeTab === tab.id
-                ? 'bg-blue-600/50 text-white border-b-2 border-blue-400'
-                : 'text-white/60 hover:bg-white/10 hover:text-white'
-            ]"
-          >
-            <span class="mr-2">{{ tab.icon }}</span>
-            {{ tab.name }}
-          </button>
-        </div>
+    <div v-if="store.statusMessage" class="mb-4 p-3 bg-green-500/20 border border-green-500/30 text-green-200 rounded-xl flex justify-between items-center text-xs backdrop-blur-xl">
+      <span>{{ store.statusMessage }}</span>
+      <button @click="store.clearStatus()" class="hover:text-white font-bold text-lg leading-none p-1">✕</button>
+    </div>
 
-        <!-- Tab Content -->
-        <div class="p-6">
+    <!-- Content Container (Card Layout) -->
+    <div class="bg-slate-950/40 backdrop-blur-xl rounded-2xl border border-white/10 shadow-2xl p-6 sm:p-8 min-h-[550px]">
           <!-- General Settings -->
           <div v-show="activeTab === 'general'" class="space-y-6">
             <h2 class="text-xl font-bold text-white mb-4">一般設定</h2>
@@ -594,15 +675,29 @@ async function handleFileChange(event: Event) {
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
                 <label class="block text-white/70 font-semibold mb-2">OpenAI API Key</label>
-                <input v-model="localConfig.general.openai_api_key" type="password" placeholder="sk-..."
-                  class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
+                <div class="flex gap-2">
+                  <input v-model="localConfig.general.openai_api_key" type="password" placeholder="sk-..."
+                    class="flex-1 px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
+                  <button @click="testConnection('gpt')" :disabled="testingGpt" 
+                    class="bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/30 font-semibold px-4 rounded-lg transition text-xs whitespace-nowrap flex items-center justify-center gap-1.5 min-w-[95px]">
+                    <span v-if="testingGpt" class="inline-block w-3 h-3 border-2 border-blue-300 border-t-transparent rounded-full animate-spin"></span>
+                    <span>⚡ 測試連線</span>
+                  </button>
+                </div>
                 <p class="text-white/40 text-sm mt-1">用於 GPT 翻譯</p>
               </div>
 
               <div>
                 <label class="block text-white/70 font-semibold mb-2">Google API Key (Gemini)</label>
-                <input v-model="localConfig.general.google_api_key" type="password" placeholder="AIza..."
-                  class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
+                <div class="flex gap-2">
+                  <input v-model="localConfig.general.google_api_key" type="password" placeholder="AIza..."
+                    class="flex-1 px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
+                  <button @click="testConnection('gemini')" :disabled="testingGemini" 
+                    class="bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/30 font-semibold px-4 rounded-lg transition text-xs whitespace-nowrap flex items-center justify-center gap-1.5 min-w-[95px]">
+                    <span v-if="testingGemini" class="inline-block w-3 h-3 border-2 border-blue-300 border-t-transparent rounded-full animate-spin"></span>
+                    <span>⚡ 測試連線</span>
+                  </button>
+                </div>
                 <p class="text-white/40 text-sm mt-1">用於 Gemini 翻譯</p>
               </div>
 
@@ -659,10 +754,17 @@ async function handleFileChange(event: Event) {
               </div>
 
               <div>
-                <label class="block text-white/70 font-semibold mb-2">設備錄音間隔（秒）</label>
+                <label class="block text-white/70 font-semibold mb-2 flex items-center gap-1.5">
+                  設備錄音間隔（秒）
+                  <span class="tooltip-container text-white/40 hover:text-blue-300 transition text-sm">
+                    ⓘ
+                    <span class="tooltip-text">
+                      僅用於設備/Loopback 模式。間隔越短延遲越低但 CPU 越高，建議 0.5（預設）
+                    </span>
+                  </span>
+                </label>
                 <input v-model.number="localConfig.input.device_recording_interval" type="number" step="0.1" min="0.1" max="1.0" placeholder="0.5"
                   class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
-                <p class="text-white/40 text-sm mt-1">僅用於設備/Loopback 模式。間隔越短延遲越低但 CPU 越高，建議 0.5（預設）</p>
               </div>
             </div>
           </div>
@@ -718,16 +820,30 @@ async function handleFileChange(event: Event) {
                   <p class="text-white/30 text-xs mt-1">預設使用內建模型</p>
                 </div>
                 <div>
-                  <label class="block text-white/70 text-sm mb-1">語音閾值</label>
+                  <label class="block text-white/70 text-sm mb-1 flex items-center gap-1.5">
+                    語音閾值
+                    <span class="tooltip-container text-white/40 hover:text-blue-300 transition text-xs">
+                      ⓘ
+                      <span class="tooltip-text">
+                        聲音被判定為語音的閾值。範圍 0.0 ~ 1.0，預設 0.5。數值越低越靈敏。
+                      </span>
+                    </span>
+                  </label>
                   <input v-model.number="localConfig.audio_slicing_vad.vad_threshold" type="number" step="0.05" min="0" max="1"
                     class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
-                  <p class="text-white/30 text-xs mt-1">0.0 ~ 1.0, 預設 0.5</p>
                 </div>
                 <div>
-                  <label class="block text-white/70 text-sm mb-1">負向閾值</label>
+                  <label class="block text-white/70 text-sm mb-1 flex items-center gap-1.5">
+                    負向閾值
+                    <span class="tooltip-container text-white/40 hover:text-blue-300 transition text-xs">
+                      ⓘ
+                      <span class="tooltip-text">
+                        判定語音結束的閾值。範圍 0.0 ~ 1.0，預設 0.35。
+                      </span>
+                    </span>
+                  </label>
                   <input v-model.number="localConfig.audio_slicing_vad.vad_neg_threshold" type="number" step="0.05" min="0" max="1"
                     class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
-                  <p class="text-white/30 text-xs mt-1">0.0 ~ 1.0, 預設 0.35</p>
                 </div>
                 <div>
                   <label class="block text-white/70 text-sm mb-1">最短語音持續 (ms)</label>
@@ -758,17 +874,31 @@ async function handleFileChange(event: Event) {
               <p class="text-white/50 text-xs mb-4">適用於本地檔案或非直播 URL，直播音源無需調整</p>
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label class="block text-white/70 text-sm mb-1">VAD 跳幀頻率 (每 N 幀呼叫一次)</label>
+                  <label class="block text-white/70 text-sm mb-1 flex items-center gap-1.5">
+                    VAD 跳幀頻率
+                    <span class="tooltip-container text-white/40 hover:text-blue-300 transition text-xs">
+                      ⓘ
+                      <span class="tooltip-text">
+                        1 = 每幀都呼叫（無優化），2 = 約減少 50% CPU，3 = 約減少 67% CPU。提高此值可降低 CPU 負擔。
+                      </span>
+                    </span>
+                  </label>
                   <input v-model.number="localConfig.audio_slicing_vad.vad_every_n_frames" type="number" min="1" max="10" step="1"
                     class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
-                  <p class="text-white/30 text-xs mt-1">1 = 每幀都呼叫（無優化），2 = 約減少 50% CPU，3 = 約減少 67% CPU</p>
                 </div>
                 <div class="flex flex-col justify-center">
                   <label class="flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer hover:bg-white/10 transition">
                     <input v-model="localConfig.audio_slicing_vad.realtime_processing" type="checkbox" class="w-5 h-5 accent-yellow-400 mt-0.5" />
                     <div>
-                      <span class="text-white font-medium">實時節流模式</span>
-                      <p class="text-white/50 text-sm mt-1">音頻讀取速度限制為實時速度，CPU 降至最低但處理時間等同音頻時長</p>
+                      <span class="text-white font-medium flex items-center gap-1.5">
+                        實時節流模式
+                        <span class="tooltip-container text-white/40 hover:text-yellow-300 transition text-sm">
+                          ⓘ
+                          <span class="tooltip-text">
+                            音頻讀取速度限制為實時速度，CPU 降至最低，但處理時間等同音頻時長。
+                          </span>
+                        </span>
+                      </span>
                     </div>
                   </label>
                 </div>
@@ -1107,8 +1237,15 @@ async function handleFileChange(event: Event) {
 
                   <div>
                     <label class="block text-white/70 font-semibold mb-2">API Key <span class="text-white/40 text-xs">(選填)</span></label>
-                    <input v-model="localConfig.translation.api_key" type="password" placeholder="覆蓋一般設定的 API Key"
-                      class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-green-400" />
+                    <div class="flex gap-2">
+                      <input v-model="localConfig.translation.api_key" type="password" placeholder="覆蓋一般設定的 API Key"
+                        class="flex-1 px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-green-400" />
+                      <button @click="testConnection('gpt')" :disabled="testingGpt" 
+                        class="bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/30 font-semibold px-4 rounded-lg transition text-xs whitespace-nowrap flex items-center justify-center gap-1.5 min-w-[95px]">
+                        <span v-if="testingGpt" class="inline-block w-3 h-3 border-2 border-blue-300 border-t-transparent rounded-full animate-spin"></span>
+                        <span>⚡ 測試連線</span>
+                      </button>
+                    </div>
                     <p class="text-white/40 text-xs mt-1">留空則使用一般設定</p>
                   </div>
 
@@ -1136,8 +1273,15 @@ async function handleFileChange(event: Event) {
 
                   <div>
                     <label class="block text-white/70 font-semibold mb-2">API Key <span class="text-white/40 text-xs">(選填)</span></label>
-                    <input v-model="localConfig.translation.api_key" type="password" placeholder="覆蓋一般設定的 API Key"
-                      class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
+                    <div class="flex gap-2">
+                      <input v-model="localConfig.translation.api_key" type="password" placeholder="覆蓋一般設定的 API Key"
+                        class="flex-1 px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
+                      <button @click="testConnection('gemini')" :disabled="testingGemini" 
+                        class="bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/30 font-semibold px-4 rounded-lg transition text-xs whitespace-nowrap flex items-center justify-center gap-1.5 min-w-[95px]">
+                        <span v-if="testingGemini" class="inline-block w-3 h-3 border-2 border-blue-300 border-t-transparent rounded-full animate-spin"></span>
+                        <span>⚡ 測試連線</span>
+                      </button>
+                    </div>
                     <p class="text-white/40 text-xs mt-1">留空則使用一般設定</p>
                   </div>
 
@@ -1259,24 +1403,45 @@ async function handleFileChange(event: Event) {
               <h3 class="text-lg font-semibold text-blue-300 mb-4">🔧 進階設定</h3>
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label class="block text-white/70 font-semibold mb-2">歷史訊息數量</label>
+                  <label class="block text-white/70 font-semibold mb-2 flex items-center gap-1.5">
+                    歷史訊息數量
+                    <span class="tooltip-container text-white/40 hover:text-blue-300 transition text-sm">
+                      ⓘ
+                      <span class="tooltip-text">
+                        0 = 並行獨立翻譯各句，大於 0 = 串行翻譯並提供上下文資訊（能更準確地翻譯對話上下文）。
+                      </span>
+                    </span>
+                  </label>
                   <input v-model.number="localConfig.translation.translation_history_size" type="number" min="0" max="20"
                     class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
-                  <p class="text-white/40 text-xs mt-1">0 = 並行翻譯, >0 = 串行翻譯 (包含上下文)</p>
                 </div>
 
                 <div>
-                  <label class="block text-white/70 font-semibold mb-2">翻譯超時 (秒)</label>
+                  <label class="block text-white/70 font-semibold mb-2 flex items-center gap-1.5">
+                    翻譯超時 (秒)
+                    <span class="tooltip-container text-white/40 hover:text-blue-300 transition text-sm">
+                      ⓘ
+                      <span class="tooltip-text">
+                        翻譯 API 的最長等待時間，超過此時間將跳過該句以避免延遲累積。
+                      </span>
+                    </span>
+                  </label>
                   <input v-model.number="localConfig.translation.translation_timeout" type="number" min="5" max="60"
                     class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
-                  <p class="text-white/40 text-xs mt-1">超過此時間將放棄該句翻譯</p>
                 </div>
 
                 <div class="md:col-span-2">
-                  <label class="block text-white/70 font-semibold mb-2">處理代理伺服器 <span class="text-white/40 text-xs">(選填)</span></label>
+                  <label class="block text-white/70 font-semibold mb-2 flex items-center gap-1.5">
+                    處理代理伺服器 <span class="text-white/40 text-xs">(選填)</span>
+                    <span class="tooltip-container text-white/40 hover:text-blue-300 transition text-sm">
+                      ⓘ
+                      <span class="tooltip-text">
+                        為 Whisper 和 GPT API 的呼叫設定 HTTP/S 代理伺服器（Google Gemini API 目前不支援此代理設定）。
+                      </span>
+                    </span>
+                  </label>
                   <input v-model="localConfig.translation.processing_proxy" type="text" placeholder="http://127.0.0.1:7890"
                     class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
-                  <p class="text-white/40 text-xs mt-1">為 Whisper/GPT API 使用代理（Gemini 目前不支援）</p>
                 </div>
 
                 <div class="md:col-span-2">
@@ -1498,24 +1663,7 @@ async function handleFileChange(event: Event) {
           </div>
         </div>
 
-        <!-- Action Buttons -->
-        <div class="border-t border-white/10 bg-white/5 px-6 py-4 flex justify-between items-center">
-          <button @click="resetToDefault" class="bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-2 px-6 rounded-lg transition">
-            🔄 重置為預設值
-          </button>
 
-          <div class="flex gap-4">
-            <button @click="handleCancel" class="bg-white/10 hover:bg-white/20 text-white font-bold py-2 px-6 rounded-lg transition border border-white/20">
-              取消
-            </button>
-
-            <button @click="handleSave" :disabled="isSaving" class="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:from-gray-500 disabled:to-gray-600 text-white font-bold py-2 px-8 rounded-lg transition shadow-lg shadow-blue-500/30">
-              {{ isSaving ? '儲存中...' : '💾 儲存設定' }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
 
     <!-- Custom Model Dialog -->
     <div v-if="showCustomModelDialog" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
@@ -1557,4 +1705,42 @@ async function handleFileChange(event: Event) {
     </div>
   </div>
 </template>
+
+<style scoped>
+.tooltip-container {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.tooltip-text {
+  visibility: hidden;
+  position: absolute;
+  bottom: 125%;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: rgba(15, 23, 42, 0.95);
+  color: #fff;
+  text-align: left;
+  padding: 8px 12px;
+  border-radius: 8px;
+  width: 260px;
+  font-size: 0.75rem;
+  line-height: 1.25rem;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3);
+  z-index: 50;
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  pointer-events: none;
+  font-weight: normal;
+}
+
+.tooltip-container:hover .tooltip-text {
+  visibility: visible;
+  opacity: 1;
+  transform: translateX(-50%) translateY(-2px);
+}
+</style>
 ```

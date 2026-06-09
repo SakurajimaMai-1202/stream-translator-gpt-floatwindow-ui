@@ -1,46 +1,67 @@
 <div align="center">
   <h1>Stream Translator FloatWindow</h1>
-  即時語音辨識 × 翻譯 × 浮動字幕
+  <p>Windows 即時語音辨識、翻譯與浮動字幕工具</p>
 </div>
 
+<p align="center">
+  <a href="https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest">下載最新版</a>
+  ·
+  <a href="#快速開始">快速開始</a>
+  ·
+  <a href="#常見問題">常見問題</a>
+</p>
 
 <p align="center">
-基於 <a href="https://github.com/ionic-bond/stream-translator-gpt">stream-translator-gpt</a> 的桌面 GUI 前端<br>
-💡 若需串聯手機端，可搭配使用此專案：<a href="https://github.com/W-Nana/SubtitleOverlay">SubtitleOverlay</a>
-</p>
-<p align="center">
-  <img src="https://img.shields.io/badge/python-3.10--3.12-blue" alt="Python">
-  <img src="https://img.shields.io/badge/CUDA-12.4-green" alt="CUDA">
   <img src="https://img.shields.io/badge/platform-Windows-lightgrey" alt="Platform">
+  <img src="https://img.shields.io/badge/GPU-NVIDIA%20CUDA-green" alt="NVIDIA CUDA">
+  <img src="https://img.shields.io/badge/python-3.10--3.12-blue" alt="Python">
 </p>
 
-<img width="2381" height="1058" alt="PixPin_2026-04-05_20-48-45" src="https://github.com/user-attachments/assets/0a663535-dd94-40a6-8444-3c00844bc563" />
+<img width="2381" height="1058" alt="Stream Translator FloatWindow screenshot" src="https://github.com/user-attachments/assets/0a663535-dd94-40a6-8444-3c00844bc563" />
 
-> **⚠️ 本專案需要 NVIDIA CUDA GPU，不提供 CPU 模式。**
->
+Stream Translator FloatWindow 是一個給 Windows 使用的即時字幕翻譯工具。它可以讀取直播 URL、麥克風、電腦播放音訊或本地音檔，經過 ASR 語音辨識後交給 GPT、Gemini 或本地 LLM 翻譯，最後顯示在桌面浮動字幕視窗，也可以在區網內分享給手機或平板觀看。
+
+本專案基於 [stream-translator-gpt](https://github.com/ionic-bond/stream-translator-gpt) 擴充桌面 GUI、浮動字幕、模型管理與字幕分享功能。若需要串聯手機端，也可搭配 [SubtitleOverlay](https://github.com/W-Nana/SubtitleOverlay)。
+
+> 本專案需要 Windows 10/11 與 NVIDIA CUDA GPU。不提供 CPU-only 模式。
+
+---
+
+## 適合用途
+
+- 看 YouTube、Twitch、Bilibili、X 等直播時即時翻譯字幕
+- 擷取遊戲、播放器、會議或瀏覽器的系統音訊並轉成字幕
+- 使用麥克風做即時語音辨識與翻譯
+- 用浮動視窗在全螢幕遊戲或影片上方顯示字幕
+- 在同一個區網內讓手機、平板或另一台電腦觀看字幕頁面
+- 使用本地 LLM 做較私密或離線的翻譯流程
 
 ---
 
 ## 下載
 
-### 給一般使用者
+### 一般使用者推薦
 
-建議提供一個完整壓縮包，放在 NAS、雲端硬碟或其他大檔下載空間：
+建議下載完整 portable 壓縮包，解壓後直接執行：
 
 - NAS 鏡像：`StreamTranslator-v1.2.0-win64-portable.zip`（連結待補）
 - GitHub Release：<https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest>
 
-NAS 單檔完整包最適合一般使用者，下載後直接解壓並執行 `Stream Translator.exe`。GitHub Release 因為單檔容量較大，提供的是分割壓縮包，適合當公開備用鏡像。
-
 完整包資訊：
 
-- 檔名：`StreamTranslator-v1.2.0-win64-portable.zip`
-- 大小：約 4.63 GB
-- SHA256：`57e752df794f92b2508d0878ce4af2880bc9edd8a9a76924a9f05a439a98ae1a`
+| 項目 | 內容 |
+|------|------|
+| 檔名 | `StreamTranslator-v1.2.0-win64-portable.zip` |
+| 大小 | 約 4.63 GB |
+| SHA256 | `57e752df794f92b2508d0878ce4af2880bc9edd8a9a76924a9f05a439a98ae1a` |
 
-### GitHub 分割包使用方式
+NAS 單檔完整包最適合一般使用者。GitHub Release 因為單檔容量較大，提供分割壓縮包作為公開備用鏡像。
 
-從 GitHub Release 下載下列檔案，放在同一個資料夾：
+請不要下載 GitHub 自動產生的 `Source code (zip)` 當作執行版；那只是原始碼，不能直接雙擊啟動。
+
+### GitHub 分割包
+
+如果從 GitHub Release 下載，請把以下檔案放在同一個資料夾：
 
 - `StreamTranslator-v1.2.0-win64-portable.zip.001`
 - `StreamTranslator-v1.2.0-win64-portable.zip.002`
@@ -53,157 +74,145 @@ NAS 單檔完整包最適合一般使用者，下載後直接解壓並執行 `St
 
 ---
 
-## 功能一覽
+## 快速開始
+
+### 使用打包版
+
+1. 下載 NAS 單檔完整包，或從 GitHub Release 下載分割包。
+2. 解壓到一個不要含特殊符號的資料夾，例如 `D:\Apps\StreamTranslator`。
+3. 執行 `Stream Translator.exe`。
+4. 在首頁選擇音源。預設會使用 URL 串流模式。
+5. 選擇輸入語言、目標語言、ASR 模型與翻譯後端。
+6. 按下「啟動即時轉譯」。
+
+第一次使用 Qwen3-ASR 或 faster-whisper 時，模型可能需要下載或載入，等待時間會比較長。
+
+### 最少要設定什麼
+
+| 設定 | 建議 |
+|------|------|
+| 音源 | 直播網址選 URL；遊戲或影片選系統音訊；真人講話選麥克風 |
+| ASR | 多語混用先用 `Qwen/Qwen3-ASR-1.7B`；日文場景可選 JA fine-tune |
+| 翻譯 | 有 API Key 可用 GPT/Gemini；要本地離線可用 llama.cpp 或 LM Studio |
+| 目標語言 | 例如繁體中文、英文、日文 |
+
+---
+
+## 功能
 
 | 類別 | 說明 |
 |------|------|
-| **音源** | YouTube / Twitch / Bilibili / X 直播 URL、麥克風、系統播放音訊（WASAPI Loopback）、本地音檔 |
-| **語音辨識 (ASR)** | Qwen3-ASR（0.6B / 1.7B）、faster-whisper（tiny → large-v3-turbo）、OpenAI Whisper API |
-| **語音切片 (VAD)** | 支援 Silero VAD 與高精準度 FireRed VAD（基於 `omnivad` 庫，打包版已內建） |
-| **翻譯** | OpenAI GPT、Google Gemini、本地 LLM（llama.cpp /lmstudio 等等） |
-| **浮動字幕** | 獨立置頂視窗，可自訂字體、顏色、透明度 |
-| **字幕分享** | 區網內其他裝置可用瀏覽器即時查看字幕（預設 port 8765） |
-| **字幕輸出** | SRT / TXT / ASS 檔案匯出 |
-| **智慧提示詞** | 根據轉錄內容動態調整翻譯 prompt |
-| **術語表** | 自定義術語對照，改善專業詞彙翻譯 |
-| **模型管理** | 內建 Qwen3-ASR / faster-whisper 模型下載介面 |
+| 音源輸入 | URL 直播、本地音檔、麥克風、系統音訊 WASAPI Loopback |
+| 語音辨識 | Qwen3-ASR、Qwen3-ASR JA fine-tune、faster-whisper、OpenAI Whisper API |
+| 語音切片 | Silero VAD、FireRed VAD，適合即時串流切句 |
+| 翻譯後端 | OpenAI GPT、Google Gemini、本地 OpenAI-compatible LLM |
+| 浮動字幕 | 置頂字幕視窗，可調字體、顏色、透明度、顯示行數 |
+| 字幕分享 | 內建網頁字幕服務，區網裝置可用瀏覽器觀看 |
+| 字幕輸出 | 支援 SRT、TXT、ASS 輸出 |
+| 術語表 | 自訂詞彙對照，改善角色名、專有名詞與固定譯法 |
+| 模型管理 | 在介面內下載、檢查與切換 ASR 模型 |
 
 ---
 
-## 快速開始
+## 我該選哪個模型
 
-### 使用打包版（推薦）
+### ASR 語音辨識
 
-1. 優先下載 NAS 單檔完整包，或從 [GitHub Release](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest) 下載分割包
-2. 解壓後執行 `Stream Translator.exe`
-3. 首次啟動後依需要設定音源、ASR 模型與翻譯後端
+| 情境 | 推薦 |
+|------|------|
+| 多語言混用、預設選擇 | `Qwen/Qwen3-ASR-1.7B` |
+| 日文內容為主 | `neosophie/Qwen3-ASR-1.7B-JA` |
+| 顯卡 VRAM 較小 | Qwen3-ASR-0.6B 或 faster-whisper small |
+| 想要 Whisper 系列穩定性 | faster-whisper large-v3-turbo |
+| 使用雲端辨識 | OpenAI Whisper API |
 
-### 從原始碼執行
+### 顯卡建議
 
-```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
+| 配置 | 建議用法 |
+|------|------|
+| 6GB VRAM | Qwen3-ASR-0.6B、faster-whisper small/medium |
+| 8GB VRAM | Qwen3-ASR-1.7B，翻譯建議用 API 或輕量本地模型 |
+| 12GB VRAM | Qwen3-ASR-1.7B + 較小本地 LLM |
+| 16GB+ VRAM | ASR 與本地 LLM 同時跑會比較舒服 |
 
-# 先安裝 CUDA 版 PyTorch
-pip install torch --extra-index-url https://download.pytorch.org/whl/cu124
+### 翻譯後端
 
-# 安裝依賴
-pip install -r app/requirements.txt
-
-# 啟動
-copy app\config.example.yaml app\config.yaml
-cd app
-python main.py
-```
-
-> 使用本地 LLM 需另備 `llama/`（[llama.cpp Releases](https://github.com/ggerganov/llama.cpp/releases)）；  
-> ffmpeg 需加入 PATH 或將 `ffmpeg-8.1-essentials_build/` 放在專案根目錄。  
-> 兩者都要和 `app/` 放在**同一層**。
-
----
-
-## 介面與使用方式
-
-程式的處理流程：
-
-```
-音訊來源 → VAD 切割 → ASR 語音辨識 → LLM 翻譯 → 字幕顯示 / 輸出
-```
-
-### Home（首頁）
-
-首頁是主要操作頁面：
-
-1. **選擇音訊來源** — URL / 麥克風 / 系統音訊 / 本地檔案
-2. **填入網址或選裝置** — 依來源類型顯示對應輸入
-3. **點 Start** — 等待模型載入後字幕開始顯示
-4. **字幕區** — 即時顯示原文與翻譯結果
-5. **字幕分享** — 啟用後區網裝置可用 `http://[本機IP]:8765` 看字幕
-
-### Settings（設定頁）
-
-設定內容多，建議按優先順序調整：
-
-| 優先度 | 區塊 | 用途 |
-|------|------|------|
-| ★★★ | **Input** | 音訊來源類型、URL cookies、裝置選擇 |
-| ★★★ | **Transcription** | ASR 後端（Qwen3-ASR / faster-whisper / OpenAI）、模型、語言 |
-| ★★★ | **Translation** | 翻譯後端（GPT / Gemini / 本地 LLM）、目標語言、Base URL |
-| ★★ | Audio Slicing & VAD | 語音切割長度、VAD 靈敏度 |
-| ★★ | Output | 字幕輸出目錄與格式（SRT/TXT/ASS） |
-| ★★ | Server | 字幕分享端口 |
-| ★ | General | API Key、Log Level |
-| ★ | Terminology | 術語對照表 |
-| ★ | Llama Settings | 本地 LLM 模型路徑、GPU Layers、上下文長度 |
-
-**第一次使用只要設好 Input / Transcription / Translation 三區就能跑。**
-
-### Floating Subtitle（浮動字幕）
-
-獨立置頂視窗，適合全螢幕時使用。可自訂：
-
-- 字體大小 / 粗細、原文顏色（預設白）、譯文顏色（預設黃）
-- 背景透明度、顯示位置、最大顯示條數
-- 可分別開關原文 / 譯文顯示
-
-### 字幕分享
-
-啟用後，區網內其他裝置（手機、平板）可用瀏覽器打開 `http://[本機IP]:8765` 即時查看字幕。有桌面版與行動版兩種檢視頁面。
+| 後端 | Base URL | 適合情境 |
+|------|----------|----------|
+| OpenAI GPT | `https://api.openai.com/v1` | 品質穩、設定簡單，需要 API Key |
+| Google Gemini | 留空或依設定頁提示 | 成本與速度彈性，需要 API Key |
+| llama.cpp | `http://127.0.0.1:8080/v1` | 本地離線翻譯 |
+| LM Studio | `http://127.0.0.1:1234/v1` | 本地模型管理較方便 |
+| Ollama | `http://127.0.0.1:11434/v1` | 已有 Ollama 環境時使用 |
 
 ---
 
 ## 常見工作流程
 
-### YouTube / Twitch /X 直播翻譯
+### 翻譯直播 URL
 
-1. Settings 設好 ASR 與翻譯後端
-2. Home → 選 URL → 貼上直播網址 → Start
+1. 首頁選擇 `URL 串流`。
+2. 貼上 YouTube、Twitch、Bilibili 或 X 直播網址。
+3. 選擇 ASR 與目標語言。
+4. 啟動即時轉譯。
+
+部分 YouTube 影片或直播需要 cookies，請在設定頁的輸入選項填入 `cookies.txt`。
 
 ### 擷取電腦播放音訊
 
-1. Home → 選「系統音訊」→ 選擇輸出裝置 → Start
-2. 適合用於遊戲、影片等非直播場景
+1. 首頁選擇 `系統音訊`。
+2. 選擇目前播放聲音的輸出裝置。
+3. 啟動轉譯。
 
-### 本地 LLM 離線翻譯
+這個模式適合遊戲、播放器、會議或任何不能直接提供直播 URL 的場景。
 
-1. Settings → Llama Settings → 設定 `.gguf` 模型路徑與 GPU Layers → 啟動 Llama Server
-2. Settings → Translation → Base URL 填 `http://127.0.0.1:8080/v1`
-3. 正常啟動翻譯
+### 使用本地 LLM 翻譯
+
+1. 準備 llama.cpp、LM Studio 或 Ollama。
+2. 啟動本地 LLM server。
+3. 在設定頁把翻譯後端設為 OpenAI-compatible API。
+4. 填入對應 Base URL，例如 `http://127.0.0.1:8080/v1`。
+5. 回到首頁啟動轉譯。
+
+### 分享字幕到手機
+
+1. 啟用字幕分享服務。
+2. 確認防火牆允許 port `8765`。
+3. 手機連到同一個 Wi-Fi。
+4. 用瀏覽器打開 `http://[本機IP]:8765`。
 
 ---
 
-## 翻譯後端
+## 介面說明
 
-| 後端 | Base URL | 說明 |
-|------|----------|------|
-| OpenAI GPT | `https://api.openai.com/v1` | 需 API Key |
-| Google Gemini | （留空） | 需 API Key |
-| llama.cpp | `http://127.0.0.1:8080/v1` | 本地，需自備 `llama/` |
-| Ollama | `http://127.0.0.1:11434/v1` | 本地，需已有服務 |
+### 首頁
 
----
+首頁是日常使用的主要畫面：
 
-## ASR 與顯卡建議
+- 選擇音源：URL、本地檔案、麥克風、系統音訊
+- 選擇輸入語言與目標語言
+- 切換是否翻譯
+- 展開進階設定，調整 ASR 引擎與模型
+- 開啟字幕視窗或字幕分享服務
 
-| ASR 模型 | 權重大小 | 建議 VRAM | 使用定位 |
-|------|------|------|------|
-| faster-whisper tiny/base/small | < 0.5 GB | 2–4 GB | 超輕量，延遲最低 |
-| faster-whisper medium/large-v3-turbo | 1.5–1.6 GB | 3–5 GB | 速度與品質均衡 |
-| faster-whisper large-v3 | ~3 GB | 4–6 GB | Whisper 品質最高 |
-| Qwen3-ASR-0.6B | ~1.8 GB | 4–5 GB | 主力入門推薦 |
-| Qwen3-ASR-1.7B | ~4 GB | 6–8 GB | 品質優先 |
-| Qwen3-ASR-1.7B 4-bit | ~1 GB | 3–5 GB | 低 VRAM 高品質 |
+處理流程如下：
 
-純 ASR 大約 8GB VRAM 就夠；若要同時跑本地 LLM 翻譯，建議 16GB 以上。
+```text
+音訊來源 -> VAD 切割 -> ASR 語音辨識 -> LLM 翻譯 -> 字幕顯示 / 檔案輸出
+```
 
-## 翻譯模型推薦組合
+### 浮動字幕
 
-| 組合 | ASR | 翻譯模型 | 定位 |
-|------|-----|----------|------|
-| 低延遲 | Qwen3-ASR-0.6B | hymt2.0 7b | 即時直播 |
-| 品質優先 | Qwen3-ASR-1.7B | sakura | 日中翻譯 |
-| 泛用多語 | faster-whisper large-v3-turbo | gemma 4 | 多語場景 |
-| **私心推薦** | Qwen3-ASR-1.7B 4-bit | gemma 4 E4B/hymt2.0 7b | 快又好 |
+浮動字幕視窗可以置頂顯示在遊戲、影片或直播上方，支援：
+
+- 原文與譯文分別顯示
+- 字體大小、粗細、顏色調整
+- 背景透明度與視窗位置調整
+- 最大顯示行數限制
+
+### 字幕分享
+
+字幕分享服務會在本機啟動網頁服務。區網內其他裝置可用瀏覽器開啟桌面版或行動版字幕頁，預設 port 是 `8765`。
 
 ---
 
@@ -211,84 +220,81 @@ python main.py
 
 <details>
 <summary><strong>有沒有 CPU 模式？</strong></summary>
-本專案不提供。即時語音辨識＋翻譯在 CPU 上延遲過高，不符合使用目標。
+
+沒有。本專案目標是即時語音辨識與翻譯，CPU-only 延遲太高，不符合使用目標。
+
 </details>
 
 <details>
-<summary><strong>ffmpeg 未偵測到</strong></summary>
-將 ffmpeg 加入系統 PATH，或將 <code>ffmpeg-8.1-essentials_build/</code> 放在專案根目錄（與 <code>app/</code> 同層）。
+<summary><strong>為什麼第一次啟動很久？</strong></summary>
+
+第一次使用模型時可能需要下載或載入權重。Qwen3-ASR 與 faster-whisper 模型大小從數百 MB 到數 GB 不等，請確認網路和磁碟空間足夠。
+
 </details>
 
 <details>
-<summary><strong>模型載入很慢 / 卡住</strong></summary>
-首次使用會自動從 HuggingFace 下載（1–4 GB），請確認網路暢通。可設定 <code>HF_ENDPOINT</code> 環境變數使用鏡像站。
+<summary><strong>YouTube 或直播網址讀不到怎麼辦？</strong></summary>
+
+先確認網址可在瀏覽器播放。若影片需要登入或年齡驗證，請用瀏覽器擴充套件匯出 `cookies.txt`，再到設定頁的 Input / Cookies 填入路徑。
+
 </details>
 
 <details>
-<summary><strong>翻譯沒有回應</strong></summary>
-確認 LLM 服務已啟動，且 Base URL 正確。可在瀏覽器開 <code>http://127.0.0.1:8080/v1/models</code> 確認。
+<summary><strong>ffmpeg 未偵測到怎麼辦？</strong></summary>
+
+打包版通常已處理常用依賴。若從原始碼執行，請把 ffmpeg 加入系統 PATH，或將 `ffmpeg-8.1-essentials_build/` 放在專案根目錄，與 `app/` 同一層。
+
 </details>
 
 <details>
-<summary><strong>YouTube 讀取失敗</strong></summary>
-部分影片需要 cookies。用瀏覽器擴充套件匯出 <code>cookies.txt</code>，在 Settings → Input → Cookies 填入路徑。
+<summary><strong>翻譯沒有回應怎麼排查？</strong></summary>
+
+確認 API Key、Base URL 與模型名稱是否正確。若使用本地 LLM，可先用瀏覽器打開 `http://127.0.0.1:8080/v1/models` 或對應 server 的 `/v1/models` 測試。
+
 </details>
 
 <details>
-<summary><strong>辨識結果大量重複</strong></summary>
-在 Settings → Transcription → Whisper Filters 確認 <code>repetition_filter</code> 已啟用。Qwen3-ASR 通常不需要。
+<summary><strong>字幕分享手機打不開怎麼辦？</strong></summary>
+
+確認手機和電腦在同一個區網，並允許 Windows 防火牆讓 port `8765` 連入。網址要使用電腦的區網 IP，例如 `http://192.168.1.10:8765`。
+
 </details>
 
 <details>
-<summary><strong>字幕分享無法存取</strong></summary>
-確認防火牆允許 port 8765 連入。區網裝置用 <code>http://[本機IP]:8765</code> 存取。
+<summary><strong>辨識結果大量重複怎麼辦？</strong></summary>
+
+如果使用 faster-whisper，請確認設定頁中的 repetition filter 已啟用。若使用 Qwen3-ASR，通常不需要開太強的重複過濾。
+
 </details>
 
 <details>
-<summary><strong>llama 功能無法使用</strong></summary>
-<code>llama-server.exe</code> 不隨倉庫提供。請從 <a href="https://github.com/ggerganov/llama.cpp/releases">llama.cpp Releases</a> 下載，放入專案根目錄下的 <code>llama/</code>。
-</details>
+<summary><strong>為什麼 requirements.txt 沒一起安裝 PyTorch？</strong></summary>
 
-<details>
-<summary><strong>為什麼 requirements.txt 沒一起裝 PyTorch？</strong></summary>
-PyTorch 必須依 CUDA 版本選擇安裝來源（cu118/cu121/cu124），無法寫死。CUDA Toolkit / Driver 則是系統層依賴。
+PyTorch 必須依照 CUDA 版本選擇 cu118、cu121、cu124 等不同來源，無法在 requirements 裡替所有使用者寫死。
+
 </details>
 
 ---
 
-<details>
-<summary><h2>開發者資訊</h2></summary>
+## 從原始碼執行
 
-### 專案結構
+一般使用者建議使用打包版。以下流程適合開發、除錯或自行打包。
 
-```
-stream-translator-gpt-floatwindow-ui/
-├── app/
-│   ├── main.py                     # 入口（PyQt6 WebView 容器）
-│   ├── windows.py                  # 視窗管理
-│   ├── services.py                 # FastAPI 後端 + 靜態檔服務
-│   ├── backend/                    # REST API / 核心邏輯 / 資料模型
-│   ├── frontend/                   # Vue 3 + Tailwind CSS + TypeScript
-│   ├── config.example.yaml         # 設定範本
-│   ├── requirements.txt            # 執行用依賴
-│   └── requirements_full.txt       # 打包用依賴（含 PyInstaller）
-├── stream-translator-gpt/          # 核心轉錄翻譯引擎（fork）
-└── README.md
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+
+# 依自己的 CUDA 版本安裝 PyTorch，以下以 CUDA 12.4 為例
+pip install torch --extra-index-url https://download.pytorch.org/whl/cu124
+
+pip install -r app/requirements.txt
+
+copy app\config.example.yaml app\config.yaml
+cd app
+python main.py
 ```
 
-### 系統需求
-
-| 項目 | 要求 |
-|------|------|
-| OS | Windows 10/11 64-bit |
-| GPU | NVIDIA CUDA 相容顯卡，Driver ≥ 528 |
-| CUDA | 12.4+（建議） |
-| Python | 3.10–3.12 |
-| Node.js | ≥ 18（僅前端建構需要） |
-
-### 外部檔案放置
-
-`llama/` 與 `ffmpeg-8.1-essentials_build/` 都放在**專案根目錄**（與 `app/` 同層）。
+本地 LLM 和 ffmpeg 的建議位置：
 
 ```text
 floatwindow/
@@ -298,4 +304,42 @@ floatwindow/
 └── stream-translator-gpt/
 ```
 
-</details>
+---
+
+## 開發者資訊
+
+### 專案結構
+
+```text
+stream-translator-gpt-floatwindow-ui/
+├── app/
+│   ├── main.py                     # PyQt6 WebView 入口
+│   ├── windows.py                  # 主視窗與浮動字幕視窗
+│   ├── services.py                 # FastAPI 後端與靜態檔服務
+│   ├── backend/                    # REST API、設定、模型管理、核心流程
+│   ├── frontend/                   # Vue 3 + Tailwind CSS + TypeScript
+│   ├── config.example.yaml         # 設定範本
+│   ├── requirements.txt            # 執行用依賴
+│   └── requirements_full.txt       # 打包用依賴
+├── stream-translator-gpt/          # 核心轉錄翻譯引擎 fork
+└── README.md
+```
+
+### 系統需求
+
+| 項目 | 要求 |
+|------|------|
+| OS | Windows 10/11 64-bit |
+| GPU | NVIDIA CUDA 相容顯卡 |
+| Driver | 建議 528 以上 |
+| CUDA | 建議 12.4+ |
+| Python | 3.10-3.12 |
+| Node.js | 18+，僅前端建構需要 |
+
+---
+
+## Credits
+
+- Core project: [ionic-bond/stream-translator-gpt](https://github.com/ionic-bond/stream-translator-gpt)
+- Mobile subtitle reference: [W-Nana/SubtitleOverlay](https://github.com/W-Nana/SubtitleOverlay)
+- Local LLM runtime: [ggerganov/llama.cpp](https://github.com/ggerganov/llama.cpp)

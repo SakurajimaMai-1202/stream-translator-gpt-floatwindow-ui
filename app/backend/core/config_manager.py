@@ -420,13 +420,9 @@ class ConfigManager:
             # 預設使用 URL
             url = input_config.get('url', '')
         
-        transcription_backend = config['transcription'].get('backend', 'faster-whisper')
-        # Qwen3-ASR 使用獨立模型欄位，其他後端沿用一般 model 欄位
-        transcription_model = (
-            config['transcription'].get('qwen3_asr_model')
-            if transcription_backend == 'qwen3-asr'
-            else config['transcription'].get('model', 'base')
-        )
+        # ROCm branch: local ASR support is intentionally limited to Qwen3-ASR.
+        transcription_backend = 'qwen3-asr'
+        transcription_model = config['transcription'].get('qwen3_asr_model') or 'Qwen/Qwen3-ASR-1.7B'
 
         # 基本參數對映
         args = {
@@ -454,22 +450,22 @@ class ConfigManager:
             'realtime_processing': config.get('audio_slicing_vad', {}).get('realtime_processing', False),
             'vad_backend': config.get('audio_slicing_vad', {}).get('vad_backend', 'silero'),
             'firered_vad_model_path': config.get('audio_slicing_vad', {}).get('firered_vad_model_path', ''),
-            'preload_asr_model': transcription_backend in ['qwen3-asr', 'faster-whisper', 'whisper'],
-            'keep_asr_loaded': transcription_backend in ['qwen3-asr', 'faster-whisper', 'whisper'],
+            'preload_asr_model': True,
+            'keep_asr_loaded': True,
             
             # 語音轉文字
             'model': transcription_model,
             'language': config['transcription'].get('language', 'auto'),
-            'use_faster_whisper': transcription_backend == 'faster-whisper',
-            'use_simul_streaming': 'simul' in transcription_backend,
-            'use_openai_transcription_api': transcription_backend == 'openai-api',
-            'use_qwen3_asr': transcription_backend == 'qwen3-asr',
+            'use_faster_whisper': False,
+            'use_simul_streaming': False,
+            'use_openai_transcription_api': False,
+            'use_qwen3_asr': True,
             'openai_transcription_model': config['transcription'].get('openai_model', 'whisper-1'),
-            'whisper_filters': config['transcription'].get('whisper_filters', []),
+            'whisper_filters': [],
             'disable_transcription_context': config['transcription'].get('disable_transcription_context', False),
             'transcription_initial_prompt': config['transcription'].get('transcription_initial_prompt', ''),
             'qwen3_dtype': config['transcription'].get('qwen3_dtype', 'bfloat16'),
-            'qwen3_load_in_4bit': config['transcription'].get('qwen3_load_in_4bit', False),
+            'qwen3_load_in_4bit': False,
             'qwen3_rms_threshold': config['transcription'].get('qwen3_rms_threshold', 0.005),
         }
         

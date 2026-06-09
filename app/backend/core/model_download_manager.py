@@ -19,31 +19,6 @@ SUPPORTED_QWEN3_MODELS = {
     "neosophie/Qwen3-ASR-1.7B-JA",
 }
 
-SUPPORTED_FASTER_WHISPER_MODELS = {
-    "tiny",
-    "base",
-    "small",
-    "medium",
-    "large-v2",
-    "large-v3",
-    "large-v3-turbo",
-}
-
-FASTER_WHISPER_MODEL_TO_REPO_ID = {
-    "tiny": "Systran/faster-whisper-tiny",
-    "base": "Systran/faster-whisper-base",
-    "small": "Systran/faster-whisper-small",
-    "medium": "Systran/faster-whisper-medium",
-    "large-v2": "Systran/faster-whisper-large-v2",
-    "large-v3": "Systran/faster-whisper-large-v3",
-    "large-v3-turbo": "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
-}
-
-FASTER_WHISPER_REPO_ID_TO_MODEL = {
-    repo_id: model_id for model_id, repo_id in FASTER_WHISPER_MODEL_TO_REPO_ID.items()
-}
-
-
 class ModelDownloadManager:
     """模型下載任務管理器"""
 
@@ -81,9 +56,7 @@ class ModelDownloadManager:
     def _normalize_repo_id(self, engine: str, model_id: str) -> str:
         if engine == "qwen3-asr":
             return model_id
-        if "/" in model_id:
-            return model_id
-        return FASTER_WHISPER_MODEL_TO_REPO_ID.get(model_id, f"Systran/faster-whisper-{model_id}")
+        raise ValueError(f"ROCm 分支不支援的模型引擎: {engine}")
 
     def _validate_model_id(self, engine: str, model_id: str) -> str:
         if engine == "qwen3-asr":
@@ -91,15 +64,7 @@ class ModelDownloadManager:
                 raise ValueError(f"不支援的 Qwen3-ASR 模型: {model_id}")
             return model_id
 
-        if engine == "faster-whisper":
-            if "/" in model_id:
-                # 允許進階使用者直接輸入完整 repo id
-                return model_id
-            if model_id not in SUPPORTED_FASTER_WHISPER_MODELS:
-                raise ValueError(f"不支援的 Faster-Whisper 模型: {model_id}")
-            return model_id
-
-        raise ValueError(f"不支援的引擎: {engine}")
+        raise ValueError(f"ROCm 分支不支援的模型引擎: {engine}")
 
     async def start_download(self, engine: str, model_id: str) -> str:
         """建立下載任務並背景執行"""
@@ -199,17 +164,6 @@ class ModelDownloadManager:
                             cache_path=cache_path,
                         )
                     )
-                elif repo_id in FASTER_WHISPER_REPO_ID_TO_MODEL or repo_id.startswith("Systran/faster-whisper-"):
-                    model_id = FASTER_WHISPER_REPO_ID_TO_MODEL.get(repo_id, repo_id.replace("Systran/faster-whisper-", ""))
-                    models.append(
-                        DownloadedModelInfo(
-                            engine="faster-whisper",
-                            model_id=model_id,
-                            repo_id=repo_id,
-                            size_bytes=size_bytes,
-                            cache_path=cache_path,
-                        )
-                    )
 
             models.sort(key=lambda m: (m.engine, m.model_id))
             return models
@@ -250,18 +204,6 @@ class ModelDownloadManager:
                         cache_path=str(item),
                     )
                 )
-            elif repo_id in FASTER_WHISPER_REPO_ID_TO_MODEL or repo_id.startswith("Systran/faster-whisper-"):
-                model_id = FASTER_WHISPER_REPO_ID_TO_MODEL.get(repo_id, repo_id.replace("Systran/faster-whisper-", ""))
-                models.append(
-                    DownloadedModelInfo(
-                        engine="faster-whisper",
-                        model_id=model_id,
-                        repo_id=repo_id,
-                        size_bytes=size_bytes,
-                        cache_path=str(item),
-                    )
-                )
-
         models.sort(key=lambda m: (m.engine, m.model_id))
         return models
 

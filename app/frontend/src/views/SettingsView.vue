@@ -7,7 +7,6 @@ import { useModelDownloadStore } from '../stores/modelDownload';
 import { useLlamaStore } from '../stores/llama';
 import LlamaSettings from '../components/LlamaSettings.vue';
 import UiSelect, { type UiSelectOption } from '../components/UiSelect.vue';
-import { useTranscriptionMutex } from '../composables/useTranscriptionMutex';
 import { useAppSyncEvents } from '../composables/useAppSyncEvents';
 
 const testingGpt = ref(false);
@@ -24,7 +23,6 @@ const modelDownloadStore = useModelDownloadStore();
 const llamaStore = useLlamaStore();
 
 const qwenModels = ['Qwen/Qwen3-ASR-0.6B', 'Qwen/Qwen3-ASR-1.7B', 'neosophie/Qwen3-ASR-1.7B-JA'];
-const fasterWhisperModels = ['tiny', 'base', 'small', 'medium', 'large-v2', 'large-v3', 'large-v3-turbo'];
 
 const logLevelOptions: UiSelectOption[] = [
   { value: 'DEBUG', label: 'DEBUG' },
@@ -38,7 +36,6 @@ const sourceTypeOptions: UiSelectOption[] = [
   { value: 'bilibili', label: 'Bilibili' },
   { value: 'x', label: 'X (Twitter)' },
 ];
-const whisperModelSelectOptions: UiSelectOption[] = fasterWhisperModels.map(m => ({ value: m, label: m }));
 const qwen3AsrModelOptions: UiSelectOption[] = [
   { value: 'Qwen/Qwen3-ASR-1.7B', label: 'Qwen3-ASR-1.7B (推薦)' },
   { value: 'Qwen/Qwen3-ASR-0.6B', label: 'Qwen3-ASR-0.6B (更快)' },
@@ -100,19 +97,20 @@ const localConfig = ref<any>({
     firered_vad_model_path: ''
   },
   transcription: {
-    model: 'base',
+    backend: 'qwen3-asr',
+    model: 'Qwen/Qwen3-ASR-1.7B',
     language: 'auto',
     transcription_initial_prompt: '',
     disable_transcription_context: false,
     use_faster_whisper: false,
     use_simul_streaming: false,
     use_openai_transcription_api: false,
-    use_qwen3_asr: false,
+    use_qwen3_asr: true,
     qwen3_asr_model: 'Qwen/Qwen3-ASR-1.7B',
     qwen3_dtype: 'bfloat16',
     qwen3_load_in_4bit: false,
     openai_transcription_model: 'whisper-1',
-    whisper_filters: ['emoji_filter', 'repetition_filter']
+    whisper_filters: []
   },
   translation: {
     backend: 'gpt',
@@ -180,6 +178,7 @@ const translationBackendOptions = computed<UiSelectOption[]>(() => {
 let _settingsAutoSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
 function debouncedAutoSave() {
+  enforceRocmAsrConfig();
   autoSaveStatus.value = 'saving';
   if (_settingsAutoSaveTimer !== null) clearTimeout(_settingsAutoSaveTimer);
   _settingsAutoSaveTimer = setTimeout(async () => {
@@ -196,6 +195,20 @@ function debouncedAutoSave() {
       autoSaveStatus.value = 'error';
     }
   }, 1000);
+}
+
+function enforceRocmAsrConfig() {
+  const transcription = localConfig.value.transcription || {};
+  transcription.backend = 'qwen3-asr';
+  transcription.model = transcription.qwen3_asr_model || 'Qwen/Qwen3-ASR-1.7B';
+  transcription.qwen3_asr_model = transcription.qwen3_asr_model || 'Qwen/Qwen3-ASR-1.7B';
+  transcription.use_qwen3_asr = true;
+  transcription.use_faster_whisper = false;
+  transcription.use_simul_streaming = false;
+  transcription.use_openai_transcription_api = false;
+  transcription.whisper_filters = [];
+  transcription.qwen3_load_in_4bit = false;
+  localConfig.value.transcription = transcription;
 }
 
 async function testConnection(backend: 'gpt' | 'gemini') {
@@ -296,9 +309,6 @@ const filteredGlossary = computed(() => {
   );
 });
 
-// 互斥邏輯: 轉錄引擎互斥規則
-useTranscriptionMutex(() => localConfig.value.transcription);
-
 function mergeConfig(defaults: any, loaded: any) {
   const result = { ...defaults };
   for (const key of Object.keys(result)) {
@@ -328,6 +338,7 @@ async function applyStoreConfigToLocalConfig(config?: any, syncLlama = false) {
     localConfig.value.output = mergeConfig(localConfig.value.output, loadedConfig.output);
     localConfig.value.output_notification = mergeConfig(localConfig.value.output_notification, loadedConfig.output_notification);
     localConfig.value.ui = mergeConfig(localConfig.value.ui, loadedConfig.ui);
+    enforceRocmAsrConfig();
 
     if (loadedConfig.translation?.custom_models) {
       localConfig.value.translation.custom_models = loadedConfig.translation.custom_models;
@@ -401,11 +412,11 @@ onUnmounted(() => {
   modelDownloadStore.stopPolling();
 });
 
-function getModelTask(engine: 'qwen3-asr' | 'faster-whisper', modelId: string) {
+function getModelTask(engine: 'qwen3-asr', modelId: string) {
   return modelDownloadStore.getTask(engine, modelId);
 }
 
-function getModelStatusText(engine: 'qwen3-asr' | 'faster-whisper', modelId: string) {
+function getModelStatusText(engine: 'qwen3-asr', modelId: string) {
   if (modelDownloadStore.isDownloaded(engine, modelId)) return '已下載';
   const task = getModelTask(engine, modelId);
   if (!task) return '未下載';
@@ -415,7 +426,7 @@ function getModelStatusText(engine: 'qwen3-asr' | 'faster-whisper', modelId: str
   return '準備中';
 }
 
-function getModelStatusClass(engine: 'qwen3-asr' | 'faster-whisper', modelId: string) {
+function getModelStatusClass(engine: 'qwen3-asr', modelId: string) {
   if (modelDownloadStore.isDownloaded(engine, modelId)) return 'text-green-300';
   const task = getModelTask(engine, modelId);
   if (!task) return 'text-white/50';
@@ -424,17 +435,18 @@ function getModelStatusClass(engine: 'qwen3-asr' | 'faster-whisper', modelId: st
   return 'text-blue-300';
 }
 
-function canStartDownload(engine: 'qwen3-asr' | 'faster-whisper', modelId: string) {
+function canStartDownload(engine: 'qwen3-asr', modelId: string) {
   if (modelDownloadStore.isDownloaded(engine, modelId)) return false;
   const task = getModelTask(engine, modelId);
   return !task || (task.status !== 'pending' && task.status !== 'downloading');
 }
 
-async function startModelDownload(engine: 'qwen3-asr' | 'faster-whisper', modelId: string) {
+async function startModelDownload(engine: 'qwen3-asr', modelId: string) {
   await modelDownloadStore.startDownload(engine, modelId);
 }
 
 async function handleSave() {
+  enforceRocmAsrConfig();
   isSaving.value = true;
   try {
     await store.saveConfig(localConfig.value);
@@ -449,6 +461,7 @@ async function handleCancel() {
     clearTimeout(_settingsAutoSaveTimer);
     _settingsAutoSaveTimer = null;
     try {
+      enforceRocmAsrConfig();
       await store.saveConfig(localConfig.value);
     } catch (e) {
       console.warn('[SettingsView] 離開保存失敗:', e);
@@ -465,7 +478,7 @@ function resetToDefault() {
       server: { public_port: 8765, enable_subtitle_sharing: true },
       input: { url: '', source_type: 'youtube', format: 'ba/wa*', cookies: '', proxy: '', timeout: 30 },
       audio_slicing_vad: { min_audio_length: 3.0, max_audio_length: 30.0, chunk_gap_threshold: 0.5, vad_enabled: true, vad_threshold: 0.5, vad_neg_threshold: 0.35, vad_min_speech_duration_ms: 250, vad_min_silence_duration_ms: 100, vad_window_size_samples: 512, vad_speech_pad_ms: 30, vad_backend: 'silero', firered_vad_model_path: '' },
-      transcription: { model: 'base', language: 'auto', transcription_initial_prompt: '', disable_transcription_context: false, use_faster_whisper: false, use_simul_streaming: false, use_openai_transcription_api: false, use_qwen3_asr: false, qwen3_asr_model: 'Qwen/Qwen3-ASR-1.7B', qwen3_dtype: 'bfloat16', qwen3_load_in_4bit: false, openai_transcription_model: 'whisper-1', whisper_filters: ['emoji_filter', 'repetition_filter'] },
+      transcription: { backend: 'qwen3-asr', model: 'Qwen/Qwen3-ASR-1.7B', language: 'auto', transcription_initial_prompt: '', disable_transcription_context: false, use_faster_whisper: false, use_simul_streaming: false, use_openai_transcription_api: false, use_qwen3_asr: true, qwen3_asr_model: 'Qwen/Qwen3-ASR-1.7B', qwen3_dtype: 'bfloat16', qwen3_load_in_4bit: false, openai_transcription_model: 'whisper-1', whisper_filters: [] },
       translation: { backend: 'gpt', target_language: 'Traditional Chinese', llm_model: 'gpt-4o-mini', api_base: '', api_key: '', temperature: 0.3, top_p: 1.0, max_tokens: 2048, use_smart_prompt: true, translation_prompt: '', custom_models: [] },
       terminology: { use_terminology_glossary: false, glossary: '', glossary_list: [] },
       output: { output_dir: './output', output_srt: true, output_txt: false, output_ass: false, max_history: 20 },
@@ -563,22 +576,6 @@ function saveCustomModel() {
 function deleteCustomModel(index: number) {
   if (confirm('確定要刪除此自訂模型嗎？')) {
     localConfig.value.translation.custom_models.splice(index, 1);
-  }
-}
-
-// Whisper 濾鏡切換
-function toggleFilter(filterName: string, checked: boolean) {
-  if (!localConfig.value.transcription.whisper_filters) {
-    localConfig.value.transcription.whisper_filters = [];
-  }
-  
-  const filters = localConfig.value.transcription.whisper_filters;
-  const index = filters.indexOf(filterName);
-  
-  if (checked && index === -1) {
-    filters.push(filterName);
-  } else if (!checked && index !== -1) {
-    filters.splice(index, 1);
   }
 }
 
@@ -910,109 +907,32 @@ async function handleFileChange(event: Event) {
           <div v-show="activeTab === 'transcription'" class="space-y-6">
             <h2 class="text-xl font-bold text-white mb-4">轉錄選項</h2>
             
-            <!-- Whisper 引擎模式選擇 (移到最上面) -->
+            <!-- ROCm ASR engine note -->
             <div class="bg-white/5 rounded-xl p-4 border border-white/10">
-              <h3 class="text-lg font-semibold text-blue-300 mb-4">🎯 轉錄引擎</h3>
-              <p class="text-white/60 text-sm mb-4">
-                💡 提示:可同時選擇 Faster-Whisper + SimulStreaming,將使用 Faster-Whisper 作為編碼器的 SimulStreaming
+              <h3 class="text-lg font-semibold text-blue-300 mb-4">🎯 ROCm ASR 引擎</h3>
+              <p class="text-white/60 text-sm">
+                此分支專門用於 AMD ROCm 實驗版，本地 ASR 僅保留 Qwen3-ASR。Faster-Whisper、SimulStreaming 與 OpenAI Whisper API 已從 ROCm 分支移除，避免使用者選到未驗證或非本地 AMD GPU 路線。
               </p>
-              <div class="space-y-3">
-                <label class="flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer hover:bg-white/10 transition">
-                  <input v-model="localConfig.transcription.use_faster_whisper" type="checkbox" class="w-5 h-5 accent-blue-500 mt-0.5" />
-                  <div class="flex-1">
-                    <span class="text-white font-medium">使用 Faster-Whisper</span>
-                    <p class="text-white/50 text-sm mt-1">
-                      使用優化過的 Faster-Whisper 引擎,提升轉錄速度。
-                      <br />✨ 與 SimulStreaming 組合:作為編碼器提供更高效能
-                    </p>
-                  </div>
-                </label>
-
-                <label class="flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer hover:bg-white/10 transition">
-                  <input v-model="localConfig.transcription.use_simul_streaming" type="checkbox" class="w-5 h-5 accent-blue-500 mt-0.5" />
-                  <div class="flex-1">
-                    <span class="text-white font-medium">使用 SimulStreaming</span>
-                    <p class="text-white/50 text-sm mt-1">
-                      使用 SimulStreaming 進行即時串流轉錄,降低延遲。
-                      <br />✨ 與 Faster-Whisper 組合:使用 Faster-Whisper 作為編碼器
-                    </p>
-                  </div>
-                </label>
-
-                <label class="flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer hover:bg-white/10 transition">
-                  <input v-model="localConfig.transcription.use_openai_transcription_api" type="checkbox" class="w-5 h-5 accent-blue-500 mt-0.5" />
-                  <div class="flex-1">
-                    <span class="text-white font-medium">使用 OpenAI Transcription API</span>
-                    <p class="text-white/50 text-sm mt-1">
-                      使用 OpenAI 官方雲端轉錄 API,無需本地模型但需要 API 額度。
-                      <br />⚠️ 此選項與上述兩項互斥
-                    </p>
-                  </div>
-                </label>
-
-                <label class="flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer hover:bg-white/10 transition">
-                  <input v-model="localConfig.transcription.use_qwen3_asr" type="checkbox" class="w-5 h-5 accent-blue-500 mt-0.5" />
-                  <div class="flex-1">
-                    <span class="text-white font-medium">使用 Qwen3-ASR</span>
-                    <p class="text-white/50 text-sm mt-1">
-                      使用阿里巴巴 Qwen3-ASR 模型進行語音轉錄,支援多語言,準確度高。
-                      <br />⚠️ 需要 GPU 支援,此選項與上述選項互斥
-                      <br />📦 需要安裝: pip install qwen-asr
-                    </p>
-                  </div>
-                </label>
-              </div>
             </div>
             
             <!-- 轉錄模型與語言設定 -->
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
                 <label class="block text-white/70 font-semibold mb-2">轉錄模型</label>
-                <!-- Whisper 模型選擇 -->
-                <UiSelect v-if="!localConfig.transcription.use_qwen3_asr && !localConfig.transcription.use_openai_transcription_api"
-                  v-model="localConfig.transcription.model"
-                  :options="whisperModelSelectOptions" />
-                <!-- OpenAI 模型選擇 -->
-                <input v-else-if="localConfig.transcription.use_openai_transcription_api" 
-                  v-model="localConfig.transcription.openai_transcription_model" 
-                  type="text" 
-                  placeholder="whisper-1"
-                  class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
-                <!-- Qwen3-ASR 模型選擇 (下拉選單) -->
-                <UiSelect v-else-if="localConfig.transcription.use_qwen3_asr"
+                <UiSelect
                   v-model="localConfig.transcription.qwen3_asr_model"
                   :options="qwen3AsrModelOptions" />
-                <div v-if="localConfig.transcription.use_qwen3_asr" class="mt-4 grid grid-cols-1 gap-4">
+                <div class="mt-4 grid grid-cols-1 gap-4">
                   <div>
                     <label class="block text-white/70 font-semibold mb-2">模型精度</label>
                     <UiSelect v-model="localConfig.transcription.qwen3_dtype" :options="qwen3DtypeOptions" />
                   </div>
-                  <div>
-                    <label class="flex items-center gap-2 cursor-pointer mt-2">
-                      <input v-model="localConfig.transcription.qwen3_load_in_4bit" type="checkbox" class="w-5 h-5 accent-purple-400" />
-                      <div>
-                        <span class="text-white">啟用 4-bit 量化（省顯存）</span>
-                        <p class="text-white/50 text-xs mt-0.5">
-                          <template v-if="localConfig.transcription.qwen3_load_in_4bit">
-                            <span class="text-green-400 font-medium">✓ 已啟用</span>　顯存需求：
-                            <span class="text-yellow-300 font-medium">{{ localConfig.transcription.qwen3_asr_model === 'Qwen/Qwen3-ASR-1.7B' ? '~1.5 GB' : '~0.5 GB' }}</span>
-                            （原 {{ localConfig.transcription.qwen3_asr_model === 'Qwen/Qwen3-ASR-1.7B' ? '~3.5 GB' : '~1.2 GB' }}，節省約 60%）
-                          </template>
-                          <template v-else>
-                            未啟用 — 顯存需求：
-                            <span class="text-yellow-300 font-medium">{{ localConfig.transcription.qwen3_asr_model === 'Qwen/Qwen3-ASR-1.7B' ? '~3.5 GB' : '~1.2 GB' }}</span>
-                            　啟用後可降至 {{ localConfig.transcription.qwen3_asr_model === 'Qwen/Qwen3-ASR-1.7B' ? '~1.5 GB' : '~0.5 GB' }}
-                          </template>
-                          <br/>📦 需要安裝: pip install bitsandbytes
-                        </p>
-                      </div>
-                    </label>
-                  </div>
+                  <p class="text-white/50 text-xs">
+                    ROCm 實驗分支先停用 bitsandbytes 4-bit 量化。AMD 測試請優先使用 bf16 / float16，確認可跑通後再評估量化方案。
+                  </p>
                 </div>
                 <p class="text-white/40 text-xs mt-2">
-                  <span v-if="localConfig.transcription.use_qwen3_asr">1.7B 模型準確度更高,0.6B 模型速度更快</span>
-                  <span v-else-if="localConfig.transcription.use_openai_transcription_api">OpenAI 轉錄模型</span>
-                  <span v-else>Whisper 本地模型</span>
+                  Qwen3-ASR 1.7B 準確度更高，0.6B 速度更快；JA fine-tune 適合日文內容。
                 </p>
               </div>
 
@@ -1021,60 +941,8 @@ async function handleFileChange(event: Event) {
                 <UiSelect v-model="localConfig.transcription.language" :options="transcriptionLanguageOptions" />
               </div>
 
-              <div class="md:col-span-2" v-if="!localConfig.transcription.use_qwen3_asr">
-                <label class="block text-white/70 font-semibold mb-2">轉錄提示詞</label>
-                <textarea v-model="localConfig.transcription.transcription_initial_prompt" placeholder="提示詞1, 提示詞2, ..." rows="3"
-                  class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400"></textarea>
-                <p class="text-white/40 text-sm mt-1">通用的轉錄固定提示詞/術語表。格式:"提示詞1, 提示詞2, ..."。此文本將始終包含在傳遞給模型的提示詞中。</p>
-              </div>
-              <div class="md:col-span-2" v-else>
+              <div class="md:col-span-2">
                 <p class="text-yellow-400 text-sm">⚠️ Qwen3-ASR 不支援自訂提示詞</p>
-              </div>
-            </div>
-
-            <!-- Whisper 濾鏡 -->
-            <div class="mt-6 pt-6 border-t border-white/10">
-              <h3 class="text-lg font-semibold text-blue-300 mb-4">🔍 Whisper 結果濾鏡</h3>
-              <p class="text-white/60 text-sm mb-4">選擇要應用於 Whisper 轉錄結果的濾鏡</p>
-              <div class="space-y-3">
-                <label class="flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer hover:bg-white/10 transition">
-                  <input 
-                    type="checkbox" 
-                    :checked="localConfig.transcription.whisper_filters?.includes('emoji_filter')"
-                    @change="toggleFilter('emoji_filter', ($event.target as HTMLInputElement).checked)"
-                    class="w-5 h-5 accent-blue-500 mt-0.5" 
-                  />
-                  <div class="flex-1">
-                    <span class="text-white font-medium">Emoji 濾鏡</span>
-                    <p class="text-white/50 text-sm mt-1">過濾轉錄結果中的 emoji 表情符號</p>
-                  </div>
-                </label>
-
-                <label class="flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer hover:bg-white/10 transition">
-                  <input 
-                    type="checkbox" 
-                    :checked="localConfig.transcription.whisper_filters?.includes('repetition_filter')"
-                    @change="toggleFilter('repetition_filter', ($event.target as HTMLInputElement).checked)"
-                    class="w-5 h-5 accent-blue-500 mt-0.5" 
-                  />
-                  <div class="flex-1">
-                    <span class="text-white font-medium">重複濾鏡</span>
-                    <p class="text-white/50 text-sm mt-1">過濾重複出現的文字內容</p>
-                  </div>
-                </label>
-
-                <label class="flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer hover:bg-white/10 transition">
-                  <input 
-                    type="checkbox" 
-                    :checked="localConfig.transcription.whisper_filters?.includes('japanese_stream_filter')"
-                    @change="toggleFilter('japanese_stream_filter', ($event.target as HTMLInputElement).checked)"
-                    class="w-5 h-5 accent-blue-500 mt-0.5" 
-                  />
-                  <div class="flex-1">
-                    <span class="text-white font-medium">日文直播濾鏡</span>
-                    <p class="text-white/50 text-sm mt-1">針對日文直播內容的特殊濾鏡處理</p>
-                  </div>
-                </label>
               </div>
             </div>
 
@@ -1136,38 +1004,6 @@ async function handleFileChange(event: Event) {
                       />
                     </div>
                     <div class="text-xs text-white/60 mt-1">{{ getModelTask('qwen3-asr', modelId)?.message }}</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div class="bg-white/5 rounded-xl p-5 border border-white/10">
-              <h3 class="text-lg font-semibold text-blue-300 mb-4">Faster-Whisper 模型</h3>
-              <div class="space-y-3">
-                <div v-for="modelId in fasterWhisperModels" :key="`fw-${modelId}`" class="p-4 rounded-lg bg-white/5 border border-white/10">
-                  <div class="flex items-center justify-between gap-4">
-                    <div>
-                      <div class="text-white font-semibold">{{ modelId }}</div>
-                      <div :class="['text-sm mt-1', getModelStatusClass('faster-whisper', modelId)]">
-                        {{ getModelStatusText('faster-whisper', modelId) }}
-                      </div>
-                    </div>
-                    <button
-                      @click="startModelDownload('faster-whisper', modelId)"
-                      :disabled="!canStartDownload('faster-whisper', modelId)"
-                      class="px-4 py-2 rounded-lg font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed bg-blue-600 hover:bg-blue-700 text-white"
-                    >
-                      {{ modelDownloadStore.isDownloaded('faster-whisper', modelId) ? '已下載' : '預下載' }}
-                    </button>
-                  </div>
-                  <div v-if="getModelTask('faster-whisper', modelId) && ['pending', 'downloading'].includes(getModelTask('faster-whisper', modelId)!.status)" class="mt-3">
-                    <div class="h-2 bg-white/10 rounded-full overflow-hidden">
-                      <div
-                        class="h-full bg-gradient-to-r from-blue-500 to-cyan-400 transition-all"
-                        :style="{ width: `${Math.max(5, (getModelTask('faster-whisper', modelId)?.progress || 0) * 100)}%` }"
-                      />
-                    </div>
-                    <div class="text-xs text-white/60 mt-1">{{ getModelTask('faster-whisper', modelId)?.message }}</div>
                   </div>
                 </div>
               </div>

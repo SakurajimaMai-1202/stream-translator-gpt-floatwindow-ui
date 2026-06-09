@@ -47,13 +47,9 @@ transcription:
   qwen3_asr_model: Qwen/Qwen3-ASR-1.7B
   qwen3_dtype: bfloat16
   qwen3_load_in_4bit: false
-  whisper_filters:
-  - emoji_filter
-  - repetition_filter
-  - japanese_stream_filter
+  whisper_filters: []
   disable_transcription_context: false
   transcription_initial_prompt: ''
-  openai_transcription_model: whisper-1
 translation:
   backend: custom:localllm
   model: localllm

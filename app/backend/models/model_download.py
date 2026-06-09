@@ -6,14 +6,14 @@ from pydantic import BaseModel, Field
 
 class StartModelDownloadRequest(BaseModel):
     """啟動模型下載請求"""
-    engine: Literal["qwen3-asr", "faster-whisper"] = Field(..., description="模型引擎")
+    engine: Literal["qwen3-asr"] = Field(..., description="模型引擎")
     model_id: str = Field(..., description="模型識別符")
 
 
 class ModelDownloadTask(BaseModel):
     """模型下載任務"""
     task_id: str
-    engine: Literal["qwen3-asr", "faster-whisper"]
+    engine: Literal["qwen3-asr"]
     model_id: str
     status: Literal["pending", "downloading", "completed", "failed"]
     progress: float = Field(0.0, ge=0.0, le=1.0)
@@ -38,7 +38,7 @@ class ModelDownloadTaskListResponse(BaseModel):
 
 class DownloadedModelInfo(BaseModel):
     """已下載模型資訊"""
-    engine: Literal["qwen3-asr", "faster-whisper"]
+    engine: Literal["qwen3-asr"]
     model_id: str
     repo_id: str
     size_bytes: int = 0

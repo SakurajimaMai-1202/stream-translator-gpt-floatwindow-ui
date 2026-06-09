@@ -169,8 +169,7 @@ const availableDevices = ref<AudioDevice[]>([]);
 const selectedDeviceIndex = ref<number | null>(null);
 const isLoadingDevices = ref(false);
 
-// 模型選擇
-const whisperModels = ['tiny', 'base', 'small', 'medium', 'large-v2', 'large-v3', 'large-v3-turbo'];
+// ROCm branch: local ASR is limited to Qwen3-ASR.
 const qwen3AsrModels = [
   { value: 'Qwen/Qwen3-ASR-1.7B', label: 'Qwen3-ASR-1.7B (推薦)' },
   { value: 'Qwen/Qwen3-ASR-0.6B', label: 'Qwen3-ASR-0.6B (更快)' },
@@ -206,16 +205,8 @@ const deviceOptions = computed<UiSelectOption[]>(() => {
 });
 
 const transcriptionEngineOptions: UiSelectOption[] = [
-  { value: 'faster-whisper', label: 'Faster-Whisper' },
-  { value: 'simul-streaming', label: 'SimulStreaming' },
-  { value: 'faster-whisper-simul', label: 'Faster-Whisper + SimulStreaming' },
-  { value: 'qwen3-asr', label: 'Qwen3-ASR' },
-  { value: 'openai-api', label: 'OpenAI API' }
+  { value: 'qwen3-asr', label: 'Qwen3-ASR (ROCm experimental)' }
 ];
-
-const whisperModelOptions = computed<UiSelectOption[]>(() =>
-  whisperModels.map((model) => ({ value: model, label: model }))
-);
 
 const qwen3AsrModelOptions = computed<UiSelectOption[]>(() =>
   qwen3AsrModels.map((model) => ({ value: model.value, label: model.label }))
@@ -268,8 +259,8 @@ const llamaPresetOptions = computed<UiSelectOption[]>(() => {
 });
 
 // 選擇的值
-const selectedTranscriptionEngine = ref('faster-whisper');  // 🆕 新增: 轉錄引擎選擇
-const selectedWhisperModel = ref('base');
+const selectedTranscriptionEngine = ref('qwen3-asr');  // ROCm branch: only Qwen3-ASR is supported
+const selectedWhisperModel = ref('Qwen/Qwen3-ASR-1.7B');
 const selectedQwen3AsrModel = ref('Qwen/Qwen3-ASR-1.7B');  // 🆕 新增: Qwen3-ASR 模型
 const selectedInputLanguage = ref('auto');
 const selectedOutputLanguage = ref('Traditional Chinese');
@@ -284,11 +275,7 @@ const isApplyingExternalConfig = ref(false);
 const lastAppliedHomeConfigSnapshot = ref('');
 
 function getTranscriptionEngineFromConfig(cfg: Config): string {
-  if (cfg.transcription?.use_qwen3_asr) return 'qwen3-asr';
-  if (cfg.transcription?.use_openai_transcription_api) return 'openai-api';
-  if (cfg.transcription?.use_faster_whisper && cfg.transcription?.use_simul_streaming) return 'faster-whisper-simul';
-  if (cfg.transcription?.use_simul_streaming) return 'simul-streaming';
-  return 'faster-whisper';
+  return 'qwen3-asr';
 }
 
 function buildHomeConfigSnapshotFromConfig(cfg: Config): string {
@@ -331,13 +318,14 @@ async function saveHomeConfigToBackend() {
     const engine = selectedTranscriptionEngine.value;
     const transcriptionPatch = {
       ...store.config.transcription,
-      model: selectedWhisperModel.value,
+      backend: 'qwen3-asr',
+      model: selectedQwen3AsrModel.value,
       qwen3_asr_model: selectedQwen3AsrModel.value,
       language: selectedInputLanguage.value,
-      use_qwen3_asr: engine === 'qwen3-asr',
-      use_openai_transcription_api: engine === 'openai-api',
-      use_faster_whisper: engine === 'faster-whisper-simul',
-      use_simul_streaming: engine === 'faster-whisper-simul' || engine === 'simul-streaming',
+      use_qwen3_asr: true,
+      use_openai_transcription_api: false,
+      use_faster_whisper: false,
+      use_simul_streaming: false,
     };
     const inputPatch = {
       ...store.config.input,
@@ -1058,22 +1046,10 @@ function clearLogs() {
                   <div class="flex flex-col">
                     <label class="text-white/50 text-[9px] font-bold tracking-wider mb-1">模型選擇</label>
                     <UiSelect
-                      v-if="selectedTranscriptionEngine === 'faster-whisper' || selectedTranscriptionEngine === 'simul-streaming' || selectedTranscriptionEngine === 'faster-whisper-simul'"
-                      v-model="selectedWhisperModel"
-                      :options="whisperModelOptions"
-                      :disabled="store.isRunning"
-                      button-class="bg-white/5 border border-white/10 text-[10px] rounded-lg"
-                    />
-                    <UiSelect
-                      v-else-if="selectedTranscriptionEngine === 'qwen3-asr'"
                       v-model="selectedQwen3AsrModel"
                       :options="qwen3AsrModelOptions"
                       :disabled="store.isRunning"
                       button-class="bg-white/5 border border-white/10 text-[10px] rounded-lg"
-                    />
-                    <input v-else-if="selectedTranscriptionEngine === 'openai-api'" 
-                      value="whisper-1" disabled
-                      class="w-full px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-white/40 cursor-not-allowed text-[10px]"
                     />
                   </div>
 

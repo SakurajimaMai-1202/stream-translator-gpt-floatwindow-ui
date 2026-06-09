@@ -17,11 +17,11 @@ class StartTranslationRequest(BaseModel):
     device_index: Optional[int] = Field(None, description="設備索引 (當 audio_source 為 microphone 或 system_audio 時，null=自動選擇)")
     
     # 轉錄相關
-    model: str = Field("base", description="Whisper 模型大小")
-    backend: str = Field("faster-whisper", description="語音識別後端")
-    transcription_engine: Optional[str] = Field(None, description="轉錄引擎 (faster-whisper/qwen3-asr/openai-api/simul-streaming/faster-whisper-simul)")
+    model: str = Field("Qwen/Qwen3-ASR-1.7B", description="Qwen3-ASR 模型名稱")
+    backend: str = Field("qwen3-asr", description="語音識別後端；ROCm 分支僅支援 qwen3-asr")
+    transcription_engine: Optional[str] = Field("qwen3-asr", description="轉錄引擎；ROCm 分支僅支援 qwen3-asr")
     qwen3_asr_model: Optional[str] = Field(None, description="Qwen3-ASR 模型名稱")
-    input_language: Optional[str] = Field(None, description="Whisper 輸入語言 (ja/en/ko/zh/auto)")
+    input_language: Optional[str] = Field(None, description="輸入語言 (ja/en/ko/zh/auto)")
     
     # 翻譯相關
     target_language: Optional[str] = Field("繁體中文", description="目標語言")

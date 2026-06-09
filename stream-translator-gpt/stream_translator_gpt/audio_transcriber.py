@@ -470,6 +470,11 @@ class Qwen3ASRTranscriber(AudioTranscriber):
 
         # 處理 4-bit/8-bit 量化
         quantization = (quantization or 'none').strip().lower()
+        if self._is_rocm_torch(torch) and (quantization not in {'none', ''} or kwargs.get('load_in_4bit', False)):
+            raise RuntimeError(
+                'Qwen3-ASR bitsandbytes quantization is not enabled on the ROCm branch. '
+                'Use full precision / bf16 first when testing AMD GPUs.'
+            )
         if quantization in {'bnb_4bit', '4bit'} or kwargs.get('load_in_4bit', False):
             from transformers import BitsAndBytesConfig
             print(f'{INFO}Enabling 4-bit quantization (NF4) for Qwen3-ASR')
@@ -521,6 +526,12 @@ class Qwen3ASRTranscriber(AudioTranscriber):
         device_map = str(device_map or 'auto').strip() or 'auto'
         if device_map == 'cpu':
             return
+        if cls._is_rocm_torch(torch):
+            if torch.cuda.is_available():
+                return
+            raise RuntimeError(
+                'ROCm PyTorch was detected, but no AMD GPU is available through torch.cuda. '
+                'Check the ROCm driver/runtime and PyTorch ROCm installation.')
         if device_map == 'auto':
             if not torch.cuda.is_available() or cls._cuda_has_supported_device(torch):
                 return
@@ -540,6 +551,8 @@ class Qwen3ASRTranscriber(AudioTranscriber):
     def _cuda_has_supported_device(torch) -> bool:
         if not torch.cuda.is_available():
             return False
+        if Qwen3ASRTranscriber._is_rocm_torch(torch):
+            return True
         supported_caps = []
         for arch in torch.cuda.get_arch_list():
             capability = _parse_torch_cuda_arch(arch)
@@ -552,6 +565,10 @@ class Qwen3ASRTranscriber(AudioTranscriber):
             if torch.cuda.get_device_capability(index) >= min_cap:
                 return True
         return False
+
+    @staticmethod
+    def _is_rocm_torch(torch) -> bool:
+        return bool(getattr(getattr(torch, 'version', None), 'hip', None))
 
     def _set_generation_pad_token_id(self) -> None:
         hf_model = getattr(self.model, 'model', None)

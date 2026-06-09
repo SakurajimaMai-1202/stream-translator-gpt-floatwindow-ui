@@ -34,17 +34,16 @@ async def start_translation(request: StartTranslationRequest, http_request: Requ
         if request.url:
             current_config['input']['url'] = request.url
             
-        # 轉錄覆蓋
-        if request.model:
-            current_config['transcription']['model'] = request.model
-        # 使用 transcription_engine 覆蓋轉錄後端（優先於 backend）
-        if request.transcription_engine:
-            current_config['transcription']['backend'] = request.transcription_engine
-        elif request.backend:
-            current_config['transcription']['backend'] = request.backend
-        # Qwen3-ASR 模型覆蓋
-        if request.qwen3_asr_model:
-            current_config['transcription']['qwen3_asr_model'] = request.qwen3_asr_model
+        # ROCm branch: local ASR is limited to Qwen3-ASR.
+        qwen3_model = request.qwen3_asr_model or request.model or current_config['transcription'].get('qwen3_asr_model')
+        current_config['transcription']['backend'] = 'qwen3-asr'
+        current_config['transcription']['model'] = qwen3_model
+        current_config['transcription']['qwen3_asr_model'] = qwen3_model
+        current_config['transcription']['use_qwen3_asr'] = True
+        current_config['transcription']['use_faster_whisper'] = False
+        current_config['transcription']['use_simul_streaming'] = False
+        current_config['transcription']['use_openai_transcription_api'] = False
+        current_config['transcription']['whisper_filters'] = []
         # 🔧 新增: 覆蓋輸入語言
         if request.input_language:
             current_config['transcription']['language'] = request.input_language
@@ -71,6 +70,14 @@ async def start_translation(request: StartTranslationRequest, http_request: Requ
             for section, values in request.override_config.items():
                 if section in current_config and isinstance(values, dict):
                     current_config[section].update(values)
+            current_config['transcription']['backend'] = 'qwen3-asr'
+            current_config['transcription']['model'] = current_config['transcription'].get('qwen3_asr_model') or 'Qwen/Qwen3-ASR-1.7B'
+            current_config['transcription']['qwen3_asr_model'] = current_config['transcription']['model']
+            current_config['transcription']['use_qwen3_asr'] = True
+            current_config['transcription']['use_faster_whisper'] = False
+            current_config['transcription']['use_simul_streaming'] = False
+            current_config['transcription']['use_openai_transcription_api'] = False
+            current_config['transcription']['whisper_filters'] = []
         
         # 3. 轉換為命令行參數
         cli_args = get_config_manager().to_main_args(current_config)

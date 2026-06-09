@@ -83,6 +83,60 @@ class ApiKeyPool():
         cls.google_api_key_index = (cls.google_api_key_index + 1) % len(cls.google_api_key_list)
 
 
+class ClientPool:
+
+    @classmethod
+    def init(cls, openai_api_key, google_api_key, proxy=None, google_base_url=None):
+        ApiKeyPool.init(openai_api_key=openai_api_key, google_api_key=google_api_key)
+        cls._openai_clients = []
+        cls._openai_index = 0
+        if openai_api_key:
+            try:
+                from openai import OpenAI
+                import httpx
+                for key in openai_api_key.split(','):
+                    key = key.strip()
+                    client = OpenAI(api_key=key, http_client=httpx.Client(proxy=proxy, verify=False))
+                    cls._openai_clients.append(client)
+            except Exception as e:
+                import sys
+                print(f"[ERROR] Failed to initialize OpenAI ClientPool: {e}", file=sys.stderr, flush=True)
+
+        cls._google_clients = []
+        cls._google_index = 0
+        if google_api_key:
+            try:
+                from google import genai
+                http_options = {'client_args': {'verify': False}}
+                if proxy:
+                    http_options['client_args']['proxy'] = proxy
+                if google_base_url:
+                    http_options['base_url'] = google_base_url
+                for key in google_api_key.split(','):
+                    key = key.strip()
+                    client = genai.Client(api_key=key, http_options=http_options)
+                    cls._google_clients.append(client)
+            except Exception as e:
+                import sys
+                print(f"[ERROR] Failed to initialize Google ClientPool: {e}", file=sys.stderr, flush=True)
+
+    @classmethod
+    def get_openai_client(cls):
+        if not cls._openai_clients:
+            return None
+        client = cls._openai_clients[cls._openai_index]
+        cls._openai_index = (cls._openai_index + 1) % len(cls._openai_clients)
+        return client
+
+    @classmethod
+    def get_google_client(cls):
+        if not cls._google_clients:
+            return None
+        client = cls._google_clients[cls._google_index]
+        cls._google_index = (cls._google_index + 1) % len(cls._google_clients)
+        return client
+
+
 def is_url(address):
     parsed_url = urlparse(address)
 

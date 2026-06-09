@@ -27,6 +27,7 @@
 |------|------|
 | **音源** | YouTube / Twitch / Bilibili / X 直播 URL、麥克風、系統播放音訊（WASAPI Loopback）、本地音檔 |
 | **語音辨識 (ASR)** | Qwen3-ASR（0.6B / 1.7B）、faster-whisper（tiny → large-v3-turbo）、OpenAI Whisper API |
+| **語音切片 (VAD)** | 支援 Silero VAD 與高精準度 FireRed VAD（基於 `omnivad` 庫，打包版已內建） |
 | **翻譯** | OpenAI GPT、Google Gemini、本地 LLM（llama.cpp /lmstudio 等等） |
 | **浮動字幕** | 獨立置頂視窗，可自訂字體、顏色、透明度 |
 | **字幕分享** | 區網內其他裝置可用瀏覽器即時查看字幕（預設 port 8765） |

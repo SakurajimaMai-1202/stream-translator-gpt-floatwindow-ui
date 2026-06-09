@@ -31,7 +31,7 @@ flowchart LR
     end
     subgraph gb["`**Audio Slicing**`"]
         direction LR
-        ba("`**Silero VAD**`")
+        ba("`**Silero VAD / FireRed VAD**`")
     end
     subgraph gc["`**Transcription**`"]
         direction LR
@@ -62,7 +62,7 @@ flowchart LR
 
 Uses [**yt-dlp**](https://github.com/yt-dlp/yt-dlp) to extract audio data from live streams.
 
-Dynamic threshold audio slicing based on [**Silero-VAD**](https://github.com/snakers4/silero-vad).
+Dynamic threshold audio slicing based on [**Silero-VAD**](https://github.com/snakers4/silero-vad) or [**FireRedVAD**](https://github.com/aishield/FireRedVAD) (via `omnivad` library).
 
 Use [**Whisper**](https://github.com/openai/whisper) / [**Faster-Whisper**](https://github.com/SYSTRAN/faster-whisper) /  [**Simul Streaming**](https://github.com/ufal/SimulStreaming) locally or call [**OpenAI Transcription API**](https://platform.openai.com/docs/guides/speech-to-text) remotely for transcription.
 
@@ -205,6 +205,8 @@ The commands on Colab [![Open In Colab](https://colab.research.google.com/assets
 | `--prefix_retention_length`             | 0.5                            | The length of the retention prefix audio during slicing.                                                                                                                                                           |
 | `--vad_threshold`                       | 0.35                           | Range 0~1. the higher this value, the stricter the speech judgment. If dynamic VAD threshold is enabled (enabled by default), this threshold will be adjusted dynamically based on the input speech's VAD results. |
 | `--disable_dynamic_vad_threshold`       |                                | Set this flag to disable dynamic VAD threshold.                                                                                                                                                                    |
+| `--vad_backend`                         | silero                         | VAD backend used for audio slicing, choose `silero` or `firered`. Note that `firered` requires the `omnivad` dependency.                                                                                            |
+| `--firered_vad_model_path`              |                                | Optional OmniVAD FireRedVAD `.omnivad` model path. If omitted, the bundled OmniVAD default model is used.                                                                                                          |
 | **Transcription Options**               |
 | `--model`                               | small                          | Select Whisper/Faster-Whisper/Simul Streaming model size. See [here](https://github.com/openai/whisper#available-models-and-languages) for available models.                                                       |
 | `--language`                            | auto                           | Language spoken in the stream. See [here](https://github.com/openai/whisper#available-models-and-languages) for available languages.                                                                               |

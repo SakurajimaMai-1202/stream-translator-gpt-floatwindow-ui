@@ -31,7 +31,7 @@ flowchart LR
     end
     subgraph gb["`**音频切片**`"]
         direction LR
-        ba("`**Silero VAD**`")
+        ba("`**Silero VAD / FireRed VAD**`")
     end
     subgraph gc["`**语音转文字**`"]
         direction LR
@@ -62,7 +62,7 @@ flowchart LR
 
 使用 [**yt-dlp**](https://github.com/yt-dlp/yt-dlp) 从直播流中提取音频数据。
 
-基于 [**Silero-VAD**](https://github.com/snakers4/silero-vad) 的动态阈值音频切片。
+基于 [**Silero-VAD**](https://github.com/snakers4/silero-vad) 或 [**FireRedVAD**](https://github.com/aishield/FireRedVAD)（通过 `omnivad` 库）的动态阈值音频切片。
 
 在本地使用 [**Whisper**](https://github.com/openai/whisper) / [**Faster-Whisper**](https://github.com/SYSTRAN/faster-whisper) /  [**Simul Streaming**](https://github.com/ufal/SimulStreaming) 或远程调用 [**OpenAI Transcription API**](https://platform.openai.com/docs/guides/speech-to-text) 进行转录。
 
@@ -205,6 +205,8 @@ Colab上的命令 [![Open In Colab](https://colab.research.google.com/assets/col
 | `--prefix_retention_length`             | 0.5                            | 切片时保留的前缀音频长度。                                                                                                                                                |
 | `--vad_threshold`                       | 0.35                           | 范围 0~1。此值越高，语音判断越严格。如果启用了动态 VAD 阈值（默认启用），此阈值将根据输入语音的 VAD 结果动态调整。                                                        |
 | `--disable_dynamic_vad_threshold`       |                                | 设置此标志以禁用动态 VAD 阈值。                                                                                                                                           |
+| `--vad_backend`                         | silero                         | 音频切片所使用的 VAD 后端，可选 `silero` 或 `firered`。注意 `firered` 需要 `omnivad` 依赖。                                                                                |
+| `--firered_vad_model_path`              |                                | 可选的 OmniVAD FireRedVAD `.omnivad` 模型路径。如果留空，将使用 OmniVAD 内置的默认模型。                                                                                   |
 | **转录选项**                            |                                |                                                                                                                                                                           |
 | `--model`                               | small                          | 选择 Whisper/Faster-Whisper/Simul Streaming 模型大小。可用模型请参见 [此处](https://github.com/openai/whisper#available-models-and-languages)。                           |
 | `--language`                            | auto                           | 直播流中的语言。可用语言请参见 [此处](https://github.com/openai/whisper#available-models-and-languages)。                                                                 |

@@ -18,6 +18,10 @@
 </p>
 
 <img width="2381" height="1058" alt="Stream Translator FloatWindow screenshot" src="https://github.com/user-attachments/assets/0a663535-dd94-40a6-8444-3c00844bc563" />
+<img width="1487" height="955" alt="PixPin_2026-06-09_22-08-51" src="https://github.com/user-attachments/assets/ff88ea18-a40c-4f40-918a-0191e2635e91" />
+
+
+
 
 Stream Translator FloatWindow 是一個給 Windows 使用的即時字幕翻譯工具。它可以讀取直播 URL、麥克風、電腦播放音訊或本地音檔，經過 ASR 語音辨識後交給 GPT、Gemini 或本地 LLM 翻譯，最後顯示在桌面浮動字幕視窗，也可以在區網內分享給手機或平板觀看。
 

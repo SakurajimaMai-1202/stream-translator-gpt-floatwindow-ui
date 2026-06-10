@@ -12,6 +12,11 @@
   <meta name="apple-mobile-web-app-title" content="字幕" />
   <link rel="manifest" href="/manifest.json" />
   <title>Stream Translator</title>
+  <script>
+    if (window.location.pathname.endsWith('/subtitle')) {
+      document.documentElement.classList.add('transparent-page');
+    }
+  </script>
 </head>
 
 <body>

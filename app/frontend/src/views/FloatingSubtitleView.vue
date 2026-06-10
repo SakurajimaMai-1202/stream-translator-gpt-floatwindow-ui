@@ -713,10 +713,6 @@ async function stopTranslation() {
 
 <style scoped>
 /* 確保視窗可以透明背景 */
-body {
-  background: transparent !important;
-}
-
 /* 強制啟用 backdrop-filter 支援 */
 .backdrop-blur-support {
   isolation: isolate;

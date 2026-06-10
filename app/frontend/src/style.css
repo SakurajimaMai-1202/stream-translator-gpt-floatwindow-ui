@@ -7,6 +7,33 @@
   color-scheme: dark;
 }
 
+:root:not(.transparent-page) {
+  background: #0f172a;
+}
+
+html:not(.transparent-page),
+body:not(.transparent-page),
+#app:not(.transparent-page) {
+  min-height: 100%;
+  background: #0f172a;
+}
+
+html.transparent-page,
+html.transparent-page body,
+html.transparent-page #app {
+  background: transparent !important;
+}
+
+body {
+  overflow: hidden;
+  text-rendering: optimizeLegibility;
+}
+
+#app {
+  isolation: isolate;
+  contain: paint;
+}
+
 select {
   color-scheme: dark;
   -webkit-appearance: menulist;

@@ -11,7 +11,7 @@ from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings, QWebEngineScript
 from PyQt6.QtWebChannel import QWebChannel
 from PyQt6.QtCore import Qt, QUrl, QTimer, QPoint, QRect, QEvent, QObject, pyqtSlot, pyqtSignal
-from PyQt6.QtGui import QIcon, QCursor, QMouseEvent, QWheelEvent, QKeyEvent
+from PyQt6.QtGui import QIcon, QCursor, QMouseEvent, QWheelEvent, QKeyEvent, QColor
 import logging
 
 logger = logging.getLogger(__name__)
@@ -393,11 +393,15 @@ class FloatingSubtitleWindow(WebViewWindow):
         
         # 設定背景透明
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setStyleSheet("background:transparent;")
+        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, False)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.setStyleSheet("background-color: transparent;")
         
         # 建立容器與佈局
         self.container = QWidget()
-        self.container.setStyleSheet("background:transparent;")
+        self.container.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, False)
+        self.container.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.container.setStyleSheet("background-color: transparent;")
         self.layout = QVBoxLayout(self.container)
         self.layout.setContentsMargins(0, 0, 0, 0) # 移除邊距，WebView 填滿
         
@@ -408,8 +412,11 @@ class FloatingSubtitleWindow(WebViewWindow):
         self._last_render_reload_at = 0.0
         self.web_view.page().renderProcessTerminated.connect(self._on_render_process_terminated)
         self.web_view.setZoomFactor(1.0)
-        self.web_view.setStyleSheet("background:transparent;")
-        self.web_view.page().setBackgroundColor(Qt.GlobalColor.transparent)
+        self.web_view.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.web_view.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, False)
+        self.web_view.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.web_view.setStyleSheet("background-color: transparent;")
+        self.web_view.page().setBackgroundColor(QColor(Qt.GlobalColor.transparent))
         
         # 設定 WebChannel 以便與 JavaScript 通訊
         self.channel = QWebChannel()

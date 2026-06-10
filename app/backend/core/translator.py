@@ -21,6 +21,31 @@ from backend.core.logging_setup import resolve_log_file
 
 logger = logging.getLogger(__name__)
 
+_SENSITIVE_ARG_NAMES = {
+    "--openai_api_key",
+    "--google_api_key",
+    "--discord_webhook_url",
+    "--telegram_token",
+    "--telegram_chat_id",
+    "--cqhttp_token",
+}
+
+
+def _redact_command_args(cmd: List[str]) -> List[str]:
+    redacted: List[str] = []
+    hide_next = False
+    for arg in cmd:
+        if hide_next:
+            redacted.append("<redacted>")
+            hide_next = False
+            continue
+
+        redacted.append(arg)
+        if arg in _SENSITIVE_ARG_NAMES:
+            hide_next = True
+
+    return redacted
+
 
 def _extract_supported_cli_args(help_text: str) -> FrozenSet[str]:
     """從 `stream_translator_gpt --help` 輸出解析可用 CLI 參數。"""
@@ -277,7 +302,7 @@ class TranslationContext:
             # 記錄完整命令以便調試
             try:
                 import json
-                logger.info(f"Full command args: {json.dumps(cmd, ensure_ascii=False)}")
+                logger.info(f"Full command args: {json.dumps(_redact_command_args(cmd), ensure_ascii=False)}")
             except:
                 logger.info(f"Full command (fallback): {cmd}")
             
@@ -490,6 +515,17 @@ class TranslationContext:
                     if self.process is not None and self.process.poll() is not None:
                         return_code = self.process.poll()
                         logger.info(f"Process exited with code: {return_code}")
+                        try:
+                            stderr_thread.join(timeout=2.0)
+                            read_thread.join(timeout=2.0)
+                        except Exception as join_err:
+                            logger.warning(f"Failed to join subprocess reader threads: {join_err}")
+                        if return_code != 0:
+                            logger.error(
+                                "Translation subprocess exited with code %s. "
+                                "See logs/translator_stderr.log for stderr output.",
+                                return_code,
+                            )
                         status = "completed" if return_code == 0 else "error"
                         self._broadcast({
                             "type": "status",

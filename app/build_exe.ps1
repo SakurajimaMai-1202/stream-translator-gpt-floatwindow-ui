@@ -6,14 +6,24 @@ $scriptDir   = $PSScriptRoot
 $frontendDir = Join-Path $scriptDir "frontend"
 $backendDir  = Join-Path $scriptDir "backend"
 $pythonCandidates = @(
-    (Join-Path $scriptDir "..\.venv\Scripts\python.exe"),
-    (Join-Path $scriptDir "venv\Scripts\python.exe")
-)
+    $env:STREAM_TRANSLATOR_BUILD_PYTHON,
+    (Join-Path $scriptDir "venv\Scripts\python.exe"),
+    (Join-Path $scriptDir "..\.venv\Scripts\python.exe")
+) | Where-Object { $_ }
 $venvPython = $null
 foreach ($candidate in $pythonCandidates) {
     if (Test-Path $candidate) {
-        $venvPython = (Resolve-Path $candidate).Path
-        break
+        $resolvedCandidate = (Resolve-Path $candidate).Path
+        $previousPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        & $resolvedCandidate -c "import sys; print(sys.executable)" *> $null
+        $candidateExitCode = $LASTEXITCODE
+        $ErrorActionPreference = $previousPreference
+        if ($candidateExitCode -eq 0) {
+            $venvPython = $resolvedCandidate
+            break
+        }
+        Write-Host "Skipping invalid Python: $resolvedCandidate" -ForegroundColor Yellow
     }
 }
 $distDir     = Join-Path $scriptDir "dist"

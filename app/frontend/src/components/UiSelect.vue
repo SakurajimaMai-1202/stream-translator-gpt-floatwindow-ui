@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 
 export interface UiSelectOption {
   value: string | number | null;
@@ -28,6 +28,13 @@ const emit = defineEmits<{
 
 const isOpen = ref(false);
 const rootRef = ref<HTMLElement | null>(null);
+const menuRef = ref<HTMLElement | null>(null);
+const menuStyle = reactive({
+  top: '0px',
+  left: '0px',
+  width: '0px',
+  maxHeight: '18rem'
+});
 
 const selectedOption = computed(() => props.options.find(opt => opt.value === props.modelValue));
 const displayText = computed(() => selectedOption.value?.label || props.placeholder);
@@ -54,6 +61,9 @@ const groupedOptions = computed(() => {
 function toggleOpen() {
   if (props.disabled) return;
   isOpen.value = !isOpen.value;
+  if (isOpen.value) {
+    nextTick(updateMenuPosition);
+  }
 }
 
 function close() {
@@ -67,8 +77,9 @@ function selectOption(option: UiSelectOption) {
 }
 
 function handleDocumentClick(event: MouseEvent) {
+  const target = event.target as Node;
   if (!rootRef.value) return;
-  if (!rootRef.value.contains(event.target as Node)) {
+  if (!rootRef.value.contains(target) && !menuRef.value?.contains(target)) {
     close();
   }
 }
@@ -79,14 +90,44 @@ function handleKeydown(event: KeyboardEvent) {
   }
 }
 
+function updateMenuPosition() {
+  if (!rootRef.value) return;
+  const rect = rootRef.value.getBoundingClientRect();
+  const gap = 4;
+  const viewportPadding = 12;
+  const spaceBelow = window.innerHeight - rect.bottom - viewportPadding;
+  const spaceAbove = rect.top - viewportPadding;
+  const openUp = spaceBelow < 180 && spaceAbove > spaceBelow;
+  const maxHeight = Math.max(140, Math.min(288, openUp ? spaceAbove - gap : spaceBelow - gap));
+
+  menuStyle.left = `${Math.max(viewportPadding, Math.min(rect.left, window.innerWidth - rect.width - viewportPadding))}px`;
+  menuStyle.width = `${rect.width}px`;
+  menuStyle.maxHeight = `${maxHeight}px`;
+  menuStyle.top = openUp
+    ? `${Math.max(viewportPadding, rect.top - maxHeight - gap)}px`
+    : `${Math.min(window.innerHeight - viewportPadding, rect.bottom + gap)}px`;
+}
+
+function handleViewportChange() {
+  if (isOpen.value) updateMenuPosition();
+}
+
 onMounted(() => {
   document.addEventListener('click', handleDocumentClick);
   document.addEventListener('keydown', handleKeydown);
+  window.addEventListener('resize', handleViewportChange);
+  window.addEventListener('scroll', handleViewportChange, true);
 });
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', handleDocumentClick);
   document.removeEventListener('keydown', handleKeydown);
+  window.removeEventListener('resize', handleViewportChange);
+  window.removeEventListener('scroll', handleViewportChange, true);
+});
+
+watch(() => props.options, () => {
+  if (isOpen.value) nextTick(updateMenuPosition);
 });
 </script>
 
@@ -106,32 +147,36 @@ onBeforeUnmount(() => {
       <span class="ml-2 text-white/70">▾</span>
     </button>
 
-    <div
-      v-if="isOpen"
-      :class="[
-        'absolute z-[120] mt-1 w-full max-h-72 overflow-y-auto rounded-lg border border-white/20 bg-slate-800 shadow-2xl',
-        menuClass
-      ]"
-    >
-      <template v-for="(group, idx) in groupedOptions" :key="`group-${idx}-${group.group || 'default'}`">
-        <div v-if="group.group" class="px-3 py-2 text-xs text-white/50 bg-slate-900/70 border-b border-white/10">
-          {{ group.group }}
-        </div>
-        <button
-          v-for="option in group.options"
-          :key="`${group.group || 'default'}-${String(option.value)}`"
-          type="button"
-          :disabled="option.disabled"
-          class="w-full text-left px-3 py-2 text-sm transition"
-          :class="[
-            option.value === modelValue ? 'bg-blue-600/60 text-white' : 'text-slate-100',
-            option.disabled ? 'opacity-40 cursor-not-allowed' : 'hover:bg-white/10'
-          ]"
-          @click="selectOption(option)"
-        >
-          {{ option.label }}
-        </button>
-      </template>
-    </div>
+    <Teleport to="body">
+      <div
+        v-if="isOpen"
+        ref="menuRef"
+        :style="menuStyle"
+        :class="[
+          'fixed z-[9999] overflow-y-auto rounded-lg border border-white/20 bg-slate-800 shadow-2xl',
+          menuClass
+        ]"
+      >
+        <template v-for="(group, idx) in groupedOptions" :key="`group-${idx}-${group.group || 'default'}`">
+          <div v-if="group.group" class="px-3 py-2 text-xs text-white/50 bg-slate-900/70 border-b border-white/10">
+            {{ group.group }}
+          </div>
+          <button
+            v-for="option in group.options"
+            :key="`${group.group || 'default'}-${String(option.value)}`"
+            type="button"
+            :disabled="option.disabled"
+            class="w-full text-left px-3 py-2 text-sm transition"
+            :class="[
+              option.value === modelValue ? 'bg-blue-600/60 text-white' : 'text-slate-100',
+              option.disabled ? 'opacity-40 cursor-not-allowed' : 'hover:bg-white/10'
+            ]"
+            @click="selectOption(option)"
+          >
+            {{ option.label }}
+          </button>
+        </template>
+      </div>
+    </Teleport>
   </div>
 </template>

@@ -32,15 +32,12 @@ async def get_config():
 async def update_full_config(data: Dict[str, Any], request: Request):
     """更新完整配置"""
     try:
-        # 更新所有區段
-        for section, section_data in data.items():
-            if isinstance(section_data, dict):
-                get_config_manager().update_section(section, section_data)
-            elif section == 'custom_models':
-                # 特殊處理自訂模型列表
-                get_config_manager().config['translation']['custom_models'] = section_data
-                get_config_manager().save()
-        updated_config = get_config_manager().get_config()
+        updates = dict(data)
+        if 'custom_models' in updates:
+            translation = dict(updates.get('translation') or {})
+            translation['custom_models'] = updates.pop('custom_models')
+            updates['translation'] = translation
+        updated_config = get_config_manager().update_config(updates)
         await publish_app_event("config.updated", {
             "section": "*",
             "config": updated_config,
@@ -144,12 +141,7 @@ async def import_config(file_content: dict, request: Request):
         # 我們使用 update_full_config 的邏輯，但這裡我們可以直接呼叫 save
         # 更安全的做法是逐個 section 更新
         
-        for section, section_data in file_content.items():
-            if isinstance(section_data, dict):
-                get_config_manager().update_section(section, section_data)
-        
-        # 強制保存
-        get_config_manager().save()
+        get_config_manager().update_config(file_content)
             
         imported_config = get_config_manager().get_config()
         await publish_app_event("config.imported", {
@@ -177,12 +169,7 @@ async def import_config_file(request: Request, file: UploadFile = File(...)):
         if not isinstance(config_data, dict):
              raise HTTPException(status_code=400, detail="配置檔案格式不正確 (根節點必須是字典)")
              
-        # 更新配置
-        for section, section_data in config_data.items():
-            if isinstance(section_data, dict):
-                get_config_manager().update_section(section, section_data)
-        
-        get_config_manager().save()
+        get_config_manager().update_config(config_data)
         
         imported_config = get_config_manager().get_config()
         await publish_app_event("config.imported", {

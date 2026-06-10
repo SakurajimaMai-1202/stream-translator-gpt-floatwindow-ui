@@ -15,7 +15,7 @@ class Settings(BaseSettings):
         BASE_DIR: Path = Path(sys._MEIPASS)
         # 執行檔同級目錄
         EXE_DIR: ClassVar[Path] = Path(sys.executable).parent
-        CONFIG_FILE: Path = EXE_DIR / "data" / "config.yaml"
+        CONFIG_FILE: Path = EXE_DIR / "config.yaml"
     else:
         # 開發模式
         BASE_DIR: Path = Path(__file__).parent.parent

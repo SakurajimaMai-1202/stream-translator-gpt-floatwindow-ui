@@ -73,9 +73,7 @@ def _start_public_server():
     
     # 讀取 public_port
     try:
-        config_path = Path(__file__).parent.parent.parent / "config.yaml"
-        if not config_path.exists():
-            config_path = Path(__file__).parent.parent / "config.yaml"
+        config_path = settings.CONFIG_FILE
         public_port = 8765
         if config_path.exists():
             with open(config_path, "r", encoding="utf-8") as f:

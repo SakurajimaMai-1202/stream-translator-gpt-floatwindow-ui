@@ -34,6 +34,8 @@ audio_slicing_vad:
   vad_speech_pad_ms: 30
   vad_every_n_frames: 2
   realtime_processing: false
+  vad_backend: silero
+  firered_vad_model_path: ''
 transcription:
   backend: qwen3-asr
   model: Qwen/Qwen3-ASR-1.7B
@@ -47,6 +49,7 @@ transcription:
   qwen3_asr_model: Qwen/Qwen3-ASR-1.7B
   qwen3_dtype: bfloat16
   qwen3_load_in_4bit: false
+  qwen3_rms_threshold: 0.005
   whisper_filters:
   - emoji_filter
   - repetition_filter
@@ -172,10 +175,3 @@ llama:
   no_mmap: false
   custom_presets: {}
   custom_model_series: []
-audio_slicing:
-  min_duration: 0.5
-  max_duration: 30
-  target_duration: 5
-  silence_threshold: 1
-  vad_threshold: 0.35
-  preserve_start_duration: 0.5

@@ -7,6 +7,10 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 import yaml
 import copy
+import os
+import tempfile
+import time
+from contextlib import contextmanager
 from backend.config import settings
 
 class ConfigManager:
@@ -202,6 +206,19 @@ class ConfigManager:
     
     def _load_or_create(self) -> Dict[str, Any]:
         """載入配置，若不存在則建立預設值"""
+        if not self.config_path.exists():
+            legacy_config_path = self.config_path.parent / "data" / "config.yaml"
+            if legacy_config_path.exists():
+                try:
+                    with open(legacy_config_path, 'r', encoding='utf-8') as f:
+                        config = yaml.safe_load(f) or {}
+                    merged = self._merge_with_defaults(config)
+                    migrated, _changed = self._migrate_legacy_config(merged)
+                    self._save(migrated)
+                    return migrated
+                except Exception as e:
+                    print(f"舊版配置載入失敗: {e}，使用預設值")
+
         if self.config_path.exists():
             try:
                 with open(self.config_path, 'r', encoding='utf-8') as f:
@@ -210,7 +227,7 @@ class ConfigManager:
                     merged = self._merge_with_defaults(config)
                     # 舊版設定遷移（例如 localllm -> llama）
                     migrated, changed = self._migrate_legacy_config(merged)
-                    if changed:
+                    if changed or migrated != config:
                         self._save(migrated)
                     return migrated
             except Exception as e:
@@ -242,6 +259,16 @@ class ConfigManager:
         
         return merge(self.DEFAULT_CONFIG, config)
 
+    def _deep_merge(self, base: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
+        """Recursively merge dictionaries while preserving unknown/new settings."""
+        result = self._deep_copy(base)
+        for key, value in updates.items():
+            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+                result[key] = self._deep_merge(result[key], value)
+            else:
+                result[key] = self._deep_copy(value)
+        return result
+
     def _migrate_legacy_config(self, config: Dict[str, Any]) -> tuple[Dict[str, Any], bool]:
         """遷移舊版配置到新版欄位/枚舉值。回傳 (config, 是否有變更)"""
         changed = False
@@ -264,19 +291,84 @@ class ConfigManager:
     
     def save(self):
         """儲存當前配置到檔案"""
-        self._save(self.config)
+        with self._config_lock():
+            self._save(self.config)
     
     def _save(self, config: Dict):
         """內部儲存方法"""
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        fd, temp_name = tempfile.mkstemp(
+            prefix=f".{self.config_path.name}.",
+            suffix=".tmp",
+            dir=str(self.config_path.parent),
+        )
         try:
-            self.config_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.config_path, 'w', encoding='utf-8') as f:
-                yaml.dump(config, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
-        except Exception as e:
-            print(f"配置儲存失敗: {e}")
+            with os.fdopen(fd, 'w', encoding='utf-8', newline='\n') as f:
+                yaml.safe_dump(
+                    config,
+                    f,
+                    allow_unicode=True,
+                    default_flow_style=False,
+                    sort_keys=False,
+                )
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_name, self.config_path)
+        except Exception:
+            try:
+                os.unlink(temp_name)
+            except OSError:
+                pass
+            raise
+
+    def _read_current_config(self) -> Dict[str, Any]:
+        """Read the latest disk state before a cross-process update."""
+        if not self.config_path.exists():
+            return self._deep_copy(self.DEFAULT_CONFIG)
+
+        with open(self.config_path, 'r', encoding='utf-8') as f:
+            loaded = yaml.safe_load(f) or {}
+        merged = self._merge_with_defaults(loaded)
+        migrated, _changed = self._migrate_legacy_config(merged)
+        return migrated
+
+    @contextmanager
+    def _config_lock(self):
+        """Serialize read-merge-write updates from the UI and backend processes."""
+        lock_path = self.config_path.with_suffix(self.config_path.suffix + '.lock')
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(lock_path, 'a+b') as lock_file:
+            lock_file.seek(0)
+            if lock_file.tell() == 0 and lock_file.read(1) == b'':
+                lock_file.write(b'0')
+                lock_file.flush()
+            lock_file.seek(0)
+
+            if os.name == 'nt':
+                import msvcrt
+                while True:
+                    try:
+                        msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+                        break
+                    except OSError:
+                        time.sleep(0.02)
+                try:
+                    yield
+                finally:
+                    lock_file.seek(0)
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
     
     def get_config(self) -> Dict[str, Any]:
         """獲取完整配置"""
+        with self._config_lock():
+            self.config = self._read_current_config()
         return self.config
 
     def _resolve_translation_api_keys(self, config: Dict[str, Any]) -> Dict[str, str]:
@@ -365,17 +457,7 @@ class ConfigManager:
             window_name: 視窗名稱 (home/settings/floating_subtitle)
             state: 視窗狀態字典 {'x', 'y', 'width', 'height', 'visible', 'transparency'(opt)}
         """
-        if 'ui' not in self.config:
-            self.config['ui'] = {'windows': {}}
-        if 'windows' not in self.config['ui']:
-            self.config['ui']['windows'] = {}
-        
-        # 合併現有狀態與新狀態 (避免覆蓋未傳遞的字段)
-        current_state = self.config['ui']['windows'].get(window_name, {})
-        current_state.update(state)
-        
-        self.config['ui']['windows'][window_name] = current_state
-        self.save()
+        self.update_section('ui', {'windows': {window_name: state}})
     
     def load_window_state(self, window_name: str) -> Dict[str, Any]:
         """從配置載入視窗狀態"""
@@ -644,6 +726,11 @@ class ConfigManager:
             if output_dir:
                 import os as _os
                 from datetime import datetime as _dt
+                from pathlib import Path as _Path
+                output_dir_path = _Path(output_dir)
+                if not output_dir_path.is_absolute():
+                    output_dir_path = settings.CONFIG_FILE.parent / output_dir_path
+                output_dir = str(output_dir_path)
                 _os.makedirs(output_dir, exist_ok=True)
                 timestamp_str = _dt.now().strftime('%Y%m%d_%H%M%S')
                 # 優先順序：srt > ass > txt
@@ -677,15 +764,20 @@ class ConfigManager:
     
     def update_from_ui(self, section: str, key: str, value: Any):
         """從 UI 更新單個配置值"""
-        if section in self.config:
-            self.config[section][key] = value
-            self.save()
+        self.update_section(section, {key: value})
+
+    def update_config(self, updates: Dict[str, Any]):
+        """Merge updates into the latest disk state and persist them once."""
+        with self._config_lock():
+            current = self._read_current_config()
+            updated = self._deep_merge(current, updates)
+            self._save(updated)
+        self.config = updated
+        return self.config
             
     def update_section(self, section: str, data: Dict[str, Any]):
-        """更新整個區段 - 完全覆蓋而非合併"""
-        # 直接更新或建立區段，不檢查是否存在，確保匯入時能還原所有設定
-        self.config[section] = data
-        self.save()
+        """更新配置區段，保留 UI 沒送回來的既有設定。"""
+        self.update_config({section: data})
 
     def reset_to_defaults(self):
         """重置為預設配置"""

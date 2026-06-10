@@ -89,11 +89,24 @@ export const useTranslationStore = defineStore('translation', () => {
   async function saveConfig(newConfig: Config) {
     try {
       await configApi.updateConfig(newConfig);
-      config.value = newConfig;
+      await loadConfig();
       statusMessage.value = '配置已儲存';
       setTimeout(() => statusMessage.value = '', 3000);
     } catch (error: any) {
       errorMessage.value = `儲存配置失敗: ${error.message}`;
+      throw error;
+    }
+  }
+
+  async function resetConfig() {
+    try {
+      await configApi.resetConfig();
+      await loadConfig();
+      statusMessage.value = '設定已重置為預設值';
+      setTimeout(() => statusMessage.value = '', 3000);
+    } catch (error: any) {
+      errorMessage.value = `重置設定失敗: ${error.message}`;
+      throw error;
     }
   }
 
@@ -332,6 +345,7 @@ export const useTranslationStore = defineStore('translation', () => {
     // Actions
     loadConfig,
     saveConfig,
+    resetConfig,
     exportConfig,
     importConfig,
     startTranslation,

@@ -300,16 +300,30 @@ const filteredGlossary = computed(() => {
 useTranscriptionMutex(() => localConfig.value.transcription);
 
 function mergeConfig(defaults: any, loaded: any) {
-  const result = { ...defaults };
-  for (const key of Object.keys(result)) {
-    if (loaded && loaded[key] !== undefined) {
-      if (typeof result[key] === 'object' && result[key] !== null && !Array.isArray(result[key])) {
-        result[key] = { ...result[key], ...loaded[key] };
-      } else {
-        result[key] = loaded[key];
-      }
+  if (!loaded || typeof loaded !== 'object') {
+    return Array.isArray(defaults) ? [...defaults] : { ...defaults };
+  }
+
+  const result = {
+    ...(defaults || {}),
+    ...loaded,
+  };
+
+  for (const key of Object.keys(defaults || {})) {
+    const defaultValue = defaults[key];
+    const loadedValue = loaded[key];
+    if (
+      defaultValue &&
+      loadedValue &&
+      typeof defaultValue === 'object' &&
+      typeof loadedValue === 'object' &&
+      !Array.isArray(defaultValue) &&
+      !Array.isArray(loadedValue)
+    ) {
+      result[key] = mergeConfig(defaultValue, loadedValue);
     }
   }
+
   return result;
 }
 
@@ -328,6 +342,7 @@ async function applyStoreConfigToLocalConfig(config?: any, syncLlama = false) {
     localConfig.value.output = mergeConfig(localConfig.value.output, loadedConfig.output);
     localConfig.value.output_notification = mergeConfig(localConfig.value.output_notification, loadedConfig.output_notification);
     localConfig.value.ui = mergeConfig(localConfig.value.ui, loadedConfig.ui);
+    localConfig.value.llama = mergeConfig(localConfig.value.llama || {}, loadedConfig.llama);
 
     if (loadedConfig.translation?.custom_models) {
       localConfig.value.translation.custom_models = loadedConfig.translation.custom_models;
@@ -457,21 +472,11 @@ async function handleCancel() {
   router.push('/');
 }
 
-function resetToDefault() {
-  if (confirm('確定要重置為預設值嗎？此操作無法復原。')) {
-    // 重置為預設值
-    localConfig.value = {
-      general: { openai_api_key: '', google_api_key: '', log_level: 'INFO' },
-      server: { public_port: 8765, enable_subtitle_sharing: true },
-      input: { url: '', source_type: 'youtube', format: 'ba/wa*', cookies: '', proxy: '', timeout: 30 },
-      audio_slicing_vad: { min_audio_length: 3.0, max_audio_length: 30.0, chunk_gap_threshold: 0.5, vad_enabled: true, vad_threshold: 0.5, vad_neg_threshold: 0.35, vad_min_speech_duration_ms: 250, vad_min_silence_duration_ms: 100, vad_window_size_samples: 512, vad_speech_pad_ms: 30, vad_backend: 'silero', firered_vad_model_path: '' },
-      transcription: { model: 'base', language: 'auto', transcription_initial_prompt: '', disable_transcription_context: false, use_faster_whisper: false, use_simul_streaming: false, use_openai_transcription_api: false, use_qwen3_asr: false, qwen3_asr_model: 'Qwen/Qwen3-ASR-1.7B', qwen3_dtype: 'bfloat16', qwen3_load_in_4bit: false, openai_transcription_model: 'whisper-1', whisper_filters: ['emoji_filter', 'repetition_filter'] },
-      translation: { backend: 'gpt', target_language: 'Traditional Chinese', llm_model: 'gpt-4o-mini', api_base: '', api_key: '', temperature: 0.3, top_p: 1.0, max_tokens: 2048, use_smart_prompt: true, translation_prompt: '', custom_models: [] },
-      terminology: { use_terminology_glossary: false, glossary: '', glossary_list: [] },
-      output: { output_dir: './output', output_srt: true, output_txt: false, output_ass: false, max_history: 20 },
-      output_notification: { discord_enabled: false, discord_webhook_url: '', telegram_enabled: false, telegram_bot_token: '', telegram_chat_id: '', output_file_path: '' },
-      ui: { theme: 'dark' }
-    };
+async function resetToDefault() {
+  if (confirm('確定要重置為後端預設值嗎？此操作無法復原。')) {
+    await store.resetConfig();
+    await store.loadConfig();
+    await applyStoreConfigToLocalConfig(store.config, true);
   }
 }
 

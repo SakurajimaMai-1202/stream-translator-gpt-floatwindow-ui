@@ -1,14 +1,12 @@
 #!/usr/bin/env pwsh
-# UI2 portable packaging script (onedir mode, PyQt6-WebEngine compatible)
+# UI2 portable packaging script (onedir mode, PyQt6-WebEngine compatible) - ROCm AMD Version
 
 $ErrorActionPreference = "Stop"
 $scriptDir   = $PSScriptRoot
 $frontendDir = Join-Path $scriptDir "frontend"
 $backendDir  = Join-Path $scriptDir "backend"
 $pythonCandidates = @(
-    (Join-Path $scriptDir ".venv-rocm-build\Scripts\python.exe"),
-    (Join-Path $scriptDir "..\.venv\Scripts\python.exe"),
-    (Join-Path $scriptDir "venv\Scripts\python.exe")
+    (Join-Path $scriptDir ".venv-rocm-build\Scripts\python.exe")
 )
 $venvPython = $null
 foreach ($candidate in $pythonCandidates) {
@@ -21,14 +19,12 @@ $distDir     = Join-Path $scriptDir "dist-rocm"
 $buildDir    = Join-Path $scriptDir "build-rocm"
 $appName     = "Stream Translator ROCm"
 
-Write-Host "=== Stream Translator - Portable Build ===" -ForegroundColor Cyan
+Write-Host "=== Stream Translator (ROCm Version) - Portable Build ===" -ForegroundColor Cyan
 Write-Host ""
 
 if (-not $venvPython) {
-    Write-Host "ERROR: no usable virtual environment Python found." -ForegroundColor Red
-    Write-Host "Checked:" -ForegroundColor Yellow
-    $pythonCandidates | ForEach-Object { Write-Host "  - $_" -ForegroundColor Yellow }
-    Write-Host "Please create one environment and install dependencies." -ForegroundColor Yellow
+    Write-Host "ERROR: no usable ROCm virtual environment Python found." -ForegroundColor Red
+    Write-Host "Please create `.venv-rocm-build` and install ROCm dependencies first." -ForegroundColor Yellow
     exit 1
 }
 
@@ -64,7 +60,7 @@ try {
     }
     if ($missingPkgs.Count -gt 0) {
         Write-Host ""
-        Write-Host "ERROR: required ML packages are missing:" -ForegroundColor Red
+        Write-Host "ERROR: required ROCm ML packages are missing:" -ForegroundColor Red
         $missingPkgs | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red }
         Write-Host ""
         Write-Host "Install dependencies first:" -ForegroundColor Yellow
@@ -113,6 +109,12 @@ try {
     if ((Test-Path $configSrc) -and (-not (Test-Path $configDst))) {
         Copy-Item $configSrc $configDst
         Write-Host "  OK copied default config.yaml" -ForegroundColor Green
+    }
+
+    $releaseNotesSrc = Join-Path $scriptDir "UPDATE_NOTES_zh-TW.txt"
+    if (Test-Path $releaseNotesSrc) {
+        Copy-Item $releaseNotesSrc (Join-Path $outputDir "UPDATE_NOTES_zh-TW.txt") -Force
+        Write-Host "  OK copied update notes" -ForegroundColor Green
     }
 
     Write-Host "[6/9] Create portable _runtime Python" -ForegroundColor Yellow
@@ -213,7 +215,7 @@ try {
 
     Write-Host ""
     Write-Host ("=" * 60) -ForegroundColor Green
-    Write-Host "BUILD COMPLETED" -ForegroundColor Green
+    Write-Host "ROCm BUILD COMPLETED" -ForegroundColor Green
     Write-Host ("=" * 60) -ForegroundColor Green
     Write-Host ""
     Write-Host "Output folder: $outputDir" -ForegroundColor Cyan

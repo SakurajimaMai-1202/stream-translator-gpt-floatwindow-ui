@@ -22,6 +22,61 @@ from backend.core.logging_setup import resolve_log_file
 logger = logging.getLogger(__name__)
 
 
+def _redact_command_args(command: List[str]) -> List[str]:
+    sensitive_options = {
+        '--openai_api_key', '--google_api_key', '--api_key', '--cqhttp_token',
+        '--telegram_token', '--discord_webhook_url',
+    }
+    redacted = list(command)
+    for index, value in enumerate(redacted[:-1]):
+        if value in sensitive_options:
+            redacted[index + 1] = '***'
+    return redacted
+
+
+def _terminate_process_tree(process: subprocess.Popen, timeout: float = 5.0) -> None:
+    """Terminate the ASR process and all descendants so GPU allocations are released."""
+    if process.poll() is not None:
+        return
+
+    if os.name == 'nt':
+        result = subprocess.run(
+            ['taskkill', '/PID', str(process.pid), '/T', '/F'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding='utf-8',
+            errors='replace',
+            timeout=timeout,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        try:
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=2.0)
+        if result.returncode not in (0, 128) and process.returncode is None:
+            raise RuntimeError(result.stderr.strip() or f'taskkill failed with code {result.returncode}')
+        return
+
+    process.terminate()
+    try:
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=2.0)
+
+
+def _close_process_pipes(process: subprocess.Popen) -> None:
+    for pipe_name in ('stdin', 'stdout', 'stderr'):
+        pipe = getattr(process, pipe_name, None)
+        if pipe is not None:
+            try:
+                pipe.close()
+            except Exception:
+                pass
+
+
 def _extract_supported_cli_args(help_text: str) -> FrozenSet[str]:
     """從 `stream_translator_gpt --help` 輸出解析可用 CLI 參數。"""
     if not help_text:
@@ -277,7 +332,7 @@ class TranslationContext:
             # 記錄完整命令以便調試
             try:
                 import json
-                logger.info(f"Full command args: {json.dumps(cmd, ensure_ascii=False)}")
+                logger.info(f"Full command args: {json.dumps(_redact_command_args(cmd), ensure_ascii=False)}")
             except:
                 logger.info(f"Full command (fallback): {cmd}")
             
@@ -305,8 +360,7 @@ class TranslationContext:
                     logger.info("Persistent process exists but config changed or process died. Terminating old process.")
                     try:
                         if persistent_process.poll() is None:
-                            persistent_process.terminate()
-                            persistent_process.wait(timeout=2.0)
+                            _terminate_process_tree(persistent_process)
                     except Exception as e:
                         logger.error(f"Failed to terminate old persistent process: {e}")
                     persistent_process = None
@@ -419,6 +473,21 @@ class TranslationContext:
                                         "type": "status",
                                         "data": {"message": zh_msg}
                                     })
+                            elif '[ERROR]' in clean_line:
+                                logger.error(f"[STDOUT_ERR] {clean_line}")
+                                self._broadcast({
+                                    "type": "error",
+                                    "data": {"message": clean_line.replace('[ERROR]', '').strip()}
+                                })
+                            elif '[WARNING]' in clean_line:
+                                logger.warning(f"[STDOUT_WARN] {clean_line}")
+                                if 'Falling back to CPU' in clean_line:
+                                    self._broadcast({
+                                        "type": "status",
+                                        "data": {"message": "目前 ROCm PyTorch 不支援此 GPU 架構，已自動改用 CPU 模式"}
+                                    })
+                            elif '[DEBUG]' in clean_line:
+                                logger.debug(f"[STDOUT_DBG] {clean_line}")
                             continue
 
                         # 將實際輸出寫入後端終端,方便確認有無輸出
@@ -617,13 +686,11 @@ class TranslationContext:
             try:
                 if persistent_process.poll() is None:
                     logger.info(f"Terminating stale persistent process (PID: {persistent_process.pid})")
-                    persistent_process.terminate()
-                    try:
-                        persistent_process.wait(timeout=3.0)
-                    except subprocess.TimeoutExpired:
-                        persistent_process.kill()
+                    _terminate_process_tree(persistent_process)
             except Exception as e:
                 logger.error(f"Failed to terminate persistent process: {e}")
+            finally:
+                _close_process_pipes(persistent_process)
             persistent_process = None
             persistent_config_args = None
         
@@ -632,16 +699,13 @@ class TranslationContext:
             pid = self.process.pid
             logger.info(f"Terminating translation subprocess (PID: {pid})")
             try:
-                self.process.terminate()
-                try:
-                    self.process.wait(timeout=5.0)
-                    logger.info(f"Process {pid} terminated cleanly")
-                except subprocess.TimeoutExpired:
-                    logger.warning(f"Process {pid} did not terminate in 5s, killing forcefully")
-                    self.process.kill()
-                    self.process.wait(timeout=2.0)
+                _terminate_process_tree(self.process)
+                logger.info(f"Process tree {pid} terminated; GPU memory can now be released")
             except Exception as e:
                 logger.error(f"Failed to terminate process {pid}: {e}")
+            finally:
+                _close_process_pipes(self.process)
+                self.process = None
         
         logger.info(f"Task {self.task_id} stopped")
 

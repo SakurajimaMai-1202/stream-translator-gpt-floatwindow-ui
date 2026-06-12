@@ -32,14 +32,12 @@ async def get_config():
 async def update_full_config(data: Dict[str, Any], request: Request):
     """更新完整配置"""
     try:
-        # 更新所有區段
-        for section, section_data in data.items():
-            if isinstance(section_data, dict):
-                get_config_manager().update_section(section, section_data)
-            elif section == 'custom_models':
-                # 特殊處理自訂模型列表
-                get_config_manager().config['translation']['custom_models'] = section_data
-                get_config_manager().save()
+        sections = {
+            section: section_data
+            for section, section_data in data.items()
+            if isinstance(section_data, dict)
+        }
+        get_config_manager().update_sections(sections)
         updated_config = get_config_manager().get_config()
         await publish_app_event("config.updated", {
             "section": "*",

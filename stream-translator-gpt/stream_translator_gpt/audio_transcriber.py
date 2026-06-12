@@ -12,7 +12,7 @@ from scipy.io.wavfile import write as write_audio
 import numpy as np
 
 from . import filters
-from .common import TranslationTask, SAMPLE_RATE, LoopWorkerBase, sec2str, ApiKeyPool, INFO, WARNING
+from .common import TranslationTask, SAMPLE_RATE, LoopWorkerBase, sec2str, ApiKeyPool, ERROR, INFO, WARNING
 from .simul_streaming.simul_whisper.whisper.utils import compression_ratio
 from .torch_setup import disable_nnpack
 
@@ -96,7 +96,12 @@ class AudioTranscriber(LoopWorkerBase):
                 initial_prompt = None
 
             asr_started_at = time.perf_counter()
-            text, tokens = self.transcribe(task.audio, initial_prompt=initial_prompt)
+            try:
+                text, tokens = self.transcribe(task.audio, initial_prompt=initial_prompt)
+            except Exception as exc:
+                print(f'{ERROR}ASR transcription failed: {type(exc).__name__}: {exc}', flush=True)
+                output_queue.put(None)
+                break
             task.asr_latency_ms = (time.perf_counter() - asr_started_at) * 1000
 
             if self.constant_prompt and text.strip().rstrip(',') == self.constant_prompt.strip().rstrip(','):
@@ -443,12 +448,29 @@ class Qwen3ASRTranscriber(AudioTranscriber):
             _apply_hf_proxy(proxy)
 
         self._validate_device_map(torch, device_map)
+        device_map = self._resolve_device_map(torch, device_map)
 
         dtype_obj = torch.bfloat16
         if dtype:
             dtype_obj = getattr(torch, dtype, None)
             if not isinstance(dtype_obj, torch.dtype):
                 raise ValueError(f'Unsupported Qwen3-ASR dtype: {dtype}')
+
+        # Fallback to float16 if bfloat16 is requested but unsupported by the current GPU
+        if dtype_obj == torch.bfloat16 and torch.cuda.is_available() and device_map != 'cpu':
+            is_bf16_supported = False
+            try:
+                is_bf16_supported = torch.cuda.is_bf16_supported()
+            except AttributeError:
+                pass
+            if not is_bf16_supported:
+                print(f'{WARNING}bfloat16 is not supported on the current GPU. Falling back to float16 for Qwen3-ASR.')
+                dtype_obj = torch.float16
+
+        if device_map == 'cpu' and dtype_obj != torch.float32:
+            print(f'{WARNING}Using float32 for Qwen3-ASR CPU fallback.')
+            dtype_obj = torch.float32
+
 
         # 檢測並啟用 SDPA / FlashAttention-2 加速
         attn_implementation = "sdpa"
@@ -546,6 +568,51 @@ class Qwen3ASRTranscriber(AudioTranscriber):
                 'Current PyTorch CUDA build does not support the available GPU(s) for Qwen3-ASR. '
                 'Install a PyTorch build that supports your GPU compute capability, or explicitly use '
                 '--qwen3_asr_device_map cpu.')
+
+    @classmethod
+    def _resolve_device_map(cls, torch, device_map: str | None) -> str:
+        requested = str(device_map or 'auto').strip() or 'auto'
+        if requested == 'cpu' or not cls._is_rocm_torch(torch) or not torch.cuda.is_available():
+            return requested
+
+        supported_arches = set(torch.cuda.get_arch_list())
+        requested_index = cls._requested_cuda_index(requested)
+        candidate_indexes = (
+            [requested_index]
+            if requested_index is not None
+            else list(range(torch.cuda.device_count()))
+        )
+
+        detected_devices = []
+        for index in candidate_indexes:
+            try:
+                properties = torch.cuda.get_device_properties(index)
+                name = str(getattr(properties, 'name', '') or torch.cuda.get_device_name(index))
+                arch = str(getattr(properties, 'gcnArchName', '') or '').split(':', 1)[0]
+            except Exception as error:
+                detected_devices.append(f'cuda:{index} (unavailable: {error})')
+                continue
+
+            label = f'cuda:{index} {name}'.strip()
+            detected_devices.append(f'{label} [{arch or "unknown arch"}]')
+            if not supported_arches or not arch or arch in supported_arches:
+                selected = f'cuda:{index}'
+                print(f'{INFO}Selected ROCm GPU: {label} [{arch or "unknown arch"}]', flush=True)
+                return selected
+
+        supported = ', '.join(sorted(supported_arches)) or 'not reported'
+        detected = ', '.join(detected_devices) or 'none'
+        print(
+            f'{WARNING}No compatible ROCm GPU was found. Detected: {detected}; '
+            f'PyTorch kernels: {supported}. Falling back to CPU to avoid HIP invalid device function.',
+            flush=True,
+        )
+        return 'cpu'
+
+    @staticmethod
+    def _requested_cuda_index(device_map: str) -> int | None:
+        match = re.fullmatch(r'(?:cuda|hip):(\d+)', device_map.lower())
+        return int(match.group(1)) if match else None
 
     @staticmethod
     def _cuda_has_supported_device(torch) -> bool:

@@ -4,6 +4,23 @@ PyQt6 + WebView + FastAPI 整合啟動器
 """
 
 import sys
+import os
+
+# 在導入 PyQt6 與其他模組前，先處理特定啟動參數並設定環境變數，否則 Chromium/RHI 設定將無效
+if sys.platform == "win32":
+    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu --disable-gpu-compositing"
+    os.environ["QSG_RHI_BACKEND"] = "software"
+
+if "--d3d11" in sys.argv:
+    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = ""
+    os.environ["QSG_RHI_BACKEND"] = "d3d11"
+elif "--opengl" in sys.argv:
+    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = ""
+    os.environ["QSG_RHI_BACKEND"] = "opengl"
+elif "--disable-gpu" in sys.argv:
+    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu --disable-gpu-compositing"
+    os.environ["QSG_RHI_BACKEND"] = "software"
+
 import logging
 import socket
 import threading
@@ -56,12 +73,7 @@ class UI2Application:
         self.dev_mode = dev_mode
         self.disable_gpu = disable_gpu
         if self.disable_gpu:
-            logger.info("停用語音網頁硬體加速 (AA_ShareOpenGLContexts, AA_UseDesktopOpenGL)")
-        else:
-            # 設定 OpenGL 上下文共享，解決 WebView 閃爍問題
-            QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
-            # 針對某些環境的 GPU 加速優化
-            QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseDesktopOpenGL)
+            logger.info("硬體加速已停用")
         
         self.app = QApplication(sys.argv)
         self.app.setApplicationName("Stream Translator")
@@ -195,6 +207,27 @@ class UI2Application:
         except Exception as e:
             logger.warning(f"停止 Llama server 失敗: {e}")
         
+        # 停止所有活動中的翻譯任務，釋放 VRAM 與 ASR 子進程
+        try:
+            import requests
+            status_resp = requests.get(
+                f"http://127.0.0.1:{self.backend_port}/api/translation/status",
+                timeout=2
+            )
+            if status_resp.status_code == 200:
+                status_data = status_resp.json()
+                tasks = status_data.get("tasks", [])
+                for t in tasks:
+                    task_id = t.get("task_id")
+                    if task_id:
+                        logger.info(f"正在透過 API 停止翻譯任務: {task_id}")
+                        requests.delete(
+                            f"http://127.0.0.1:{self.backend_port}/api/translation/stop/{task_id}",
+                            timeout=2
+                        )
+        except Exception as e:
+            logger.warning(f"透過 API 停止翻譯任務失敗: {e}")
+
         # 停止 backend 和 frontend
         if self.backend:
             self.backend.stop()
@@ -312,6 +345,16 @@ def main():
         action='store_true',
         help='停用 GPU 網頁硬體加速（解決某些顯示卡閃爍或黑屏問題）'
     )
+    parser.add_argument(
+        '--opengl',
+        action='store_true',
+        help='強制使用 OpenGL 渲染後端（解決某些 AMD 顯示卡在 D3D11 下的閃爍問題）'
+    )
+    parser.add_argument(
+        '--d3d11',
+        action='store_true',
+        help='強制使用 Direct3D 11 渲染後端（若需要硬體加速時使用）'
+    )
     args = parser.parse_args()
 
     if args.backend:
@@ -321,13 +364,22 @@ def main():
     try:
         is_frozen = getattr(sys, 'frozen', False)
         dev_mode = (not args.prod) and (not is_frozen)
-        
-        if args.disable_gpu:
-            import os
-            os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu --disable-gpu-compositing"
-            logger.info("已設定 Chromium 旗標以停用 GPU 加速")
+
+        is_software = args.disable_gpu or (sys.platform == "win32" and not args.d3d11 and not args.opengl)
+
+        if args.d3d11:
+            logger.info("已在啟動時強制套用 D3D11 渲染後端")
+        elif args.opengl:
+            logger.info("已在啟動時強制套用 OpenGL 渲染後端")
+        elif args.disable_gpu:
+            logger.info("已在啟動時停用 GPU 加速，改用 Software 軟體渲染")
+        else:
+            if sys.platform == "win32":
+                logger.info("預設套用 Software 軟體渲染以防止破圖與閃爍")
+            else:
+                logger.info("套用系統預設 RHI 渲染後端")
             
-        app = UI2Application(dev_mode=dev_mode, disable_gpu=args.disable_gpu)
+        app = UI2Application(dev_mode=dev_mode, disable_gpu=is_software)
         exit_code = app.run()
         app.cleanup()
         sys.exit(exit_code)

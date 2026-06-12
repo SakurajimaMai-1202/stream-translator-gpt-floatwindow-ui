@@ -902,8 +902,7 @@ def cli():
     if args['output_file_path']:
         output_dir = os.path.dirname(os.path.abspath(args['output_file_path']))
         if not os.path.isdir(output_dir):
-            print(f'{ERROR}Output directory does not exist: {output_dir}')
-            sys.exit(1)
+            os.makedirs(output_dir, exist_ok=True)
 
     preload_asr_model = args.pop('preload_asr_model', False)
     keep_asr_loaded = args.pop('keep_asr_loaded', False)

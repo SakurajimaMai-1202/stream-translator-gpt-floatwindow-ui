@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue';
-import { useRouter, useRoute } from 'vue-router';
+import { useRouter, useRoute, onBeforeRouteLeave } from 'vue-router';
 import axios from 'axios';
 import { useTranslationStore } from '../stores/translation';
 import { useModelDownloadStore } from '../stores/modelDownload';
@@ -177,6 +177,29 @@ const translationBackendOptions = computed<UiSelectOption[]>(() => {
 // 自動保存 debounce timer
 let _settingsAutoSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
+async function saveConfigImmediately() {
+  if (_settingsAutoSaveTimer !== null) {
+    clearTimeout(_settingsAutoSaveTimer);
+    _settingsAutoSaveTimer = null;
+  }
+  autoSaveStatus.value = 'saving';
+  isApplyingRemoteConfig.value = true;
+  try {
+    enforceRocmAsrConfig();
+    await store.saveConfig(localConfig.value);
+    autoSaveStatus.value = 'saved';
+    if (autoSaveStatusTimeout) clearTimeout(autoSaveStatusTimeout);
+    autoSaveStatusTimeout = setTimeout(() => {
+      autoSaveStatus.value = 'idle';
+    }, 3000);
+  } catch (e) {
+    console.warn('[SettingsView] 立即保存失敗:', e);
+    autoSaveStatus.value = 'error';
+  } finally {
+    isApplyingRemoteConfig.value = false;
+  }
+}
+
 function debouncedAutoSave() {
   enforceRocmAsrConfig();
   autoSaveStatus.value = 'saving';
@@ -198,17 +221,37 @@ function debouncedAutoSave() {
 }
 
 function enforceRocmAsrConfig() {
-  const transcription = localConfig.value.transcription || {};
-  transcription.backend = 'qwen3-asr';
-  transcription.model = transcription.qwen3_asr_model || 'Qwen/Qwen3-ASR-1.7B';
-  transcription.qwen3_asr_model = transcription.qwen3_asr_model || 'Qwen/Qwen3-ASR-1.7B';
-  transcription.use_qwen3_asr = true;
-  transcription.use_faster_whisper = false;
-  transcription.use_simul_streaming = false;
-  transcription.use_openai_transcription_api = false;
-  transcription.whisper_filters = [];
-  transcription.qwen3_load_in_4bit = false;
-  localConfig.value.transcription = transcription;
+  const transcription = localConfig.value.transcription;
+  if (!transcription) return;
+
+  if (transcription.backend !== 'qwen3-asr') {
+    transcription.backend = 'qwen3-asr';
+  }
+  const targetModel = transcription.qwen3_asr_model || 'Qwen/Qwen3-ASR-1.7B';
+  if (transcription.model !== targetModel) {
+    transcription.model = targetModel;
+  }
+  if (transcription.qwen3_asr_model !== targetModel) {
+    transcription.qwen3_asr_model = targetModel;
+  }
+  if (transcription.use_qwen3_asr !== true) {
+    transcription.use_qwen3_asr = true;
+  }
+  if (transcription.use_faster_whisper !== false) {
+    transcription.use_faster_whisper = false;
+  }
+  if (transcription.use_simul_streaming !== false) {
+    transcription.use_simul_streaming = false;
+  }
+  if (transcription.use_openai_transcription_api !== false) {
+    transcription.use_openai_transcription_api = false;
+  }
+  if (!transcription.whisper_filters || transcription.whisper_filters.length > 0) {
+    transcription.whisper_filters = [];
+  }
+  if (transcription.qwen3_load_in_4bit !== false) {
+    transcription.qwen3_load_in_4bit = false;
+  }
 }
 
 async function testConnection(backend: 'gpt' | 'gemini') {
@@ -404,6 +447,19 @@ onMounted(async () => {
   }, { deep: true });
 });
 
+onBeforeRouteLeave(async (to, from) => {
+  if (_settingsAutoSaveTimer !== null) {
+    clearTimeout(_settingsAutoSaveTimer);
+    _settingsAutoSaveTimer = null;
+    try {
+      enforceRocmAsrConfig();
+      await store.saveConfig(localConfig.value);
+    } catch (e) {
+      console.warn('[SettingsView] 導航離開保存失敗:', e);
+    }
+  }
+});
+
 onUnmounted(() => {
   if (_settingsAutoSaveTimer !== null) {
     clearTimeout(_settingsAutoSaveTimer);
@@ -456,7 +512,7 @@ async function handleSave() {
 }
 
 async function handleCancel() {
-  // 離開前確保待處理的 debounce 變更都被儲存
+  // 關閉前確保未處理的 debounce 變更都被儲存
   if (_settingsAutoSaveTimer !== null) {
     clearTimeout(_settingsAutoSaveTimer);
     _settingsAutoSaveTimer = null;
@@ -464,15 +520,14 @@ async function handleCancel() {
       enforceRocmAsrConfig();
       await store.saveConfig(localConfig.value);
     } catch (e) {
-      console.warn('[SettingsView] 離開保存失敗:', e);
+      console.warn('[SettingsView] 關閉儲存失敗:', e);
     }
   }
   router.push('/');
 }
 
 function resetToDefault() {
-  if (confirm('確定要重置為預設值嗎？此操作無法復原。')) {
-    // 重置為預設值
+  if (confirm('確定要重置所有設定值嗎？操作無法復原。')) {
     localConfig.value = {
       general: { openai_api_key: '', google_api_key: '', log_level: 'INFO' },
       server: { public_port: 8765, enable_subtitle_sharing: true },
@@ -485,6 +540,7 @@ function resetToDefault() {
       output_notification: { discord_enabled: false, discord_webhook_url: '', telegram_enabled: false, telegram_bot_token: '', telegram_chat_id: '', output_file_path: '' },
       ui: { theme: 'dark' }
     };
+    saveConfigImmediately();
   }
 }
 
@@ -500,10 +556,12 @@ function addTerm() {
   });
   newTermOriginal.value = '';
   newTermTranslated.value = '';
+  saveConfigImmediately();
 }
 
 function removeTerm(index: number) {
   localConfig.value.terminology.glossary_list.splice(index, 1);
+  saveConfigImmediately();
 }
 
 function importGlossary() {
@@ -527,6 +585,7 @@ function importGlossary() {
       ...newTerms
     ];
     store.statusMessage = `已匯入 ${newTerms.length} 個術語`;
+    saveConfigImmediately();
   };
   input.click();
 }
@@ -546,7 +605,7 @@ function exportGlossary() {
 // 自訂模型操作
 function openCustomModelDialog(index = -1) {
   editingModelIndex.value = index;
-  if (index >= 0) {
+  if (index >= 0 && localConfig.value.translation?.custom_models) {
     const model = localConfig.value.translation.custom_models[index];
     customModelForm.value = { ...model };
   } else {
@@ -555,27 +614,48 @@ function openCustomModelDialog(index = -1) {
   showCustomModelDialog.value = true;
 }
 
-function saveCustomModel() {
-  if (!customModelForm.value.name.trim() || !customModelForm.value.base_url.trim()) {
-    store.errorMessage = '請填寫模型名稱和 Base URL';
-    return;
-  }
-  
-  if (!localConfig.value.translation.custom_models) {
-      localConfig.value.translation.custom_models = [];
-  }
+// 儲存自訂模型並立即寫入設定
+async function saveCustomModel() {
+  try {
+    if (!customModelForm.value.name.trim() || !customModelForm.value.base_url.trim()) {
+      store.errorMessage = '請填寫模型名稱和 Base URL';
+      return;
+    }
 
-  if (editingModelIndex.value >= 0) {
-    localConfig.value.translation.custom_models[editingModelIndex.value] = { ...customModelForm.value };
-  } else {
-    localConfig.value.translation.custom_models.push({ ...customModelForm.value });
+    if (!localConfig.value.translation) {
+      localConfig.value.translation = {};
+    }
+    if (!localConfig.value.translation.custom_models) {
+      localConfig.value.translation.custom_models = [];
+    }
+
+    if (editingModelIndex.value >= 0) {
+      localConfig.value.translation.custom_models[editingModelIndex.value] = { ...customModelForm.value };
+    } else {
+      localConfig.value.translation.custom_models.push({ ...customModelForm.value });
+    }
+    showCustomModelDialog.value = false;
+    await saveConfigImmediately();
+  } catch (error: any) {
+    console.error('[SettingsView] saveCustomModel 發生錯誤:', error);
+    store.errorMessage = `儲存自訂模型失敗: ${error.message || error}`;
+    alert(`儲存自訂模型失敗: ${error.message || error}`);
   }
-  showCustomModelDialog.value = false;
 }
 
-function deleteCustomModel(index: number) {
-  if (confirm('確定要刪除此自訂模型嗎？')) {
-    localConfig.value.translation.custom_models.splice(index, 1);
+async function deleteCustomModel(index: number) {
+  try {
+    if (confirm('確定要刪除此自訂模型嗎？')) {
+      if (!localConfig.value.translation?.custom_models) {
+        return;
+      }
+      localConfig.value.translation.custom_models.splice(index, 1);
+      await saveConfigImmediately();
+    }
+  } catch (error: any) {
+    console.error('[SettingsView] deleteCustomModel 發生錯誤:', error);
+    store.errorMessage = `刪除自訂模型失敗: ${error.message || error}`;
+    alert(`刪除自訂模型失敗: ${error.message || error}`);
   }
 }
 

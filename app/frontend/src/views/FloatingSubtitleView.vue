@@ -297,6 +297,8 @@ async function loadSettingsFromBackend() {
   }
 }
 
+
+
 onMounted(async () => {
   console.log('FloatingSubtitleView mounted');
   console.log('Store:', store);
@@ -351,12 +353,18 @@ onMounted(async () => {
   // 監聯 storage 事件作為備用
   window.addEventListener('storage', handleStorageChange);
   
-  if (window.qt && window.qt.webChannelTransport) {
-    new window.QWebChannel(window.qt.webChannelTransport, (channel: any) => {
-      window.bridge = channel.objects.bridge;
-      console.log('WebChannel 已連接');
-    });
-  }
+  const initQWebChannel = () => {
+    if (window.qt && window.qt.webChannelTransport && window.QWebChannel) {
+      new window.QWebChannel(window.qt.webChannelTransport, (channel: any) => {
+        window.bridge = channel.objects.bridge;
+        console.log('WebChannel 已連接');
+      });
+    } else if (window.qt && window.qt.webChannelTransport) {
+      console.log('QWebChannel 尚未準備就緒，50ms 後重試...');
+      setTimeout(initQWebChannel, 50);
+    }
+  };
+  initQWebChannel();
 });
 
 onUnmounted(() => {

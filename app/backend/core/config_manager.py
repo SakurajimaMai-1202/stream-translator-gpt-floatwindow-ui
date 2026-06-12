@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 import yaml
 import copy
+import os
+import tempfile
 from backend.config import settings
 
 class ConfigManager:
@@ -265,15 +267,37 @@ class ConfigManager:
     def save(self):
         """儲存當前配置到檔案"""
         self._save(self.config)
+
+    def reload(self):
+        """從磁碟重新載入配置，避免多程序持有舊副本互相覆蓋。"""
+        if not self.config_path.exists():
+            return
+
+        with open(self.config_path, 'r', encoding='utf-8') as f:
+            config = yaml.safe_load(f) or {}
+        self.config = self._merge_with_defaults(config)
     
     def _save(self, config: Dict):
-        """內部儲存方法"""
+        """以原子替換方式儲存配置；失敗時必須讓呼叫端得知。"""
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = None
         try:
-            self.config_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.config_path, 'w', encoding='utf-8') as f:
+            with tempfile.NamedTemporaryFile(
+                mode='w',
+                encoding='utf-8',
+                dir=self.config_path.parent,
+                prefix=f'.{self.config_path.name}.',
+                suffix='.tmp',
+                delete=False,
+            ) as f:
+                temp_path = Path(f.name)
                 yaml.dump(config, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
-        except Exception as e:
-            print(f"配置儲存失敗: {e}")
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, self.config_path)
+        finally:
+            if temp_path is not None and temp_path.exists():
+                temp_path.unlink()
     
     def get_config(self) -> Dict[str, Any]:
         """獲取完整配置"""
@@ -365,6 +389,7 @@ class ConfigManager:
             window_name: 視窗名稱 (home/settings/floating_subtitle)
             state: 視窗狀態字典 {'x', 'y', 'width', 'height', 'visible', 'transparency'(opt)}
         """
+        self.reload()
         if 'ui' not in self.config:
             self.config['ui'] = {'windows': {}}
         if 'windows' not in self.config['ui']:
@@ -451,7 +476,8 @@ class ConfigManager:
             'vad_backend': config.get('audio_slicing_vad', {}).get('vad_backend', 'silero'),
             'firered_vad_model_path': config.get('audio_slicing_vad', {}).get('firered_vad_model_path', ''),
             'preload_asr_model': True,
-            'keep_asr_loaded': True,
+            # A stopped task must release the ASR subprocess and its VRAM.
+            'keep_asr_loaded': False,
             
             # 語音轉文字
             'model': transcription_model,
@@ -640,6 +666,12 @@ class ConfigManager:
             if output_dir:
                 import os as _os
                 from datetime import datetime as _dt
+
+                # 若為相對路徑，轉換為相對於根目錄的絕對路徑，防範後端與子進程的工作目錄 (CWD) 衝突
+                if not _os.path.isabs(output_dir):
+                    root_dir = settings.BASE_DIR.parent
+                    output_dir = _os.path.abspath(_os.path.join(root_dir, output_dir))
+
                 _os.makedirs(output_dir, exist_ok=True)
                 timestamp_str = _dt.now().strftime('%Y%m%d_%H%M%S')
                 # 優先順序：srt > ass > txt
@@ -679,9 +711,19 @@ class ConfigManager:
             
     def update_section(self, section: str, data: Dict[str, Any]):
         """更新整個區段 - 完全覆蓋而非合併"""
-        # 直接更新或建立區段，不檢查是否存在，確保匯入時能還原所有設定
-        self.config[section] = data
-        self.save()
+        self.update_sections({section: data})
+
+    def update_sections(self, sections: Dict[str, Dict[str, Any]]):
+        """重新載入後一次更新多個區段，避免舊副本與部分寫入。"""
+        previous_config = self._deep_copy(self.config)
+        try:
+            self.reload()
+            for section, data in sections.items():
+                self.config[section] = self._deep_copy(data)
+            self.save()
+        except Exception:
+            self.config = previous_config
+            raise
 
     def reset_to_defaults(self):
         """重置為預設配置"""

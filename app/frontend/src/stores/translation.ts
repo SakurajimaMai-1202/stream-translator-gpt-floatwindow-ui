@@ -94,6 +94,7 @@ export const useTranslationStore = defineStore('translation', () => {
       setTimeout(() => statusMessage.value = '', 3000);
     } catch (error: any) {
       errorMessage.value = `儲存配置失敗: ${error.message}`;
+      throw error;
     }
   }
 

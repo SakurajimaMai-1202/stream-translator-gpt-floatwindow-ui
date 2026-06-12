@@ -8,10 +8,10 @@ from pathlib import Path
 from time import monotonic
 from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QApplication
 from PyQt6.QtWebEngineWidgets import QWebEngineView
-from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings, QWebEngineScript
+from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings, QWebEngineScript, QWebEngineProfile
 from PyQt6.QtWebChannel import QWebChannel
 from PyQt6.QtCore import Qt, QUrl, QTimer, QPoint, QRect, QEvent, QObject, pyqtSlot, pyqtSignal
-from PyQt6.QtGui import QIcon, QCursor, QMouseEvent, QWheelEvent, QKeyEvent
+from PyQt6.QtGui import QColor, QIcon, QCursor, QMouseEvent, QWheelEvent, QKeyEvent
 import logging
 
 logger = logging.getLogger(__name__)
@@ -72,13 +72,20 @@ class WebViewWindow(QMainWindow):
             if not icon.isNull():
                 self.setWindowIcon(icon)
         self.resize(width, height)
-        
+
         # 設定視窗背景色為深色，避免載入或重新繪製時的白屏閃爍
         self.setStyleSheet("background-color: #0f172a;")
-        
+
         # 建立 WebView
         self.web_view = QWebEngineView()
         self.web_view.setPage(CustomWebPage(self.web_view))
+        self.web_view.page().setBackgroundColor(QColor("#0f172a"))
+
+        # 停用快取，防止本地前端靜態資源快取導致 UI 更新不即時
+        profile = self.web_view.page().profile()
+        profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.NoCache)
+        profile.clearHttpCache()
+
         self._render_reload_attempts = 0
         self._last_render_reload_at = 0.0
         self.web_view.page().renderProcessTerminated.connect(self._on_render_process_terminated)
@@ -147,7 +154,7 @@ class WebViewWindow(QMainWindow):
             logger.error("[WebView] Render process keeps terminating; automatic reload paused to avoid flicker")
             return
 
-        QTimer.singleShot(1200, self.web_view.reload)
+        QTimer.singleShot(120, self.web_view.reload)
 
     def _enforce_zoom_factor(self):
         """強制保持縮放倍率為 1，避免原生下拉/彈窗層改動頁面縮放"""
@@ -249,14 +256,7 @@ class HomeWindow(WebViewWindow):
                 'height': geometry.height()
             }
             
-            config = self.config_manager.get_config()
-            if 'ui' not in config:
-                config['ui'] = {}
-            if 'windows' not in config['ui']:
-                config['ui']['windows'] = {}
-            
-            config['ui']['windows']['main_window'] = window_config
-            self.config_manager.save()
+            self.config_manager.save_window_state('main_window', window_config)
             logger.info(f"已儲存主視窗配置: {window_config}")
         except Exception as e:
             logger.error(f"儲存主視窗配置失敗: {e}")
@@ -329,6 +329,7 @@ class SubtitleSettingsWindow(QMainWindow):
         # 建立 WebView
         self.web_view = QWebEngineView()
         self.web_view.setPage(CustomWebPage(self.web_view))
+        self.web_view.page().setBackgroundColor(QColor("#0f172a"))
         self.web_view.setStyleSheet("background-color: #0f172a;")
         
         # 設定
@@ -404,6 +405,12 @@ class FloatingSubtitleWindow(WebViewWindow):
         # 建立 WebView
         self.web_view = QWebEngineView()
         self.web_view.setPage(CustomWebPage(self.web_view))
+
+        # 停用快取，防止本地前端靜態資源快取導致 UI 更新不即時
+        profile = self.web_view.page().profile()
+        profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.NoCache)
+        profile.clearHttpCache()
+
         self._render_reload_attempts = 0
         self._last_render_reload_at = 0.0
         self.web_view.page().renderProcessTerminated.connect(self._on_render_process_terminated)
@@ -626,18 +633,7 @@ class FloatingSubtitleWindow(WebViewWindow):
                 'visible': self.isVisible()
             }
             
-            # 獲取當前配置
-            config = self.config_manager.get_config()
-            if 'ui' not in config:
-                config['ui'] = {}
-            if 'windows' not in config['ui']:
-                config['ui']['windows'] = {}
-            
-            # 更新字幕視窗配置
-            config['ui']['windows']['floating_subtitle'] = window_config
-            
-            # 儲存配置
-            self.config_manager.save()
+            self.config_manager.save_window_state('floating_subtitle', window_config)
             logger.debug(f"已儲存字幕視窗配置: {window_config}")
         except Exception as e:
             logger.error(f"儲存字幕視窗配置失敗: {e}")

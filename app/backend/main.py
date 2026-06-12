@@ -31,7 +31,37 @@ async def lifespan(app: FastAPI):
 
     yield  # 應用程式執行中
 
-    # ── 關閉（可放清理邏輯）──────────────────────────────
+    # ── 關閉（清理邏輯）──────────────────────────────
+    logger.info("後端服務正在關閉，開始清理資源...")
+
+    # 1) 停止所有活動中的翻譯任務 (例如 Qwen3-ASR)
+    try:
+        from backend.core.translator import active_translations
+        tasks = list(active_translations.keys())
+        for task_id in tasks:
+            context = active_translations.get(task_id)
+            if context:
+                logger.info(f"正在停止活動中的翻譯任務: {task_id}")
+                await context.stop()
+    except Exception as e:
+        logger.error(f"關閉翻譯任務時發生錯誤: {e}")
+
+    # 2) 停止 Llama.cpp 伺服器 (若是本應用程式啟動的)
+    try:
+        from backend.api.llama import llama_state
+        if llama_state.is_running and llama_state.server_process:
+            logger.info(f"正在終止 Llama 伺服器進程 (PID: {llama_state.server_process.pid})...")
+            llama_state.server_process.terminate()
+            try:
+                llama_state.server_process.wait(timeout=5.0)
+            except Exception:
+                logger.warning("Llama 伺服器正常結束超時，強制終止...")
+                llama_state.server_process.kill()
+                llama_state.server_process.wait(timeout=2.0)
+            logger.info("Llama 伺服器已成功結束")
+    except Exception as e:
+        logger.error(f"清理 Llama 伺服器進程時發生錯誤: {e}")
+
 
 
 app = FastAPI(

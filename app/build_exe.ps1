@@ -45,15 +45,18 @@ Write-Host "Using Python: $venvPython" -ForegroundColor Gray
 
 try {
     Write-Host "[1/9] Ensure PyInstaller" -ForegroundColor Yellow
-    $pyiExe = Join-Path (Split-Path -Parent $venvPython) "pyinstaller.exe"
-    if (-not (Test-Path $pyiExe)) {
+    & $venvPython -c "import PyInstaller" 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
         Write-Host "  Installing PyInstaller..." -ForegroundColor Gray
         & $venvPython -m pip install pyinstaller --quiet
     }
     Write-Host "  OK PyInstaller ready" -ForegroundColor Green
 
     Write-Host "[2/9] Ensure httpx" -ForegroundColor Yellow
-    & $venvPython -m pip install httpx --quiet
+    & $venvPython -c "import httpx" 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        & $venvPython -m pip install httpx --quiet
+    }
     Write-Host "  OK httpx ready" -ForegroundColor Green
 
     Write-Host "[2b/9] Validate ML packages" -ForegroundColor Yellow
@@ -128,10 +131,20 @@ try {
     Write-Host "[6/9] Create portable _runtime Python" -ForegroundColor Yellow
     $runtimeDir = Join-Path $outputDir "_runtime"
 
-    $venvRoot = Split-Path -Parent (Split-Path -Parent $venvPython)
+    $pythonDir = Split-Path -Parent $venvPython
+    $venvRoot = Split-Path -Parent $pythonDir
     $pyvenvCfg = Join-Path $venvRoot "pyvenv.cfg"
-    $homeValue = (Get-Content $pyvenvCfg | Where-Object { $_ -match "^home\s*=" }) -replace "^home\s*=\s*", ""
-    $basePythonDir = $homeValue.Trim()
+    if (Test-Path $pyvenvCfg) {
+        $homeValue = (Get-Content $pyvenvCfg | Where-Object { $_ -match "^home\s*=" }) -replace "^home\s*=\s*", ""
+        $basePythonDir = $homeValue.Trim()
+        $srcSitePackages = Join-Path $venvRoot "Lib\site-packages"
+    } elseif (Test-Path (Join-Path $pythonDir "Lib\site-packages")) {
+        # Allow a copied portable runtime to act as a reproducible build environment.
+        $basePythonDir = $pythonDir
+        $srcSitePackages = Join-Path $pythonDir "Lib\site-packages"
+    } else {
+        throw "Unsupported Python layout: $venvPython"
+    }
     Write-Host "  Base Python: $basePythonDir" -ForegroundColor Gray
 
     if (-not (Test-Path $basePythonDir)) {
@@ -161,7 +174,6 @@ try {
 
     $dstSitePackages = Join-Path $dstLib "site-packages"
     New-Item -ItemType Directory -Force -Path $dstSitePackages | Out-Null
-    $srcSitePackages = Join-Path $venvRoot "Lib\site-packages"
     Write-Host "  Copying site-packages (may take a while, torch is large)..." -ForegroundColor Gray
     Copy-Item "$srcSitePackages\*" $dstSitePackages -Recurse -Force
 
@@ -222,6 +234,12 @@ try {
             }
         }
         Write-Host "  OK llama copied: $llamaDst" -ForegroundColor Green
+    }
+
+    $updateNotesSrc = Join-Path $scriptDir "UPDATE_NOTES_zh-TW.txt"
+    if (Test-Path $updateNotesSrc) {
+        Copy-Item $updateNotesSrc (Join-Path $outputDir "UPDATE_NOTES_zh-TW.txt") -Force
+        Write-Host "  OK update notes copied" -ForegroundColor Green
     }
 
     $zipPath = Join-Path $distDir "$appName.zip"

@@ -192,6 +192,7 @@ class TranslationContext:
             'use_openai_transcription_api', 'use_qwen3_asr', 'openai_transcription_model', 'whisper_filters',
             'transcription_initial_prompt', 'disable_transcription_context', 'qwen3_context',
             'qwen3_load_in_4bit', 'qwen3_dtype', 'qwen3_rms_threshold',
+            'asr_corrections_enabled', 'asr_correction_rules', 'asr_corrections_case_sensitive',
             'gpt_model', 'gemini_model', 'translation_prompt', 'translation_glossary', 'translation_history_size',
             'translation_timeout', 'gpt_base_url', 'gemini_base_url', 'processing_proxy',
             'use_json_result', 'retry_if_translation_fails', 'output_timestamps',

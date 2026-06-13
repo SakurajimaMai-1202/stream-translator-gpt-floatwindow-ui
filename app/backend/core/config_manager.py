@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 import yaml
 import copy
+import json
 import os
 import tempfile
 import time
@@ -73,6 +74,9 @@ class ConfigManager:
             'qwen3_dtype': 'bfloat16',
             'qwen3_load_in_4bit': False,
             'qwen3_rms_threshold': 0.005,
+            'asr_corrections_enabled': False,
+            'asr_corrections_case_sensitive': False,
+            'asr_correction_rules': [],
             'openai_transcription_model': 'whisper-1',
             'whisper_filters': [],
             'disable_transcription_context': False,
@@ -553,6 +557,13 @@ class ConfigManager:
             'qwen3_dtype': config['transcription'].get('qwen3_dtype', 'bfloat16'),
             'qwen3_load_in_4bit': config['transcription'].get('qwen3_load_in_4bit', False),
             'qwen3_rms_threshold': config['transcription'].get('qwen3_rms_threshold', 0.005),
+            'asr_corrections_enabled': config['transcription'].get('asr_corrections_enabled', False),
+            'asr_corrections_case_sensitive': config['transcription'].get('asr_corrections_case_sensitive', False),
+            'asr_correction_rules': json.dumps(
+                config['transcription'].get('asr_correction_rules', []),
+                ensure_ascii=False,
+                separators=(',', ':'),
+            ),
         }
         
         # Qwen3-ASR 語言格式轉換：短碼 → 完整名稱

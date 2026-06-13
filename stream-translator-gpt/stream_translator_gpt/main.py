@@ -62,6 +62,9 @@ def main(url, **kwargs):
     show_latency_log = kwargs.get('show_latency_log', False)
     disable_transcription_context = kwargs.get('disable_transcription_context', False)
     transcription_initial_prompt = kwargs.get('transcription_initial_prompt')
+    asr_corrections_enabled = kwargs.get('asr_corrections_enabled', False)
+    asr_correction_rules = kwargs.get('asr_correction_rules')
+    asr_corrections_case_sensitive = kwargs.get('asr_corrections_case_sensitive', False)
 
     use_qwen3_asr = kwargs.get('use_qwen3_asr', False)
     qwen3_asr_model = kwargs.get('qwen3_asr_model')
@@ -204,6 +207,9 @@ def main(url, **kwargs):
                 'output_timestamps': output_timestamps,
                 'disable_transcription_context': disable_transcription_context,
                 'transcription_initial_prompt': transcription_initial_prompt,
+                'asr_corrections_enabled': asr_corrections_enabled,
+                'asr_correction_rules': asr_correction_rules,
+                'asr_corrections_case_sensitive': asr_corrections_case_sensitive,
             }
             if use_qwen3_asr:
                 qwen_model = qwen3_asr_model or model
@@ -636,6 +642,12 @@ def cli():
     parser.add_argument('--disable_transcription_context',
                         action='store_true',
                         help='Set this flag to disable context (previous sentence) propagation in transcription.')
+    parser.add_argument('--asr_corrections_enabled', action='store_true',
+                        help='Apply ASR proper-noun correction rules after transcription.')
+    parser.add_argument('--asr_correction_rules', type=str, default=None,
+                        help='JSON list of ASR correction rules with canonical and aliases fields.')
+    parser.add_argument('--asr_corrections_case_sensitive', action='store_true',
+                        help='Match ASR correction aliases case-sensitively.')
     parser.add_argument('--gpt_model',
                         type=str,
                         default='gpt-5-nano',

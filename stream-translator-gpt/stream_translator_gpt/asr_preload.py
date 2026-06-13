@@ -20,6 +20,9 @@ class ASRConfig:
     output_timestamps: bool
     disable_transcription_context: bool
     transcription_initial_prompt: str | None
+    asr_corrections_enabled: bool = False
+    asr_correction_rules: str | None = None
+    asr_corrections_case_sensitive: bool = False
     use_faster_whisper: bool = False
     openai_transcription_model: str | None = None
     qwen3_asr_model: str | None = None
@@ -99,6 +102,9 @@ def build_asr_config(options: dict[str, Any]) -> ASRConfig:
         output_timestamps=bool(options.get("output_timestamps")),
         disable_transcription_context=bool(options.get("disable_transcription_context")),
         transcription_initial_prompt=options.get("transcription_initial_prompt"),
+        asr_corrections_enabled=bool(options.get("asr_corrections_enabled")),
+        asr_correction_rules=options.get("asr_correction_rules"),
+        asr_corrections_case_sensitive=bool(options.get("asr_corrections_case_sensitive")),
         use_faster_whisper=backend in {"faster", "faster_simul"},
         openai_transcription_model=openai_transcription_model,
         qwen3_asr_model=qwen3_asr_model,
@@ -121,6 +127,9 @@ def create_transcriber(config: ASRConfig):
         "output_timestamps": config.output_timestamps,
         "disable_transcription_context": config.disable_transcription_context,
         "transcription_initial_prompt": config.transcription_initial_prompt,
+        "asr_corrections_enabled": config.asr_corrections_enabled,
+        "asr_correction_rules": config.asr_correction_rules,
+        "asr_corrections_case_sensitive": config.asr_corrections_case_sensitive,
     }
 
     if config.backend == "faster_simul":

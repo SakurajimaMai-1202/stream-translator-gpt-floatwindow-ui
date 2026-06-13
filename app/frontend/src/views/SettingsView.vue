@@ -111,6 +111,9 @@ const localConfig = ref<any>({
     qwen3_asr_model: 'Qwen/Qwen3-ASR-1.7B',
     qwen3_dtype: 'bfloat16',
     qwen3_load_in_4bit: false,
+    asr_corrections_enabled: false,
+    asr_corrections_case_sensitive: false,
+    asr_correction_rules: [],
     openai_transcription_model: 'whisper-1',
     whisper_filters: ['emoji_filter', 'repetition_filter']
   },
@@ -246,6 +249,9 @@ async function testConnection(backend: 'gpt' | 'gemini') {
 const newTermOriginal = ref('');
 const newTermTranslated = ref('');
 const termSearchQuery = ref('');
+const newAsrCanonical = ref('');
+const newAsrAliases = ref('');
+const asrCorrectionSearchQuery = ref('');
 
 // 自訂模型
 const showCustomModelDialog = ref(false);
@@ -296,6 +302,16 @@ const filteredGlossary = computed(() => {
   );
 });
 
+const filteredAsrCorrections = computed(() => {
+  const rules = localConfig.value.transcription?.asr_correction_rules || [];
+  const query = asrCorrectionSearchQuery.value.trim().toLowerCase();
+  if (!query) return rules;
+  return rules.filter((rule: any) =>
+    rule.canonical?.toLowerCase().includes(query) ||
+    (rule.aliases || []).some((alias: string) => alias.toLowerCase().includes(query))
+  );
+});
+
 // 互斥邏輯: 轉錄引擎互斥規則
 useTranscriptionMutex(() => localConfig.value.transcription);
 
@@ -327,27 +343,50 @@ function mergeConfig(defaults: any, loaded: any) {
   return result;
 }
 
+function configsEqual(left: any, right: any): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function replaceObjectContents(target: Record<string, any>, source: Record<string, any>) {
+  for (const key of Object.keys(target)) {
+    if (!(key in source)) delete target[key];
+  }
+  Object.assign(target, source);
+}
+
+function applyConfigSection(section: string, loadedSection: any) {
+  if (!loadedSection || typeof loadedSection !== 'object') return;
+  const currentSection = localConfig.value[section] || {};
+  const mergedSection = mergeConfig(currentSection, loadedSection);
+  if (configsEqual(currentSection, mergedSection)) return;
+
+  if (!Array.isArray(currentSection) && !Array.isArray(mergedSection)) {
+    replaceObjectContents(currentSection, mergedSection);
+    return;
+  }
+  localConfig.value[section] = mergedSection;
+}
+
 async function applyStoreConfigToLocalConfig(config?: any, syncLlama = false) {
   isApplyingRemoteConfig.value = true;
   try {
     const loadedConfig = config || store.config || {};
 
-    localConfig.value.general = mergeConfig(localConfig.value.general, loadedConfig.general);
-    localConfig.value.server = mergeConfig(localConfig.value.server, loadedConfig.server);
-    localConfig.value.input = mergeConfig(localConfig.value.input, loadedConfig.input);
-    localConfig.value.audio_slicing_vad = mergeConfig(localConfig.value.audio_slicing_vad, loadedConfig.audio_slicing_vad);
-    localConfig.value.transcription = mergeConfig(localConfig.value.transcription, loadedConfig.transcription);
-    localConfig.value.translation = mergeConfig(localConfig.value.translation, loadedConfig.translation);
-    localConfig.value.terminology = mergeConfig(localConfig.value.terminology, loadedConfig.terminology);
-    localConfig.value.output = mergeConfig(localConfig.value.output, loadedConfig.output);
-    localConfig.value.output_notification = mergeConfig(localConfig.value.output_notification, loadedConfig.output_notification);
-    localConfig.value.ui = mergeConfig(localConfig.value.ui, loadedConfig.ui);
-    localConfig.value.llama = mergeConfig(localConfig.value.llama || {}, loadedConfig.llama);
+    for (const section of [
+      'general', 'server', 'input', 'audio_slicing_vad', 'transcription',
+      'translation', 'terminology', 'output', 'output_notification', 'ui', 'llama'
+    ]) {
+      applyConfigSection(section, loadedConfig[section]);
+    }
 
     if (loadedConfig.translation?.custom_models) {
-      localConfig.value.translation.custom_models = loadedConfig.translation.custom_models;
+      if (!configsEqual(localConfig.value.translation.custom_models, loadedConfig.translation.custom_models)) {
+        localConfig.value.translation.custom_models = loadedConfig.translation.custom_models;
+      }
     } else if (loadedConfig.custom_models) {
-      localConfig.value.translation.custom_models = loadedConfig.custom_models;
+      if (!configsEqual(localConfig.value.translation.custom_models, loadedConfig.custom_models)) {
+        localConfig.value.translation.custom_models = loadedConfig.custom_models;
+      }
     }
 
     if (syncLlama) {
@@ -355,6 +394,7 @@ async function applyStoreConfigToLocalConfig(config?: any, syncLlama = false) {
       await llamaStore.refreshServerStatus();
     }
   } finally {
+    await nextTick();
     isApplyingRemoteConfig.value = false;
   }
 }
@@ -532,6 +572,60 @@ function exportGlossary() {
   a.href = url;
   a.download = 'glossary.csv';
   a.click();
+  URL.revokeObjectURL(url);
+}
+
+function addAsrCorrection() {
+  const canonical = newAsrCanonical.value.trim();
+  const aliases = newAsrAliases.value
+    .split(/[,，\n]/)
+    .map(value => value.trim())
+    .filter((value, index, values) => value && value !== canonical && values.indexOf(value) === index);
+  if (!canonical || aliases.length === 0) return;
+  if (!localConfig.value.transcription.asr_correction_rules) {
+    localConfig.value.transcription.asr_correction_rules = [];
+  }
+  localConfig.value.transcription.asr_correction_rules.push({ canonical, aliases });
+  newAsrCanonical.value = '';
+  newAsrAliases.value = '';
+}
+
+function removeAsrCorrection(rule: any) {
+  const rules = localConfig.value.transcription.asr_correction_rules || [];
+  const index = rules.indexOf(rule);
+  if (index >= 0) rules.splice(index, 1);
+}
+
+function importAsrCorrections() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.txt,.csv';
+  input.onchange = async (event: any) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    const imported = (await file.text())
+      .split(/\r?\n/)
+      .map((line: string) => line.split(/[,，\t]/).map(value => value.trim()).filter(Boolean))
+      .filter((parts: string[]) => parts.length >= 2)
+      .map((parts: string[]) => ({ canonical: parts[0], aliases: parts.slice(1) }));
+    localConfig.value.transcription.asr_correction_rules = [
+      ...(localConfig.value.transcription.asr_correction_rules || []),
+      ...imported,
+    ];
+    store.statusMessage = `已匯入 ${imported.length} 筆 ASR 修正規則`;
+  };
+  input.click();
+}
+
+function exportAsrCorrections() {
+  const rules = localConfig.value.transcription.asr_correction_rules || [];
+  const csv = rules.map((rule: any) => [rule.canonical, ...(rule.aliases || [])].join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = 'asr-name-corrections.csv';
+  anchor.click();
   URL.revokeObjectURL(url);
 }
 
@@ -1497,6 +1591,66 @@ async function handleFileChange(event: Event) {
           <!-- Terminology Settings -->
           <div v-show="activeTab === 'terminology'" class="space-y-6">
             <h2 class="text-xl font-bold text-white mb-4">術語表</h2>
+
+            <div class="bg-gradient-to-br from-cyan-500/10 to-blue-500/10 rounded-xl p-5 border border-cyan-500/20">
+              <div class="flex items-center justify-between gap-4">
+                <div>
+                  <h3 class="text-lg font-semibold text-cyan-300 mb-2">ASR 人名／專有名詞修正</h3>
+                  <p class="text-white/60 text-sm">辨識完成後、翻譯之前，將常見誤辨統一成標準原文。長詞優先且不會連鎖替換。</p>
+                </div>
+                <label class="flex items-center gap-3 cursor-pointer shrink-0">
+                  <input v-model="localConfig.transcription.asr_corrections_enabled" type="checkbox" class="w-6 h-6 accent-cyan-500" />
+                  <span class="text-white font-semibold">{{ localConfig.transcription.asr_corrections_enabled ? '已啟用' : '已停用' }}</span>
+                </label>
+              </div>
+
+              <label class="flex items-center gap-2 cursor-pointer mt-4 text-sm text-white/70">
+                <input v-model="localConfig.transcription.asr_corrections_case_sensitive" type="checkbox" class="w-4 h-4 accent-cyan-500" />
+                英文別名區分大小寫
+              </label>
+            </div>
+
+            <div class="rounded-xl p-5 border border-white/10 bg-white/[0.03] space-y-4">
+              <div class="grid grid-cols-1 lg:grid-cols-[minmax(180px,0.8fr)_minmax(260px,1.4fr)_auto] gap-3">
+                <input v-model="newAsrCanonical" type="text" placeholder="標準名稱，例如：桜島麻衣"
+                  class="px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-cyan-400" />
+                <input v-model="newAsrAliases" type="text" placeholder="常見誤辨，以逗號分隔：櫻島舞衣, 桜島舞衣"
+                  class="px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-cyan-400"
+                  @keyup.enter="addAsrCorrection" />
+                <button @click="addAsrCorrection" class="bg-cyan-600 hover:bg-cyan-700 text-white font-semibold py-2 px-4 rounded-lg transition">
+                  + 新增修正
+                </button>
+              </div>
+
+              <div class="flex flex-wrap gap-3">
+                <input v-model="asrCorrectionSearchQuery" type="text" placeholder="搜尋標準名稱或誤辨文字..."
+                  class="flex-1 min-w-[220px] px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-cyan-400" />
+                <button @click="importAsrCorrections" class="bg-white/10 hover:bg-white/20 text-white font-semibold py-2 px-4 rounded-lg transition border border-white/20">
+                  匯入 CSV
+                </button>
+                <button @click="exportAsrCorrections" class="bg-white/10 hover:bg-white/20 text-white font-semibold py-2 px-4 rounded-lg transition border border-white/20">
+                  匯出 CSV
+                </button>
+              </div>
+
+              <div class="max-h-80 overflow-y-auto space-y-2">
+                <div v-for="rule in filteredAsrCorrections" :key="`${rule.canonical}-${(rule.aliases || []).join('|')}`"
+                  class="flex items-center justify-between gap-4 p-3 bg-white/5 rounded-lg border border-white/10">
+                  <div class="min-w-0">
+                    <div class="text-cyan-300 font-semibold">{{ rule.canonical }}</div>
+                    <div class="text-white/55 text-sm break-words mt-1">誤辨：{{ (rule.aliases || []).join('、') }}</div>
+                  </div>
+                  <button @click="removeAsrCorrection(rule)" class="text-red-400 hover:text-red-300 shrink-0">刪除</button>
+                </div>
+                <div v-if="filteredAsrCorrections.length === 0" class="text-white/40 text-center py-6">
+                  {{ (localConfig.transcription?.asr_correction_rules?.length || 0) === 0 ? '尚未新增 ASR 修正規則' : '沒有符合搜尋的規則' }}
+                </div>
+              </div>
+
+              <div class="text-white/40 text-sm">共 {{ localConfig.transcription?.asr_correction_rules?.length || 0 }} 筆修正規則</div>
+            </div>
+
+            <h3 class="text-lg font-semibold text-purple-300 pt-4">翻譯術語表</h3>
             
             <!-- 啟用術語表開關 -->
             <div class="bg-gradient-to-br from-purple-500/10 to-blue-500/10 rounded-xl p-5 border border-purple-500/20 mb-6">

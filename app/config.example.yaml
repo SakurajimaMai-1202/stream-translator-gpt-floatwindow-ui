@@ -50,6 +50,9 @@ transcription:
   qwen3_dtype: bfloat16
   qwen3_load_in_4bit: false
   qwen3_rms_threshold: 0.005
+  asr_corrections_enabled: false
+  asr_corrections_case_sensitive: false
+  asr_correction_rules: []
   whisper_filters:
   - emoji_filter
   - repetition_filter

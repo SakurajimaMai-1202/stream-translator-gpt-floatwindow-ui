@@ -15,6 +15,7 @@ from . import filters
 from .common import TranslationTask, SAMPLE_RATE, LoopWorkerBase, sec2str, ApiKeyPool, INFO, WARNING
 from .simul_streaming.simul_whisper.whisper.utils import compression_ratio
 from .torch_setup import disable_nnpack
+from .asr_postprocessor import ASRTermCorrector
 
 try:
     import torch
@@ -24,7 +25,7 @@ except ImportError:
 
 
 def _filter_text(text: str, whisper_filters: str):
-    filter_name_list = whisper_filters.split(',')
+    filter_name_list = [name.strip() for name in (whisper_filters or '').split(',') if name.strip()]
     for filter_name in filter_name_list:
         filter = getattr(filters, filter_name)
         if not filter:
@@ -47,12 +48,17 @@ class AudioTranscriber(LoopWorkerBase):
 
     def __init__(self, whisper_filters: str = None, print_result: bool = False, output_timestamps: bool = False,
                  disable_transcription_context: bool = False, transcription_initial_prompt: str = None,
-                 transcription_filters: str = None):
+                 transcription_filters: str = None, asr_corrections_enabled: bool = False,
+                 asr_correction_rules: str = None, asr_corrections_case_sensitive: bool = False):
         self.whisper_filters = whisper_filters or transcription_filters or ""
         self.print_result = print_result
         self.output_timestamps = output_timestamps
         self.disable_transcription_context = disable_transcription_context
         self.transcription_initial_prompt = transcription_initial_prompt
+        self.term_corrector = ASRTermCorrector(
+            asr_correction_rules if asr_corrections_enabled else None,
+            case_sensitive=asr_corrections_case_sensitive,
+        )
 
         self.constant_prompt = re.sub(r',\s*', ', ',
                                       transcription_initial_prompt) if transcription_initial_prompt else ""
@@ -118,7 +124,8 @@ class AudioTranscriber(LoopWorkerBase):
                     self.reset_context()
                     is_repetitive = True
 
-            task.transcript = _filter_text(text, self.whisper_filters).strip()
+            task.raw_transcript = _filter_text(text, self.whisper_filters).strip()
+            task.transcript = self.term_corrector.apply(task.raw_transcript).strip()
             if not task.transcript:
                 continue
             previous_text = "" if is_repetitive else task.transcript

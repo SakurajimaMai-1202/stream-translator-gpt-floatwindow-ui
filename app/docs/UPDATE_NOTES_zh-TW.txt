@@ -1,26 +1,45 @@
-Stream Translator CUDA v1.2.1 更新說明
+Stream Translator CUDA v1.3.0 更新說明
 ======================================
 
 本版本是 NVIDIA CUDA 主線版，不是 AMD ROCm 版。
 
 主要更新
 --------
-- 新增 ASR 專有名詞修正，可在設定頁建立別名與正確名稱規則。
-- 修正 ASR 過濾器空白設定的處理。
-- 保留辨識原文，再套用專有名詞修正，方便後續處理。
+- 新增免安裝 CUDA Full 與輕量 App Update 雙包流程。
+- ASR 模型預設儲存在程式旁的 models\huggingface，更新程式不再需要重新下載模型。
+- 設定頁可查看、開啟、變更模型儲存位置，並可刪除不再使用的模型。
+- Qwen3-ASR-1.7B 新增 BF16 與 FP32 精度選項。
+- 修正 Qwen3-ASR-1.7B-JA 偶發連續輸出重複字句。
+- 修正前段音訊保留長度設為 0 時，反而重播整段上一片音訊的問題。
+- 加強病態重複句偵測與相鄰重複字幕抑制。
+- 精簡 CUDA Runtime，移除 ASR 子行程不需要的 Gradio、PyQt 與建置工具。
+- 整理 app 目錄，將文件集中到 docs，打包實作集中到 packaging。
 
-如何更新
---------
-1. 完全關閉舊版 Stream Translator。
-2. 備份舊版資料夾中的 config.yaml。
-3. 將新版 ZIP 解壓縮到新的資料夾，不要直接覆蓋正在使用的舊版資料夾。
-4. 將備份的 config.yaml 複製到新版資料夾，取代新版的預設設定檔。
-5. 執行 Stream Translator.exe。
-6. 確認設定與辨識功能正常後，再刪除舊版資料夾。
+新安裝
+------
+1. 下載完整 CUDA 包的所有分割檔。
+2. 依 Release 內的合併說明還原 StreamTranslator-CUDA-v1.3.0-Full.zip。
+3. 將完整 ZIP 解壓縮到新資料夾。
+4. 執行 Stream Translator.exe。
+
+既有版本更新
+------------
+1. 完全關閉 Stream Translator。
+2. 備份 config.yaml。
+3. 將 App Update ZIP 內容覆蓋到原程式資料夾。
+4. 不要刪除 config.yaml、models、output、srt 與 logs。
+5. 重新啟動並確認模型路徑與轉錄設定。
+
+Qwen3-ASR-JA 建議設定
+--------------------
+- 模型精度：BF16；遇到相容性問題時可改用 FP32。
+- 停用轉錄上下文：開啟。
+- 前段音訊保留長度：0 秒。
+- FireRed VAD 可繼續使用。
 
 注意事項
 --------
-- 需要 NVIDIA 顯示卡；建議驅動程式版本 550 或更新版本。
-- CUDA 執行環境已包含在 portable 套件內，不需要另外安裝 CUDA Toolkit。
+- 需要 NVIDIA 顯示卡與相容驅動程式；建議驅動版本 550 或更新版本。
+- CUDA 執行環境已包含在 portable 套件內，不需要另外安裝 Python、CUDA Toolkit 或 cuDNN。
+- FP32 顯存需求約為 BF16 的兩倍，速度也會較慢。
 - Llama 的 GGUF 模型不包含在套件內，請沿用原本的模型路徑設定。
-- 若新版啟動異常，可先還原舊版資料夾與備份的 config.yaml。

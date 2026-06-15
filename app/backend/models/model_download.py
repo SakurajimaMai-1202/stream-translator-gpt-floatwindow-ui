@@ -49,3 +49,19 @@ class DownloadedModelListResponse(BaseModel):
     """已下載模型列表回應"""
     success: bool = True
     models: List[DownloadedModelInfo]
+
+
+class ModelStorageInfo(BaseModel):
+    storage_path: str
+    hub_cache_path: str
+    is_default: bool
+
+
+class ModelStorageInfoResponse(BaseModel):
+    success: bool = True
+    storage: ModelStorageInfo
+
+
+class ModelActionResponse(BaseModel):
+    success: bool = True
+    message: str

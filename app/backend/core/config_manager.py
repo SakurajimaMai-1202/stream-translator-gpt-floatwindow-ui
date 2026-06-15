@@ -27,6 +27,9 @@ class ConfigManager:
             'public_port': 8765,
             'enable_subtitle_sharing': True,
         },
+        'models': {
+            'storage_path': '',
+        },
         'input': {
             'input_source': 'url',
             'url': '',

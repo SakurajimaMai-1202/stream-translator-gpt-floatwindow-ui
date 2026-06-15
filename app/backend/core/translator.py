@@ -18,6 +18,7 @@ from typing import Dict, Any, AsyncGenerator, Optional, List, FrozenSet
 from pathlib import Path
 from backend.config import settings
 from backend.core.logging_setup import resolve_log_file
+from backend.core.portable_paths import apply_model_cache_environment
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +58,7 @@ def _extract_supported_cli_args(help_text: str) -> FrozenSet[str]:
 @lru_cache(maxsize=8)
 def _get_supported_cli_args(python_exe: str, cwd: str) -> Optional[FrozenSet[str]]:
     """偵測目前 Python 執行環境中的 stream_translator_gpt 支援哪些 CLI 參數。"""
-    env = os.environ.copy()
+    env = apply_model_cache_environment()
     env['PYTHONIOENCODING'] = 'utf-8'
     env['PYTHONUTF8'] = '1'
     env['PYTHONUNBUFFERED'] = '1'
@@ -283,7 +284,7 @@ class TranslationContext:
             cwd = settings.BASE_DIR.parent
             
             # 設定環境變數
-            env = os.environ.copy()
+            env = apply_model_cache_environment()
             env['PYTHONIOENCODING'] = 'utf-8'
             env['PYTHONUTF8'] = '1'
             env['PYTHONUNBUFFERED'] = '1'
@@ -309,12 +310,13 @@ class TranslationContext:
             
             url = cmd[-1] if cmd else ""
             config_args = cmd[:-1] if cmd else []
+            process_signature = config_args + ["__HF_HOME__", env.get("HF_HOME", "")]
 
             global persistent_process, persistent_config_args
             reused = False
             
             if persistent_process is not None:
-                if persistent_process.poll() is None and persistent_config_args == config_args:
+                if persistent_process.poll() is None and persistent_config_args == process_signature:
                     logger.info(f"Reusing persistent ASR subprocess (PID: {persistent_process.pid})")
                     self.process = persistent_process
                     persistent_process = None

@@ -81,7 +81,9 @@ def build_asr_config(options: dict[str, Any]) -> ASRConfig:
         model = None
     openai_transcription_model = (options.get("openai_transcription_model") or options.get("model")) if backend == "openai_api" else None
     qwen3_asr_model = (options.get("qwen3_asr_model") or options.get("model")) if backend == "qwen3" else None
-    qwen3_asr_dtype = options.get("qwen3_asr_dtype") if backend == "qwen3" else None
+    qwen3_asr_dtype = (
+        options.get("qwen3_asr_dtype") or options.get("qwen3_dtype")
+    ) if backend == "qwen3" else None
     qwen3_asr_device_map = options.get("qwen3_asr_device_map") if backend == "qwen3" else None
     qwen3_asr_max_new_tokens = options.get("qwen3_asr_max_new_tokens") if backend == "qwen3" else None
     qwen3_asr_quantization = options.get("qwen3_asr_quantization") if backend == "qwen3" else None

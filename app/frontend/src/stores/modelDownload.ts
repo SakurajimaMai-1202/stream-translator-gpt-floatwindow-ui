@@ -1,12 +1,13 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
-import { modelApi, type DownloadedModelInfo, type ModelDownloadTask, type ModelEngine } from '../services/api';
+import { modelApi, type DownloadedModelInfo, type ModelDownloadTask, type ModelEngine, type ModelStorageInfo } from '../services/api';
 
 const POLL_INTERVAL_MS = 1500;
 
 export const useModelDownloadStore = defineStore('modelDownload', () => {
   const tasks = ref<ModelDownloadTask[]>([]);
   const downloadedModels = ref<DownloadedModelInfo[]>([]);
+  const storageInfo = ref<ModelStorageInfo | null>(null);
   const isLoading = ref(false);
   const errorMessage = ref('');
   const successMessage = ref('');
@@ -39,11 +40,16 @@ export const useModelDownloadStore = defineStore('modelDownload', () => {
     downloadedModels.value = result.models || [];
   }
 
+  async function loadStorage() {
+    const result = await modelApi.getStorage();
+    storageInfo.value = result.storage;
+  }
+
   async function refreshAll() {
     isLoading.value = true;
     errorMessage.value = '';
     try {
-      await Promise.all([loadTasks(), loadDownloadedModels()]);
+      await Promise.all([loadTasks(), loadDownloadedModels(), loadStorage()]);
     } catch (error: any) {
       errorMessage.value = `載入模型資訊失敗: ${error?.message || error}`;
     } finally {
@@ -70,6 +76,27 @@ export const useModelDownloadStore = defineStore('modelDownload', () => {
       startPolling();
     } catch (error: any) {
       errorMessage.value = `啟動下載失敗: ${error?.response?.data?.detail || error?.message || error}`;
+    }
+  }
+
+  async function openStorage() {
+    clearMessages();
+    try {
+      const response = await modelApi.openStorage();
+      successMessage.value = response.message;
+    } catch (error: any) {
+      errorMessage.value = `開啟資料夾失敗: ${error?.response?.data?.detail || error?.message || error}`;
+    }
+  }
+
+  async function deleteModel(engine: ModelEngine, modelId: string) {
+    clearMessages();
+    try {
+      const response = await modelApi.deleteModel(engine, modelId);
+      successMessage.value = response.message;
+      await loadDownloadedModels();
+    } catch (error: any) {
+      errorMessage.value = `刪除模型失敗: ${error?.response?.data?.detail || error?.message || error}`;
     }
   }
 
@@ -125,12 +152,15 @@ export const useModelDownloadStore = defineStore('modelDownload', () => {
   return {
     tasks,
     downloadedModels,
+    storageInfo,
     activeTasks,
     isLoading,
     errorMessage,
     successMessage,
     refreshAll,
     startDownload,
+    openStorage,
+    deleteModel,
     pollOnce,
     startPolling,
     stopPolling,

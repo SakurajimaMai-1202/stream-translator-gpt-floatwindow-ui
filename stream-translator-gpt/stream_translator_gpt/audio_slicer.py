@@ -127,7 +127,7 @@ class AudioSlicer(LoopWorkerBase):
                  vad_backend: str = 'silero', firered_vad_model_path: str | None = None):
         self.min_audio_length = min_audio_length
         self.max_audio_length = max_audio_length
-        self.prefix_retention_count = round(prefix_retention_length / FRAME_DURATION)
+        self.prefix_retention_count = max(0, round(prefix_retention_length / FRAME_DURATION))
         self.target_audio_length = target_audio_length
         self.dynamic_no_speech_threshold = dynamic_no_speech_threshold
         if self.dynamic_no_speech_threshold:
@@ -219,7 +219,10 @@ class AudioSlicer(LoopWorkerBase):
         concatenate_buffer = self.prefix_audio_buffer + self.audio_buffer
         concatenate_audio = np.concatenate(concatenate_buffer)
         self.audio_buffer = []
-        self.prefix_audio_buffer = concatenate_buffer[-self.prefix_retention_count:]
+        if self.prefix_retention_count > 0:
+            self.prefix_audio_buffer = concatenate_buffer[-self.prefix_retention_count:]
+        else:
+            self.prefix_audio_buffer = []
         self.speech_count = 0
         self.no_speech_count = 0
         self.continuous_no_speech_count = 0

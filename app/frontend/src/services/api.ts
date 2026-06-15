@@ -191,6 +191,12 @@ export interface DownloadedModelInfo {
   cache_path: string;
 }
 
+export interface ModelStorageInfo {
+  storage_path: string;
+  hub_cache_path: string;
+  is_default: boolean;
+}
+
 export const translationApi = {
   async start(request: StartTranslationRequest): Promise<StartResponse> {
     const response = await axios.post(`${API_BASE}/translation/start`, request);
@@ -244,6 +250,21 @@ export const modelApi = {
 
   async getDownloadedModels(): Promise<{ success: boolean; models: DownloadedModelInfo[] }> {
     const response = await axios.get(`${API_BASE}/models/list`);
+    return response.data;
+  },
+
+  async getStorage(): Promise<{ success: boolean; storage: ModelStorageInfo }> {
+    const response = await axios.get(`${API_BASE}/models/storage`);
+    return response.data;
+  },
+
+  async openStorage(): Promise<{ success: boolean; message: string }> {
+    const response = await axios.post(`${API_BASE}/models/storage/open`);
+    return response.data;
+  },
+
+  async deleteModel(engine: ModelEngine, modelId: string): Promise<{ success: boolean; message: string }> {
+    const response = await axios.delete(`${API_BASE}/models/${engine}/${encodeURIComponent(modelId)}`);
     return response.data;
   }
 };

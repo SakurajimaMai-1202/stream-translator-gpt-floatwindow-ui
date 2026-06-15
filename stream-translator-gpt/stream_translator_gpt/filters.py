@@ -46,8 +46,8 @@ def japanese_stream_filter(text: str):
 
 def repetition_filter(text: str, max_repeats=3):
     """
-    Filter that reduces consecutive repetitions of any substring.
-    Example: "Test test test test" -> "Test test test" (if max_repeats=3)
+    Collapse pathological consecutive repetitions once they reach the threshold.
+    Example: "Test Test Test Test" -> "Test" (if max_repeats=3)
     """
     length = len(text)
     if length < 2:
@@ -67,8 +67,7 @@ def repetition_filter(text: str, max_repeats=3):
                         break
 
                 if count >= max_repeats:
-                    keep_count = max_repeats
-                    kept_text = substring * keep_count
+                    kept_text = substring
                     return text[:i] + kept_text + text[curr:]
 
     return text

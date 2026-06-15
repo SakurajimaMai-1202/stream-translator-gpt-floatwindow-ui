@@ -45,9 +45,8 @@ const qwen3AsrModelOptions: UiSelectOption[] = [
   { value: 'neosophie/Qwen3-ASR-1.7B-JA', label: 'Qwen3-ASR-1.7B-JA (Japanese fine-tune)' },
 ];
 const qwen3DtypeOptions: UiSelectOption[] = [
-  { value: 'bfloat16', label: 'bfloat16 (推薦)' },
-  { value: 'float16', label: 'float16' },
-  { value: 'float32', label: 'float32' },
+  { value: 'bfloat16', label: 'BF16（建議，速度快、顯存較低）' },
+  { value: 'float32', label: 'FP32（相容性高、顯存約兩倍）' },
 ];
 const transcriptionLanguageOptions: UiSelectOption[] = [
   { value: 'auto', label: '自動偵測' },
@@ -74,6 +73,9 @@ const localConfig = ref<any>({
     public_port: 8765,
     enable_subtitle_sharing: true
   },
+  models: {
+    storage_path: ''
+  },
   input: {
     url: '',
     source_type: 'youtube',
@@ -87,6 +89,7 @@ const localConfig = ref<any>({
     min_audio_length: 3.0,
     max_audio_length: 30.0,
     chunk_gap_threshold: 0.5,
+    prefix_retention_length: 0.5,
     vad_enabled: true,
     vad_threshold: 0.5,
     vad_neg_threshold: 0.35,
@@ -373,10 +376,14 @@ async function applyStoreConfigToLocalConfig(config?: any, syncLlama = false) {
     const loadedConfig = config || store.config || {};
 
     for (const section of [
-      'general', 'server', 'input', 'audio_slicing_vad', 'transcription',
+      'general', 'server', 'models', 'input', 'audio_slicing_vad', 'transcription',
       'translation', 'terminology', 'output', 'output_notification', 'ui', 'llama'
     ]) {
       applyConfigSection(section, loadedConfig[section]);
+    }
+
+    if (!['bfloat16', 'float32'].includes(localConfig.value.transcription.qwen3_dtype)) {
+      localConfig.value.transcription.qwen3_dtype = 'bfloat16';
     }
 
     if (loadedConfig.translation?.custom_models) {
@@ -487,6 +494,16 @@ function canStartDownload(engine: 'qwen3-asr' | 'faster-whisper', modelId: strin
 
 async function startModelDownload(engine: 'qwen3-asr' | 'faster-whisper', modelId: string) {
   await modelDownloadStore.startDownload(engine, modelId);
+}
+
+async function applyModelStoragePath() {
+  await store.saveConfig(localConfig.value);
+  await modelDownloadStore.refreshAll();
+}
+
+async function deleteDownloadedModel(engine: 'qwen3-asr' | 'faster-whisper', modelId: string) {
+  if (!confirm(`確定要刪除模型「${modelId}」嗎？之後使用時需要重新下載。`)) return;
+  await modelDownloadStore.deleteModel(engine, modelId);
 }
 
 async function handleSave() {
@@ -891,6 +908,13 @@ async function handleFileChange(event: Event) {
                   <input v-model.number="localConfig.audio_slicing_vad.chunk_gap_threshold" type="number" step="0.1"
                     class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
                 </div>
+                <div>
+                  <label class="block text-white/70 text-sm mb-1">前段音訊保留長度 (秒)</label>
+                  <input v-model.number="localConfig.audio_slicing_vad.prefix_retention_length" type="number"
+                    step="0.1" min="0" max="5"
+                    class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
+                  <p class="text-xs text-white/40 mt-1">將上一片段結尾接到下一片段開頭；設為 0 可完全停用。</p>
+                </div>
               </div>
             </div>
 
@@ -1056,7 +1080,7 @@ async function handleFileChange(event: Event) {
                     <p class="text-white/50 text-sm mt-1">
                       使用阿里巴巴 Qwen3-ASR 模型進行語音轉錄,支援多語言,準確度高。
                       <br />⚠️ 需要 GPU 支援,此選項與上述選項互斥
-                      <br />📦 需要安裝: pip install qwen-asr
+                      <br />📦 CUDA 可攜版已內建所需執行環境
                     </p>
                   </div>
                 </label>
@@ -1085,6 +1109,9 @@ async function handleFileChange(event: Event) {
                   <div>
                     <label class="block text-white/70 font-semibold mb-2">模型精度</label>
                     <UiSelect v-model="localConfig.transcription.qwen3_dtype" :options="qwen3DtypeOptions" />
+                    <p class="text-white/45 text-xs mt-2">
+                      BF16 適合支援 BF16 的 NVIDIA GPU；FP32 較慢且需要更多顯存，但可用於排查精度或相容性問題。
+                    </p>
                   </div>
                   <div>
                     <label class="flex items-center gap-2 cursor-pointer mt-2">
@@ -1102,7 +1129,7 @@ async function handleFileChange(event: Event) {
                             <span class="text-yellow-300 font-medium">{{ localConfig.transcription.qwen3_asr_model === 'Qwen/Qwen3-ASR-1.7B' ? '~3.5 GB' : '~1.2 GB' }}</span>
                             　啟用後可降至 {{ localConfig.transcription.qwen3_asr_model === 'Qwen/Qwen3-ASR-1.7B' ? '~1.5 GB' : '~0.5 GB' }}
                           </template>
-                          <br/>📦 需要安裝: pip install bitsandbytes
+                          <br/>📦 CUDA 可攜版已內建量化支援
                         </p>
                       </div>
                     </label>
@@ -1197,7 +1224,32 @@ async function handleFileChange(event: Event) {
                 📦 在這裡可預先下載 ASR 模型，避免首次啟動轉錄時等待。
               </p>
               <p class="text-white/50 text-xs mt-2">
-                模型快取目前沿用 HuggingFace 預設路徑。
+                預設儲存在程式旁的 models\\huggingface，更新程式時不會覆蓋模型。
+              </p>
+            </div>
+
+            <div class="bg-white/5 rounded-xl p-5 border border-white/10">
+              <h3 class="text-lg font-semibold text-blue-300 mb-3">模型儲存位置</h3>
+              <label class="block text-white/70 text-sm mb-1">自訂位置（留空使用程式旁的預設位置）</label>
+              <div class="flex flex-col lg:flex-row gap-2">
+                <input
+                  v-model="localConfig.models.storage_path"
+                  type="text"
+                  placeholder="例如 D:\\StreamTranslatorModels"
+                  class="flex-1 px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400"
+                />
+                <button @click="applyModelStoragePath" class="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold transition">
+                  套用路徑
+                </button>
+                <button @click="modelDownloadStore.openStorage()" class="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white font-semibold transition">
+                  開啟資料夾
+                </button>
+              </div>
+              <p class="text-white/50 text-xs mt-2 break-all">
+                目前位置：{{ modelDownloadStore.storageInfo?.storage_path || '讀取中...' }}
+              </p>
+              <p class="text-yellow-200/70 text-xs mt-1">
+                變更位置不會自動搬移既有模型；需要保留時請先手動搬移整個 huggingface 資料夾。
               </p>
             </div>
 
@@ -1293,7 +1345,15 @@ async function handleFileChange(event: Event) {
                       <div class="text-white font-medium">{{ item.model_id }}</div>
                       <div class="text-xs text-white/50 mt-1">{{ item.engine }} · {{ item.repo_id }}</div>
                     </div>
-                    <div class="text-sm text-white/70">{{ modelDownloadStore.formatSize(item.size_bytes) }}</div>
+                    <div class="flex items-center gap-3">
+                      <div class="text-sm text-white/70">{{ modelDownloadStore.formatSize(item.size_bytes) }}</div>
+                      <button
+                        @click="deleteDownloadedModel(item.engine, item.model_id)"
+                        class="px-3 py-1.5 rounded-lg text-sm bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 text-red-200 transition"
+                      >
+                        刪除
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>

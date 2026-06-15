@@ -2,6 +2,7 @@ import asyncio
 import copy
 import logging
 import os
+import shutil
 import time
 import uuid
 from datetime import datetime
@@ -10,6 +11,12 @@ from threading import Lock
 from typing import Dict, List, Literal, Optional
 
 from backend.models.model_download import ModelDownloadTask, DownloadedModelInfo
+from backend.core.portable_paths import (
+    ensure_model_storage,
+    get_app_root,
+    get_huggingface_hub_cache,
+    get_model_storage_root,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -142,8 +149,11 @@ class ModelDownloadManager:
         def blocking_download():
             from huggingface_hub import snapshot_download
 
+            cache_dir = get_huggingface_hub_cache()
+            cache_dir.mkdir(parents=True, exist_ok=True)
             return snapshot_download(
                 repo_id=repo_id,
+                cache_dir=str(cache_dir),
                 resume_download=True,
                 local_files_only=False,
             )
@@ -169,11 +179,42 @@ class ModelDownloadManager:
         return tasks
 
     def _get_hf_cache_dir(self) -> Path:
-        if os.environ.get("HUGGINGFACE_HUB_CACHE"):
-            return Path(os.environ["HUGGINGFACE_HUB_CACHE"])
-        if os.environ.get("HF_HOME"):
-            return Path(os.environ["HF_HOME"]) / "hub"
-        return Path.home() / ".cache" / "huggingface" / "hub"
+        return get_huggingface_hub_cache()
+
+    def get_storage_info(self) -> dict:
+        root = ensure_model_storage()
+        default_root = (get_app_root() / "models" / "huggingface").resolve()
+        return {
+            "storage_path": str(root),
+            "hub_cache_path": str(root / "hub"),
+            "is_default": root == default_root,
+        }
+
+    def open_storage_folder(self) -> Path:
+        root = ensure_model_storage()
+        if os.name != "nt" or not hasattr(os, "startfile"):
+            raise RuntimeError("目前只支援在 Windows 開啟模型資料夾")
+        os.startfile(str(root))
+        return root
+
+    def delete_model(self, engine: str, model_id: str) -> Path:
+        normalized_model_id = self._validate_model_id(engine, model_id)
+        repo_id = self._normalize_repo_id(engine, normalized_model_id)
+        cache_root = self._get_hf_cache_dir().resolve()
+        repo_dir = (cache_root / f"models--{repo_id.replace('/', '--')}").resolve()
+
+        try:
+            repo_dir.relative_to(cache_root)
+        except ValueError as exc:
+            raise ValueError("模型路徑不在快取目錄內") from exc
+
+        if not repo_dir.exists():
+            raise FileNotFoundError(f"模型尚未下載: {model_id}")
+        if repo_dir.is_symlink():
+            raise ValueError("拒絕刪除符號連結模型目錄")
+
+        shutil.rmtree(repo_dir)
+        return repo_dir
 
     def list_downloaded_models(self) -> List[DownloadedModelInfo]:
         """列出 HuggingFace 快取中的指定模型"""
@@ -183,7 +224,7 @@ class ModelDownloadManager:
         try:
             from huggingface_hub import scan_cache_dir
 
-            cache = scan_cache_dir()
+            cache = scan_cache_dir(str(self._get_hf_cache_dir()))
             for repo in cache.repos:
                 repo_id = repo.repo_id
                 size_bytes = int(getattr(repo, "size_on_disk", 0) or 0)

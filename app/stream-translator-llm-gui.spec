@@ -25,7 +25,10 @@ if qt6_dir:
     # resources/ — Chromium ICU、pak 檔案
     resources_dir = qt6_dir / 'resources'
     if resources_dir.exists():
-        qt_datas.append((str(resources_dir), 'PyQt6/Qt6/resources'))
+        for resource in resources_dir.iterdir():
+            if resource.name == 'qtwebengine_devtools_resources.debug.pak':
+                continue
+            qt_datas.append((str(resource), 'PyQt6/Qt6/resources'))
 
     # translations/qtwebengine_locales/
     locales_dir = qt6_dir / 'translations' / 'qtwebengine_locales'

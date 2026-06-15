@@ -44,7 +44,19 @@ def _apply_hf_proxy(proxy: str):
         pass
 
 
+def _normalize_duplicate_text(text: str) -> str:
+    return re.sub(r'[\W_]+', '', text or '', flags=re.UNICODE).casefold()
+
+
+def _is_consecutive_duplicate(previous_text: str, current_text: str) -> bool:
+    previous = _normalize_duplicate_text(previous_text)
+    current = _normalize_duplicate_text(current_text)
+    return len(current) >= 6 and current == previous
+
+
 class AudioTranscriber(LoopWorkerBase):
+
+    suppress_consecutive_duplicates = False
 
     def __init__(self, whisper_filters: str = None, print_result: bool = False, output_timestamps: bool = False,
                  disable_transcription_context: bool = False, transcription_initial_prompt: str = None,
@@ -80,6 +92,7 @@ class AudioTranscriber(LoopWorkerBase):
 
     def loop(self, input_queue: queue.SimpleQueue[TranslationTask], output_queue: queue.SimpleQueue[TranslationTask]):
         previous_text = ""
+        previous_transcript = ""
 
         while True:
             task = input_queue.get()
@@ -125,9 +138,15 @@ class AudioTranscriber(LoopWorkerBase):
                     is_repetitive = True
 
             task.raw_transcript = _filter_text(text, self.whisper_filters).strip()
+            if (self.suppress_consecutive_duplicates and
+                    _is_consecutive_duplicate(previous_transcript, task.raw_transcript)):
+                self.reset_context()
+                previous_text = ""
+                continue
             task.transcript = self.term_corrector.apply(task.raw_transcript).strip()
             if not task.transcript:
                 continue
+            previous_transcript = task.raw_transcript
             previous_text = "" if is_repetitive else task.transcript
             if self.print_result:
                 if self.output_timestamps:
@@ -392,6 +411,8 @@ def _parse_torch_cuda_arch(arch: str) -> tuple[int, int] | None:
 
 
 class Qwen3ASRTranscriber(AudioTranscriber):
+    suppress_consecutive_duplicates = True
+
     LANGUAGE_NAMES = {
         'ar': 'Arabic',
         'cs': 'Czech',

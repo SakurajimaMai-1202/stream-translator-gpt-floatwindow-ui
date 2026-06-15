@@ -5,6 +5,8 @@ general:
 server:
   public_port: 8765
   enable_subtitle_sharing: true
+models:
+  storage_path: ''
 input:
   input_source: url
   url: https://www.youtube.com/watch?v=EXAMPLE

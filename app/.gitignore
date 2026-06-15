@@ -51,7 +51,7 @@ test_api.py
 
 # PyInstaller
 *.spec
-!stream-translator-llm-gui.spec
+!packaging/stream-translator-llm-gui.spec
 version_info.txt
 
 # Development executables
@@ -68,6 +68,8 @@ PROJECT_SUMMARY.md
 TESTING.md
 README.md
 README.txt
+!docs/README.md
+!packaging/README.md
 
 # Runtime logs
 app.log

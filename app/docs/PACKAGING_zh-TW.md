@@ -1,6 +1,6 @@
 # UI2 打包與使用說明
 
-本文件說明如何在 `app` 目錄打包可攜版，並說明打包後的初始預設。
+本文件說明如何在 `app` 目錄打包可攜版，並說明打包後的初始預設。打包實作集中在 `app/packaging`，根目錄腳本是保持舊指令可用的入口。
 
 ## 1. 打包前準備
 
@@ -12,12 +12,15 @@
 
 在 `app` 目錄執行：
 
-- `build_exe.ps1`
+- CUDA 新版：`.\build_cuda_release.ps1`
+- 舊版完整打包：`.\build_exe.ps1`
 
 打包完成後，輸出位置：
 
-- 目錄：`app/dist/Stream Translator/`
-- 壓縮檔：`app/dist/Stream Translator.zip`
+- CUDA 目錄：`app/dist-cuda/Stream Translator/`
+- CUDA 完整包：`app/dist-cuda/StreamTranslator-CUDA-Full.zip`
+- CUDA 更新包：`app/dist-cuda/StreamTranslator-CUDA-App-Update.zip`
+- 舊版輸出：`app/dist/Stream Translator.zip`
 
 ## 3. 打包後初始預設
 

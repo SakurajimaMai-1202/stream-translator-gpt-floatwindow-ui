@@ -2,6 +2,8 @@
 import sys
 from pathlib import Path
 
+app_dir = Path(SPECPATH).parent
+
 # 找 PyQt6 的 Qt6 資源目錄（WebEngine 需要）
 def find_qt6_dir():
     try:
@@ -36,14 +38,14 @@ if qt6_dir:
         qt_datas.append((str(locales_dir), 'PyQt6/Qt6/translations/qtwebengine_locales'))
 
 a = Analysis(
-    ['main.py'],
-    pathex=[],
+    [str(app_dir / 'main.py')],
+    pathex=[str(app_dir)],
     binaries=qt_binaries,
     datas=[
-        ('backend/static', 'backend/static'),
-        ('config.example.yaml', '.'),
-        ('README.txt', '.'),
-        ('app_icon.ico', '.'),
+        (str(app_dir / 'backend/static'), 'backend/static'),
+        (str(app_dir / 'config.example.yaml'), '.'),
+        (str(app_dir / 'README.txt'), '.'),
+        (str(app_dir / 'app_icon.ico'), '.'),
     ] + qt_datas,
     hiddenimports=[
         # FastAPI / uvicorn
@@ -110,7 +112,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='app_icon.ico',
+    icon=str(app_dir / 'app_icon.ico'),
 )
 
 # onedir：把所有 DLL / 資源收集到同一個輸出資料夾

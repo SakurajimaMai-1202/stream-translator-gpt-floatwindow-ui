@@ -3,6 +3,7 @@ import { useRouter, useRoute } from 'vue-router';
 
 const router = useRouter();
 const route = useRoute();
+const appVersion = import.meta.env.VITE_APP_VERSION || '1.3.1';
 
 // Define navigation items
 const primaryNavigation = [
@@ -116,7 +117,7 @@ function navigateTo(path: string, tabId?: string) {
 
       <!-- Sidebar Footer -->
       <div class="p-4 border-t border-white/5 bg-black/10 flex items-center text-[10px] text-white/30">
-        <span>v1.2.0</span>
+        <span>v{{ appVersion }}</span>
       </div>
     </aside>
 

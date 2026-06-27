@@ -3,5 +3,5 @@ param(
     [switch]$Force
 )
 
-& (Join-Path $PSScriptRoot "packaging\build_cuda_runtime.ps1") @PSBoundParameters
+& (Join-Path $PSScriptRoot "packaging\build_cuda_runtime.ps1") -Profile cuda @PSBoundParameters
 exit $LASTEXITCODE

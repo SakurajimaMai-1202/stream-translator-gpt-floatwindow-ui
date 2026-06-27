@@ -186,6 +186,7 @@ class TranslationContext:
         allowed_args = {
             'proxy', 'openai_api_key', 'google_api_key', 'format', 'list_format', 'cookies',
             'input_proxy', 'device_index', 'list_devices', 'device_recording_interval',
+            'runtime_profile', 'runtime_device_policy', 'runtime_allow_integrated_gpu',
             'min_audio_length', 'max_audio_length', 'target_audio_length',
             'continuous_no_speech_threshold', 'disable_dynamic_no_speech_threshold',
             'prefix_retention_length', 'vad_threshold', 'disable_dynamic_vad_threshold',

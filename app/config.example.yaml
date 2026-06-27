@@ -5,6 +5,12 @@ general:
 server:
   public_port: 8765
   enable_subtitle_sharing: true
+runtime:
+  profile: cuda
+  device_policy: auto_discrete
+  device_index: null
+  device_name: ''
+  allow_integrated_gpu: false
 models:
   storage_path: ''
 input:

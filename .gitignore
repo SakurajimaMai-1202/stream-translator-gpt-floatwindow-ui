@@ -59,6 +59,9 @@ node_modules/
 # ── 前端建構產物 ─────────────────────────────────────────────
 app/frontend/dist/
 app/backend/static/
+app/dist-*/
+app/build-*/
+app/release-v*-assets/
 
 # ── 通用建構產物 ─────────────────────────────────────────────
 dist/

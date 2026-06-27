@@ -57,6 +57,58 @@ export interface SystemCheckResponse {
   ffmpeg: FfmpegCheckResult;
 }
 
+export interface RuntimeGpuDevice {
+  index: number;
+  name: string;
+  vendor: string;
+  backend: string;
+  memory_mb: number | null;
+  is_integrated: boolean;
+  arch_name?: string | null;
+  is_supported_by_torch?: boolean | null;
+  source: string;
+}
+
+export interface RuntimeCapabilities {
+  profile: string;
+  status: string;
+  package_suffix: string;
+  default_device_policy: string;
+  allow_integrated_gpu: boolean;
+  qwen3_default_dtype: string;
+  qwen3_offline_models: string[];
+  qwen3_asr_model_ids: string[];
+  qwen3_streaming_status: string;
+  qwen3_streaming_note: string;
+  faster_whisper_status: string;
+  faster_whisper_models: string[];
+  faster_whisper_model_ids: string[];
+  faster_whisper_gpu_enabled: boolean;
+  faster_whisper_cpu_fallback: boolean;
+  local_asr_engines: string[];
+  remote_asr_engines: string[];
+}
+
+export interface RuntimeSelection {
+  kind: string;
+  profile: string;
+  policy: string;
+  device: RuntimeGpuDevice | null;
+  reason: string;
+  ignored_devices: RuntimeGpuDevice[];
+}
+
+export interface RuntimeStatus {
+  profile: string;
+  status: string;
+  package_suffix: string;
+  device_policy: string;
+  allow_integrated_gpu: boolean;
+  capabilities: RuntimeCapabilities;
+  devices: RuntimeGpuDevice[];
+  selection: RuntimeSelection;
+}
+
 export const configApi = {
   async getConfig(): Promise<Config> {
     const response = await axios.get(`${API_BASE}/config`);
@@ -119,6 +171,13 @@ export const systemApi = {
   async checkDependencies(): Promise<SystemCheckResponse> {
     const response = await axios.get(`${API_BASE}/system/check`);
     return response.data;
+  }
+};
+
+export const runtimeApi = {
+  async getStatus(): Promise<RuntimeStatus> {
+    const response = await axios.get(`${API_BASE}/runtime/status`);
+    return response.data.data || response.data;
   }
 };
 

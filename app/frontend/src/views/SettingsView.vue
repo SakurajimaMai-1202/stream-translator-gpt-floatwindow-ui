@@ -23,8 +23,8 @@ const store = useTranslationStore();
 const modelDownloadStore = useModelDownloadStore();
 const llamaStore = useLlamaStore();
 
-const qwenModels = ['Qwen/Qwen3-ASR-0.6B', 'Qwen/Qwen3-ASR-1.7B', 'neosophie/Qwen3-ASR-1.7B-JA'];
-const fasterWhisperModels = ['tiny', 'base', 'small', 'medium', 'large-v2', 'large-v3', 'large-v3-turbo'];
+const allQwenModels = ['Qwen/Qwen3-ASR-0.6B', 'Qwen/Qwen3-ASR-1.7B', 'neosophie/Qwen3-ASR-1.7B-JA'];
+const allFasterWhisperModels = ['tiny', 'base', 'small', 'medium', 'large-v2', 'large-v3', 'large-v3-turbo'];
 
 const logLevelOptions: UiSelectOption[] = [
   { value: 'DEBUG', label: 'DEBUG' },
@@ -38,21 +38,40 @@ const sourceTypeOptions: UiSelectOption[] = [
   { value: 'bilibili', label: 'Bilibili' },
   { value: 'x', label: 'X (Twitter)' },
 ];
-const whisperModelSelectOptions: UiSelectOption[] = fasterWhisperModels.map(m => ({ value: m, label: m }));
-const qwen3AsrModelOptions: UiSelectOption[] = [
+const whisperModelSelectOptions = computed<UiSelectOption[]>(() =>
+  allFasterWhisperModels
+    .filter(m => allowedFasterWhisperModels.value.includes(m))
+    .map(m => ({ value: m, label: m }))
+);
+const allQwen3AsrModelOptions: UiSelectOption[] = [
   { value: 'Qwen/Qwen3-ASR-1.7B', label: 'Qwen3-ASR-1.7B (推薦)' },
   { value: 'Qwen/Qwen3-ASR-0.6B', label: 'Qwen3-ASR-0.6B (更快)' },
   { value: 'neosophie/Qwen3-ASR-1.7B-JA', label: 'Qwen3-ASR-1.7B-JA (Japanese fine-tune)' },
 ];
+const qwen3AsrModelOptions = computed<UiSelectOption[]>(() =>
+  allQwen3AsrModelOptions.filter(option => allowedQwen3AsrModels.value.includes(String(option.value)))
+);
 const qwen3DtypeOptions: UiSelectOption[] = [
   { value: 'bfloat16', label: 'BF16（建議，速度快、顯存較低）' },
   { value: 'float32', label: 'FP32（相容性高、顯存約兩倍）' },
+];
+const runtimeProfileOptions: UiSelectOption[] = [
+  { value: 'cuda', label: 'CUDA' },
+  { value: 'cpu', label: 'CPU' },
+  { value: 'rocm', label: 'ROCm Experimental' },
+];
+const runtimeDevicePolicyOptions: UiSelectOption[] = [
+  { value: 'auto_discrete', label: 'Auto discrete GPU' },
+  { value: 'auto_any', label: 'Auto any GPU' },
+  { value: 'manual', label: 'Manual' },
+  { value: 'cpu', label: 'CPU' },
 ];
 const transcriptionLanguageOptions: UiSelectOption[] = [
   { value: 'auto', label: '自動偵測' },
   { value: 'ja', label: '日文' },
   { value: 'en', label: '英文' },
-  { value: 'zh', label: '中文' },
+  { value: 'zh-tw', label: '繁體中文' },
+  { value: 'zh-cn', label: '簡體中文' },
   { value: 'ko', label: '韓文' },
 ];
 const targetLanguageOptions: UiSelectOption[] = [
@@ -72,6 +91,13 @@ const localConfig = ref<any>({
   server: {
     public_port: 8765,
     enable_subtitle_sharing: true
+  },
+  runtime: {
+    profile: 'cuda',
+    device_policy: 'auto_discrete',
+    device_index: null,
+    device_name: '',
+    allow_integrated_gpu: false
   },
   models: {
     storage_path: ''
@@ -192,6 +218,7 @@ function debouncedAutoSave() {
     _settingsAutoSaveTimer = null;
     try {
       await store.saveConfig(localConfig.value);
+      await store.loadRuntimeStatus();
       autoSaveStatus.value = 'saved';
       if (autoSaveStatusTimeout) clearTimeout(autoSaveStatusTimeout);
       autoSaveStatusTimeout = setTimeout(() => {
@@ -316,6 +343,122 @@ const filteredAsrCorrections = computed(() => {
 });
 
 // 互斥邏輯: 轉錄引擎互斥規則
+const runtimeStatus = computed(() => store.runtimeStatus);
+const runtimeCapabilities = computed(() => runtimeStatus.value?.capabilities || null);
+const allowedLocalAsrEngines = computed<string[]>(() =>
+  runtimeCapabilities.value?.local_asr_engines?.length
+    ? runtimeCapabilities.value.local_asr_engines
+    : ['faster-whisper', 'simul-streaming', 'faster-whisper-simul', 'qwen3-asr']
+);
+const allowedRemoteAsrEngines = computed<string[]>(() =>
+  runtimeCapabilities.value?.remote_asr_engines?.length
+    ? runtimeCapabilities.value.remote_asr_engines
+    : ['openai-api']
+);
+const canUseFasterWhisper = computed(() => allowedLocalAsrEngines.value.includes('faster-whisper'));
+const canUseSimulStreaming = computed(() => allowedLocalAsrEngines.value.includes('simul-streaming'));
+const canUseFasterWhisperSimul = computed(() => allowedLocalAsrEngines.value.includes('faster-whisper-simul'));
+const canUseQwen3Asr = computed(() => allowedLocalAsrEngines.value.includes('qwen3-asr'));
+const canUseOpenAiAsr = computed(() => allowedRemoteAsrEngines.value.includes('openai-api'));
+const allowedFasterWhisperModels = computed<string[]>(() =>
+  runtimeCapabilities.value?.faster_whisper_model_ids?.length
+    ? runtimeCapabilities.value.faster_whisper_model_ids
+    : allFasterWhisperModels
+);
+const allowedQwen3AsrModels = computed<string[]>(() =>
+  runtimeCapabilities.value?.qwen3_asr_model_ids?.length
+    ? runtimeCapabilities.value.qwen3_asr_model_ids
+    : allQwenModels
+);
+const qwenModelList = computed(() =>
+  allQwenModels.filter(modelId => allowedQwen3AsrModels.value.includes(modelId))
+);
+const fasterWhisperModelList = computed(() =>
+  allFasterWhisperModels.filter(modelId => allowedFasterWhisperModels.value.includes(modelId))
+);
+const runtimeSelection = computed(() => runtimeStatus.value?.selection || null);
+const selectedRuntimeDevice = computed(() => runtimeSelection.value?.device || null);
+const ignoredRuntimeDevices = computed(() => runtimeSelection.value?.ignored_devices || []);
+const runtimeStatusLabel = computed(() => {
+  const status = runtimeStatus.value?.status || 'unknown';
+  if (status === 'official') return 'Official';
+  if (status === 'compatibility') return 'Compatibility';
+  if (status === 'experimental') return 'Experimental';
+  return status;
+});
+const runtimeDiagnosticNotice = computed(() => {
+  const profile = runtimeStatus.value?.profile || localConfig.value?.runtime?.profile;
+  if (profile !== 'rocm') return '';
+  if (runtimeSelection.value?.kind === 'gpu') {
+    return 'ROCm package/profile is selected. Run diagnose_runtime.ps1 on an AMD GPU machine to confirm HIP GPU execution; ASR inference is still not marked verified by package validation alone.';
+  }
+  return 'ROCm package/profile is selected, but no suitable AMD discrete GPU is selected on this machine. Package validation can still pass; ROCm GPU inference remains unverified until diagnose_runtime.ps1 passes on AMD hardware.';
+});
+
+function formatRuntimeMemory(memoryMb: number | null | undefined): string {
+  if (!memoryMb) return 'unknown VRAM';
+  if (memoryMb >= 1024) return `${(memoryMb / 1024).toFixed(1)} GB VRAM`;
+  return `${memoryMb} MB VRAM`;
+}
+
+function runtimeDeviceLine(device: any): string {
+  if (!device) return 'None';
+  const integrated = device.is_integrated ? 'integrated' : 'discrete';
+  const details = [formatRuntimeMemory(device.memory_mb), integrated];
+  if (device.arch_name) details.push(device.arch_name);
+  if (device.is_supported_by_torch === false) details.push('unsupported by torch');
+  if (device.is_supported_by_torch === true) details.push('torch supported');
+  if (device.is_supported_by_torch === null || device.is_supported_by_torch === undefined) details.push('torch support unknown');
+  if (device.source === 'runtime_python') details.push('runtime probe');
+  if (device.source === 'win32_video_controller') details.push('Windows estimate');
+  return `${device.name} (${details.join(', ')})`;
+}
+
+function coerceAsrSettingsForRuntime() {
+  const transcription = localConfig.value.transcription || {};
+  if (!canUseFasterWhisper.value) {
+    transcription.use_faster_whisper = false;
+  }
+  if (!canUseSimulStreaming.value && !canUseFasterWhisperSimul.value) {
+    transcription.use_simul_streaming = false;
+  }
+  if (!canUseQwen3Asr.value) {
+    transcription.use_qwen3_asr = false;
+  }
+  if (!canUseOpenAiAsr.value) {
+    transcription.use_openai_transcription_api = false;
+  }
+  if (!allowedFasterWhisperModels.value.includes(transcription.model)) {
+    transcription.model = allowedFasterWhisperModels.value[0] || 'small';
+  }
+  if (!allowedQwen3AsrModels.value.includes(transcription.qwen3_asr_model)) {
+    transcription.qwen3_asr_model = allowedQwen3AsrModels.value[0] || 'Qwen/Qwen3-ASR-0.6B';
+  }
+  if (
+    !transcription.use_faster_whisper &&
+    !transcription.use_simul_streaming &&
+    !transcription.use_qwen3_asr &&
+    !transcription.use_openai_transcription_api
+  ) {
+    if (canUseQwen3Asr.value) {
+      transcription.use_qwen3_asr = true;
+    } else if (canUseFasterWhisper.value) {
+      transcription.use_faster_whisper = true;
+    } else if (canUseOpenAiAsr.value) {
+      transcription.use_openai_transcription_api = true;
+    }
+  }
+}
+
+function normalizeInputLanguage(language: string | null | undefined): string {
+  const normalized = String(language || 'auto').trim().toLowerCase();
+  if (!normalized) return 'auto';
+  if (normalized === 'zh') return 'zh-tw';
+  if (normalized === 'zh-hant' || normalized === 'traditional chinese' || normalized === '繁體中文') return 'zh-tw';
+  if (normalized === 'zh-hans' || normalized === 'simplified chinese' || normalized === '簡體中文') return 'zh-cn';
+  return normalized;
+}
+
 useTranscriptionMutex(() => localConfig.value.transcription);
 
 function mergeConfig(defaults: any, loaded: any) {
@@ -376,7 +519,7 @@ async function applyStoreConfigToLocalConfig(config?: any, syncLlama = false) {
     const loadedConfig = config || store.config || {};
 
     for (const section of [
-      'general', 'server', 'models', 'input', 'audio_slicing_vad', 'transcription',
+      'general', 'server', 'runtime', 'models', 'input', 'audio_slicing_vad', 'transcription',
       'translation', 'terminology', 'output', 'output_notification', 'ui', 'llama'
     ]) {
       applyConfigSection(section, loadedConfig[section]);
@@ -385,6 +528,7 @@ async function applyStoreConfigToLocalConfig(config?: any, syncLlama = false) {
     if (!['bfloat16', 'float32'].includes(localConfig.value.transcription.qwen3_dtype)) {
       localConfig.value.transcription.qwen3_dtype = 'bfloat16';
     }
+    localConfig.value.transcription.language = normalizeInputLanguage(localConfig.value.transcription.language);
 
     if (loadedConfig.translation?.custom_models) {
       if (!configsEqual(localConfig.value.translation.custom_models, loadedConfig.translation.custom_models)) {
@@ -395,6 +539,8 @@ async function applyStoreConfigToLocalConfig(config?: any, syncLlama = false) {
         localConfig.value.translation.custom_models = loadedConfig.custom_models;
       }
     }
+
+    coerceAsrSettingsForRuntime();
 
     if (syncLlama) {
       await llamaStore.loadConfig();
@@ -409,14 +555,17 @@ async function applyStoreConfigToLocalConfig(config?: any, syncLlama = false) {
 useAppSyncEvents({
   onConfigUpdated: async (payload) => {
     await store.loadConfig();
+    await store.loadRuntimeStatus();
     await applyStoreConfigToLocalConfig(store.config, payload.section === '*' || payload.section === 'llama');
   },
   onConfigReset: async () => {
     await store.loadConfig();
+    await store.loadRuntimeStatus();
     await applyStoreConfigToLocalConfig(store.config, true);
   },
   onConfigImported: async () => {
     await store.loadConfig();
+    await store.loadRuntimeStatus();
     await applyStoreConfigToLocalConfig(store.config, true);
   },
   onTranslationStarted: async () => {
@@ -435,6 +584,7 @@ watch(() => route.query.tab, (newTab) => {
 
 onMounted(async () => {
   await store.loadConfig();
+  await store.loadRuntimeStatus();
   await applyStoreConfigToLocalConfig(store.config, true);
   
   // 從 URL 參數設定 tab
@@ -453,6 +603,11 @@ onMounted(async () => {
     if (isApplyingRemoteConfig.value) return;
     debouncedAutoSave();
   }, { deep: true });
+
+  watch(runtimeCapabilities, () => {
+    if (isApplyingRemoteConfig.value) return;
+    coerceAsrSettingsForRuntime();
+  });
 });
 
 onUnmounted(() => {
@@ -1033,6 +1188,74 @@ async function handleFileChange(event: Event) {
           <div v-show="activeTab === 'transcription'" class="space-y-6">
             <h2 class="text-xl font-bold text-white mb-4">轉錄選項</h2>
             
+            <div class="bg-white/5 rounded-xl p-4 border border-white/10">
+              <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-4">
+                <div>
+                  <h3 class="text-lg font-semibold text-cyan-300 mb-1">Runtime Profile</h3>
+                  <p class="text-white/50 text-sm">
+                    選擇 CUDA / CPU / ROCm runtime，系統會優先避開內顯並選擇合適的 ASR 加速裝置。
+                  </p>
+                </div>
+                <button type="button"
+                  class="px-3 py-2 bg-white/10 hover:bg-white/15 border border-white/10 rounded-lg text-white text-sm transition"
+                  @click="store.loadRuntimeStatus()">
+                  Refresh
+                </button>
+              </div>
+
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label class="block text-white/70 font-semibold mb-2">Profile</label>
+                  <UiSelect v-model="localConfig.runtime.profile" :options="runtimeProfileOptions" />
+                </div>
+                <div>
+                  <label class="block text-white/70 font-semibold mb-2">Device policy</label>
+                  <UiSelect v-model="localConfig.runtime.device_policy" :options="runtimeDevicePolicyOptions" />
+                </div>
+                <div class="flex items-end">
+                  <label class="flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer w-full">
+                    <input v-model="localConfig.runtime.allow_integrated_gpu" type="checkbox" class="w-5 h-5 accent-yellow-400 mt-0.5" />
+                    <div>
+                      <span class="text-white font-medium">Allow integrated GPU</span>
+                      <p class="text-white/45 text-xs mt-1">只建議 ROCm APU/iGPU 實驗測試時開啟。</p>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              <div class="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div class="bg-black/20 rounded-lg p-3 border border-white/10">
+                  <div class="flex items-center justify-between gap-3 mb-2">
+                    <span class="text-white/60 text-sm">Status</span>
+                    <span class="px-2 py-0.5 rounded bg-cyan-500/15 text-cyan-200 text-xs">{{ runtimeStatusLabel }}</span>
+                  </div>
+                  <div class="text-white font-medium">{{ selectedRuntimeDevice ? runtimeDeviceLine(selectedRuntimeDevice) : (runtimeSelection?.kind === 'cpu' ? 'CPU' : 'No GPU selected') }}</div>
+                  <p class="text-white/45 text-xs mt-2">{{ runtimeSelection?.reason || store.runtimeStatusError || 'Runtime status not loaded yet.' }}</p>
+                </div>
+                <div class="bg-black/20 rounded-lg p-3 border border-white/10">
+                  <div class="text-white/60 text-sm mb-2">ASR capability</div>
+                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+                    <div class="text-white/80">Qwen3 dtype: <span class="text-cyan-200">{{ runtimeCapabilities?.qwen3_default_dtype || '-' }}</span></div>
+                    <div class="text-white/80">Qwen3 streaming: <span class="text-yellow-200">{{ runtimeCapabilities?.qwen3_streaming_status || '-' }}</span></div>
+                    <div class="text-white/80">Faster-Whisper: <span class="text-cyan-200">{{ runtimeCapabilities?.faster_whisper_status || '-' }}</span></div>
+                    <div class="text-white/80">Package: <span class="text-white/70">{{ runtimeStatus?.package_suffix || '-' }}</span></div>
+                  </div>
+                </div>
+              </div>
+
+              <div v-if="ignoredRuntimeDevices.length" class="mt-4 bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3">
+                <div class="text-yellow-200 text-sm font-semibold mb-2">Ignored devices</div>
+                <div v-for="device in ignoredRuntimeDevices" :key="`${device.source}-${device.index}-${device.name}`" class="text-white/70 text-sm">
+                  {{ runtimeDeviceLine(device) }}
+                </div>
+              </div>
+
+              <div v-if="runtimeDiagnosticNotice" class="mt-4 bg-cyan-500/10 border border-cyan-500/20 rounded-lg p-3">
+                <div class="text-cyan-200 text-sm font-semibold mb-2">ROCm diagnostics</div>
+                <p class="text-white/70 text-sm">{{ runtimeDiagnosticNotice }}</p>
+              </div>
+            </div>
+
             <!-- Whisper 引擎模式選擇 (移到最上面) -->
             <div class="bg-white/5 rounded-xl p-4 border border-white/10">
               <h3 class="text-lg font-semibold text-blue-300 mb-4">🎯 轉錄引擎</h3>
@@ -1040,8 +1263,8 @@ async function handleFileChange(event: Event) {
                 💡 提示:可同時選擇 Faster-Whisper + SimulStreaming,將使用 Faster-Whisper 作為編碼器的 SimulStreaming
               </p>
               <div class="space-y-3">
-                <label class="flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer hover:bg-white/10 transition">
-                  <input v-model="localConfig.transcription.use_faster_whisper" type="checkbox" class="w-5 h-5 accent-blue-500 mt-0.5" />
+                <label :class="['flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 transition', canUseFasterWhisper ? 'cursor-pointer hover:bg-white/10' : 'opacity-45 cursor-not-allowed']">
+                  <input v-model="localConfig.transcription.use_faster_whisper" :disabled="!canUseFasterWhisper" type="checkbox" class="w-5 h-5 accent-blue-500 mt-0.5" />
                   <div class="flex-1">
                     <span class="text-white font-medium">使用 Faster-Whisper</span>
                     <p class="text-white/50 text-sm mt-1">
@@ -1051,8 +1274,8 @@ async function handleFileChange(event: Event) {
                   </div>
                 </label>
 
-                <label class="flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer hover:bg-white/10 transition">
-                  <input v-model="localConfig.transcription.use_simul_streaming" type="checkbox" class="w-5 h-5 accent-blue-500 mt-0.5" />
+                <label :class="['flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 transition', (canUseSimulStreaming || canUseFasterWhisperSimul) ? 'cursor-pointer hover:bg-white/10' : 'opacity-45 cursor-not-allowed']">
+                  <input v-model="localConfig.transcription.use_simul_streaming" :disabled="!canUseSimulStreaming && !canUseFasterWhisperSimul" type="checkbox" class="w-5 h-5 accent-blue-500 mt-0.5" />
                   <div class="flex-1">
                     <span class="text-white font-medium">使用 SimulStreaming</span>
                     <p class="text-white/50 text-sm mt-1">
@@ -1062,8 +1285,8 @@ async function handleFileChange(event: Event) {
                   </div>
                 </label>
 
-                <label class="flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer hover:bg-white/10 transition">
-                  <input v-model="localConfig.transcription.use_openai_transcription_api" type="checkbox" class="w-5 h-5 accent-blue-500 mt-0.5" />
+                <label :class="['flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 transition', canUseOpenAiAsr ? 'cursor-pointer hover:bg-white/10' : 'opacity-45 cursor-not-allowed']">
+                  <input v-model="localConfig.transcription.use_openai_transcription_api" :disabled="!canUseOpenAiAsr" type="checkbox" class="w-5 h-5 accent-blue-500 mt-0.5" />
                   <div class="flex-1">
                     <span class="text-white font-medium">使用 OpenAI Transcription API</span>
                     <p class="text-white/50 text-sm mt-1">
@@ -1073,8 +1296,8 @@ async function handleFileChange(event: Event) {
                   </div>
                 </label>
 
-                <label class="flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer hover:bg-white/10 transition">
-                  <input v-model="localConfig.transcription.use_qwen3_asr" type="checkbox" class="w-5 h-5 accent-blue-500 mt-0.5" />
+                <label :class="['flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 transition', canUseQwen3Asr ? 'cursor-pointer hover:bg-white/10' : 'opacity-45 cursor-not-allowed']">
+                  <input v-model="localConfig.transcription.use_qwen3_asr" :disabled="!canUseQwen3Asr" type="checkbox" class="w-5 h-5 accent-blue-500 mt-0.5" />
                   <div class="flex-1">
                     <span class="text-white font-medium">使用 Qwen3-ASR</span>
                     <p class="text-white/50 text-sm mt-1">
@@ -1263,7 +1486,7 @@ async function handleFileChange(event: Event) {
             <div class="bg-white/5 rounded-xl p-5 border border-white/10">
               <h3 class="text-lg font-semibold text-blue-300 mb-4">Qwen3-ASR 模型</h3>
               <div class="space-y-3">
-                <div v-for="modelId in qwenModels" :key="`qwen-${modelId}`" class="p-4 rounded-lg bg-white/5 border border-white/10">
+                <div v-for="modelId in qwenModelList" :key="`qwen-${modelId}`" class="p-4 rounded-lg bg-white/5 border border-white/10">
                   <div class="flex items-center justify-between gap-4">
                     <div>
                       <div class="text-white font-semibold">{{ modelId }}</div>
@@ -1295,7 +1518,7 @@ async function handleFileChange(event: Event) {
             <div class="bg-white/5 rounded-xl p-5 border border-white/10">
               <h3 class="text-lg font-semibold text-blue-300 mb-4">Faster-Whisper 模型</h3>
               <div class="space-y-3">
-                <div v-for="modelId in fasterWhisperModels" :key="`fw-${modelId}`" class="p-4 rounded-lg bg-white/5 border border-white/10">
+                <div v-for="modelId in fasterWhisperModelList" :key="`fw-${modelId}`" class="p-4 rounded-lg bg-white/5 border border-white/10">
                   <div class="flex items-center justify-between gap-4">
                     <div>
                       <div class="text-white font-semibold">{{ modelId }}</div>

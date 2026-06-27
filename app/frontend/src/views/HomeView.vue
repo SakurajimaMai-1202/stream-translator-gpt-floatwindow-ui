@@ -181,7 +181,8 @@ const inputLanguages = [
   { value: 'ja', label: '日文' },
   { value: 'en', label: '英文' },
   { value: 'ko', label: '韓文' },
-  { value: 'zh', label: '中文' }
+  { value: 'zh-tw', label: '繁體中文' },
+  { value: 'zh-cn', label: '簡體中文' }
 ];
 const outputLanguages = [
   { value: 'Traditional Chinese', label: '繁體中文' },
@@ -205,20 +206,24 @@ const deviceOptions = computed<UiSelectOption[]>(() => {
   return [...base, ...deviceItems];
 });
 
-const transcriptionEngineOptions: UiSelectOption[] = [
-  { value: 'faster-whisper', label: 'Faster-Whisper' },
-  { value: 'simul-streaming', label: 'SimulStreaming' },
-  { value: 'faster-whisper-simul', label: 'Faster-Whisper + SimulStreaming' },
-  { value: 'qwen3-asr', label: 'Qwen3-ASR' },
-  { value: 'openai-api', label: 'OpenAI API' }
+const allTranscriptionEngineOptions: UiSelectOption[] = [
+  { value: 'faster-whisper', label: 'Faster-Whisper', group: '本機 ASR' },
+  { value: 'simul-streaming', label: 'SimulStreaming', group: '本機 ASR' },
+  { value: 'faster-whisper-simul', label: 'Faster-Whisper + SimulStreaming', group: '本機 ASR' },
+  { value: 'qwen3-asr', label: 'Qwen3-ASR', group: '本機 ASR' },
+  { value: 'openai-api', label: 'OpenAI API', group: '遠端 ASR' }
 ];
 
 const whisperModelOptions = computed<UiSelectOption[]>(() =>
-  whisperModels.map((model) => ({ value: model, label: model }))
+  whisperModels
+    .filter((model) => allowedFasterWhisperModels.value.includes(model))
+    .map((model) => ({ value: model, label: model }))
 );
 
 const qwen3AsrModelOptions = computed<UiSelectOption[]>(() =>
-  qwen3AsrModels.map((model) => ({ value: model.value, label: model.label }))
+  qwen3AsrModels
+    .filter((model) => allowedQwen3AsrModels.value.includes(model.value))
+    .map((model) => ({ value: model.value, label: model.label }))
 );
 
 const inputLanguageOptions = computed<UiSelectOption[]>(() =>
@@ -277,6 +282,51 @@ const selectedBackend = ref('gpt');
 const translationEnabled = ref(true);  // 🔧 新增: 翻譯開關
 
 // 自動保存 debounce timer
+const runtimeCapabilities = computed(() => store.runtimeStatus?.capabilities || null);
+const allowedLocalAsrEngines = computed<string[]>(() =>
+  runtimeCapabilities.value?.local_asr_engines?.length
+    ? runtimeCapabilities.value.local_asr_engines
+    : ['faster-whisper', 'simul-streaming', 'faster-whisper-simul', 'qwen3-asr']
+);
+const allowedRemoteAsrEngines = computed<string[]>(() =>
+  runtimeCapabilities.value?.remote_asr_engines?.length
+    ? runtimeCapabilities.value.remote_asr_engines
+    : ['openai-api']
+);
+const allowedTranscriptionEngines = computed<string[]>(() => [
+  ...allowedLocalAsrEngines.value,
+  ...allowedRemoteAsrEngines.value,
+]);
+const transcriptionEngineOptions = computed<UiSelectOption[]>(() =>
+  allTranscriptionEngineOptions.filter((option) =>
+    allowedTranscriptionEngines.value.includes(String(option.value))
+  )
+);
+const allowedFasterWhisperModels = computed<string[]>(() =>
+  runtimeCapabilities.value?.faster_whisper_model_ids?.length
+    ? runtimeCapabilities.value.faster_whisper_model_ids
+    : whisperModels
+);
+const allowedQwen3AsrModels = computed<string[]>(() =>
+  runtimeCapabilities.value?.qwen3_asr_model_ids?.length
+    ? runtimeCapabilities.value.qwen3_asr_model_ids
+    : qwen3AsrModels.map((model) => model.value)
+);
+
+function coerceRuntimeLimitedSelections() {
+  if (!allowedTranscriptionEngines.value.includes(selectedTranscriptionEngine.value)) {
+    selectedTranscriptionEngine.value = allowedTranscriptionEngines.value.includes('qwen3-asr')
+      ? 'qwen3-asr'
+      : allowedTranscriptionEngines.value[0] || 'openai-api';
+  }
+  if (!allowedFasterWhisperModels.value.includes(selectedWhisperModel.value)) {
+    selectedWhisperModel.value = allowedFasterWhisperModels.value[0] || 'small';
+  }
+  if (!allowedQwen3AsrModels.value.includes(selectedQwen3AsrModel.value)) {
+    selectedQwen3AsrModel.value = allowedQwen3AsrModels.value[0] || 'Qwen/Qwen3-ASR-0.6B';
+  }
+}
+
 let _homeAutoSaveTimer: ReturnType<typeof setTimeout> | null = null;
 let _homeConfigSyncTimer: ReturnType<typeof setInterval> | null = null;
 let _homeRunningSyncTimer: ReturnType<typeof setInterval> | null = null;
@@ -291,6 +341,15 @@ function getTranscriptionEngineFromConfig(cfg: Config): string {
   return 'faster-whisper';
 }
 
+function normalizeInputLanguage(language: string | null | undefined): string {
+  const normalized = String(language || 'auto').trim().toLowerCase();
+  if (!normalized) return 'auto';
+  if (normalized === 'zh') return 'zh-tw';
+  if (normalized === 'zh-hant' || normalized === 'traditional chinese' || normalized === '繁體中文') return 'zh-tw';
+  if (normalized === 'zh-hans' || normalized === 'simplified chinese' || normalized === '簡體中文') return 'zh-cn';
+  return normalized;
+}
+
 function buildHomeConfigSnapshotFromConfig(cfg: Config): string {
   return JSON.stringify({
     urlInput: cfg.input?.url || '',
@@ -299,7 +358,7 @@ function buildHomeConfigSnapshotFromConfig(cfg: Config): string {
     selectedTranscriptionEngine: getTranscriptionEngineFromConfig(cfg),
     selectedWhisperModel: cfg.transcription?.model || 'base',
     selectedQwen3AsrModel: cfg.transcription?.qwen3_asr_model || 'Qwen/Qwen3-ASR-1.7B',
-    selectedInputLanguage: cfg.transcription?.language || 'auto',
+    selectedInputLanguage: normalizeInputLanguage(cfg.transcription?.language),
     selectedOutputLanguage: cfg.translation?.target_language || 'Traditional Chinese',
     selectedBackend: cfg.translation?.backend || 'gpt',
     translationEnabled: cfg.translation?.backend !== 'none',
@@ -336,7 +395,7 @@ async function saveHomeConfigToBackend() {
       language: selectedInputLanguage.value,
       use_qwen3_asr: engine === 'qwen3-asr',
       use_openai_transcription_api: engine === 'openai-api',
-      use_faster_whisper: engine === 'faster-whisper-simul',
+      use_faster_whisper: engine === 'faster-whisper' || engine === 'faster-whisper-simul',
       use_simul_streaming: engine === 'faster-whisper-simul' || engine === 'simul-streaming',
     };
     const inputPatch = {
@@ -501,7 +560,8 @@ async function applyConfigToRefs(cfg: Config) {
     selectedWhisperModel.value = cfg.transcription?.model || 'base';
     selectedQwen3AsrModel.value = cfg.transcription?.qwen3_asr_model || 'Qwen/Qwen3-ASR-1.7B';
     selectedTranscriptionEngine.value = getTranscriptionEngineFromConfig(cfg);
-    selectedInputLanguage.value = cfg.transcription?.language || 'auto';
+    coerceRuntimeLimitedSelections();
+    selectedInputLanguage.value = normalizeInputLanguage(cfg.transcription?.language);
     selectedOutputLanguage.value = cfg.translation?.target_language || 'Traditional Chinese';
     selectedBackend.value = cfg.translation?.backend || 'gpt';
     translationEnabled.value = cfg.translation?.backend !== 'none';
@@ -528,6 +588,13 @@ async function syncHomeStateFromBackend(force = false, syncLlama = false) {
   }
 
   await store.loadConfig();
+  if (force || !store.runtimeStatus) {
+    try {
+      await store.loadRuntimeStatus();
+    } catch (error) {
+      console.warn('[HomeView] runtime status refresh failed:', error);
+    }
+  }
   const incomingSnapshot = buildHomeConfigSnapshotFromConfig(store.config);
 
   if (!force && incomingSnapshot === lastAppliedHomeConfigSnapshot.value) {
@@ -593,6 +660,10 @@ watch(selectedBackend, (newVal) => {
   } else {
     translationEnabled.value = true;
   }
+});
+
+watch(runtimeCapabilities, () => {
+  coerceRuntimeLimitedSelections();
 });
 
 onMounted(async () => {

@@ -1,12 +1,13 @@
 import gc
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any
 
 from .common import INFO
 from .audio_transcriber import (OpenaiWhisper, FasterWhisper, SimulStreaming, RemoteOpenaiTranscriber, HFTranscriber,
                                 Qwen3ASRTranscriber, NemoASRTranscriber)
+from .runtime_accelerator import resolve_qwen3_device_map
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,9 @@ class ASRConfig:
     qwen3_asr_quantization: str | None = None
     qwen3_asr_bnb_4bit_quant_type: str | None = None
     qwen3_asr_bnb_4bit_use_double_quant: bool = False
+    runtime_profile: str | None = "cuda"
+    runtime_device_policy: str | None = "auto_discrete"
+    runtime_allow_integrated_gpu: bool = False
     nemo_asr_model: str | None = None
     nemo_asr_device: str | None = None
     nemo_asr_decoding: str | None = None
@@ -116,6 +120,9 @@ def build_asr_config(options: dict[str, Any]) -> ASRConfig:
         qwen3_asr_quantization=qwen3_asr_quantization,
         qwen3_asr_bnb_4bit_quant_type=qwen3_asr_bnb_4bit_quant_type,
         qwen3_asr_bnb_4bit_use_double_quant=qwen3_asr_bnb_4bit_use_double_quant,
+        runtime_profile=options.get("runtime_profile", "cuda"),
+        runtime_device_policy=options.get("runtime_device_policy", "auto_discrete"),
+        runtime_allow_integrated_gpu=bool(options.get("runtime_allow_integrated_gpu", False)),
         nemo_asr_model=nemo_asr_model,
         nemo_asr_device=nemo_asr_device,
         nemo_asr_decoding=nemo_asr_decoding,
@@ -156,11 +163,14 @@ def create_transcriber(config: ASRConfig):
     if config.backend == "hf":
         return HFTranscriber(model=config.model, language=config.language, proxy=config.processing_proxy, **common_args)
     if config.backend == "qwen3":
+        import torch
+
+        qwen3_device_map, qwen3_dtype = resolve_qwen3_preload_runtime_options(torch, config)
         return Qwen3ASRTranscriber(model=config.qwen3_asr_model,
                                    language=config.language,
                                    proxy=config.processing_proxy,
-                                   dtype=config.qwen3_asr_dtype,
-                                   device_map=config.qwen3_asr_device_map,
+                                   dtype=qwen3_dtype,
+                                   device_map=qwen3_device_map,
                                    max_new_tokens=config.qwen3_asr_max_new_tokens,
                                    quantization=config.qwen3_asr_quantization,
                                    bnb_4bit_quant_type=config.qwen3_asr_bnb_4bit_quant_type,
@@ -173,6 +183,32 @@ def create_transcriber(config: ASRConfig):
                                   decoding=config.nemo_asr_decoding,
                                   **common_args)
     return OpenaiWhisper(model=config.model, language=config.language, **common_args)
+
+
+def resolve_preload_config(config: ASRConfig) -> ASRConfig:
+    if config.backend != "qwen3":
+        return config
+    import torch
+
+    device_map, dtype = resolve_qwen3_preload_runtime_options(torch, config)
+    return replace(config, qwen3_asr_device_map=device_map, qwen3_asr_dtype=dtype)
+
+
+def resolve_qwen3_preload_runtime_options(torch_module: Any, config: ASRConfig) -> tuple[str, str | None]:
+    device_map = resolve_qwen3_device_map(
+        torch_module=torch_module,
+        requested_device_map=config.qwen3_asr_device_map,
+        runtime_profile=config.runtime_profile,
+        device_policy=config.runtime_device_policy,
+        allow_integrated_gpu=config.runtime_allow_integrated_gpu,
+    )
+    dtype = config.qwen3_asr_dtype
+    if device_map == "cpu" and str(dtype).lower() in {"bfloat16", "float16"}:
+        dtype = "float32"
+        print(f"{INFO}Qwen3-ASR preload fell back to CPU; using float32 dtype for compatibility")
+    print(f"{INFO}Qwen3-ASR preload device map resolved: {device_map} "
+          f"(profile={config.runtime_profile}, policy={config.runtime_device_policy})")
+    return device_map, dtype
 
 
 class PreloadedTranscriberManager:
@@ -189,6 +225,8 @@ class PreloadedTranscriberManager:
     def preload(self, config: ASRConfig) -> str:
         if config.backend == "openai_api":
             raise ValueError("OpenAI Transcription API is remote and does not need ASR preloading.")
+
+        config = resolve_preload_config(config)
 
         with self._lock:
             if self.in_use:
@@ -232,6 +270,7 @@ class PreloadedTranscriberManager:
             return self.config is not None and self.config.fingerprint() == config.fingerprint()
 
     def get_for_run(self, config: ASRConfig):
+        config = resolve_preload_config(config)
         with self._lock:
             if self.transcriber is None:
                 return None

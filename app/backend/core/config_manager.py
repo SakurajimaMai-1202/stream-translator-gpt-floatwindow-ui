@@ -13,6 +13,7 @@ import tempfile
 import time
 from contextlib import contextmanager
 from backend.config import settings
+from backend.core.runtime_profiles import get_runtime_capabilities
 
 class ConfigManager:
     """配置管理器 - 處理所有配置相關操作"""
@@ -26,6 +27,13 @@ class ConfigManager:
         'server': {
             'public_port': 8765,
             'enable_subtitle_sharing': True,
+        },
+        'runtime': {
+            'profile': 'cuda',
+            'device_policy': 'auto_discrete',
+            'device_index': None,
+            'device_name': '',
+            'allow_integrated_gpu': False,
         },
         'models': {
             'storage_path': '',
@@ -475,6 +483,29 @@ class ConfigManager:
         
         return self.config['ui']['windows'].get(window_name, default_states.get(window_name, {}))
     
+    def _coerce_transcription_backend(self, requested_backend: Any, runtime_capabilities: Any) -> str:
+        requested = str(requested_backend or '').strip() or 'faster-whisper'
+        allowed_local = set(runtime_capabilities.local_asr_engines)
+        allowed_remote = set(runtime_capabilities.remote_asr_engines)
+        allowed = allowed_local | allowed_remote
+        if requested in allowed:
+            return requested
+        if requested in {'faster-whisper', 'simul-streaming', 'faster-whisper-simul'} and 'faster-whisper' in allowed:
+            return 'faster-whisper'
+        if 'qwen3-asr' in allowed:
+            return 'qwen3-asr'
+        if 'faster-whisper' in allowed:
+            return 'faster-whisper'
+        if 'openai-api' in allowed:
+            return 'openai-api'
+        return 'qwen3-asr'
+
+    def _coerce_model_id(self, requested_model: Any, allowed_models: tuple[str, ...], fallback: str) -> str:
+        requested = str(requested_model or '').strip()
+        if requested and (not allowed_models or requested in allowed_models):
+            return requested
+        return allowed_models[0] if allowed_models else fallback
+
     def to_main_args(self, config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         轉換配置為 stream_translator_gpt.main.main() 函式參數
@@ -509,13 +540,38 @@ class ConfigManager:
             # 預設使用 URL
             url = input_config.get('url', '')
         
-        transcription_backend = config['transcription'].get('backend', 'faster-whisper')
-        # Qwen3-ASR 使用獨立模型欄位，其他後端沿用一般 model 欄位
-        transcription_model = (
-            config['transcription'].get('qwen3_asr_model')
-            if transcription_backend == 'qwen3-asr'
-            else config['transcription'].get('model', 'base')
+        runtime_config = config.get('runtime', {})
+        runtime_capabilities = get_runtime_capabilities(runtime_config.get('profile'))
+        transcription_backend = self._coerce_transcription_backend(
+            config['transcription'].get('backend', 'faster-whisper'),
+            runtime_capabilities,
         )
+        runtime_device_policy = runtime_config.get('device_policy') or runtime_capabilities.default_device_policy
+        if runtime_capabilities.profile == 'cpu':
+            runtime_device_policy = 'cpu'
+        runtime_allow_integrated_gpu = bool(runtime_config.get(
+            'allow_integrated_gpu',
+            runtime_capabilities.allow_integrated_gpu,
+        ))
+        qwen3_dtype = config['transcription'].get('qwen3_dtype')
+        if not qwen3_dtype or (
+            runtime_capabilities.profile == 'cpu' and qwen3_dtype == 'bfloat16'
+        ):
+            qwen3_dtype = runtime_capabilities.qwen3_default_dtype
+        qwen3_device_map = 'cpu' if runtime_capabilities.profile == 'cpu' else 'auto'
+        # Qwen3-ASR 使用獨立模型欄位，其他後端沿用一般 model 欄位
+        if transcription_backend == 'qwen3-asr':
+            transcription_model = self._coerce_model_id(
+                config['transcription'].get('qwen3_asr_model'),
+                runtime_capabilities.qwen3_asr_model_ids,
+                'Qwen/Qwen3-ASR-0.6B',
+            )
+        else:
+            transcription_model = self._coerce_model_id(
+                config['transcription'].get('model', 'base'),
+                runtime_capabilities.faster_whisper_model_ids,
+                'small',
+            )
 
         # 基本參數對映
         args = {
@@ -529,6 +585,9 @@ class ConfigManager:
             'input_proxy': input_config.get('proxy', ''),
             'device_index': input_config.get('device_index'),
             'device_recording_interval': input_config.get('device_recording_interval', 0.05),
+            'runtime_profile': runtime_capabilities.profile,
+            'runtime_device_policy': runtime_device_policy,
+            'runtime_allow_integrated_gpu': runtime_allow_integrated_gpu,
             
             # 音頻切片
             'min_audio_length': config.get('audio_slicing_vad', {}).get('min_audio_length', 0.5),
@@ -549,7 +608,7 @@ class ConfigManager:
             # 語音轉文字
             'model': transcription_model,
             'language': config['transcription'].get('language', 'auto'),
-            'use_faster_whisper': transcription_backend == 'faster-whisper',
+            'use_faster_whisper': transcription_backend in ['faster-whisper', 'faster-whisper-simul'],
             'use_simul_streaming': 'simul' in transcription_backend,
             'use_openai_transcription_api': transcription_backend == 'openai-api',
             'use_qwen3_asr': transcription_backend == 'qwen3-asr',
@@ -557,7 +616,9 @@ class ConfigManager:
             'whisper_filters': config['transcription'].get('whisper_filters', []),
             'disable_transcription_context': config['transcription'].get('disable_transcription_context', False),
             'transcription_initial_prompt': config['transcription'].get('transcription_initial_prompt', ''),
-            'qwen3_dtype': config['transcription'].get('qwen3_dtype', 'bfloat16'),
+            'qwen3_dtype': qwen3_dtype,
+            'qwen3_asr_dtype': qwen3_dtype,
+            'qwen3_asr_device_map': qwen3_device_map,
             'qwen3_load_in_4bit': config['transcription'].get('qwen3_load_in_4bit', False),
             'qwen3_rms_threshold': config['transcription'].get('qwen3_rms_threshold', 0.005),
             'asr_corrections_enabled': config['transcription'].get('asr_corrections_enabled', False),
@@ -573,6 +634,8 @@ class ConfigManager:
         if transcription_backend == 'qwen3-asr':
             qwen3_lang_map = {
                 'ja': 'Japanese', 'en': 'English', 'zh': 'Chinese',
+                'zh-tw': 'Chinese', 'zh-hant': 'Chinese',
+                'zh-cn': 'Chinese', 'zh-hans': 'Chinese',
                 'ko': 'Korean', 'fr': 'French', 'de': 'German',
                 'es': 'Spanish', 'pt': 'Portuguese', 'ru': 'Russian',
                 'it': 'Italian', 'ar': 'Arabic', 'th': 'Thai',
@@ -608,7 +671,10 @@ class ConfigManager:
                 input_language = config['transcription'].get('language', 'auto')
                 target_language_code = config['translation'].get('target_language', '繁體中文') or '繁體中文'
                 
-                zh_languages = ['zh', 'auto', '繁體中文', '簡體中文', 'Traditional Chinese', 'Simplified Chinese']
+                zh_languages = [
+                    'zh', 'zh-tw', 'zh-hant', 'zh-cn', 'zh-hans', 'auto',
+                    '繁體中文', '簡體中文', 'Traditional Chinese', 'Simplified Chinese',
+                ]
                 is_zh_involved = input_language in zh_languages or target_language_code in zh_languages
                 
                 target_lang_map_zh = {

@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
-import { translationApi, configApi, type Config, type AudioSource } from '../services/api';
+import { translationApi, configApi, runtimeApi, type Config, type AudioSource, type RuntimeStatus } from '../services/api';
 
 export interface HomeInputState {
   urlInput: string;
@@ -43,6 +43,8 @@ export const useTranslationStore = defineStore('translation', () => {
   });
   const errorMessage = ref('');
   const statusMessage = ref('');
+  const runtimeStatus = ref<RuntimeStatus | null>(null);
+  const runtimeStatusError = ref('');
 
   // 首頁輸入狀態持久化（避免從設定頁返回時被覆蓋）
   const isConfigInitialized = ref(false);
@@ -83,6 +85,15 @@ export const useTranslationStore = defineStore('translation', () => {
       config.value = await configApi.getConfig();
     } catch (error: any) {
       errorMessage.value = `載入配置失敗: ${error.message}`;
+    }
+  }
+
+  async function loadRuntimeStatus() {
+    try {
+      runtimeStatus.value = await runtimeApi.getStatus();
+      runtimeStatusError.value = '';
+    } catch (error: any) {
+      runtimeStatusError.value = error?.message || 'Failed to load runtime status';
     }
   }
 
@@ -336,6 +347,8 @@ export const useTranslationStore = defineStore('translation', () => {
     config,
     errorMessage,
     statusMessage,
+    runtimeStatus,
+    runtimeStatusError,
     isConfigInitialized,
     homeInputState,
 
@@ -344,6 +357,7 @@ export const useTranslationStore = defineStore('translation', () => {
 
     // Actions
     loadConfig,
+    loadRuntimeStatus,
     saveConfig,
     resetConfig,
     exportConfig,

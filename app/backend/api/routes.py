@@ -4,6 +4,7 @@ from . import translation
 from . import llama
 from . import models
 from . import sync
+from . import runtime
 from backend.api.config import get_config_manager
 from backend.core.system_check import check_ffmpeg
 
@@ -14,6 +15,7 @@ def register_routes(app: FastAPI):
     app.include_router(llama.router, prefix="/api")
     app.include_router(models.router, prefix="/api")
     app.include_router(sync.router, prefix="/api")
+    app.include_router(runtime.router, prefix="/api")
 
     @app.get("/api/server/info")
     async def server_info():

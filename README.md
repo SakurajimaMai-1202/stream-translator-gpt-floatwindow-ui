@@ -83,6 +83,7 @@ GitHub Release 因為單檔容量限制，Full package 以分割包提供。
   - `StreamTranslator-win64-ROCm-Experimental-Full.zip.part02`
 
 - 建議一起下載：
+  - `merge-full-package.bat`
   - `SHA256SUMS-v1.3.1.txt`
   - `RELEASE_NOTES_v1.3.1_zh-TW.md`
 
@@ -91,6 +92,8 @@ GitHub Release 因為單檔容量限制，Full package 以分割包提供。
 - `StreamTranslator-win64-CUDA-Full.zip`
 - `StreamTranslator-win64-CPU-Full.zip`
 - `StreamTranslator-win64-ROCm-Experimental-Full.zip`
+
+最簡單的方式：把 `merge-full-package.bat` 和同一組 `.part*` 檔案放在同一個資料夾，雙擊執行即可自動合併。
 
 PowerShell 合併範例（以 CUDA 版為例）：
 

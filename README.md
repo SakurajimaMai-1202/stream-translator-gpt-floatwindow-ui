@@ -402,13 +402,28 @@ stream-translator-gpt-floatwindow-ui/
 
 ### 系統需求
 
+打包版共通需求：
+
 | 項目 | 要求 |
 |------|------|
 | OS | Windows 10/11 64-bit |
-| GPU | NVIDIA CUDA 相容顯卡 |
-| Driver | 建議 528 以上 |
-| CUDA | 建議 12.4+ |
-| Python | 3.10-3.12 |
+| CPU / RAM | 建議 4 核心以上、16 GB RAM 以上；CPU 版與大型模型會需要更多記憶體 |
+| 磁碟空間 | Full package 約 2-4 GB；首次使用模型會另外下載到 `models` 或自訂模型資料夾 |
+| Python / Node.js | 一般使用者不需要安裝；只有從原始碼開發或自行打包時需要 |
+
+不同 runtime profile 需求：
+
+| 版本 | GPU / Driver | 備註 |
+|------|------|------|
+| CUDA | NVIDIA CUDA 相容獨立顯卡；建議 NVIDIA Driver 528+ | CUDA / PyTorch runtime 已包含在 Full package，不需要另外安裝 CUDA Toolkit 或 cuDNN |
+| CPU | 不需要獨立顯卡 | 速度較慢，建議先使用 Faster-Whisper small / medium 或 Qwen3-ASR 0.6B |
+| ROCm Experimental | 支援 Windows ROCm/HIP 的 AMD 獨立顯卡與相容驅動 | 實驗版；預設避開 AMD 內顯 / APU，ROCm GPU 實機推論仍需依使用者診斷結果確認 |
+
+開發 / 自行打包需求：
+
+| 項目 | 要求 |
+|------|------|
+| Python | 3.10-3.12，依目標 profile 準備 CUDA / CPU / ROCm 對應 PyTorch |
 | Node.js | 18+，僅前端建構需要 |
 
 ---

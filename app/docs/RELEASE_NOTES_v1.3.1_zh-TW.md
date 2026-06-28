@@ -66,8 +66,8 @@
 
 - Qwen3-ASR 預設使用 bf16。
 - 預設裝置策略為 auto_discrete，會避免選到 AMD 內顯 / APU。
-- 目前建置機沒有 ROCm 獨立顯卡，已驗證 package 結構、HIP runtime manifest 與 ROCm torch 支援架構，但不宣稱 ROCm GPU ASR 實機推論已通過。
-- 若 ROCm 使用者仍看到 `No GPU selected`，請執行 `diagnose_runtime.ps1 -Profile rocm` 並回報輸出。
+- Radeon RX 9070 XT 已由使用者實機確認可用；其他 AMD 顯卡仍建議視為 experimental。
+- 若 ROCm 使用者仍看到 `No GPU selected` 或推論異常，請執行 `diagnose_runtime.ps1 -Profile rocm` 並回報輸出。
 
 ## Full package 分卷合併
 

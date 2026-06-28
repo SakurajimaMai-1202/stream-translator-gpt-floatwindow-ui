@@ -417,7 +417,7 @@ stream-translator-gpt-floatwindow-ui/
 |------|------|------|
 | CUDA | NVIDIA CUDA 相容獨立顯卡；建議 NVIDIA Driver 528+ | CUDA / PyTorch runtime 已包含在 Full package，不需要另外安裝 CUDA Toolkit 或 cuDNN |
 | CPU | 不需要獨立顯卡 | 速度較慢，建議先使用 Faster-Whisper small / medium 或 Qwen3-ASR 0.6B |
-| ROCm Experimental | 支援 Windows ROCm/HIP 的 AMD 獨立顯卡與相容驅動 | 實驗版；預設避開 AMD 內顯 / APU，ROCm GPU 實機推論仍需依使用者診斷結果確認 |
+| ROCm Experimental | 支援 Windows ROCm/HIP 的 AMD 獨立顯卡與相容驅動 | Radeon RX 9070 XT 已由使用者實機確認可用；仍屬實驗版，預設避開 AMD 內顯 / APU，其他 AMD 顯卡如遇問題請附診斷結果 |
 
 開發 / 自行打包需求：
 

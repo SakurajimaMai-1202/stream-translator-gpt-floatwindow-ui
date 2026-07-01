@@ -31,6 +31,7 @@ def test_custom_relative_model_storage_resolves_from_app_root(monkeypatch, tmp_p
 
     assert env["HF_HOME"] == str((tmp_path / "model-data").resolve())
     assert env["HUGGINGFACE_HUB_CACHE"] == str((tmp_path / "model-data" / "hub").resolve())
+    assert env["MODELSCOPE_CACHE"] == str((tmp_path / "model-data" / "modelscope").resolve())
     assert env["PATH"] == "example"
 
 
@@ -49,3 +50,24 @@ def test_delete_model_only_removes_expected_repo(monkeypatch, tmp_path):
     assert deleted == repo_dir.resolve()
     assert not repo_dir.exists()
     assert unrelated.exists()
+
+
+def test_sensevoice_model_download_metadata_and_delete(monkeypatch, tmp_path):
+    manager = ModelDownloadManager()
+    cache_root = tmp_path / "modelscope"
+    repo_dir = cache_root / "models" / "iic" / "SenseVoiceSmall"
+    repo_dir.mkdir(parents=True)
+    (repo_dir / "model.bin").write_bytes(b"test")
+    monkeypatch.setattr(manager, "_get_modelscope_cache_dir", lambda: cache_root)
+    monkeypatch.setattr(manager, "_get_hf_cache_dir", lambda: tmp_path / "empty-hf")
+
+    models = manager.list_downloaded_models()
+
+    assert len(models) == 1
+    assert models[0].engine == "sensevoice"
+    assert models[0].model_id == "iic/SenseVoiceSmall"
+
+    deleted = manager.delete_model("sensevoice", "iic/SenseVoiceSmall")
+
+    assert deleted == repo_dir.resolve()
+    assert not repo_dir.exists()

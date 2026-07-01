@@ -38,7 +38,17 @@ if (-not $pythonExe) {
 $probeScript = @"
 import importlib.util
 import json
+import os
 import sys
+import tempfile
+
+os.environ.setdefault('MPLCONFIGDIR', os.path.join(tempfile.gettempdir(), 'stream-translator-matplotlib'))
+
+def has_module(name):
+    try:
+        return importlib.util.find_spec(name) is not None
+    except ModuleNotFoundError:
+        return False
 
 info = {
     'executable': sys.executable,
@@ -58,9 +68,12 @@ try:
 except Exception as exc:
     info['torch_error'] = repr(exc)
 
-info['pyinstaller'] = importlib.util.find_spec('PyInstaller') is not None
-info['qwen_asr'] = importlib.util.find_spec('qwen_asr') is not None
-info['faster_whisper'] = importlib.util.find_spec('faster_whisper') is not None
+info['pyinstaller'] = has_module('PyInstaller')
+info['qwen_asr'] = has_module('qwen_asr')
+info['faster_whisper'] = has_module('faster_whisper')
+info['funasr'] = has_module('funasr')
+info['torchaudio'] = has_module('torchaudio')
+info['nemo'] = has_module('nemo.collections.asr.models')
 print(json.dumps(info, ensure_ascii=False))
 "@
 
@@ -81,8 +94,17 @@ if (-not $info.pyinstaller) {
 if (-not $info.qwen_asr) {
     $errors += "qwen_asr is not importable"
 }
+if (-not $info.funasr) {
+    $errors += "funasr is required for SenseVoice support"
+}
+if (-not $info.torchaudio) {
+    $errors += "torchaudio is required for SenseVoice support"
+}
 if ($Profile -in @("cuda", "cpu") -and -not $info.faster_whisper) {
     $errors += "faster_whisper is required for $Profile profile"
+}
+if ($Profile -eq "cuda" -and -not $info.nemo) {
+    $errors += "nemo.collections.asr.models is required for CUDA Parakeet CTC JA support. Install app/requirements_cuda_parakeet.txt in the build Python."
 }
 if ($Profile -eq "cuda" -and -not $info.cuda) {
     $errors += "CUDA profile requires torch.version.cuda. Use a CUDA torch build Python."

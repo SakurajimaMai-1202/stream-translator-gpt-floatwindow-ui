@@ -17,6 +17,23 @@ The legacy CUDA wrappers are still available:
 
 They are compatibility aliases for `-Profile cuda`.
 
+CUDA Parakeet CTC JA is part of the CUDA profile only. Before building a CUDA
+package with Parakeet enabled, the build Python must pass:
+
+```powershell
+.\check_runtime_profile_env.ps1 -Profile cuda
+```
+
+If `nemo.collections.asr.models` is missing, install:
+
+```powershell
+python -m pip install -r .\requirements_cuda_parakeet.txt
+```
+
+The model id is `grider-transwithai/parakeet-ctc-1.1b-ja`; the runtime loads
+`parakeet-ja.nemo` from that HuggingFace repo with NVIDIA NeMo
+`ASRModel.restore_from()`.
+
 Validate built artifacts from `app`:
 
 ```powershell

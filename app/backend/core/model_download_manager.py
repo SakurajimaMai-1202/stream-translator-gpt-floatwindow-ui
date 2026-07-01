@@ -3,6 +3,8 @@ import copy
 import logging
 import os
 import shutil
+import subprocess
+import sys
 import time
 import uuid
 from datetime import datetime
@@ -15,6 +17,7 @@ from backend.core.portable_paths import (
     ensure_model_storage,
     get_app_root,
     get_huggingface_hub_cache,
+    get_modelscope_cache,
     get_model_storage_root,
 )
 
@@ -24,6 +27,14 @@ SUPPORTED_QWEN3_MODELS = {
     "Qwen/Qwen3-ASR-0.6B",
     "Qwen/Qwen3-ASR-1.7B",
     "neosophie/Qwen3-ASR-1.7B-JA",
+}
+
+SUPPORTED_SENSEVOICE_MODELS = {
+    "iic/SenseVoiceSmall",
+}
+
+SUPPORTED_PARAKEET_CTC_JA_MODELS = {
+    "grider-transwithai/parakeet-ctc-1.1b-ja",
 }
 
 SUPPORTED_FASTER_WHISPER_MODELS = {
@@ -88,6 +99,10 @@ class ModelDownloadManager:
     def _normalize_repo_id(self, engine: str, model_id: str) -> str:
         if engine == "qwen3-asr":
             return model_id
+        if engine == "sensevoice":
+            return model_id
+        if engine == "parakeet-ctc-ja":
+            return model_id
         if "/" in model_id:
             return model_id
         return FASTER_WHISPER_MODEL_TO_REPO_ID.get(model_id, f"Systran/faster-whisper-{model_id}")
@@ -96,6 +111,16 @@ class ModelDownloadManager:
         if engine == "qwen3-asr":
             if model_id not in SUPPORTED_QWEN3_MODELS:
                 raise ValueError(f"不支援的 Qwen3-ASR 模型: {model_id}")
+            return model_id
+
+        if engine == "sensevoice":
+            if model_id not in SUPPORTED_SENSEVOICE_MODELS:
+                raise ValueError(f"不支援的 SenseVoice 模型: {model_id}")
+            return model_id
+
+        if engine == "parakeet-ctc-ja":
+            if model_id not in SUPPORTED_PARAKEET_CTC_JA_MODELS:
+                raise ValueError(f"不支援的 Parakeet CTC JA 模型: {model_id}")
             return model_id
 
         if engine == "faster-whisper":
@@ -135,8 +160,11 @@ class ModelDownloadManager:
         """執行單一下載任務"""
         try:
             self._update_task(task_id, status="downloading", progress=0.05, message="準備下載")
-            repo_id = self._normalize_repo_id(engine, model_id)
-            await self._download_from_hf(task_id, repo_id)
+            if engine == "sensevoice":
+                await self._download_sensevoice_from_modelscope(task_id, model_id)
+            else:
+                repo_id = self._normalize_repo_id(engine, model_id)
+                await self._download_from_hf(task_id, repo_id)
             self._update_task(task_id, status="completed", progress=1.0, message="下載完成")
         except Exception as e:
             logger.exception("模型下載失敗 task_id=%s", task_id)
@@ -167,6 +195,45 @@ class ModelDownloadManager:
         path = await asyncio.to_thread(blocking_download)
         self._update_task(task_id, progress=0.95, message=f"模型已快取至 {path}")
 
+    async def _download_sensevoice_from_modelscope(self, task_id: str, model_id: str) -> None:
+        self._update_task(task_id, progress=0.15, message="Preparing ModelScope download")
+
+        def blocking_download():
+            cache_dir = self._get_modelscope_cache_dir()
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            python_exe = self._resolve_sensevoice_download_python()
+            script = (
+                "from funasr import AutoModel\n"
+                f"AutoModel(model={model_id!r}, trust_remote_code=True, device='cpu', disable_update=True)\n"
+            )
+            env = dict(os.environ)
+            env["MODELSCOPE_CACHE"] = str(cache_dir)
+            result = subprocess.run(
+                [python_exe, "-c", script],
+                cwd=str(get_app_root()),
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=1800,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(
+                    "SenseVoice ModelScope download failed with "
+                    f"{python_exe}: {result.stderr or result.stdout}"
+                )
+            return self._get_modelscope_model_dir(model_id)
+
+        for step in (0.25, 0.45, 0.65, 0.85):
+            self._update_task(task_id, progress=step, message="Downloading from ModelScope")
+            await asyncio.sleep(0.05)
+
+        path = await asyncio.to_thread(blocking_download)
+        self._update_task(task_id, progress=0.95, message=f"SenseVoice model downloaded: {path}")
+
     def get_task(self, task_id: str) -> Optional[ModelDownloadTask]:
         with self._lock:
             task = self._tasks.get(task_id)
@@ -181,12 +248,56 @@ class ModelDownloadManager:
     def _get_hf_cache_dir(self) -> Path:
         return get_huggingface_hub_cache()
 
+    def _get_modelscope_cache_dir(self) -> Path:
+        return get_modelscope_cache()
+
+    def _get_modelscope_model_dir(self, repo_id: str) -> Path:
+        namespace, name = repo_id.split("/", 1)
+        return (self._get_modelscope_cache_dir() / "models" / namespace / name).resolve()
+
+    def _resolve_sensevoice_download_python(self) -> str:
+        app_root = get_app_root()
+        candidates = [
+            app_root / "_runtime" / "python.exe",
+            app_root / "build-runtime-cache" / "cuda-runtime" / "python.exe",
+            app_root / "build-runtime-cache" / "cpu-runtime" / "python.exe",
+            app_root / "build-runtime-cache" / "rocm-runtime" / "python.exe",
+            Path(sys.executable),
+        ]
+        for candidate in candidates:
+            if not candidate.exists():
+                continue
+            result = subprocess.run(
+                [str(candidate), "-c", "import funasr"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            )
+            if result.returncode == 0:
+                return str(candidate)
+        raise RuntimeError("No Python runtime with FunASR is available for SenseVoice download")
+
+    def _directory_size(self, path: Path) -> int:
+        size_bytes = 0
+        try:
+            for root, _, files in os.walk(path):
+                for file_name in files:
+                    fp = Path(root) / file_name
+                    try:
+                        size_bytes += fp.stat().st_size
+                    except OSError:
+                        continue
+        except OSError:
+            pass
+        return size_bytes
+
     def get_storage_info(self) -> dict:
         root = ensure_model_storage()
         default_root = (get_app_root() / "models" / "huggingface").resolve()
         return {
             "storage_path": str(root),
             "hub_cache_path": str(root / "hub"),
+            "modelscope_cache_path": str(root / "modelscope"),
             "is_default": root == default_root,
         }
 
@@ -199,9 +310,13 @@ class ModelDownloadManager:
 
     def delete_model(self, engine: str, model_id: str) -> Path:
         normalized_model_id = self._validate_model_id(engine, model_id)
-        repo_id = self._normalize_repo_id(engine, normalized_model_id)
-        cache_root = self._get_hf_cache_dir().resolve()
-        repo_dir = (cache_root / f"models--{repo_id.replace('/', '--')}").resolve()
+        if engine == "sensevoice":
+            cache_root = self._get_modelscope_cache_dir().resolve()
+            repo_dir = self._get_modelscope_model_dir(normalized_model_id)
+        else:
+            repo_id = self._normalize_repo_id(engine, normalized_model_id)
+            cache_root = self._get_hf_cache_dir().resolve()
+            repo_dir = (cache_root / f"models--{repo_id.replace('/', '--')}").resolve()
 
         try:
             repo_dir.relative_to(cache_root)
@@ -219,6 +334,19 @@ class ModelDownloadManager:
     def list_downloaded_models(self) -> List[DownloadedModelInfo]:
         """列出 HuggingFace 快取中的指定模型"""
         models: List[DownloadedModelInfo] = []
+
+        for model_id in sorted(SUPPORTED_SENSEVOICE_MODELS):
+            model_dir = self._get_modelscope_model_dir(model_id)
+            if model_dir.exists() and model_dir.is_dir():
+                models.append(
+                    DownloadedModelInfo(
+                        engine="sensevoice",
+                        model_id=model_id,
+                        repo_id=model_id,
+                        size_bytes=self._directory_size(model_dir),
+                        cache_path=str(model_dir),
+                    )
+                )
 
         # 優先使用 huggingface_hub 的 cache 掃描
         try:
@@ -240,6 +368,16 @@ class ModelDownloadManager:
                             cache_path=cache_path,
                         )
                     )
+                elif repo_id in SUPPORTED_PARAKEET_CTC_JA_MODELS:
+                    models.append(
+                        DownloadedModelInfo(
+                            engine="parakeet-ctc-ja",
+                            model_id=repo_id,
+                            repo_id=repo_id,
+                            size_bytes=size_bytes,
+                            cache_path=cache_path,
+                        )
+                    )
                 elif repo_id in FASTER_WHISPER_REPO_ID_TO_MODEL or repo_id.startswith("Systran/faster-whisper-"):
                     model_id = FASTER_WHISPER_REPO_ID_TO_MODEL.get(repo_id, repo_id.replace("Systran/faster-whisper-", ""))
                     models.append(
@@ -251,7 +389,6 @@ class ModelDownloadManager:
                             cache_path=cache_path,
                         )
                     )
-
             models.sort(key=lambda m: (m.engine, m.model_id))
             return models
         except Exception as e:
@@ -260,7 +397,7 @@ class ModelDownloadManager:
         # 回退：直接掃描資料夾名稱
         cache_dir = self._get_hf_cache_dir()
         if not cache_dir.exists():
-            return []
+            return models
 
         for item in cache_dir.iterdir():
             if not item.is_dir() or not item.name.startswith("models--"):
@@ -291,6 +428,16 @@ class ModelDownloadManager:
                         cache_path=str(item),
                     )
                 )
+            elif repo_id in SUPPORTED_PARAKEET_CTC_JA_MODELS:
+                models.append(
+                    DownloadedModelInfo(
+                        engine="parakeet-ctc-ja",
+                        model_id=repo_id,
+                        repo_id=repo_id,
+                        size_bytes=size_bytes,
+                        cache_path=str(item),
+                    )
+                )
             elif repo_id in FASTER_WHISPER_REPO_ID_TO_MODEL or repo_id.startswith("Systran/faster-whisper-"):
                 model_id = FASTER_WHISPER_REPO_ID_TO_MODEL.get(repo_id, repo_id.replace("Systran/faster-whisper-", ""))
                 models.append(
@@ -302,7 +449,6 @@ class ModelDownloadManager:
                         cache_path=str(item),
                     )
                 )
-
         models.sort(key=lambda m: (m.engine, m.model_id))
         return models
 

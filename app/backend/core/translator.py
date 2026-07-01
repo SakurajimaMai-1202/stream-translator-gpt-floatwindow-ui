@@ -48,6 +48,17 @@ def _redact_command_args(cmd: List[str]) -> List[str]:
     return redacted
 
 
+def _apply_source_pythonpath(env: Dict[str, str], cwd: str) -> None:
+    package_source = Path(cwd) / 'stream-translator-gpt'
+    if not package_source.exists():
+        return
+    current = env.get('PYTHONPATH', '')
+    parts = [str(package_source)]
+    if current:
+        parts.append(current)
+    env['PYTHONPATH'] = os.pathsep.join(parts)
+
+
 def _extract_supported_cli_args(help_text: str) -> FrozenSet[str]:
     """從 `stream_translator_gpt --help` 輸出解析可用 CLI 參數。"""
     if not help_text:
@@ -55,10 +66,28 @@ def _extract_supported_cli_args(help_text: str) -> FrozenSet[str]:
     return frozenset(re.findall(r'--([a-zA-Z0-9_]+)', help_text))
 
 
+def _resolve_profile_python(runtime_profile: str | None) -> Optional[str]:
+    profile = (runtime_profile or "").strip().lower()
+    candidates: List[Path] = []
+    if getattr(sys, 'frozen', False):
+        candidates.append(Path(sys.executable).parent / '_runtime' / 'python.exe')
+    if profile:
+        candidates.append(settings.BASE_DIR / 'build-runtime-cache' / f'{profile}-runtime' / 'python.exe')
+    env_python = os.environ.get('STREAM_TRANSLATOR_BUILD_PYTHON')
+    if env_python:
+        candidates.append(Path(env_python))
+
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
 @lru_cache(maxsize=8)
 def _get_supported_cli_args(python_exe: str, cwd: str) -> Optional[FrozenSet[str]]:
     """偵測目前 Python 執行環境中的 stream_translator_gpt 支援哪些 CLI 參數。"""
     env = apply_model_cache_environment()
+    _apply_source_pythonpath(env, cwd)
     env['PYTHONIOENCODING'] = 'utf-8'
     env['PYTHONUTF8'] = '1'
     env['PYTHONUNBUFFERED'] = '1'
@@ -144,8 +173,12 @@ class TranslationContext:
         # 檢查是否在打包環境中
         is_frozen = getattr(sys, 'frozen', False)
         cwd = str(settings.BASE_DIR.parent)
+        profile_python = _resolve_profile_python(str(self.config.get('runtime_profile') or ''))
         
-        if is_frozen:
+        if profile_python:
+            logger.info(f"Using runtime profile Python: {profile_python}")
+            cmd = [profile_python, '-m', 'stream_translator_gpt']
+        elif is_frozen:
             # 打包環境：直接使用 Python，因為 stream_translator_gpt 已包含在 exe 中
             # 我們需要找到原始的 stream-translator-gpt 安裝
             base_dir = Path(sys.executable).parent
@@ -201,7 +234,8 @@ class TranslationContext:
             'hide_transcribe_result', 'output_proxy', 'output_file_path', 'cqhttp_url',
             'cqhttp_token', 'discord_webhook_url', 'telegram_token', 'telegram_chat_id',
             'vad_backend', 'firered_vad_model_path', 'preload_asr_model', 'keep_asr_loaded',
-            'use_hf_asr', 'use_nemo_asr', 'nemo_asr_model', 'nemo_asr_device', 'nemo_asr_decoding',
+            'use_hf_asr', 'use_nemo_asr', 'nemo_asr_model', 'nemo_asr_device', 'nemo_asr_decoding', 'nemo_asr_dtype',
+            'use_sensevoice_asr', 'sensevoice_model', 'sensevoice_device',
             'qwen3_asr_model', 'qwen3_asr_dtype', 'qwen3_asr_device_map', 'qwen3_asr_max_new_tokens',
             'qwen3_asr_quantization', 'qwen3_asr_bnb_4bit_quant_type', 'qwen3_asr_bnb_4bit_use_double_quant'
         }
@@ -286,6 +320,7 @@ class TranslationContext:
             
             # 設定環境變數
             env = apply_model_cache_environment()
+            _apply_source_pythonpath(env, str(cwd))
             env['PYTHONIOENCODING'] = 'utf-8'
             env['PYTHONUTF8'] = '1'
             env['PYTHONUNBUFFERED'] = '1'
@@ -422,7 +457,7 @@ class TranslationContext:
                             if '[INFO]' in clean_line:
                                 msg = clean_line.replace('[INFO]', '').strip()
                                 # 篩選出載入與就緒相關的重要狀態日誌，並廣播給前端
-                                if any(kw in msg for kw in ['Loading', 'loaded', 'Initialization', 'quantization', 'Attention', 'device', 'VAD', 'detected', 'complete', 'context enabled']):
+                                if any(kw in msg for kw in ['Loading', 'loaded', 'Initialization', 'quantization', 'Attention', 'device', 'VAD', 'detected', 'complete', 'context enabled', 'Parakeet', 'memory']):
                                     # 簡單的英文日誌中文化映射，提升使用者體驗
                                     zh_msg = msg
                                     if 'Loading Qwen3-ASR model' in msg:

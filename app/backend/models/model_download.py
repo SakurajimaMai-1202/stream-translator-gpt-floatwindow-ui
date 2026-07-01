@@ -1,19 +1,24 @@
 from datetime import datetime
-from typing import List, Optional, Literal
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
 
+ModelEngine = Literal["qwen3-asr", "faster-whisper", "sensevoice", "parakeet-ctc-ja"]
+
+
 class StartModelDownloadRequest(BaseModel):
-    """啟動模型下載請求"""
-    engine: Literal["qwen3-asr", "faster-whisper"] = Field(..., description="模型引擎")
-    model_id: str = Field(..., description="模型識別符")
+    """Request to start a model download task."""
+
+    engine: ModelEngine = Field(..., description="Model engine")
+    model_id: str = Field(..., description="Model id")
 
 
 class ModelDownloadTask(BaseModel):
-    """模型下載任務"""
+    """Model download task state."""
+
     task_id: str
-    engine: Literal["qwen3-asr", "faster-whisper"]
+    engine: ModelEngine
     model_id: str
     status: Literal["pending", "downloading", "completed", "failed"]
     progress: float = Field(0.0, ge=0.0, le=1.0)
@@ -24,21 +29,24 @@ class ModelDownloadTask(BaseModel):
 
 
 class StartModelDownloadResponse(BaseModel):
-    """啟動模型下載回應"""
+    """Response for a started model download task."""
+
     success: bool = True
     task_id: str
     message: str
 
 
 class ModelDownloadTaskListResponse(BaseModel):
-    """模型下載任務列表回應"""
+    """List of model download tasks."""
+
     success: bool = True
     tasks: List[ModelDownloadTask]
 
 
 class DownloadedModelInfo(BaseModel):
-    """已下載模型資訊"""
-    engine: Literal["qwen3-asr", "faster-whisper"]
+    """Downloaded model metadata."""
+
+    engine: ModelEngine
     model_id: str
     repo_id: str
     size_bytes: int = 0
@@ -46,7 +54,8 @@ class DownloadedModelInfo(BaseModel):
 
 
 class DownloadedModelListResponse(BaseModel):
-    """已下載模型列表回應"""
+    """Downloaded model list response."""
+
     success: bool = True
     models: List[DownloadedModelInfo]
 
@@ -54,6 +63,7 @@ class DownloadedModelListResponse(BaseModel):
 class ModelStorageInfo(BaseModel):
     storage_path: str
     hub_cache_path: str
+    modelscope_cache_path: str = ""
     is_default: bool
 
 

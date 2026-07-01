@@ -9,6 +9,7 @@ import LlamaSettings from '../components/LlamaSettings.vue';
 import UiSelect, { type UiSelectOption } from '../components/UiSelect.vue';
 import { useTranscriptionMutex } from '../composables/useTranscriptionMutex';
 import { useAppSyncEvents } from '../composables/useAppSyncEvents';
+import type { ModelEngine } from '../services/api';
 
 const testingGpt = ref(false);
 const testingGemini = ref(false);
@@ -25,6 +26,8 @@ const llamaStore = useLlamaStore();
 
 const allQwenModels = ['Qwen/Qwen3-ASR-0.6B', 'Qwen/Qwen3-ASR-1.7B', 'neosophie/Qwen3-ASR-1.7B-JA'];
 const allFasterWhisperModels = ['tiny', 'base', 'small', 'medium', 'large-v2', 'large-v3', 'large-v3-turbo'];
+const allSenseVoiceModels = ['iic/SenseVoiceSmall'];
+const allParakeetModels = ['grider-transwithai/parakeet-ctc-1.1b-ja'];
 
 const logLevelOptions: UiSelectOption[] = [
   { value: 'DEBUG', label: 'DEBUG' },
@@ -50,6 +53,16 @@ const allQwen3AsrModelOptions: UiSelectOption[] = [
 ];
 const qwen3AsrModelOptions = computed<UiSelectOption[]>(() =>
   allQwen3AsrModelOptions.filter(option => allowedQwen3AsrModels.value.includes(String(option.value)))
+);
+const senseVoiceModelOptions = computed<UiSelectOption[]>(() =>
+  allSenseVoiceModels
+    .filter(model => allowedSenseVoiceModels.value.includes(model))
+    .map(model => ({ value: model, label: 'SenseVoiceSmall' }))
+);
+const parakeetModelOptions = computed<UiSelectOption[]>(() =>
+  allParakeetModels
+    .filter(model => allowedParakeetModels.value.includes(model))
+    .map(model => ({ value: model, label: 'Parakeet CTC 1.1B JA' }))
 );
 const qwen3DtypeOptions: UiSelectOption[] = [
   { value: 'bfloat16', label: 'BF16（建議，速度快、顯存較低）' },
@@ -137,9 +150,16 @@ const localConfig = ref<any>({
     use_simul_streaming: false,
     use_openai_transcription_api: false,
     use_qwen3_asr: false,
+    use_sensevoice_asr: false,
+    use_nemo_asr: false,
     qwen3_asr_model: 'Qwen/Qwen3-ASR-1.7B',
     qwen3_dtype: 'bfloat16',
     qwen3_load_in_4bit: false,
+    sensevoice_model: 'iic/SenseVoiceSmall',
+    nemo_asr_model: 'grider-transwithai/parakeet-ctc-1.1b-ja',
+    nemo_asr_device: 'auto',
+    nemo_asr_decoding: 'ctc',
+    nemo_asr_dtype: 'bfloat16',
     asr_corrections_enabled: false,
     asr_corrections_case_sensitive: false,
     asr_correction_rules: [],
@@ -348,7 +368,7 @@ const runtimeCapabilities = computed(() => runtimeStatus.value?.capabilities || 
 const allowedLocalAsrEngines = computed<string[]>(() =>
   runtimeCapabilities.value?.local_asr_engines?.length
     ? runtimeCapabilities.value.local_asr_engines
-    : ['faster-whisper', 'simul-streaming', 'faster-whisper-simul', 'qwen3-asr']
+    : ['faster-whisper', 'simul-streaming', 'faster-whisper-simul', 'qwen3-asr', 'sensevoice', 'parakeet-ctc-ja']
 );
 const allowedRemoteAsrEngines = computed<string[]>(() =>
   runtimeCapabilities.value?.remote_asr_engines?.length
@@ -359,6 +379,8 @@ const canUseFasterWhisper = computed(() => allowedLocalAsrEngines.value.includes
 const canUseSimulStreaming = computed(() => allowedLocalAsrEngines.value.includes('simul-streaming'));
 const canUseFasterWhisperSimul = computed(() => allowedLocalAsrEngines.value.includes('faster-whisper-simul'));
 const canUseQwen3Asr = computed(() => allowedLocalAsrEngines.value.includes('qwen3-asr'));
+const canUseSenseVoice = computed(() => allowedLocalAsrEngines.value.includes('sensevoice'));
+const canUseParakeet = computed(() => allowedLocalAsrEngines.value.includes('parakeet-ctc-ja'));
 const canUseOpenAiAsr = computed(() => allowedRemoteAsrEngines.value.includes('openai-api'));
 const allowedFasterWhisperModels = computed<string[]>(() =>
   runtimeCapabilities.value?.faster_whisper_model_ids?.length
@@ -370,11 +392,27 @@ const allowedQwen3AsrModels = computed<string[]>(() =>
     ? runtimeCapabilities.value.qwen3_asr_model_ids
     : allQwenModels
 );
+const allowedSenseVoiceModels = computed<string[]>(() =>
+  runtimeCapabilities.value?.sensevoice_model_ids?.length
+    ? runtimeCapabilities.value.sensevoice_model_ids
+    : allSenseVoiceModels
+);
+const allowedParakeetModels = computed<string[]>(() =>
+  runtimeCapabilities.value?.parakeet_model_ids?.length
+    ? runtimeCapabilities.value.parakeet_model_ids
+    : allParakeetModels
+);
 const qwenModelList = computed(() =>
   allQwenModels.filter(modelId => allowedQwen3AsrModels.value.includes(modelId))
 );
 const fasterWhisperModelList = computed(() =>
   allFasterWhisperModels.filter(modelId => allowedFasterWhisperModels.value.includes(modelId))
+);
+const senseVoiceModelList = computed(() =>
+  allSenseVoiceModels.filter(modelId => allowedSenseVoiceModels.value.includes(modelId))
+);
+const parakeetModelList = computed(() =>
+  allParakeetModels.filter(modelId => allowedParakeetModels.value.includes(modelId))
 );
 const runtimeSelection = computed(() => runtimeStatus.value?.selection || null);
 const selectedRuntimeDevice = computed(() => runtimeSelection.value?.device || null);
@@ -425,6 +463,12 @@ function coerceAsrSettingsForRuntime() {
   if (!canUseQwen3Asr.value) {
     transcription.use_qwen3_asr = false;
   }
+  if (!canUseSenseVoice.value) {
+    transcription.use_sensevoice_asr = false;
+  }
+  if (!canUseParakeet.value) {
+    transcription.use_nemo_asr = false;
+  }
   if (!canUseOpenAiAsr.value) {
     transcription.use_openai_transcription_api = false;
   }
@@ -434,14 +478,24 @@ function coerceAsrSettingsForRuntime() {
   if (!allowedQwen3AsrModels.value.includes(transcription.qwen3_asr_model)) {
     transcription.qwen3_asr_model = allowedQwen3AsrModels.value[0] || 'Qwen/Qwen3-ASR-0.6B';
   }
+  if (!allowedSenseVoiceModels.value.includes(transcription.sensevoice_model)) {
+    transcription.sensevoice_model = allowedSenseVoiceModels.value[0] || 'iic/SenseVoiceSmall';
+  }
+  if (!allowedParakeetModels.value.includes(transcription.nemo_asr_model)) {
+    transcription.nemo_asr_model = allowedParakeetModels.value[0] || 'grider-transwithai/parakeet-ctc-1.1b-ja';
+  }
   if (
     !transcription.use_faster_whisper &&
     !transcription.use_simul_streaming &&
     !transcription.use_qwen3_asr &&
+    !transcription.use_sensevoice_asr &&
+    !transcription.use_nemo_asr &&
     !transcription.use_openai_transcription_api
   ) {
     if (canUseQwen3Asr.value) {
       transcription.use_qwen3_asr = true;
+    } else if (canUseSenseVoice.value) {
+      transcription.use_sensevoice_asr = true;
     } else if (canUseFasterWhisper.value) {
       transcription.use_faster_whisper = true;
     } else if (canUseOpenAiAsr.value) {
@@ -618,11 +672,11 @@ onUnmounted(() => {
   modelDownloadStore.stopPolling();
 });
 
-function getModelTask(engine: 'qwen3-asr' | 'faster-whisper', modelId: string) {
+function getModelTask(engine: ModelEngine, modelId: string) {
   return modelDownloadStore.getTask(engine, modelId);
 }
 
-function getModelStatusText(engine: 'qwen3-asr' | 'faster-whisper', modelId: string) {
+function getModelStatusText(engine: ModelEngine, modelId: string) {
   if (modelDownloadStore.isDownloaded(engine, modelId)) return '已下載';
   const task = getModelTask(engine, modelId);
   if (!task) return '未下載';
@@ -632,7 +686,7 @@ function getModelStatusText(engine: 'qwen3-asr' | 'faster-whisper', modelId: str
   return '準備中';
 }
 
-function getModelStatusClass(engine: 'qwen3-asr' | 'faster-whisper', modelId: string) {
+function getModelStatusClass(engine: ModelEngine, modelId: string) {
   if (modelDownloadStore.isDownloaded(engine, modelId)) return 'text-green-300';
   const task = getModelTask(engine, modelId);
   if (!task) return 'text-white/50';
@@ -641,13 +695,13 @@ function getModelStatusClass(engine: 'qwen3-asr' | 'faster-whisper', modelId: st
   return 'text-blue-300';
 }
 
-function canStartDownload(engine: 'qwen3-asr' | 'faster-whisper', modelId: string) {
+function canStartDownload(engine: ModelEngine, modelId: string) {
   if (modelDownloadStore.isDownloaded(engine, modelId)) return false;
   const task = getModelTask(engine, modelId);
   return !task || (task.status !== 'pending' && task.status !== 'downloading');
 }
 
-async function startModelDownload(engine: 'qwen3-asr' | 'faster-whisper', modelId: string) {
+async function startModelDownload(engine: ModelEngine, modelId: string) {
   await modelDownloadStore.startDownload(engine, modelId);
 }
 
@@ -656,7 +710,7 @@ async function applyModelStoragePath() {
   await modelDownloadStore.refreshAll();
 }
 
-async function deleteDownloadedModel(engine: 'qwen3-asr' | 'faster-whisper', modelId: string) {
+async function deleteDownloadedModel(engine: ModelEngine, modelId: string) {
   if (!confirm(`確定要刪除模型「${modelId}」嗎？之後使用時需要重新下載。`)) return;
   await modelDownloadStore.deleteModel(engine, modelId);
 }
@@ -1238,6 +1292,8 @@ async function handleFileChange(event: Event) {
                     <div class="text-white/80">Qwen3 dtype: <span class="text-cyan-200">{{ runtimeCapabilities?.qwen3_default_dtype || '-' }}</span></div>
                     <div class="text-white/80">Qwen3 streaming: <span class="text-yellow-200">{{ runtimeCapabilities?.qwen3_streaming_status || '-' }}</span></div>
                     <div class="text-white/80">Faster-Whisper: <span class="text-cyan-200">{{ runtimeCapabilities?.faster_whisper_status || '-' }}</span></div>
+                    <div class="text-white/80">SenseVoice: <span class="text-cyan-200">{{ runtimeCapabilities?.sensevoice_status || '-' }}</span></div>
+                    <div class="text-white/80">Parakeet CTC JA: <span class="text-cyan-200">{{ runtimeCapabilities?.parakeet_status || '-' }}</span></div>
                     <div class="text-white/80">Package: <span class="text-white/70">{{ runtimeStatus?.package_suffix || '-' }}</span></div>
                   </div>
                 </div>
@@ -1307,6 +1363,26 @@ async function handleFileChange(event: Event) {
                     </p>
                   </div>
                 </label>
+
+                <label :class="['flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 transition', canUseSenseVoice ? 'cursor-pointer hover:bg-white/10' : 'opacity-45 cursor-not-allowed']">
+                  <input v-model="localConfig.transcription.use_sensevoice_asr" :disabled="!canUseSenseVoice" type="checkbox" class="w-5 h-5 accent-blue-500 mt-0.5" />
+                  <div class="flex-1">
+                    <span class="text-white font-medium">使用 SenseVoiceSmall</span>
+                    <p class="text-white/50 text-sm mt-1">
+                      多語 ASR，CPU 可用；CUDA 可加速，ROCm 先列 experimental，需 AMD 實機驗證。
+                    </p>
+                  </div>
+                </label>
+
+                <label :class="['flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 transition', canUseParakeet ? 'cursor-pointer hover:bg-white/10' : 'opacity-45 cursor-not-allowed']">
+                  <input v-model="localConfig.transcription.use_nemo_asr" :disabled="!canUseParakeet" type="checkbox" class="w-5 h-5 accent-blue-500 mt-0.5" />
+                  <div class="flex-1">
+                    <span class="text-white font-medium">Parakeet CTC JA</span>
+                    <p class="text-white/50 text-sm mt-1">
+                      CUDA experimental Japanese-only ASR. Uses NVIDIA NeMo and grider-transwithai/parakeet-ctc-1.1b-ja.
+                    </p>
+                  </div>
+                </label>
               </div>
             </div>
             
@@ -1315,7 +1391,7 @@ async function handleFileChange(event: Event) {
               <div>
                 <label class="block text-white/70 font-semibold mb-2">轉錄模型</label>
                 <!-- Whisper 模型選擇 -->
-                <UiSelect v-if="!localConfig.transcription.use_qwen3_asr && !localConfig.transcription.use_openai_transcription_api"
+                <UiSelect v-if="!localConfig.transcription.use_qwen3_asr && !localConfig.transcription.use_openai_transcription_api && !localConfig.transcription.use_sensevoice_asr && !localConfig.transcription.use_nemo_asr"
                   v-model="localConfig.transcription.model"
                   :options="whisperModelSelectOptions" />
                 <!-- OpenAI 模型選擇 -->
@@ -1324,6 +1400,12 @@ async function handleFileChange(event: Event) {
                   type="text" 
                   placeholder="whisper-1"
                   class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
+                <UiSelect v-else-if="localConfig.transcription.use_sensevoice_asr"
+                  v-model="localConfig.transcription.sensevoice_model"
+                  :options="senseVoiceModelOptions" />
+                <UiSelect v-else-if="localConfig.transcription.use_nemo_asr"
+                  v-model="localConfig.transcription.nemo_asr_model"
+                  :options="parakeetModelOptions" />
                 <!-- Qwen3-ASR 模型選擇 (下拉選單) -->
                 <UiSelect v-else-if="localConfig.transcription.use_qwen3_asr"
                   v-model="localConfig.transcription.qwen3_asr_model"
@@ -1370,7 +1452,7 @@ async function handleFileChange(event: Event) {
                 <UiSelect v-model="localConfig.transcription.language" :options="transcriptionLanguageOptions" />
               </div>
 
-              <div class="md:col-span-2" v-if="!localConfig.transcription.use_qwen3_asr">
+              <div class="md:col-span-2" v-if="!localConfig.transcription.use_qwen3_asr && !localConfig.transcription.use_nemo_asr">
                 <label class="block text-white/70 font-semibold mb-2">轉錄提示詞</label>
                 <textarea v-model="localConfig.transcription.transcription_initial_prompt" placeholder="提示詞1, 提示詞2, ..." rows="3"
                   class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400"></textarea>
@@ -1510,6 +1592,72 @@ async function handleFileChange(event: Event) {
                       />
                     </div>
                     <div class="text-xs text-white/60 mt-1">{{ getModelTask('qwen3-asr', modelId)?.message }}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="bg-white/5 rounded-xl p-5 border border-white/10">
+              <h3 class="text-lg font-semibold text-blue-300 mb-4">SenseVoice 模型</h3>
+              <div class="space-y-3">
+                <div v-for="modelId in senseVoiceModelList" :key="`sensevoice-${modelId}`" class="p-4 rounded-lg bg-white/5 border border-white/10">
+                  <div class="flex items-center justify-between gap-4">
+                    <div>
+                      <div class="text-white font-semibold">{{ modelId }}</div>
+                      <div class="text-white/50 text-xs mt-1">CPU capable; ROCm remains experimental until AMD validation.</div>
+                      <div :class="['text-sm mt-1', getModelStatusClass('sensevoice', modelId)]">
+                        {{ getModelStatusText('sensevoice', modelId) }}
+                      </div>
+                    </div>
+                    <button
+                      @click="startModelDownload('sensevoice', modelId)"
+                      :disabled="!canStartDownload('sensevoice', modelId)"
+                      class="px-4 py-2 rounded-lg font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed bg-blue-600 hover:bg-blue-700 text-white"
+                    >
+                      {{ modelDownloadStore.isDownloaded('sensevoice', modelId) ? '已下載' : '預下載' }}
+                    </button>
+                  </div>
+                  <div v-if="getModelTask('sensevoice', modelId) && ['pending', 'downloading'].includes(getModelTask('sensevoice', modelId)!.status)" class="mt-3">
+                    <div class="h-2 bg-white/10 rounded-full overflow-hidden">
+                      <div
+                        class="h-full bg-gradient-to-r from-blue-500 to-cyan-400 transition-all"
+                        :style="{ width: `${Math.max(5, (getModelTask('sensevoice', modelId)?.progress || 0) * 100)}%` }"
+                      />
+                    </div>
+                    <div class="text-xs text-white/60 mt-1">{{ getModelTask('sensevoice', modelId)?.message }}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div v-if="parakeetModelList.length > 0" class="bg-white/5 rounded-xl p-5 border border-white/10">
+              <h3 class="text-lg font-semibold text-blue-300 mb-4">Parakeet CTC JA 模型</h3>
+              <div class="space-y-3">
+                <div v-for="modelId in parakeetModelList" :key="`parakeet-${modelId}`" class="p-4 rounded-lg bg-white/5 border border-white/10">
+                  <div class="flex items-center justify-between gap-4">
+                    <div>
+                      <div class="text-white font-semibold">{{ modelId }}</div>
+                      <div class="text-white/50 text-xs mt-1">CUDA experimental; Japanese-only; requires NVIDIA NeMo.</div>
+                      <div :class="['text-sm mt-1', getModelStatusClass('parakeet-ctc-ja', modelId)]">
+                        {{ getModelStatusText('parakeet-ctc-ja', modelId) }}
+                      </div>
+                    </div>
+                    <button
+                      @click="startModelDownload('parakeet-ctc-ja', modelId)"
+                      :disabled="!canStartDownload('parakeet-ctc-ja', modelId)"
+                      class="px-4 py-2 rounded-lg font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed bg-blue-600 hover:bg-blue-700 text-white"
+                    >
+                      {{ modelDownloadStore.isDownloaded('parakeet-ctc-ja', modelId) ? '已下載' : '預下載' }}
+                    </button>
+                  </div>
+                  <div v-if="getModelTask('parakeet-ctc-ja', modelId) && ['pending', 'downloading'].includes(getModelTask('parakeet-ctc-ja', modelId)!.status)" class="mt-3">
+                    <div class="h-2 bg-white/10 rounded-full overflow-hidden">
+                      <div
+                        class="h-full bg-gradient-to-r from-blue-500 to-cyan-400 transition-all"
+                        :style="{ width: `${Math.max(5, (getModelTask('parakeet-ctc-ja', modelId)?.progress || 0) * 100)}%` }"
+                      />
+                    </div>
+                    <div class="text-xs text-white/60 mt-1">{{ getModelTask('parakeet-ctc-ja', modelId)?.message }}</div>
                   </div>
                 </div>
               </div>

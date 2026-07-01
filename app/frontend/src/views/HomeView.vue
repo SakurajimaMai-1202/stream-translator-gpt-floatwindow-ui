@@ -184,6 +184,9 @@ const inputLanguages = [
   { value: 'zh-tw', label: '繁體中文' },
   { value: 'zh-cn', label: '簡體中文' }
 ];
+const parakeetModels = [
+  { value: 'grider-transwithai/parakeet-ctc-1.1b-ja', label: 'Parakeet CTC 1.1B JA' }
+];
 const outputLanguages = [
   { value: 'Traditional Chinese', label: '繁體中文' },
   { value: 'Simplified Chinese', label: '簡體中文' },
@@ -211,6 +214,8 @@ const allTranscriptionEngineOptions: UiSelectOption[] = [
   { value: 'simul-streaming', label: 'SimulStreaming', group: '本機 ASR' },
   { value: 'faster-whisper-simul', label: 'Faster-Whisper + SimulStreaming', group: '本機 ASR' },
   { value: 'qwen3-asr', label: 'Qwen3-ASR', group: '本機 ASR' },
+  { value: 'sensevoice', label: 'SenseVoiceSmall', group: '本機 ASR' },
+  { value: 'parakeet-ctc-ja', label: 'Parakeet CTC JA', group: '本機 ASR' },
   { value: 'openai-api', label: 'OpenAI API', group: '遠端 ASR' }
 ];
 
@@ -223,6 +228,14 @@ const whisperModelOptions = computed<UiSelectOption[]>(() =>
 const qwen3AsrModelOptions = computed<UiSelectOption[]>(() =>
   qwen3AsrModels
     .filter((model) => allowedQwen3AsrModels.value.includes(model.value))
+    .map((model) => ({ value: model.value, label: model.label }))
+);
+const senseVoiceModelOptions: UiSelectOption[] = [
+  { value: 'iic/SenseVoiceSmall', label: 'SenseVoiceSmall' }
+];
+const parakeetModelOptions = computed<UiSelectOption[]>(() =>
+  parakeetModels
+    .filter((model) => allowedParakeetModels.value.includes(model.value))
     .map((model) => ({ value: model.value, label: model.label }))
 );
 
@@ -276,6 +289,8 @@ const llamaPresetOptions = computed<UiSelectOption[]>(() => {
 const selectedTranscriptionEngine = ref('faster-whisper');  // 🆕 新增: 轉錄引擎選擇
 const selectedWhisperModel = ref('base');
 const selectedQwen3AsrModel = ref('Qwen/Qwen3-ASR-1.7B');  // 🆕 新增: Qwen3-ASR 模型
+const selectedSenseVoiceModel = ref('iic/SenseVoiceSmall');
+const selectedParakeetModel = ref('grider-transwithai/parakeet-ctc-1.1b-ja');
 const selectedInputLanguage = ref('auto');
 const selectedOutputLanguage = ref('Traditional Chinese');
 const selectedBackend = ref('gpt');
@@ -286,7 +301,7 @@ const runtimeCapabilities = computed(() => store.runtimeStatus?.capabilities || 
 const allowedLocalAsrEngines = computed<string[]>(() =>
   runtimeCapabilities.value?.local_asr_engines?.length
     ? runtimeCapabilities.value.local_asr_engines
-    : ['faster-whisper', 'simul-streaming', 'faster-whisper-simul', 'qwen3-asr']
+    : ['faster-whisper', 'simul-streaming', 'faster-whisper-simul', 'qwen3-asr', 'sensevoice', 'parakeet-ctc-ja']
 );
 const allowedRemoteAsrEngines = computed<string[]>(() =>
   runtimeCapabilities.value?.remote_asr_engines?.length
@@ -312,6 +327,16 @@ const allowedQwen3AsrModels = computed<string[]>(() =>
     ? runtimeCapabilities.value.qwen3_asr_model_ids
     : qwen3AsrModels.map((model) => model.value)
 );
+const allowedSenseVoiceModels = computed<string[]>(() =>
+  runtimeCapabilities.value?.sensevoice_model_ids?.length
+    ? runtimeCapabilities.value.sensevoice_model_ids
+    : ['iic/SenseVoiceSmall']
+);
+const allowedParakeetModels = computed<string[]>(() =>
+  runtimeCapabilities.value?.parakeet_model_ids?.length
+    ? runtimeCapabilities.value.parakeet_model_ids
+    : parakeetModels.map((model) => model.value)
+);
 
 function coerceRuntimeLimitedSelections() {
   if (!allowedTranscriptionEngines.value.includes(selectedTranscriptionEngine.value)) {
@@ -325,6 +350,12 @@ function coerceRuntimeLimitedSelections() {
   if (!allowedQwen3AsrModels.value.includes(selectedQwen3AsrModel.value)) {
     selectedQwen3AsrModel.value = allowedQwen3AsrModels.value[0] || 'Qwen/Qwen3-ASR-0.6B';
   }
+  if (!allowedSenseVoiceModels.value.includes(selectedSenseVoiceModel.value)) {
+    selectedSenseVoiceModel.value = allowedSenseVoiceModels.value[0] || 'iic/SenseVoiceSmall';
+  }
+  if (!allowedParakeetModels.value.includes(selectedParakeetModel.value)) {
+    selectedParakeetModel.value = allowedParakeetModels.value[0] || 'grider-transwithai/parakeet-ctc-1.1b-ja';
+  }
 }
 
 let _homeAutoSaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -335,6 +366,8 @@ const lastAppliedHomeConfigSnapshot = ref('');
 
 function getTranscriptionEngineFromConfig(cfg: Config): string {
   if (cfg.transcription?.use_qwen3_asr) return 'qwen3-asr';
+  if (cfg.transcription?.use_sensevoice_asr) return 'sensevoice';
+  if (cfg.transcription?.use_nemo_asr) return 'parakeet-ctc-ja';
   if (cfg.transcription?.use_openai_transcription_api) return 'openai-api';
   if (cfg.transcription?.use_faster_whisper && cfg.transcription?.use_simul_streaming) return 'faster-whisper-simul';
   if (cfg.transcription?.use_simul_streaming) return 'simul-streaming';
@@ -358,6 +391,8 @@ function buildHomeConfigSnapshotFromConfig(cfg: Config): string {
     selectedTranscriptionEngine: getTranscriptionEngineFromConfig(cfg),
     selectedWhisperModel: cfg.transcription?.model || 'base',
     selectedQwen3AsrModel: cfg.transcription?.qwen3_asr_model || 'Qwen/Qwen3-ASR-1.7B',
+    selectedSenseVoiceModel: cfg.transcription?.sensevoice_model || 'iic/SenseVoiceSmall',
+    selectedParakeetModel: cfg.transcription?.nemo_asr_model || 'grider-transwithai/parakeet-ctc-1.1b-ja',
     selectedInputLanguage: normalizeInputLanguage(cfg.transcription?.language),
     selectedOutputLanguage: cfg.translation?.target_language || 'Traditional Chinese',
     selectedBackend: cfg.translation?.backend || 'gpt',
@@ -375,6 +410,8 @@ function buildHomeConfigSnapshotFromRefs(): string {
     selectedTranscriptionEngine: selectedTranscriptionEngine.value,
     selectedWhisperModel: selectedWhisperModel.value,
     selectedQwen3AsrModel: selectedQwen3AsrModel.value,
+    selectedSenseVoiceModel: selectedSenseVoiceModel.value,
+    selectedParakeetModel: selectedParakeetModel.value,
     selectedInputLanguage: selectedInputLanguage.value,
     selectedOutputLanguage: selectedOutputLanguage.value,
     selectedBackend: selectedBackend.value,
@@ -392,8 +429,14 @@ async function saveHomeConfigToBackend() {
       ...store.config.transcription,
       model: selectedWhisperModel.value,
       qwen3_asr_model: selectedQwen3AsrModel.value,
+      sensevoice_model: selectedSenseVoiceModel.value,
+      nemo_asr_model: selectedParakeetModel.value,
+      nemo_asr_dtype: store.config.transcription?.nemo_asr_dtype || 'bfloat16',
       language: selectedInputLanguage.value,
+      backend: engine,
       use_qwen3_asr: engine === 'qwen3-asr',
+      use_sensevoice_asr: engine === 'sensevoice',
+      use_nemo_asr: engine === 'parakeet-ctc-ja',
       use_openai_transcription_api: engine === 'openai-api',
       use_faster_whisper: engine === 'faster-whisper' || engine === 'faster-whisper-simul',
       use_simul_streaming: engine === 'faster-whisper-simul' || engine === 'simul-streaming',
@@ -559,6 +602,8 @@ async function applyConfigToRefs(cfg: Config) {
     selectedDeviceIndex.value = cfg.input?.device_index ?? null;
     selectedWhisperModel.value = cfg.transcription?.model || 'base';
     selectedQwen3AsrModel.value = cfg.transcription?.qwen3_asr_model || 'Qwen/Qwen3-ASR-1.7B';
+    selectedSenseVoiceModel.value = cfg.transcription?.sensevoice_model || 'iic/SenseVoiceSmall';
+    selectedParakeetModel.value = cfg.transcription?.nemo_asr_model || 'grider-transwithai/parakeet-ctc-1.1b-ja';
     selectedTranscriptionEngine.value = getTranscriptionEngineFromConfig(cfg);
     coerceRuntimeLimitedSelections();
     selectedInputLanguage.value = normalizeInputLanguage(cfg.transcription?.language);
@@ -697,6 +742,8 @@ onMounted(async () => {
       selectedTranscriptionEngine,
       selectedWhisperModel,
       selectedQwen3AsrModel,
+      selectedSenseVoiceModel,
+      selectedParakeetModel,
       selectedInputLanguage,
       selectedOutputLanguage,
       selectedBackend,
@@ -769,7 +816,7 @@ async function handleStart() {
     addLog(`設備: ${selectedDeviceIndex.value === null ? '自動選擇' : selectedDeviceIndex.value}`);
   }
   addLog(`轉錄引擎: ${selectedTranscriptionEngine.value}`);
-  addLog(`模型: ${selectedTranscriptionEngine.value === 'qwen3-asr' ? selectedQwen3AsrModel.value : selectedWhisperModel.value}`);
+  addLog(`模型: ${selectedTranscriptionEngine.value === 'qwen3-asr' ? selectedQwen3AsrModel.value : selectedTranscriptionEngine.value === 'sensevoice' ? selectedSenseVoiceModel.value : selectedWhisperModel.value}`);
   addLog(`輸入語言: ${selectedInputLanguage.value}`);
   addLog(`翻譯後端: ${selectedBackend.value}`);
   addLog(`目標語言: ${selectedOutputLanguage.value}`);
@@ -784,10 +831,20 @@ async function handleStart() {
         : undefined,
       model: selectedTranscriptionEngine.value === 'qwen3-asr'
         ? selectedQwen3AsrModel.value
-        : selectedWhisperModel.value,
+        : selectedTranscriptionEngine.value === 'sensevoice'
+          ? selectedSenseVoiceModel.value
+          : selectedTranscriptionEngine.value === 'parakeet-ctc-ja'
+            ? selectedParakeetModel.value
+            : selectedWhisperModel.value,
       transcription_engine: selectedTranscriptionEngine.value,
       qwen3_asr_model: selectedTranscriptionEngine.value === 'qwen3-asr'
         ? selectedQwen3AsrModel.value : undefined,
+      sensevoice_model: selectedTranscriptionEngine.value === 'sensevoice'
+        ? selectedSenseVoiceModel.value : undefined,
+      nemo_asr_model: selectedTranscriptionEngine.value === 'parakeet-ctc-ja'
+        ? selectedParakeetModel.value : undefined,
+      nemo_asr_dtype: selectedTranscriptionEngine.value === 'parakeet-ctc-ja'
+        ? (store.config.transcription?.nemo_asr_dtype || 'bfloat16') : undefined,
       qwen3_flash_attention: selectedTranscriptionEngine.value === 'qwen3-asr' 
         ? store.config.transcription?.qwen3_flash_attention : undefined,
       qwen3_dtype: selectedTranscriptionEngine.value === 'qwen3-asr' 
@@ -1139,6 +1196,20 @@ function clearLogs() {
                       v-else-if="selectedTranscriptionEngine === 'qwen3-asr'"
                       v-model="selectedQwen3AsrModel"
                       :options="qwen3AsrModelOptions"
+                      :disabled="store.isRunning"
+                      button-class="bg-white/5 border border-white/10 text-[10px] rounded-lg"
+                    />
+                    <UiSelect
+                      v-else-if="selectedTranscriptionEngine === 'sensevoice'"
+                      v-model="selectedSenseVoiceModel"
+                      :options="senseVoiceModelOptions"
+                      :disabled="store.isRunning"
+                      button-class="bg-white/5 border border-white/10 text-[10px] rounded-lg"
+                    />
+                    <UiSelect
+                      v-else-if="selectedTranscriptionEngine === 'parakeet-ctc-ja'"
+                      v-model="selectedParakeetModel"
+                      :options="parakeetModelOptions"
                       :disabled="store.isRunning"
                       button-class="bg-white/5 border border-white/10 text-[10px] rounded-lg"
                     />

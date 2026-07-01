@@ -6,7 +6,11 @@ import re
 import time
 import logging
 import contextlib
+import tempfile
+import gc
 from abc import abstractmethod
+from pathlib import Path
+from typing import Any
 from scipy.io.wavfile import write as write_audio
 
 import numpy as np
@@ -360,13 +364,316 @@ class HFTranscriber(AudioTranscriber):
 
 class NemoASRTranscriber(AudioTranscriber):
 
-    def __init__(self, *args, **kwargs) -> None:
-        raise ImportError(
-            "Nvidia NeMo Parakeet ASR is not supported in this build to prevent heavy and unstable Python dependencies on Windows."
+    DEFAULT_MODEL = "grider-transwithai/parakeet-ctc-1.1b-ja"
+    DEFAULT_HF_FILENAME = "parakeet-ja.nemo"
+
+    def __init__(self, model: str = DEFAULT_MODEL, language: str = 'ja',
+                 device: str = 'auto', decoding: str = 'ctc', dtype: str = 'bfloat16',
+                 runtime_profile: str = 'cuda', proxy: str = None, **kwargs) -> None:
+        super().__init__(**kwargs)
+        if str(runtime_profile or 'cuda').lower() != 'cuda':
+            raise RuntimeError('Parakeet CTC JA is only enabled for the CUDA runtime profile.')
+        if decoding and str(decoding).lower() != 'ctc':
+            raise ValueError('Parakeet CTC JA supports only CTC decoding in this build.')
+        self.language = self._normalize_language(language)
+        self.model_id = model or self.DEFAULT_MODEL
+        if proxy:
+            _apply_hf_proxy(proxy)
+
+        os.environ.setdefault('MPLCONFIGDIR', str(Path(tempfile.gettempdir()) / 'stream-translator-matplotlib'))
+        try:
+            import torch
+            from nemo.collections.asr.models import ASRModel
+        except ImportError as exc:
+            raise ImportError(
+                'Parakeet CTC JA support requires NVIDIA NeMo. Install the CUDA Parakeet extra before using '
+                '--use_nemo_asr, for example: pip install -r app/requirements_cuda_parakeet.txt'
+            ) from exc
+
+        self.device = self._resolve_device(torch, device)
+        self.dtype_name, self.torch_dtype = self._resolve_dtype(torch, dtype, self.device)
+        model_path = self._resolve_nemo_model_path(self.model_id)
+        if model_path:
+            self.model = self._quiet_call(ASRModel.restore_from, restore_path=str(model_path), map_location=self.device)
+        else:
+            self.model = self._quiet_call(ASRModel.from_pretrained, model_name=self.model_id, map_location=self.device)
+        if self.torch_dtype is not None:
+            self.model = self.model.to(device=self.device, dtype=self.torch_dtype)
+        else:
+            self.model = self.model.to(self.device)
+        self.model.eval()
+        gc.collect()
+        torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats()
+        print(f'{INFO}Parakeet CTC JA model loaded: {self.model_id} on {self.device} dtype={self.dtype_name}')
+        self._print_memory_diagnostics(torch)
+
+    def transcribe(self, audio: np.array, initial_prompt: str = None) -> tuple[str, list | None]:
+        wav_path = self._write_temp_wav(audio)
+        try:
+            result = self._transcribe_file(wav_path)
+        finally:
+            try:
+                wav_path.unlink()
+            except OSError:
+                pass
+        return self._extract_text(result), None
+
+    def _transcribe_file(self, wav_path: Path):
+        if self.torch_dtype is None:
+            return self._quiet_call(
+                self.model.transcribe,
+                [str(wav_path)],
+                batch_size=1,
+                return_hypotheses=False,
+            )
+
+        import torch
+
+        with torch.inference_mode(), torch.autocast(device_type='cuda', dtype=self.torch_dtype):
+            return self._quiet_call(
+                self.model.transcribe,
+                [str(wav_path)],
+                batch_size=1,
+                return_hypotheses=False,
+            )
+
+    @staticmethod
+    def _normalize_language(language: str | None) -> str:
+        normalized = str(language or 'ja').strip().lower()
+        if normalized in {'', 'auto', 'ja', 'japanese'}:
+            return 'ja'
+        raise ValueError('Parakeet CTC JA is a Japanese-only ASR model. Set input language to Japanese or auto.')
+
+    @staticmethod
+    def _resolve_device(torch_module: Any, device: str | None) -> str:
+        requested = str(device or 'auto').strip().lower()
+        if requested in {'auto', ''}:
+            if torch_module.cuda.is_available():
+                return 'cuda:0'
+            raise RuntimeError('Parakeet CTC JA requires an available CUDA GPU.')
+        if requested == 'cuda':
+            requested = 'cuda:0'
+        if not requested.startswith('cuda'):
+            raise RuntimeError('Parakeet CTC JA requires a CUDA device.')
+        if not torch_module.cuda.is_available():
+            raise RuntimeError('Parakeet CTC JA requires an available CUDA GPU.')
+        return requested
+
+    @staticmethod
+    def _resolve_dtype(torch_module: Any, dtype: str | None, device: str) -> tuple[str, Any | None]:
+        requested = str(dtype or 'bfloat16').strip().lower()
+        aliases = {
+            'auto': 'bfloat16',
+            'bf16': 'bfloat16',
+            'fp16': 'float16',
+            'half': 'float16',
+            'fp32': 'float32',
+            'full': 'float32',
+            'none': 'float32',
+        }
+        requested = aliases.get(requested, requested)
+        if requested in {'float32', '32'}:
+            return 'float32', None
+        if requested == 'bfloat16':
+            is_supported = getattr(torch_module.cuda, 'is_bf16_supported', lambda: False)
+            if callable(is_supported) and is_supported():
+                return 'bfloat16', torch_module.bfloat16
+            print(f'{WARNING}Parakeet CTC JA requested bfloat16, but this CUDA device does not report BF16 support; falling back to float16.')
+            return 'float16', torch_module.float16
+        if requested in {'float16', '16'}:
+            return 'float16', torch_module.float16
+        raise ValueError('Parakeet CTC JA dtype must be auto, bfloat16, float16, or float32.')
+
+    @classmethod
+    def _resolve_nemo_model_path(cls, model_id: str) -> Path | None:
+        path = Path(str(model_id)).expanduser()
+        if path.suffix.lower() == '.nemo':
+            if not path.exists():
+                raise FileNotFoundError(f'Parakeet CTC JA .nemo file not found: {path}')
+            return path
+        if model_id == cls.DEFAULT_MODEL:
+            try:
+                from huggingface_hub import hf_hub_download
+            except ImportError as exc:
+                raise ImportError('Parakeet CTC JA HuggingFace download requires huggingface_hub.') from exc
+            return Path(hf_hub_download(repo_id=model_id, filename=cls.DEFAULT_HF_FILENAME))
+        return None
+
+    def _print_memory_diagnostics(self, torch_module: Any) -> None:
+        try:
+            dtype_counts: dict[str, int] = {}
+            dtype_bytes: dict[str, int] = {}
+            buffer_counts: dict[str, int] = {}
+            buffer_bytes: dict[str, int] = {}
+            total_params = 0
+            for param in self.model.parameters():
+                count = int(param.numel())
+                dtype = str(param.dtype).replace('torch.', '')
+                dtype_counts[dtype] = dtype_counts.get(dtype, 0) + count
+                dtype_bytes[dtype] = dtype_bytes.get(dtype, 0) + count * int(param.element_size())
+                total_params += count
+            total_buffers = 0
+            for buffer in self.model.buffers():
+                count = int(buffer.numel())
+                dtype = str(buffer.dtype).replace('torch.', '')
+                buffer_counts[dtype] = buffer_counts.get(dtype, 0) + count
+                buffer_bytes[dtype] = buffer_bytes.get(dtype, 0) + count * int(buffer.element_size())
+                total_buffers += count
+            dtype_summary = ', '.join(
+                f'{dtype}:{count / 1_000_000_000:.3f}B/{dtype_bytes[dtype] / (1024 ** 3):.2f}GiB'
+                for dtype, count in sorted(dtype_counts.items())
+            )
+            buffer_summary = ', '.join(
+                f'{dtype}:{count / 1_000_000_000:.3f}B/{buffer_bytes[dtype] / (1024 ** 3):.2f}GiB'
+                for dtype, count in sorted(buffer_counts.items())
+            ) or 'none'
+            allocated = torch_module.cuda.memory_allocated() / (1024 ** 3)
+            reserved = torch_module.cuda.memory_reserved() / (1024 ** 3)
+            max_allocated = torch_module.cuda.max_memory_allocated() / (1024 ** 3)
+            print(
+                f'{INFO}Parakeet CTC JA memory: params={total_params / 1_000_000_000:.3f}B '
+                f'[{dtype_summary}], buffers={total_buffers / 1_000_000_000:.3f}B [{buffer_summary}], cuda_allocated={allocated:.2f}GiB, '
+                f'cuda_reserved={reserved:.2f}GiB, cuda_max_allocated={max_allocated:.2f}GiB'
+            )
+        except Exception as exc:
+            print(f'{WARNING}Parakeet CTC JA memory diagnostics failed: {exc}')
+
+    @staticmethod
+    def _write_temp_wav(audio: np.array) -> Path:
+        samples = np.asarray(audio, dtype=np.float32)
+        samples = np.nan_to_num(samples, nan=0.0, posinf=0.0, neginf=0.0)
+        samples = np.clip(samples, -1.0, 1.0)
+        pcm = (samples * 32767.0).astype(np.int16)
+        tmp = tempfile.NamedTemporaryFile(prefix='parakeet-ctc-ja-', suffix='.wav', delete=False)
+        tmp_path = Path(tmp.name)
+        tmp.close()
+        write_audio(str(tmp_path), SAMPLE_RATE, pcm)
+        return tmp_path
+
+    @classmethod
+    def _extract_text(cls, result: Any) -> str:
+        if isinstance(result, list):
+            if not result:
+                return ''
+            return cls._extract_text(result[0])
+        if isinstance(result, tuple):
+            return cls._extract_text(result[0] if result else '')
+        if hasattr(result, 'text'):
+            return str(result.text or '').strip()
+        return str(result or '').strip()
+
+    @staticmethod
+    def _quiet_call(func, *args, **kwargs):
+        stdout_buffer = io.StringIO()
+        stderr_buffer = io.StringIO()
+        previous_disable_level = logging.root.manager.disable
+        logging.disable(logging.CRITICAL)
+        try:
+            with contextlib.redirect_stdout(stdout_buffer), contextlib.redirect_stderr(stderr_buffer):
+                return func(*args, **kwargs)
+        finally:
+            logging.disable(previous_disable_level)
+
+
+class SenseVoiceTranscriber(AudioTranscriber):
+
+    TAG_RE = re.compile(r"<\|[^|>]+?\|>")
+
+    def __init__(self, model: str = 'iic/SenseVoiceSmall', language: str = 'auto',
+                 device: str = 'cpu', proxy: str = None, **kwargs) -> None:
+        super().__init__(**kwargs)
+        if proxy:
+            _apply_hf_proxy(proxy)
+        try:
+            from funasr import AutoModel
+        except ImportError as exc:
+            raise ImportError(
+                'SenseVoice support requires FunASR. Install the SenseVoice runtime extra before using --use_sensevoice_asr.'
+            ) from exc
+
+        self.language = self._normalize_language(language)
+        self.device = device or 'cpu'
+        self.model_id = model or 'iic/SenseVoiceSmall'
+        self.model = self._quiet_call(
+            AutoModel,
+            model=self.model_id,
+            trust_remote_code=True,
+            device=self.device,
+            disable_update=True,
         )
 
     def transcribe(self, audio: np.array, initial_prompt: str = None) -> tuple[str, list | None]:
-        return "", None
+        wav_path = self._write_temp_wav(audio)
+        try:
+            result = self._quiet_call(
+                self.model.generate,
+                input=str(wav_path),
+                cache={},
+                language=self.language,
+                use_itn=True,
+                batch_size_s=60,
+                merge_vad=True,
+                merge_length_s=15,
+            )
+        finally:
+            try:
+                wav_path.unlink()
+            except OSError:
+                pass
+
+        return self._extract_text(result), None
+
+    @classmethod
+    def _write_temp_wav(cls, audio: np.array) -> Path:
+        samples = np.asarray(audio, dtype=np.float32)
+        samples = np.nan_to_num(samples, nan=0.0, posinf=0.0, neginf=0.0)
+        samples = np.clip(samples, -1.0, 1.0)
+        pcm = (samples * 32767.0).astype(np.int16)
+        tmp = tempfile.NamedTemporaryFile(prefix='sensevoice-', suffix='.wav', delete=False)
+        tmp_path = Path(tmp.name)
+        tmp.close()
+        write_audio(str(tmp_path), SAMPLE_RATE, pcm)
+        return tmp_path
+
+    @classmethod
+    def _extract_text(cls, result: Any) -> str:
+        if isinstance(result, list):
+            return cls._clean_text(' '.join(cls._extract_text(item) for item in result))
+        if isinstance(result, dict):
+            return cls._clean_text(str(result.get('text') or result.get('sentence') or ''))
+        return cls._clean_text(str(result or ''))
+
+    @classmethod
+    def _clean_text(cls, text: str) -> str:
+        return cls.TAG_RE.sub('', text).strip()
+
+    @staticmethod
+    def _quiet_call(func, *args, **kwargs):
+        stdout_buffer = io.StringIO()
+        stderr_buffer = io.StringIO()
+        previous_disable_level = logging.root.manager.disable
+        logging.disable(logging.CRITICAL)
+        try:
+            with contextlib.redirect_stdout(stdout_buffer), contextlib.redirect_stderr(stderr_buffer):
+                return func(*args, **kwargs)
+        finally:
+            logging.disable(previous_disable_level)
+
+    @staticmethod
+    def _normalize_language(language: str | None) -> str:
+        normalized = str(language or 'auto').strip().lower()
+        if normalized in {'', 'auto'}:
+            return 'auto'
+        if normalized in {'zh', 'zh-tw', 'zh-hant', 'zh-cn', 'zh-hans', 'chinese'}:
+            return 'zh'
+        if normalized in {'ja', 'japanese'}:
+            return 'ja'
+        if normalized in {'en', 'english'}:
+            return 'en'
+        if normalized in {'ko', 'korean'}:
+            return 'ko'
+        return normalized
 
 
 def _load_qwen3_asr_model_class():

@@ -5,6 +5,8 @@ interface TranscriptionConfig {
   use_simul_streaming?: boolean;
   use_openai_transcription_api?: boolean;
   use_qwen3_asr?: boolean;
+  use_sensevoice_asr?: boolean;
+  use_nemo_asr?: boolean;
 }
 
 /**
@@ -27,6 +29,8 @@ export function useTranscriptionMutex(getTranscription: () => TranscriptionConfi
           cfg.use_faster_whisper = false;
           cfg.use_simul_streaming = false;
           cfg.use_qwen3_asr = false;
+          cfg.use_sensevoice_asr = false;
+          cfg.use_nemo_asr = false;
           return;
         }
 
@@ -34,12 +38,34 @@ export function useTranscriptionMutex(getTranscription: () => TranscriptionConfi
           cfg.use_faster_whisper = false;
           cfg.use_simul_streaming = false;
           cfg.use_openai_transcription_api = false;
+          cfg.use_sensevoice_asr = false;
+          cfg.use_nemo_asr = false;
+          return;
+        }
+
+        if (cfg.use_sensevoice_asr) {
+          cfg.use_faster_whisper = false;
+          cfg.use_simul_streaming = false;
+          cfg.use_openai_transcription_api = false;
+          cfg.use_qwen3_asr = false;
+          cfg.use_nemo_asr = false;
+          return;
+        }
+
+        if (cfg.use_nemo_asr) {
+          cfg.use_faster_whisper = false;
+          cfg.use_simul_streaming = false;
+          cfg.use_openai_transcription_api = false;
+          cfg.use_qwen3_asr = false;
+          cfg.use_sensevoice_asr = false;
           return;
         }
 
         if (cfg.use_faster_whisper || cfg.use_simul_streaming) {
           cfg.use_openai_transcription_api = false;
           cfg.use_qwen3_asr = false;
+          cfg.use_sensevoice_asr = false;
+          cfg.use_nemo_asr = false;
         }
       } finally {
         isApplying = false;

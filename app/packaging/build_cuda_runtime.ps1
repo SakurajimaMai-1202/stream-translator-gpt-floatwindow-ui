@@ -54,7 +54,13 @@ if ($Profile -eq "cpu" -and ($sourceRuntime.cuda -or $sourceRuntime.hip)) {
 
 $requirementsHash = (Get-FileHash -Path (Join-Path $scriptDir "requirements.txt") -Algorithm SHA256).Hash
 $fullRequirementsHash = (Get-FileHash -Path (Join-Path $scriptDir "requirements_full.txt") -Algorithm SHA256).Hash
-$fingerprintSource = "runtime-schema=2`n" + $Profile + "`n" + $requirementsHash + "`n" + $fullRequirementsHash + "`n" + ($sourceRuntimeJson | Out-String)
+$parakeetRequirementsPath = Join-Path $scriptDir "requirements_cuda_parakeet.txt"
+$parakeetRequirementsHash = if (Test-Path $parakeetRequirementsPath) {
+    (Get-FileHash -Path $parakeetRequirementsPath -Algorithm SHA256).Hash
+} else {
+    ""
+}
+$fingerprintSource = "runtime-schema=2`n" + $Profile + "`n" + $requirementsHash + "`n" + $fullRequirementsHash + "`n" + $parakeetRequirementsHash + "`n" + ($sourceRuntimeJson | Out-String)
 $fingerprintBytes = [Text.Encoding]::UTF8.GetBytes($fingerprintSource)
 $fingerprintStream = [IO.MemoryStream]::new($fingerprintBytes)
 $fingerprint = (Get-FileHash -InputStream $fingerprintStream -Algorithm SHA256).Hash
@@ -140,9 +146,11 @@ import sys
 import torch
 
 profile = '$Profile'
-required = ['qwen_asr']
+required = ['qwen_asr', 'funasr', 'torchaudio']
 if profile in ('cuda', 'cpu'):
     required.extend(['faster_whisper', 'whisper', 'omnivad'])
+if profile == 'cuda':
+    required.append('nemo.collections.asr.models')
 
 for name in required:
     importlib.import_module(name)

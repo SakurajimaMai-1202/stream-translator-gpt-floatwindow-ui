@@ -41,9 +41,14 @@ def get_huggingface_hub_cache() -> Path:
     return get_model_storage_root() / "hub"
 
 
+def get_modelscope_cache() -> Path:
+    return get_model_storage_root() / "modelscope"
+
+
 def ensure_model_storage() -> Path:
     root = get_model_storage_root()
     (root / "hub").mkdir(parents=True, exist_ok=True)
+    (root / "modelscope").mkdir(parents=True, exist_ok=True)
     return root
 
 
@@ -53,4 +58,5 @@ def apply_model_cache_environment(env: Mapping[str, str] | None = None) -> dict[
     result["HF_HOME"] = str(root)
     result["HUGGINGFACE_HUB_CACHE"] = str(root / "hub")
     result["TRANSFORMERS_CACHE"] = str(root / "hub")
+    result["MODELSCOPE_CACHE"] = str(root / "modelscope")
     return result

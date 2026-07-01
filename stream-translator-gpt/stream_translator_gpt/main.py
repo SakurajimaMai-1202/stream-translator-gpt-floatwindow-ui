@@ -23,7 +23,7 @@ from .audio_getter import (
     _resolve_cookie_file,
 )
 from .audio_slicer import AudioSlicer
-from .audio_transcriber import OpenaiWhisper, FasterWhisper, SimulStreaming, RemoteOpenaiTranscriber, Qwen3ASRTranscriber, HFTranscriber, NemoASRTranscriber
+from .audio_transcriber import OpenaiWhisper, FasterWhisper, SimulStreaming, RemoteOpenaiTranscriber, Qwen3ASRTranscriber, HFTranscriber, NemoASRTranscriber, SenseVoiceTranscriber
 from .llm_translator import LLMClient, ParallelTranslator, SerialTranslator
 from .result_exporter import ResultExporter
 from .subtitle_sharing import DEFAULT_PUBLIC_HOST, DEFAULT_PUBLIC_PORT, SubtitleShareServer, create_task_id
@@ -89,6 +89,10 @@ def main(url, **kwargs):
     nemo_asr_model = kwargs.get('nemo_asr_model')
     nemo_asr_device = kwargs.get('nemo_asr_device')
     nemo_asr_decoding = kwargs.get('nemo_asr_decoding')
+    nemo_asr_dtype = kwargs.get('nemo_asr_dtype', 'bfloat16')
+    use_sensevoice_asr = kwargs.get('use_sensevoice_asr', False)
+    sensevoice_model = kwargs.get('sensevoice_model') or 'iic/SenseVoiceSmall'
+    sensevoice_device = kwargs.get('sensevoice_device') or 'auto'
 
     model = kwargs.get('model', 'turbo')
     language = kwargs.get('language')
@@ -236,10 +240,40 @@ def main(url, **kwargs):
                                           dtype=qwen_dtype, device_map=qwen_device_map,
                                           quantization=qwen_quant,
                                           rms_threshold=qwen3_rms_threshold, **common_args)
+            elif use_sensevoice_asr:
+                import torch
+                resolved_device = resolve_qwen3_device_map(
+                    torch_module=torch,
+                    requested_device_map=sensevoice_device,
+                    runtime_profile=runtime_profile,
+                    device_policy=runtime_device_policy,
+                    allow_integrated_gpu=runtime_allow_integrated_gpu,
+                )
+                print(f'{INFO}SenseVoice device resolved: {resolved_device} '
+                      f'(profile={runtime_profile}, policy={runtime_device_policy})')
+                return SenseVoiceTranscriber(model=sensevoice_model, language=language,
+                                             device=resolved_device, **common_args)
             elif use_hf_asr:
                 return HFTranscriber(model=model, language=language, proxy=processing_proxy, **common_args)
             elif use_nemo_asr:
-                return NemoASRTranscriber(**common_args)
+                import torch
+                resolved_device = resolve_qwen3_device_map(
+                    torch_module=torch,
+                    requested_device_map=nemo_asr_device,
+                    runtime_profile=runtime_profile,
+                    device_policy=runtime_device_policy,
+                    allow_integrated_gpu=runtime_allow_integrated_gpu,
+                )
+                print(f'{INFO}Parakeet CTC JA device resolved: {resolved_device} '
+                      f'(profile={runtime_profile}, policy={runtime_device_policy})')
+                return NemoASRTranscriber(model=nemo_asr_model or model,
+                                          language=language,
+                                          proxy=processing_proxy,
+                                          device=resolved_device,
+                                          decoding=nemo_asr_decoding or 'ctc',
+                                          dtype=nemo_asr_dtype or 'bfloat16',
+                                          runtime_profile=runtime_profile,
+                                          **common_args)
             elif use_simul_streaming:
                 return SimulStreaming(model=model,
                                       language=language,
@@ -627,9 +661,13 @@ def cli():
 
     parser.add_argument('--use_hf_asr', action='store_true', help='Set this flag to use a HuggingFace ASR model specified by --model.')
     parser.add_argument('--use_nemo_asr', action='store_true', help='Set this flag to use NVIDIA NeMo ASR.')
-    parser.add_argument('--nemo_asr_model', type=str, default='nvidia/parakeet-tdt_ctc-0.6b-ja', help='NeMo ASR model name.')
+    parser.add_argument('--nemo_asr_model', type=str, default='grider-transwithai/parakeet-ctc-1.1b-ja', help='NeMo ASR model name.')
     parser.add_argument('--nemo_asr_device', type=str, default='auto', help='Device used when running NeMo ASR.')
-    parser.add_argument('--nemo_asr_decoding', type=str, choices=['tdt', 'ctc'], default='tdt', help='Decoding mode for NeMo ASR.')
+    parser.add_argument('--nemo_asr_decoding', type=str, choices=['ctc'], default='ctc', help='Decoding mode for NeMo ASR.')
+    parser.add_argument('--nemo_asr_dtype', type=str, choices=['auto', 'bfloat16', 'float16', 'float32'], default='bfloat16', help='Dtype for NeMo Parakeet CTC JA.')
+    parser.add_argument('--use_sensevoice_asr', action='store_true', help='Set this flag to use SenseVoice ASR.')
+    parser.add_argument('--sensevoice_model', type=str, default='iic/SenseVoiceSmall', help='SenseVoice model repo id.')
+    parser.add_argument('--sensevoice_device', type=str, default='auto', help='Device used when running SenseVoice ASR.')
 
     parser.add_argument('--qwen3_asr_model', type=str, default=None, help='Override --model for Qwen3-ASR.')
     parser.add_argument('--qwen3_asr_dtype', type=str, default=None, help='Override --qwen3_dtype.')

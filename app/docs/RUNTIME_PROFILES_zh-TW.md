@@ -31,6 +31,7 @@ app/dist-rocm
 | Faster-Whisper | 全系列 |
 | Qwen3-ASR offline | 0.6B / 1.7B / 1.7B-JA |
 | Qwen3-ASR streaming | 0.6B Streaming，experimental，English only |
+| SenseVoiceSmall | compatibility，offline sliced transcription |
 | Qwen3-ASR default dtype | `bfloat16` |
 | 預設 device policy | `auto_discrete` |
 
@@ -41,6 +42,7 @@ app/dist-rocm
 | Faster-Whisper | small / medium，慢速 |
 | Qwen3-ASR offline | 0.6B |
 | Qwen3-ASR streaming | 0.6B Streaming，experimental，English only，速度待測 |
+| SenseVoiceSmall | compatibility，CPU 可用，速度待測 |
 | Qwen3-ASR default dtype | `float32` |
 | 預設 device policy | `cpu` |
 
@@ -53,6 +55,7 @@ CPU profile 會把預設的 Qwen3 `bfloat16` 改成 `float32`，避免 CPU runti
 | Faster-Whisper | GPU 不正式承諾；必要時走 CPU fallback |
 | Qwen3-ASR offline | 0.6B / 1.7B / 1.7B-JA |
 | Qwen3-ASR streaming | 先列 experimental，不當正式承諾 |
+| SenseVoiceSmall | experimental；需 AMD 實機 ASR smoke test 後再提升狀態 |
 | Qwen3-ASR default dtype | `bfloat16` |
 | 預設 device policy | `auto_discrete` |
 
@@ -209,22 +212,25 @@ CUDA：
 
 - Faster-Whisper small
 - Qwen3-ASR 0.6B，`bfloat16`
+- SenseVoiceSmall 短音檔轉錄
 
 CPU：
 
 - Faster-Whisper small / medium
 - Qwen3-ASR 0.6B，`float32`
+- SenseVoiceSmall 短音檔轉錄，速度待測
 
 ROCm：
 
 - Qwen3-ASR 0.6B，`bfloat16`
 - Qwen3-ASR 1.7B，依 VRAM 測試
+- SenseVoiceSmall 短音檔轉錄；未通過 AMD 實機前維持 experimental
 
 ## 待辦
 
 1. 在實機 CUDA / CPU / ROCm build Python 上各跑一次 `build_runtime.ps1`。
 2. 在三種 full package 中驗證 `config.yaml` 的 `runtime.profile` 注入。
-3. 補實機 smoke test 結果，尤其是 ROCm streaming 與 CPU streaming 速度。
+3. 補實機 smoke test 結果，尤其是 ROCm streaming、SenseVoiceSmall ROCm 與 CPU 速度。
 
 ## ROCm 無卡建置與診斷
 
@@ -264,3 +270,11 @@ asr_inference_validated: no, unless a real ASR smoke test was run
 - `asr_inference_validated` 固定為 `false`，直到另外跑完整音檔 ASR smoke test。
 
 這樣即使本機沒有 ROCm 卡，也能先發出結構正確、標示保守的 ROCm Experimental 包；真正的 AMD GPU 實機結果則用診斷 log 回收。
+## CUDA Parakeet CTC JA 補充
+
+- CUDA profile 另支援 `Parakeet CTC JA`，狀態為 experimental。
+- 模型來源為 `grider-transwithai/parakeet-ctc-1.1b-ja`，預設載入 HuggingFace repo 內的 `parakeet-ja.nemo`。
+- 這個後端只開在 CUDA 版；CPU / ROCm profile 會在能力矩陣中關閉。
+- 輸入語言只支援日文或自動偵測；其他語言會直接拒絕，避免誤用。
+- CUDA runtime 必須能 import `nemo.collections.asr.models`。若要重打 CUDA 包，請先在 build Python 安裝 `app/requirements_cuda_parakeet.txt`。
+- 模型管理的 `parakeet-ctc-ja` 下載會快取整個 HuggingFace repo，實際 ASR 載入會使用 `.nemo` 檔案並透過 `ASRModel.restore_from()`。

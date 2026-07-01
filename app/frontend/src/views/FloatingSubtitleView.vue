@@ -469,11 +469,11 @@ async function stopTranslation() {
       @scroll="handleScroll"
       :style="containerStyle"
       :class="[
-        'absolute left-0 right-0 top-0 bottom-0 px-4 py-2 transition-all duration-300 flex flex-col rounded-lg overflow-y-auto',
+        'subtitle-scroll-shell absolute left-0 right-0 top-0 bottom-0 px-4 py-2 transition-all duration-300 flex flex-col rounded-lg overflow-y-auto',
         position === 'top' ? 'justify-start' : 'justify-end'
       ]"
     >
-      <div v-if="displaySubtitles.length > 0" class="space-y-3" :class="autoScroll ? 'scroll-smooth' : ''">
+      <div v-if="displaySubtitles.length > 0" class="subtitle-list space-y-3" :class="autoScroll ? 'scroll-smooth' : ''">
         <div v-for="sub in displaySubtitles" :key="sub.id" class="text-left leading-relaxed">
           <!-- 時間戳 -->
           <div v-if="showTimestamp" class="text-xs opacity-70 font-mono mb-1" :style="{ color: timestampColor }">
@@ -541,7 +541,7 @@ async function stopTranslation() {
     </div>
 
     <!-- 垂直按鈕列（預設可見，避免首次開啟 hover 未觸發導致消失） -->
-    <div class="absolute top-2 right-2 flex flex-col gap-2 opacity-75 hover:opacity-100 transition-opacity z-50">
+    <div class="subtitle-floating-controls absolute top-2 right-2 flex flex-col gap-2 opacity-75 hover:opacity-100 transition-opacity z-50">
       <!-- Settings Toggle Button -->
       <button
         @click="openSettings"
@@ -712,6 +712,45 @@ async function stopTranslation() {
 </template>
 
 <style scoped>
+:global(:root) {
+  --subtitle-control-safe-area: clamp(3.75rem, 7vw, 5.5rem);
+}
+
+.subtitle-scroll-shell {
+  padding-right: var(--subtitle-control-safe-area);
+  scrollbar-gutter: stable;
+}
+
+.subtitle-list {
+  width: 100%;
+  max-width: 100%;
+}
+
+.subtitle-list span {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.subtitle-floating-controls {
+  pointer-events: none;
+}
+
+.subtitle-floating-controls button {
+  pointer-events: auto;
+  background-color: rgba(0, 0, 0, 0.26);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
+}
+
+@media (max-width: 520px) {
+  :global(:root) {
+    --subtitle-control-safe-area: 3.25rem;
+  }
+
+  .subtitle-scroll-shell {
+    padding-left: 0.75rem;
+  }
+}
+
 /* 確保視窗可以透明背景 */
 /* 強制啟用 backdrop-filter 支援 */
 .backdrop-blur-support {

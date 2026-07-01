@@ -130,9 +130,9 @@ CPU 與 ROCm 包會分別寫成 `cpu` / `rocm`。CPU 包會同步寫入 `device_
 
 重點：
 
-- CUDA：正式支援 Faster-Whisper 全系列、Qwen3-ASR offline 0.6B / 1.7B / 1.7B-JA，Qwen3 streaming 先列 experimental。
-- CPU：正式列 Faster-Whisper small / medium 慢速、Qwen3-ASR offline 0.6B；Qwen3 streaming 速度待測。
-- ROCm：正式列 Qwen3-ASR offline 0.6B / 1.7B / 1.7B-JA；streaming 只列 experimental，不作正式承諾。
+- CUDA：正式支援 Faster-Whisper 全系列、Qwen3-ASR offline 0.6B / 1.7B / 1.7B-JA；Qwen3 streaming 先列 experimental；SenseVoiceSmall 列 compatibility。
+- CPU：正式列 Faster-Whisper small / medium 慢速、Qwen3-ASR offline 0.6B；Qwen3 streaming 速度待測；SenseVoiceSmall 列 compatibility，CPU 可用但速度待測。
+- ROCm：正式列 Qwen3-ASR offline 0.6B / 1.7B / 1.7B-JA；streaming 只列 experimental，不作正式承諾；SenseVoiceSmall 先列 experimental，需 AMD 實機 ASR smoke test。
 
 ## Runtime diagnostics
 
@@ -153,4 +153,21 @@ CPU 與 ROCm 包會分別寫成 `cpu` / `rocm`。CPU 包會同步寫入 `device_
 .\diagnose_runtime.ps1 -Profile rocm -Output .\rocm-diagnostics.json
 ```
 
-診斷工具會驗證 runtime manifest、PyTorch CUDA/HIP backend、Qwen3-ASR import、GPU 選擇策略與輕量 torch tensor execution。它不會宣稱完整 ASR inference 已通過；完整 ASR smoke test 仍需要實際音檔與模型 cache。
+診斷工具會驗證 runtime manifest、PyTorch CUDA/HIP backend、Qwen3-ASR / FunASR import、GPU 選擇策略與輕量 torch tensor execution。它不會宣稱完整 ASR inference 已通過；完整 ASR smoke test 仍需要實際音檔與模型 cache。
+
+SenseVoiceSmall 真實 ASR smoke test 可使用 package 內的：
+
+```powershell
+.\smoke_sensevoice_asr.ps1 -Profile cpu -Audio .\sample.wav
+.\smoke_sensevoice_asr.ps1 -Profile cuda -Audio .\sample.wav
+.\smoke_sensevoice_asr.ps1 -Profile rocm -Audio .\sample.wav
+```
+
+ROCm smoke test 未在 AMD 實機通過前，SenseVoiceSmall 仍維持 experimental。
+## CUDA Parakeet CTC JA 打包注意
+
+- CUDA 版現在包含 `Parakeet CTC JA` experimental 後端，模型為 `grider-transwithai/parakeet-ctc-1.1b-ja`。
+- build Python 需要同時具備 CUDA torch、Qwen3-ASR、Faster-Whisper、FunASR、torchaudio、PyInstaller，以及 NVIDIA NeMo ASR。
+- NeMo 依賴請用 `app/requirements_cuda_parakeet.txt` 安裝；`check_runtime_profile_env.ps1 -Profile cuda` 會檢查 `nemo.collections.asr.models`。
+- HuggingFace repo 內的實際模型檔是 `.nemo`，目前預設使用 `parakeet-ja.nemo`，程式會以 `ASRModel.restore_from()` 載入。
+- CPU / ROCm 包不啟用 Parakeet；不要把 CUDA App Update 覆蓋到 CPU 或 ROCm 完整包。

@@ -19,8 +19,11 @@ class StartTranslationRequest(BaseModel):
     # 轉錄相關
     model: str = Field("base", description="Whisper 模型大小")
     backend: str = Field("faster-whisper", description="語音識別後端")
-    transcription_engine: Optional[str] = Field(None, description="轉錄引擎 (faster-whisper/qwen3-asr/openai-api/simul-streaming/faster-whisper-simul)")
+    transcription_engine: Optional[str] = Field(None, description="轉錄引擎 (faster-whisper/qwen3-asr/parakeet-ctc-ja/openai-api/simul-streaming/faster-whisper-simul)")
     qwen3_asr_model: Optional[str] = Field(None, description="Qwen3-ASR 模型名稱")
+    sensevoice_model: Optional[str] = Field(None, description="SenseVoice 模型名稱")
+    nemo_asr_model: Optional[str] = Field(None, description="Parakeet CTC JA / NeMo 模型名稱")
+    nemo_asr_dtype: Optional[str] = Field(None, description="Parakeet CTC JA dtype (bfloat16/float16/float32)")
     input_language: Optional[str] = Field(None, description="Whisper 輸入語言 (ja/en/ko/zh/auto)")
     
     # 翻譯相關

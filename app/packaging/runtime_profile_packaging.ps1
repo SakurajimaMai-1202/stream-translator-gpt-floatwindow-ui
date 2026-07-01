@@ -81,7 +81,7 @@ function Get-RuntimeProfileDocText {
         [Parameter(Mandatory = $true)]
         [ValidateSet("cuda", "cpu", "rocm")]
         [string]$RuntimeProfile,
-        [string]$Version = "1.3.1",
+        [string]$Version = "1.3.2",
         [Parameter(Mandatory = $true)]
         [ValidateSet("portable_guide", "update_notes", "readme")]
         [string]$Document
@@ -98,11 +98,16 @@ function Get-RuntimeProfileDocText {
         $models = @(
             "Faster-Whisper 全系列",
             "Qwen3-ASR offline: 0.6B / 1.7B / 1.7B-JA",
-            "Qwen3-ASR streaming: 0.6B Streaming，experimental，English only"
+            "Qwen3-ASR streaming: 0.6B Streaming，experimental，English only",
+            "SenseVoiceSmall: compatibility，offline sliced transcription",
+            "Parakeet CTC 1.1B JA: experimental，CUDA only，Japanese-only，模型 grider-transwithai/parakeet-ctc-1.1b-ja"
         )
         $notes = @(
             "本版本是 NVIDIA CUDA 主線版。",
             "Qwen3-ASR 在 CUDA / ROCm profile 預設使用 bf16。",
+            "SenseVoiceSmall 使用 FunASR runtime；首次使用前可先在模型管理預下載 iic/SenseVoiceSmall。",
+            "Parakeet CTC JA 使用 NVIDIA NeMo runtime；打包 CUDA runtime 前請確認 build Python 已安裝 app/requirements_cuda_parakeet.txt。",
+            "Parakeet CTC JA 預設使用 bfloat16；實測可正式跑，穩態顯存約 4GB，載入峰值會略高。",
             "預設裝置策略為 auto_discrete，會優先選擇獨立 GPU，避免誤選內顯。"
         )
         $warning = "若沒有可用 NVIDIA CUDA GPU，請改用 CPU 包；AMD ROCm 使用者請改用 ROCm Experimental 包。"
@@ -114,11 +119,14 @@ function Get-RuntimeProfileDocText {
         $models = @(
             "Faster-Whisper: small / medium 慢速",
             "Qwen3-ASR offline: 0.6B",
-            "Qwen3-ASR streaming: 0.6B Streaming，experimental，English only，速度待測"
+            "Qwen3-ASR streaming: 0.6B Streaming，experimental，English only，速度待測",
+            "SenseVoiceSmall: compatibility，CPU 可用，速度待測"
         )
         $notes = @(
             "本版本是 CPU 相容版，不會承諾 GPU 加速。",
             "CPU profile 會把 ASR device policy 寫成 cpu，避免誤用顯卡。",
+            "CPU 版保留遠端 API / 遠端字幕能力，可用於沒有獨顯的相容環境。",
+            "SenseVoiceSmall 不預先標慢速；請依實際 CPU 與音訊長度測試速度。",
             "目前 runtime 體積接近 CUDA 包；之後若改純 CPU torch runtime，可再降低體積。"
         )
         $warning = "CPU 版適合沒有可用獨顯或想先測功能的使用者；大型模型會很慢。"
@@ -130,14 +138,17 @@ function Get-RuntimeProfileDocText {
         $models = @(
             "Qwen3-ASR offline: 0.6B / 1.7B / 1.7B-JA",
             "Qwen3-ASR streaming: experimental；上游明確列 CUDA / Apple Silicon / CPU，未正式列 ROCm",
+            "SenseVoiceSmall: experimental；需 AMD 實機 ASR smoke test 後再提升狀態",
             "Faster-Whisper GPU 不正式承諾；必要時請改用 CUDA 或 CPU 包"
         )
         $notes = @(
             "本版本是 AMD ROCm Experimental，不是 NVIDIA CUDA 版。",
             "Qwen3-ASR 在 CUDA / ROCm profile 預設使用 bf16。",
-            "預設裝置策略為 auto_discrete，會避免選到 AMD 內顯 / APU；沒有 ROCm 獨顯時會在診斷中標示未驗證。"
+            "SenseVoiceSmall 在 ROCm profile 先列 experimental；package validation 不等於 AMD GPU ASR inference 已通過。",
+            "預設裝置策略為 auto_discrete，會避免選到 AMD 內顯 / APU；沒有 ROCm 獨顯時會在診斷中標示未驗證。",
+            "Radeon RX 9070 XT 已由使用者實機測試確認可用。"
         )
-        $warning = "目前建置機沒有 ROCm 獨立顯卡，已驗證 package 結構與 HIP runtime manifest，但不宣稱 ROCm GPU ASR 實機推論已通過。"
+        $warning = "目前建置機沒有 ROCm 獨立顯卡；package 結構與 HIP runtime manifest 可驗證，Radeon RX 9070 XT 已由使用者實機確認可用，其他 AMD 顯卡仍請附診斷結果回報。"
     }
 
     $modelLines = ($models | ForEach-Object { "- $_" }) -join "`r`n"
@@ -214,7 +225,9 @@ $name v$Version 更新說明
 - 新增 runtime profile 設定與打包驗證，避免 CUDA、CPU、ROCm package 混用 runtime。
 - 新增顯卡選擇策略，預設使用 auto_discrete，避免誤選內顯。
 - 輸入語言已拆分繁體中文與簡體中文；Qwen3-ASR 會映射為 Chinese。
-- 每個 package 會附上 diagnose_runtime.ps1，用於收集目標機器的 runtime / GPU / Qwen3-ASR 狀態。
+- CUDA 版新增 Parakeet CTC 1.1B JA experimental；僅限日文輸入，使用 NVIDIA NeMo 與 grider-transwithai/parakeet-ctc-1.1b-ja。
+- 每個 package 會附上 diagnose_runtime.ps1，用於收集目標機器的 runtime / GPU / Qwen3-ASR / FunASR 狀態。
+- 每個 package 會附上 smoke_sensevoice_asr.ps1，可用短音檔驗證 SenseVoiceSmall 真實 ASR 推論。
 
 本版本支援範圍
 --------------
@@ -265,7 +278,7 @@ function Write-RuntimeProfileDocs {
         [Parameter(Mandatory = $true)]
         [ValidateSet("cuda", "cpu", "rocm")]
         [string]$RuntimeProfile,
-        [string]$Version = "1.3.1"
+        [string]$Version = "1.3.2"
     )
 
     if (-not (Test-Path $Destination)) {

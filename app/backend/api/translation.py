@@ -11,6 +11,9 @@ from backend.core.app_sync import publish_app_event
 router = APIRouter(prefix="/translation", tags=["translation"])
 from backend.api.config import get_config_manager
 
+SENSEVOICE_MODEL_IDS = {"iic/SenseVoiceSmall"}
+PARAKEET_CTC_JA_MODEL_IDS = {"grider-transwithai/parakeet-ctc-1.1b-ja"}
+
 @router.post("/start", response_model=TranslationTaskResponse)
 async def start_translation(request: StartTranslationRequest, http_request: Request):
     """啟動翻譯任務"""
@@ -35,16 +38,34 @@ async def start_translation(request: StartTranslationRequest, http_request: Requ
             current_config['input']['url'] = request.url
             
         # 轉錄覆蓋
+        inferred_sensevoice = False
+        inferred_parakeet = False
         if request.model:
             current_config['transcription']['model'] = request.model
+            if request.model in SENSEVOICE_MODEL_IDS:
+                current_config['transcription']['backend'] = 'sensevoice'
+                current_config['transcription']['sensevoice_model'] = request.model
+                inferred_sensevoice = True
+            elif request.model in PARAKEET_CTC_JA_MODEL_IDS:
+                current_config['transcription']['backend'] = 'parakeet-ctc-ja'
+                current_config['transcription']['nemo_asr_model'] = request.model
+                inferred_parakeet = True
         # 使用 transcription_engine 覆蓋轉錄後端（優先於 backend）
         if request.transcription_engine:
             current_config['transcription']['backend'] = request.transcription_engine
-        elif request.backend:
+        elif request.backend and not inferred_sensevoice and not inferred_parakeet:
             current_config['transcription']['backend'] = request.backend
         # Qwen3-ASR 模型覆蓋
         if request.qwen3_asr_model:
             current_config['transcription']['qwen3_asr_model'] = request.qwen3_asr_model
+        if request.sensevoice_model:
+            current_config['transcription']['sensevoice_model'] = request.sensevoice_model
+            current_config['transcription']['backend'] = 'sensevoice'
+        if request.nemo_asr_model:
+            current_config['transcription']['nemo_asr_model'] = request.nemo_asr_model
+            current_config['transcription']['backend'] = 'parakeet-ctc-ja'
+        if request.nemo_asr_dtype:
+            current_config['transcription']['nemo_asr_dtype'] = request.nemo_asr_dtype
         # 🔧 新增: 覆蓋輸入語言
         if request.input_language:
             current_config['transcription']['language'] = request.input_language

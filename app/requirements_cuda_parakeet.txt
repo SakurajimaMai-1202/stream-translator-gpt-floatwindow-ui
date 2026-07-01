@@ -1,0 +1,9 @@
+# Optional CUDA-only dependencies for Parakeet CTC JA ASR.
+#
+# Install this only into the CUDA runtime/build Python. Do not install it into
+# CPU or ROCm runtimes unless the runtime matrix is intentionally expanded.
+#
+# The model exposed by the app is:
+#   grider-transwithai/parakeet-ctc-1.1b-ja
+
+nemo_toolkit[asr]>=2.0.0,<3.0.0

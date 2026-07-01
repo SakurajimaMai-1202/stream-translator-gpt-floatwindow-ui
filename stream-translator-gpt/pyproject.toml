@@ -46,6 +46,8 @@ dependencies = [
   "sounddevice<1.0",
   "openai-whisper==20250625",
   "faster-whisper>=1.1.1,<2.0.0",
+  "funasr>=1.2.6,<2.0.0",
+  "torchaudio",
   "openai>=2.0,<3.0",
   "google-genai>=1.0,<2.0",
   "httpx>=0.26.0,<1.0"
@@ -53,6 +55,7 @@ dependencies = [
 
 [project.optional-dependencies]
 webui = ["gradio>=5.0,<6.0", "platformdirs>=4.0"]
+parakeet = ["nemo_toolkit[asr]>=2.0.0,<3.0.0"]
 
 [project.scripts]
 stream-translator-gpt = "stream_translator_gpt.main:cli"

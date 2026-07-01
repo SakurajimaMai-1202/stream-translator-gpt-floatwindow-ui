@@ -36,6 +36,7 @@ def build_runtime_diagnostics(
         "runtime_manifest": _read_runtime_manifest(),
         "torch": _torch_report(),
         "qwen_asr": _import_report("qwen_asr"),
+        "funasr": _import_report("funasr"),
         "validation": {
             "package_validated": False,
             "runtime_import_validated": False,
@@ -185,13 +186,14 @@ def _validation_summary(report: dict[str, Any]) -> dict[str, Any]:
     torch_report = report.get("torch", {})
     manifest = report.get("runtime_manifest", {})
     qwen = report.get("qwen_asr", {})
+    funasr = report.get("funasr", {})
     selection = report.get("selection", {})
     smoke = report.get("torch_smoke", {})
     profile = report.get("profile")
     device_map = selection.get("device_map")
 
     package_validated = bool(manifest.get("found") and manifest.get("profile") == profile)
-    runtime_import_validated = bool(torch_report.get("imported") and qwen.get("imported"))
+    runtime_import_validated = bool(torch_report.get("imported") and qwen.get("imported") and funasr.get("imported"))
     torch_execution_validated = smoke.get("status") == "passed"
     gpu_inference_validated = bool(torch_execution_validated and isinstance(device_map, str) and device_map.startswith("cuda:"))
 

@@ -80,6 +80,14 @@ export interface RuntimeCapabilities {
   qwen3_asr_model_ids: string[];
   qwen3_streaming_status: string;
   qwen3_streaming_note: string;
+  sensevoice_status: string;
+  sensevoice_models: string[];
+  sensevoice_model_ids: string[];
+  sensevoice_note: string;
+  parakeet_status: string;
+  parakeet_models: string[];
+  parakeet_model_ids: string[];
+  parakeet_note: string;
   faster_whisper_status: string;
   faster_whisper_models: string[];
   faster_whisper_model_ids: string[];
@@ -206,6 +214,9 @@ export interface StartTranslationRequest {
   backend?: string;
   transcription_engine?: string;  // 轉錄引擎: faster-whisper/qwen3-asr/openai-api/...
   qwen3_asr_model?: string;       // Qwen3-ASR 模型名稱
+  sensevoice_model?: string;       // SenseVoice 模型名稱
+  nemo_asr_model?: string;         // Parakeet CTC JA / NeMo 模型名稱
+  nemo_asr_dtype?: string;         // Parakeet CTC JA dtype: bfloat16, float16, float32
   qwen3_flash_attention?: boolean;// Qwen3-ASR Flash Attention
   qwen3_dtype?: string;           // Qwen3-ASR 模型精度: bfloat16, float16, float32
   input_language?: string;  // 🔧 新增: Whisper 輸入語言
@@ -223,7 +234,7 @@ export interface StartResponse {
   message: string;
 }
 
-export type ModelEngine = 'qwen3-asr' | 'faster-whisper';
+export type ModelEngine = 'qwen3-asr' | 'faster-whisper' | 'sensevoice' | 'parakeet-ctc-ja';
 
 export interface StartModelDownloadRequest {
   engine: ModelEngine;

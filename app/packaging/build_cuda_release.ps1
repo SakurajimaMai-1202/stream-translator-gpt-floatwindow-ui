@@ -2,7 +2,7 @@
 param(
     [ValidateSet("cuda", "cpu", "rocm")]
     [string]$Profile = "cuda",
-    [string]$Version = "1.3.1",
+    [string]$Version = "1.3.2",
     [switch]$ForceRuntime,
     [switch]$SkipFullZip
 )
@@ -112,6 +112,7 @@ $updatePackageDir = Join-Path $updateRoot "_runtime\Lib\site-packages"
 New-Item $updatePackageDir -ItemType Directory -Force | Out-Null
 Copy-Item (Join-Path $projectRoot "stream-translator-gpt\stream_translator_gpt") $updatePackageDir -Recurse -Force
 Copy-Item (Join-Path $scriptDir "diagnose_runtime.ps1") $updateRoot
+Copy-Item (Join-Path $scriptDir "smoke_sensevoice_asr.ps1") $updateRoot
 Write-RuntimeProfileDocs -Destination $updateRoot -RuntimeProfile $Profile -Version $Version
 Push-Location $distDir
 try { & tar.exe -a -c -f $packageInfo.AppUpdateZip "App-Update" } finally { Pop-Location }
@@ -123,6 +124,7 @@ Set-RuntimeManifestAppVersion -RuntimeDir (Join-Path $releaseRoot "_runtime")
 New-Item (Join-Path $releaseRoot "models\huggingface\hub") -ItemType Directory -Force | Out-Null
 Copy-ProfileConfig (Join-Path $releaseRoot "config.yaml")
 Copy-Item (Join-Path $scriptDir "diagnose_runtime.ps1") $releaseRoot
+Copy-Item (Join-Path $scriptDir "smoke_sensevoice_asr.ps1") $releaseRoot
 Write-RuntimeProfileDocs -Destination $releaseRoot -RuntimeProfile $Profile -Version $Version
 
 $ffmpegSource = Join-Path $projectRoot "ffmpeg-8.1-essentials_build\ffmpeg-8.1-essentials_build\bin"

@@ -18,6 +18,23 @@ interface TranscriptionConfig {
 export function useTranscriptionMutex(getTranscription: () => TranscriptionConfig) {
   let isApplying = false;
 
+  function clearExclusiveEngines(cfg: TranscriptionConfig) {
+    cfg.use_openai_transcription_api = false;
+    cfg.use_qwen3_asr = false;
+    cfg.use_sensevoice_asr = false;
+    cfg.use_nemo_asr = false;
+  }
+
+  function selectExclusiveEngine(cfg: TranscriptionConfig, engine: 'openai' | 'qwen3' | 'sensevoice' | 'nemo') {
+    cfg.use_faster_whisper = false;
+    cfg.use_simul_streaming = false;
+    clearExclusiveEngines(cfg);
+    if (engine === 'openai') cfg.use_openai_transcription_api = true;
+    if (engine === 'qwen3') cfg.use_qwen3_asr = true;
+    if (engine === 'sensevoice') cfg.use_sensevoice_asr = true;
+    if (engine === 'nemo') cfg.use_nemo_asr = true;
+  }
+
   watch(
     getTranscription,
     (cfg) => {
@@ -25,52 +42,33 @@ export function useTranscriptionMutex(getTranscription: () => TranscriptionConfi
 
       isApplying = true;
       try {
-        if (cfg.use_openai_transcription_api) {
-          cfg.use_faster_whisper = false;
-          cfg.use_simul_streaming = false;
-          cfg.use_qwen3_asr = false;
-          cfg.use_sensevoice_asr = false;
-          cfg.use_nemo_asr = false;
-          return;
-        }
-
-        if (cfg.use_qwen3_asr) {
-          cfg.use_faster_whisper = false;
-          cfg.use_simul_streaming = false;
-          cfg.use_openai_transcription_api = false;
-          cfg.use_sensevoice_asr = false;
-          cfg.use_nemo_asr = false;
-          return;
-        }
-
         if (cfg.use_sensevoice_asr) {
-          cfg.use_faster_whisper = false;
-          cfg.use_simul_streaming = false;
-          cfg.use_openai_transcription_api = false;
-          cfg.use_qwen3_asr = false;
-          cfg.use_nemo_asr = false;
+          selectExclusiveEngine(cfg, 'sensevoice');
           return;
         }
 
         if (cfg.use_nemo_asr) {
-          cfg.use_faster_whisper = false;
-          cfg.use_simul_streaming = false;
-          cfg.use_openai_transcription_api = false;
-          cfg.use_qwen3_asr = false;
-          cfg.use_sensevoice_asr = false;
+          selectExclusiveEngine(cfg, 'nemo');
+          return;
+        }
+
+        if (cfg.use_qwen3_asr) {
+          selectExclusiveEngine(cfg, 'qwen3');
+          return;
+        }
+
+        if (cfg.use_openai_transcription_api) {
+          selectExclusiveEngine(cfg, 'openai');
           return;
         }
 
         if (cfg.use_faster_whisper || cfg.use_simul_streaming) {
-          cfg.use_openai_transcription_api = false;
-          cfg.use_qwen3_asr = false;
-          cfg.use_sensevoice_asr = false;
-          cfg.use_nemo_asr = false;
+          clearExclusiveEngines(cfg);
         }
       } finally {
         isApplying = false;
       }
     },
-    { deep: true }
+    { deep: true, immediate: true }
   );
 }

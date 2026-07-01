@@ -81,7 +81,7 @@ function Get-RuntimeProfileDocText {
         [Parameter(Mandatory = $true)]
         [ValidateSet("cuda", "cpu", "rocm")]
         [string]$RuntimeProfile,
-        [string]$Version = "1.3.2",
+        [string]$Version = "1.3.3",
         [Parameter(Mandatory = $true)]
         [ValidateSet("portable_guide", "update_notes", "readme")]
         [string]$Document
@@ -226,6 +226,9 @@ $name v$Version 更新說明
 - 新增顯卡選擇策略，預設使用 auto_discrete，避免誤選內顯。
 - 輸入語言已拆分繁體中文與簡體中文；Qwen3-ASR 會映射為 Chinese。
 - CUDA 版新增 Parakeet CTC 1.1B JA experimental；僅限日文輸入，使用 NVIDIA NeMo 與 grider-transwithai/parakeet-ctc-1.1b-ja。
+- 設定頁「模型管理」更名為「ASR模型管理」，並修正第一次點入時落到一般設定的問題。
+- 轉錄選項會整理為單一 ASR 後端，避免 Qwen3-ASR / SenseVoiceSmall / Parakeet CTC JA 同時被選取。
+- ROCm Experimental 版補齊 FunASR runtime，修正 SenseVoiceSmall 因缺少 funasr 無法啟動的問題。
 - 每個 package 會附上 diagnose_runtime.ps1，用於收集目標機器的 runtime / GPU / Qwen3-ASR / FunASR 狀態。
 - 每個 package 會附上 smoke_sensevoice_asr.ps1，可用短音檔驗證 SenseVoiceSmall 真實 ASR 推論。
 
@@ -278,7 +281,7 @@ function Write-RuntimeProfileDocs {
         [Parameter(Mandatory = $true)]
         [ValidateSet("cuda", "cpu", "rocm")]
         [string]$RuntimeProfile,
-        [string]$Version = "1.3.2"
+        [string]$Version = "1.3.3"
     )
 
     if (-not (Test-Path $Destination)) {

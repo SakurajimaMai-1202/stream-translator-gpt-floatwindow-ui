@@ -132,6 +132,30 @@ def test_sensevoice_model_id_overrides_stale_backend():
     assert args["use_faster_whisper"] is False
 
 
+def test_conflicting_asr_flags_are_normalized_to_one_backend():
+    config = _config_for("cuda")
+    config["transcription"].update({
+        "backend": "qwen3-asr",
+        "use_qwen3_asr": True,
+        "use_sensevoice_asr": True,
+        "use_nemo_asr": True,
+        "qwen3_asr_model": "Qwen/Qwen3-ASR-1.7B",
+        "nemo_asr_model": "grider-transwithai/parakeet-ctc-1.1b-ja",
+    })
+
+    args = _manager().to_main_args(config)
+
+    enabled_flags = [
+        args["use_openai_transcription_api"],
+        args["use_qwen3_asr"],
+        args["use_sensevoice_asr"],
+        args["use_nemo_asr"],
+    ]
+    assert enabled_flags.count(True) == 1
+    assert args["use_sensevoice_asr"] is True
+    assert args["model"] == "iic/SenseVoiceSmall"
+
+
 def test_sensevoice_config_forces_cpu_device_on_cpu_profile():
     args = _manager().to_main_args(_config_for("cpu"))
 

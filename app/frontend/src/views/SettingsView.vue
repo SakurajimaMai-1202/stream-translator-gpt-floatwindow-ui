@@ -209,7 +209,24 @@ const localConfig = ref<any>({
   }
 });
 const isSaving = ref(false);
-const activeTab = ref('general');
+const settingsTabIds = new Set([
+  'general',
+  'input',
+  'output',
+  'audio_vad',
+  'transcription',
+  'model_management',
+  'translation',
+  'llama',
+  'terminology',
+]);
+
+function normalizeSettingsTab(tab: unknown): string {
+  const value = Array.isArray(tab) ? tab[0] : tab;
+  return typeof value === 'string' && settingsTabIds.has(value) ? value : 'general';
+}
+
+const activeTab = ref(normalizeSettingsTab(route.query.tab));
 const isApplyingRemoteConfig = ref(false);
 
 const translationBackendOptions = computed<UiSelectOption[]>(() => {
@@ -327,7 +344,7 @@ const categorizedTabs = [
     items: [
       { id: 'audio_vad', name: '音訊切片/VAD', icon: '🔊' },
       { id: 'transcription', name: '轉錄選項', icon: '🎤' },
-      { id: 'model_management', name: '模型管理', icon: '📦' }
+      { id: 'model_management', name: 'ASR模型管理', icon: '📦' }
     ]
   },
   {
@@ -484,6 +501,7 @@ function coerceAsrSettingsForRuntime() {
   if (!allowedParakeetModels.value.includes(transcription.nemo_asr_model)) {
     transcription.nemo_asr_model = allowedParakeetModels.value[0] || 'grider-transwithai/parakeet-ctc-1.1b-ja';
   }
+  normalizeAsrEngineSelection();
   if (
     !transcription.use_faster_whisper &&
     !transcription.use_simul_streaming &&
@@ -502,6 +520,79 @@ function coerceAsrSettingsForRuntime() {
       transcription.use_openai_transcription_api = true;
     }
   }
+}
+
+type AsrEngine =
+  | 'faster_whisper'
+  | 'simul_streaming'
+  | 'openai'
+  | 'qwen3'
+  | 'sensevoice'
+  | 'parakeet';
+
+function clearExclusiveAsrEngines(transcription: any) {
+  transcription.use_openai_transcription_api = false;
+  transcription.use_qwen3_asr = false;
+  transcription.use_sensevoice_asr = false;
+  transcription.use_nemo_asr = false;
+}
+
+function clearAllAsrEngines(transcription: any) {
+  transcription.use_faster_whisper = false;
+  transcription.use_simul_streaming = false;
+  clearExclusiveAsrEngines(transcription);
+}
+
+function normalizeAsrEngineSelection() {
+  const transcription = localConfig.value.transcription || {};
+  const selectedExclusive = [
+    transcription.use_sensevoice_asr ? 'sensevoice' : '',
+    transcription.use_nemo_asr ? 'parakeet' : '',
+    transcription.use_qwen3_asr ? 'qwen3' : '',
+    transcription.use_openai_transcription_api ? 'openai' : '',
+  ].filter(Boolean);
+
+  if (selectedExclusive.length > 0) {
+    const selected = selectedExclusive[0];
+    clearAllAsrEngines(transcription);
+    if (selected === 'sensevoice') transcription.use_sensevoice_asr = true;
+    if (selected === 'parakeet') transcription.use_nemo_asr = true;
+    if (selected === 'qwen3') transcription.use_qwen3_asr = true;
+    if (selected === 'openai') transcription.use_openai_transcription_api = true;
+  }
+}
+
+function isAsrEngineSelected(engine: AsrEngine): boolean {
+  const transcription = localConfig.value.transcription || {};
+  if (engine === 'faster_whisper') return !!transcription.use_faster_whisper;
+  if (engine === 'simul_streaming') return !!transcription.use_simul_streaming;
+  if (engine === 'openai') return !!transcription.use_openai_transcription_api;
+  if (engine === 'qwen3') return !!transcription.use_qwen3_asr;
+  if (engine === 'sensevoice') return !!transcription.use_sensevoice_asr;
+  if (engine === 'parakeet') return !!transcription.use_nemo_asr;
+  return false;
+}
+
+function selectAsrEngine(engine: AsrEngine) {
+  const transcription = localConfig.value.transcription || {};
+
+  if (engine === 'faster_whisper') {
+    clearExclusiveAsrEngines(transcription);
+    transcription.use_faster_whisper = !transcription.use_faster_whisper;
+    return;
+  }
+
+  if (engine === 'simul_streaming') {
+    clearExclusiveAsrEngines(transcription);
+    transcription.use_simul_streaming = !transcription.use_simul_streaming;
+    return;
+  }
+
+  clearAllAsrEngines(transcription);
+  if (engine === 'openai') transcription.use_openai_transcription_api = true;
+  if (engine === 'qwen3') transcription.use_qwen3_asr = true;
+  if (engine === 'sensevoice') transcription.use_sensevoice_asr = true;
+  if (engine === 'parakeet') transcription.use_nemo_asr = true;
 }
 
 function normalizeInputLanguage(language: string | null | undefined): string {
@@ -631,9 +722,7 @@ useAppSyncEvents({
 });
 
 watch(() => route.query.tab, (newTab) => {
-  if (newTab) {
-    activeTab.value = newTab as string;
-  }
+  activeTab.value = normalizeSettingsTab(newTab);
 });
 
 onMounted(async () => {
@@ -642,9 +731,7 @@ onMounted(async () => {
   await applyStoreConfigToLocalConfig(store.config, true);
   
   // 從 URL 參數設定 tab
-  if (route.query.tab) {
-    activeTab.value = route.query.tab as string;
-  }
+  activeTab.value = normalizeSettingsTab(route.query.tab);
 
   await modelDownloadStore.refreshAll();
   if (modelDownloadStore.activeTasks.length > 0) {
@@ -1319,8 +1406,11 @@ async function handleFileChange(event: Event) {
                 💡 提示:可同時選擇 Faster-Whisper + SimulStreaming,將使用 Faster-Whisper 作為編碼器的 SimulStreaming
               </p>
               <div class="space-y-3">
-                <label :class="['flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 transition', canUseFasterWhisper ? 'cursor-pointer hover:bg-white/10' : 'opacity-45 cursor-not-allowed']">
-                  <input v-model="localConfig.transcription.use_faster_whisper" :disabled="!canUseFasterWhisper" type="checkbox" class="w-5 h-5 accent-blue-500 mt-0.5" />
+                <label
+                  @click.prevent="canUseFasterWhisper && selectAsrEngine('faster_whisper')"
+                  :class="['flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 transition', canUseFasterWhisper ? 'cursor-pointer hover:bg-white/10' : 'opacity-45 cursor-not-allowed']"
+                >
+                  <input :checked="isAsrEngineSelected('faster_whisper')" :disabled="!canUseFasterWhisper" type="checkbox" class="w-5 h-5 accent-blue-500 mt-0.5 pointer-events-none" />
                   <div class="flex-1">
                     <span class="text-white font-medium">使用 Faster-Whisper</span>
                     <p class="text-white/50 text-sm mt-1">
@@ -1330,8 +1420,11 @@ async function handleFileChange(event: Event) {
                   </div>
                 </label>
 
-                <label :class="['flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 transition', (canUseSimulStreaming || canUseFasterWhisperSimul) ? 'cursor-pointer hover:bg-white/10' : 'opacity-45 cursor-not-allowed']">
-                  <input v-model="localConfig.transcription.use_simul_streaming" :disabled="!canUseSimulStreaming && !canUseFasterWhisperSimul" type="checkbox" class="w-5 h-5 accent-blue-500 mt-0.5" />
+                <label
+                  @click.prevent="(canUseSimulStreaming || canUseFasterWhisperSimul) && selectAsrEngine('simul_streaming')"
+                  :class="['flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 transition', (canUseSimulStreaming || canUseFasterWhisperSimul) ? 'cursor-pointer hover:bg-white/10' : 'opacity-45 cursor-not-allowed']"
+                >
+                  <input :checked="isAsrEngineSelected('simul_streaming')" :disabled="!canUseSimulStreaming && !canUseFasterWhisperSimul" type="checkbox" class="w-5 h-5 accent-blue-500 mt-0.5 pointer-events-none" />
                   <div class="flex-1">
                     <span class="text-white font-medium">使用 SimulStreaming</span>
                     <p class="text-white/50 text-sm mt-1">
@@ -1341,8 +1434,11 @@ async function handleFileChange(event: Event) {
                   </div>
                 </label>
 
-                <label :class="['flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 transition', canUseOpenAiAsr ? 'cursor-pointer hover:bg-white/10' : 'opacity-45 cursor-not-allowed']">
-                  <input v-model="localConfig.transcription.use_openai_transcription_api" :disabled="!canUseOpenAiAsr" type="checkbox" class="w-5 h-5 accent-blue-500 mt-0.5" />
+                <label
+                  @click.prevent="canUseOpenAiAsr && selectAsrEngine('openai')"
+                  :class="['flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 transition', canUseOpenAiAsr ? 'cursor-pointer hover:bg-white/10' : 'opacity-45 cursor-not-allowed']"
+                >
+                  <input :checked="isAsrEngineSelected('openai')" :disabled="!canUseOpenAiAsr" type="checkbox" class="w-5 h-5 accent-blue-500 mt-0.5 pointer-events-none" />
                   <div class="flex-1">
                     <span class="text-white font-medium">使用 OpenAI Transcription API</span>
                     <p class="text-white/50 text-sm mt-1">
@@ -1352,8 +1448,11 @@ async function handleFileChange(event: Event) {
                   </div>
                 </label>
 
-                <label :class="['flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 transition', canUseQwen3Asr ? 'cursor-pointer hover:bg-white/10' : 'opacity-45 cursor-not-allowed']">
-                  <input v-model="localConfig.transcription.use_qwen3_asr" :disabled="!canUseQwen3Asr" type="checkbox" class="w-5 h-5 accent-blue-500 mt-0.5" />
+                <label
+                  @click.prevent="canUseQwen3Asr && selectAsrEngine('qwen3')"
+                  :class="['flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 transition', canUseQwen3Asr ? 'cursor-pointer hover:bg-white/10' : 'opacity-45 cursor-not-allowed']"
+                >
+                  <input :checked="isAsrEngineSelected('qwen3')" :disabled="!canUseQwen3Asr" type="checkbox" class="w-5 h-5 accent-blue-500 mt-0.5 pointer-events-none" />
                   <div class="flex-1">
                     <span class="text-white font-medium">使用 Qwen3-ASR</span>
                     <p class="text-white/50 text-sm mt-1">
@@ -1364,8 +1463,11 @@ async function handleFileChange(event: Event) {
                   </div>
                 </label>
 
-                <label :class="['flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 transition', canUseSenseVoice ? 'cursor-pointer hover:bg-white/10' : 'opacity-45 cursor-not-allowed']">
-                  <input v-model="localConfig.transcription.use_sensevoice_asr" :disabled="!canUseSenseVoice" type="checkbox" class="w-5 h-5 accent-blue-500 mt-0.5" />
+                <label
+                  @click.prevent="canUseSenseVoice && selectAsrEngine('sensevoice')"
+                  :class="['flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 transition', canUseSenseVoice ? 'cursor-pointer hover:bg-white/10' : 'opacity-45 cursor-not-allowed']"
+                >
+                  <input :checked="isAsrEngineSelected('sensevoice')" :disabled="!canUseSenseVoice" type="checkbox" class="w-5 h-5 accent-blue-500 mt-0.5 pointer-events-none" />
                   <div class="flex-1">
                     <span class="text-white font-medium">使用 SenseVoiceSmall</span>
                     <p class="text-white/50 text-sm mt-1">
@@ -1374,8 +1476,11 @@ async function handleFileChange(event: Event) {
                   </div>
                 </label>
 
-                <label :class="['flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 transition', canUseParakeet ? 'cursor-pointer hover:bg-white/10' : 'opacity-45 cursor-not-allowed']">
-                  <input v-model="localConfig.transcription.use_nemo_asr" :disabled="!canUseParakeet" type="checkbox" class="w-5 h-5 accent-blue-500 mt-0.5" />
+                <label
+                  @click.prevent="canUseParakeet && selectAsrEngine('parakeet')"
+                  :class="['flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 transition', canUseParakeet ? 'cursor-pointer hover:bg-white/10' : 'opacity-45 cursor-not-allowed']"
+                >
+                  <input :checked="isAsrEngineSelected('parakeet')" :disabled="!canUseParakeet" type="checkbox" class="w-5 h-5 accent-blue-500 mt-0.5 pointer-events-none" />
                   <div class="flex-1">
                     <span class="text-white font-medium">Parakeet CTC JA</span>
                     <p class="text-white/50 text-sm mt-1">
@@ -1522,7 +1627,7 @@ async function handleFileChange(event: Event) {
 
           <!-- Model Management Settings -->
           <div v-show="activeTab === 'model_management'" class="space-y-6">
-            <h2 class="text-xl font-bold text-white mb-4">模型管理</h2>
+            <h2 class="text-xl font-bold text-white mb-4">ASR模型管理</h2>
 
             <div class="bg-cyan-500/10 rounded-xl p-4 border border-cyan-500/20">
               <p class="text-cyan-200 text-sm">

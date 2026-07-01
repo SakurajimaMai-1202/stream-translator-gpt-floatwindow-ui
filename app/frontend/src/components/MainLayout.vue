@@ -3,7 +3,7 @@ import { useRouter, useRoute } from 'vue-router';
 
 const router = useRouter();
 const route = useRoute();
-const appVersion = import.meta.env.VITE_APP_VERSION || '1.3.2';
+const appVersion = import.meta.env.VITE_APP_VERSION || '1.3.3';
 
 // Define navigation items
 const primaryNavigation = [
@@ -25,7 +25,7 @@ const settingsGroups = [
     items: [
       { id: 'audio_vad', name: '音訊切片/VAD', icon: '🔊' },
       { id: 'transcription', name: '轉錄選項', icon: '🎤' },
-      { id: 'model_management', name: '模型管理', icon: '📦' }
+      { id: 'model_management', name: 'ASR模型管理', icon: '📦' }
     ]
   },
   {
@@ -41,7 +41,7 @@ const settingsGroups = [
 // Check active status
 function isTabActive(tabId: string) {
   if (route.path === '/settings') {
-    return route.query.tab === tabId;
+    return (route.query.tab || 'general') === tabId;
   }
   return false;
 }
@@ -123,11 +123,7 @@ function navigateTo(path: string, tabId?: string) {
 
     <!-- Right Content Panel -->
     <main class="flex-1 overflow-y-auto bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950/40 relative">
-      <router-view v-slot="{ Component }">
-        <transition name="fade" mode="out-in">
-          <component :is="Component" />
-        </transition>
-      </router-view>
+      <router-view />
     </main>
   </div>
 </template>

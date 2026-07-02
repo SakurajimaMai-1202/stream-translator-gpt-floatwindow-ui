@@ -3,7 +3,7 @@ import { useRouter, useRoute } from 'vue-router';
 
 const router = useRouter();
 const route = useRoute();
-const appVersion = import.meta.env.VITE_APP_VERSION || '1.3.3';
+const appVersion = import.meta.env.VITE_APP_VERSION || '1.3.4';
 
 // Define navigation items
 const primaryNavigation = [
@@ -48,8 +48,10 @@ function isTabActive(tabId: string) {
 
 function navigateTo(path: string, tabId?: string) {
   if (tabId) {
-    router.push({ path: '/settings', query: { tab: tabId } });
+    if (route.path === '/settings' && route.query.tab === tabId) return;
+    router.replace({ path: '/settings', query: { tab: tabId } });
   } else {
+    if (route.path === path) return;
     router.push(path);
   }
 }

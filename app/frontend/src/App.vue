@@ -5,7 +5,8 @@ import { useRoute } from 'vue-router';
 
 const route = useRoute();
 const isTransparentPage = computed(() => {
-  return route.name === 'subtitle' || route.path === '/subtitle' || window.location.pathname.endsWith('/subtitle') || window.location.pathname.includes('/subtitle');
+  const pathname = window.location.pathname.replace(/\/+$/, '') || '/';
+  return route.name === 'subtitle' || route.path === '/subtitle' || pathname === '/subtitle';
 });
 
 watchEffect(() => {

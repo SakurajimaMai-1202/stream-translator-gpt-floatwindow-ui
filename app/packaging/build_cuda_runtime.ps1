@@ -49,7 +49,7 @@ if ($Profile -eq "rocm" -and -not $sourceRuntime.hip) {
     throw "ROCm profile requires a build Python with torch.version.hip. Pass -Python to check_runtime_profile_env.ps1 or set STREAM_TRANSLATOR_BUILD_PYTHON to a ROCm/HIP torch runtime."
 }
 if ($Profile -eq "cpu" -and ($sourceRuntime.cuda -or $sourceRuntime.hip)) {
-    Write-Warning "CPU profile is using a GPU-capable torch build. It is allowed, but a CPU torch build is smaller."
+    throw "CPU profile requires a CPU-only PyTorch runtime. Current torch backend: $($sourceRuntime.torch_backend). Set STREAM_TRANSLATOR_BUILD_PYTHON to a Python environment with CPU-only torch."
 }
 
 $requirementsHash = (Get-FileHash -Path (Join-Path $scriptDir "requirements.txt") -Algorithm SHA256).Hash
@@ -160,7 +160,7 @@ if profile == 'cuda' and not torch.version.cuda:
 if profile == 'rocm' and not getattr(torch.version, 'hip', None):
     raise SystemExit('ROCm profile requires a ROCm/HIP PyTorch runtime')
 if profile == 'cpu' and (torch.version.cuda or getattr(torch.version, 'hip', None)):
-    print('Warning: CPU profile is using a GPU-capable torch build; package policy will still force CPU.', file=sys.stderr)
+    raise SystemExit('CPU profile requires a CPU-only PyTorch runtime')
 
 print(f'{profile.upper()} Runtime import check OK {torch.__version__}')
 "@

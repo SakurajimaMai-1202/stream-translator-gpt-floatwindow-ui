@@ -61,10 +61,13 @@ class HomeBridge(QObject):
 
 
 class WebViewWindow(QMainWindow):
+    initialLoadFinished = pyqtSignal(bool)
     """通用 WebView 視窗基類"""
     
     def __init__(self, title: str, url: str, width: int = 1200, height: int = 800):
         super().__init__()
+        self._initial_load_emitted = False
+        self.setWindowOpacity(0.0)
         self.setWindowTitle(title)
         app = QApplication.instance()
         if app is not None:
@@ -79,12 +82,15 @@ class WebViewWindow(QMainWindow):
         # 建立 WebView
         self.web_view = QWebEngineView()
         self.web_view.setPage(CustomWebPage(self.web_view))
+        self.web_view.setVisible(True)
         self._render_reload_attempts = 0
         self._last_render_reload_at = 0.0
         self.web_view.page().renderProcessTerminated.connect(self._on_render_process_terminated)
+        self.web_view.loadFinished.connect(self._on_load_finished)
         self.web_view.setZoomFactor(1.0)
         # 設定 WebView 背景也為深色 (會被頁面 CSS 覆蓋，但防止空頁面閃爍)
         self.web_view.setStyleSheet("background-color: #0f172a;")
+        self.web_view.page().setBackgroundColor(QColor("#0f172a"))
         
         # 設定
         settings = self.web_view.settings()
@@ -108,12 +114,32 @@ class WebViewWindow(QMainWindow):
         # 延遲載入 URL（確保服務已啟動）
         self._target_url = url
         QTimer.singleShot(500, self._load_url)
+        QTimer.singleShot(4000, self._show_web_view_if_hidden)
         
     def _load_url(self):
         """載入 URL"""
         logger.info(f"載入 URL: {self._target_url}")
         self.web_view.setUrl(QUrl(self._target_url))
         self._enforce_zoom_factor()
+
+    def _on_load_finished(self, ok: bool):
+        if not ok:
+            logger.warning(f"[WebView] Initial page load did not finish cleanly: {self._target_url}")
+        self._enforce_zoom_factor()
+        self.web_view.setVisible(True)
+        self.setWindowOpacity(1.0)
+        self.web_view.update()
+        self.web_view.repaint()
+        if not self._initial_load_emitted:
+            self._initial_load_emitted = True
+            self.initialLoadFinished.emit(ok)
+
+    def _show_web_view_if_hidden(self):
+        if not self.web_view.isVisible():
+            logger.warning("[WebView] Showing view after startup fallback timeout")
+            self.web_view.setVisible(True)
+        if self.windowOpacity() < 1.0:
+            self.setWindowOpacity(1.0)
 
     def _should_block_zoom_key(self, event: QKeyEvent) -> bool:
         """判斷是否為縮放快捷鍵 (Ctrl/Meta + +/-/=0)"""
@@ -305,10 +331,13 @@ class SettingsWindow(WebViewWindow):
 
 
 class SubtitleSettingsWindow(QMainWindow):
+    initialLoadFinished = pyqtSignal(bool)
     """字幕設定彈窗（獨立視窗）"""
     
     def __init__(self, base_url: str = "http://localhost:5173"):
         super().__init__()
+        self._initial_load_emitted = False
+        self.setWindowOpacity(0.0)
         self.setWindowTitle("字幕設定")
         app = QApplication.instance()
         if app is not None:
@@ -329,7 +358,10 @@ class SubtitleSettingsWindow(QMainWindow):
         # 建立 WebView
         self.web_view = QWebEngineView()
         self.web_view.setPage(CustomWebPage(self.web_view))
+        self.web_view.setVisible(True)
+        self.web_view.loadFinished.connect(self._on_load_finished)
         self.web_view.setStyleSheet("background-color: #0f172a;")
+        self.web_view.page().setBackgroundColor(QColor("#0f172a"))
         
         # 設定
         settings = self.web_view.settings()
@@ -342,11 +374,30 @@ class SubtitleSettingsWindow(QMainWindow):
         # 延遲載入 URL
         self._target_url = f"{base_url}/subtitle-settings"
         QTimer.singleShot(500, self._load_url)
+        QTimer.singleShot(4000, self._show_web_view_if_hidden)
     
     def _load_url(self):
         """載入 URL"""
         logger.info(f"載入字幕設定 URL: {self._target_url}")
         self.web_view.setUrl(QUrl(self._target_url))
+
+    def _on_load_finished(self, ok: bool):
+        if not ok:
+            logger.warning(f"[WebView] Subtitle settings page load did not finish cleanly: {self._target_url}")
+        self.web_view.setVisible(True)
+        self.setWindowOpacity(1.0)
+        self.web_view.update()
+        self.web_view.repaint()
+        if not self._initial_load_emitted:
+            self._initial_load_emitted = True
+            self.initialLoadFinished.emit(ok)
+
+    def _show_web_view_if_hidden(self):
+        if not self.web_view.isVisible():
+            logger.warning("[WebView] Showing subtitle settings view after startup fallback timeout")
+            self.web_view.setVisible(True)
+        if self.windowOpacity() < 1.0:
+            self.setWindowOpacity(1.0)
 
 
 class FloatingSubtitleWindow(WebViewWindow):
@@ -355,6 +406,8 @@ class FloatingSubtitleWindow(WebViewWindow):
     def __init__(self, base_url: str = "http://localhost:5173", config_manager=None):
         # 不呼叫 super().__init__ 以自定義佈局
         QMainWindow.__init__(self)
+        self._initial_load_emitted = False
+        self.setWindowOpacity(0.0)
         
         self.config_manager = config_manager
         self.setWindowTitle("字幕")
@@ -408,9 +461,11 @@ class FloatingSubtitleWindow(WebViewWindow):
         # 建立 WebView
         self.web_view = QWebEngineView()
         self.web_view.setPage(CustomWebPage(self.web_view))
+        self.web_view.setVisible(True)
         self._render_reload_attempts = 0
         self._last_render_reload_at = 0.0
         self.web_view.page().renderProcessTerminated.connect(self._on_render_process_terminated)
+        self.web_view.loadFinished.connect(self._on_load_finished)
         self.web_view.setZoomFactor(1.0)
         self.web_view.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.web_view.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, False)
@@ -450,6 +505,7 @@ class FloatingSubtitleWindow(WebViewWindow):
         # 延遲載入 URL
         self._target_url = f"{base_url}/subtitle"
         QTimer.singleShot(500, self._load_url)
+        QTimer.singleShot(4000, self._show_web_view_if_hidden)
         
         # 延遲安裝事件過濾器，確保子元件已建立
         QTimer.singleShot(1000, self._install_event_filter)
@@ -543,21 +599,15 @@ class FloatingSubtitleWindow(WebViewWindow):
         self.web_view.setUrl(QUrl(self._target_url))
         self.web_view.setZoomFactor(1.0)
 
-        # 首次顯示後微幅重繪，避免透明無框視窗首幀元素未完全更新
-        QTimer.singleShot(900, self._trigger_initial_repaint)
+    def _on_load_finished(self, ok: bool):
+        WebViewWindow._on_load_finished(self, ok)
+        QTimer.singleShot(100, self._trigger_initial_repaint)
 
     def _trigger_initial_repaint(self):
         """觸發一次首幀重繪，提升首次顯示穩定性"""
-        size = self.size()
-        self.resize(size.width() + 1, size.height() + 1)
-
-        def restore():
-            self.resize(size)
-            self.web_view.update()
-            self.web_view.repaint()
-            self.web_view.page().runJavaScript("window.dispatchEvent(new Event('resize'));")
-
-        QTimer.singleShot(120, restore)
+        self.web_view.update()
+        self.web_view.repaint()
+        self.web_view.page().runJavaScript("window.dispatchEvent(new Event('resize'));")
         
     def _check_edge(self, pos: QPoint):
         """檢查滑鼠是否在邊緣"""

@@ -81,7 +81,7 @@ function Get-RuntimeProfileDocText {
         [Parameter(Mandatory = $true)]
         [ValidateSet("cuda", "cpu", "rocm")]
         [string]$RuntimeProfile,
-        [string]$Version = "1.3.3",
+        [string]$Version = "1.3.4",
         [Parameter(Mandatory = $true)]
         [ValidateSet("portable_guide", "update_notes", "readme")]
         [string]$Document
@@ -114,7 +114,7 @@ function Get-RuntimeProfileDocText {
     } elseif ($RuntimeProfile -eq "cpu") {
         $name = "Stream Translator CPU"
         $status = "相容版"
-        $runtime = "CPU profile；目前打包 runtime 仍使用 GPU-capable torch，但功能層會強制 CPU policy"
+        $runtime = "CPU profile / PyTorch CPU-only"
         $requirements = "不需要 NVIDIA 或 AMD 獨立顯示卡。CPU 速度會比 GPU 慢，建議先使用 Faster-Whisper small / medium 或 Qwen3-ASR 0.6B。"
         $models = @(
             "Faster-Whisper: small / medium 慢速",
@@ -127,7 +127,7 @@ function Get-RuntimeProfileDocText {
             "CPU profile 會把 ASR device policy 寫成 cpu，避免誤用顯卡。",
             "CPU 版保留遠端 API / 遠端字幕能力，可用於沒有獨顯的相容環境。",
             "SenseVoiceSmall 不預先標慢速；請依實際 CPU 與音訊長度測試速度。",
-            "目前 runtime 體積接近 CUDA 包；之後若改純 CPU torch runtime，可再降低體積。"
+            "CPU package 使用 CPU-only PyTorch runtime，不會攜帶 CUDA / ROCm GPU torch runtime。"
         )
         $warning = "CPU 版適合沒有可用獨顯或想先測功能的使用者；大型模型會很慢。"
     } else {
@@ -281,7 +281,7 @@ function Write-RuntimeProfileDocs {
         [Parameter(Mandatory = $true)]
         [ValidateSet("cuda", "cpu", "rocm")]
         [string]$RuntimeProfile,
-        [string]$Version = "1.3.3"
+        [string]$Version = "1.3.4"
     )
 
     if (-not (Test-Path $Destination)) {

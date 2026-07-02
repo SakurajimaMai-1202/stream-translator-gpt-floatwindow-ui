@@ -28,11 +28,10 @@ export function useTranscriptionMutex(getTranscription: () => TranscriptionConfi
   function selectExclusiveEngine(cfg: TranscriptionConfig, engine: 'openai' | 'qwen3' | 'sensevoice' | 'nemo') {
     cfg.use_faster_whisper = false;
     cfg.use_simul_streaming = false;
-    clearExclusiveEngines(cfg);
-    if (engine === 'openai') cfg.use_openai_transcription_api = true;
-    if (engine === 'qwen3') cfg.use_qwen3_asr = true;
-    if (engine === 'sensevoice') cfg.use_sensevoice_asr = true;
-    if (engine === 'nemo') cfg.use_nemo_asr = true;
+    cfg.use_openai_transcription_api = engine === 'openai';
+    cfg.use_qwen3_asr = engine === 'qwen3';
+    cfg.use_sensevoice_asr = engine === 'sensevoice';
+    cfg.use_nemo_asr = engine === 'nemo';
   }
 
   watch(

@@ -229,6 +229,13 @@ function normalizeSettingsTab(tab: unknown): string {
 const activeTab = ref(normalizeSettingsTab(route.query.tab));
 const isApplyingRemoteConfig = ref(false);
 
+function syncActiveTabFromRoute(tab: unknown = route.query.tab) {
+  const normalized = normalizeSettingsTab(tab);
+  if (activeTab.value !== normalized) {
+    activeTab.value = normalized;
+  }
+}
+
 const translationBackendOptions = computed<UiSelectOption[]>(() => {
   const base: UiSelectOption[] = [
     { value: 'none', label: '不翻譯' },
@@ -554,11 +561,12 @@ function normalizeAsrEngineSelection() {
 
   if (selectedExclusive.length > 0) {
     const selected = selectedExclusive[0];
-    clearAllAsrEngines(transcription);
-    if (selected === 'sensevoice') transcription.use_sensevoice_asr = true;
-    if (selected === 'parakeet') transcription.use_nemo_asr = true;
-    if (selected === 'qwen3') transcription.use_qwen3_asr = true;
-    if (selected === 'openai') transcription.use_openai_transcription_api = true;
+    transcription.use_faster_whisper = false;
+    transcription.use_simul_streaming = false;
+    transcription.use_sensevoice_asr = selected === 'sensevoice';
+    transcription.use_nemo_asr = selected === 'parakeet';
+    transcription.use_qwen3_asr = selected === 'qwen3';
+    transcription.use_openai_transcription_api = selected === 'openai';
   }
 }
 
@@ -722,8 +730,8 @@ useAppSyncEvents({
 });
 
 watch(() => route.query.tab, (newTab) => {
-  activeTab.value = normalizeSettingsTab(newTab);
-});
+  syncActiveTabFromRoute(newTab);
+}, { immediate: true });
 
 onMounted(async () => {
   await store.loadConfig();
@@ -731,7 +739,7 @@ onMounted(async () => {
   await applyStoreConfigToLocalConfig(store.config, true);
   
   // 從 URL 參數設定 tab
-  activeTab.value = normalizeSettingsTab(route.query.tab);
+  syncActiveTabFromRoute();
 
   await modelDownloadStore.refreshAll();
   if (modelDownloadStore.activeTasks.length > 0) {

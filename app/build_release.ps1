@@ -2,7 +2,7 @@
 param(
     [ValidateSet("cuda", "cpu", "rocm")]
     [string]$Profile = "cuda",
-    [string]$Version = "1.3.3",
+    [string]$Version = "1.3.4",
     [switch]$ForceRuntime,
     [switch]$SkipFullZip
 )

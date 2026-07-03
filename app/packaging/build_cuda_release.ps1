@@ -111,6 +111,25 @@ Copy-Item $builtApp $updateRoot -Recurse
 $updatePackageDir = Join-Path $updateRoot "_runtime\Lib\site-packages"
 New-Item $updatePackageDir -ItemType Directory -Force | Out-Null
 Copy-Item (Join-Path $projectRoot "stream-translator-gpt\stream_translator_gpt") $updatePackageDir -Recurse -Force
+$runtimePackageDir = Join-Path $runtimeCache "Lib\site-packages"
+$runtimeUpdateExcludePatterns = @(
+    "stream_translator_gpt",
+    "torch", "torch-*", "torchgen", "functorch",
+    "torchaudio", "torchaudio-*",
+    "torchvision", "torchvision-*",
+    "nemo*", "megatron*", "lightning*", "pytorch_lightning*",
+    "PyQt6", "PyQt6-*", "pyqt6_*.dist-info",
+    "PyInstaller", "pyinstaller-*", "_pytest", "pytest", "pytest-*",
+    "~orch", "~orch-*", "__editable__*", "*.egg-link"
+)
+if (Test-Path $runtimePackageDir) {
+    Get-ChildItem $runtimePackageDir -Force | Where-Object {
+        $name = $_.Name
+        -not ($runtimeUpdateExcludePatterns | Where-Object { $name -like $_ })
+    } | ForEach-Object {
+        Copy-Item $_.FullName $updatePackageDir -Recurse -Force
+    }
+}
 Copy-Item (Join-Path $scriptDir "diagnose_runtime.ps1") $updateRoot
 Copy-Item (Join-Path $scriptDir "smoke_sensevoice_asr.ps1") $updateRoot
 Write-RuntimeProfileDocs -Destination $updateRoot -RuntimeProfile $Profile -Version $Version

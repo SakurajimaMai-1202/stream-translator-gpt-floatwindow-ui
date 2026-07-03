@@ -71,3 +71,23 @@ def test_sensevoice_model_download_metadata_and_delete(monkeypatch, tmp_path):
 
     assert deleted == repo_dir.resolve()
     assert not repo_dir.exists()
+
+
+def test_sensevoice_legacy_modelscope_path_is_listed_and_deleted(monkeypatch, tmp_path):
+    manager = ModelDownloadManager()
+    cache_root = tmp_path / "modelscope"
+    repo_dir = cache_root / "iic" / "SenseVoiceSmall"
+    repo_dir.mkdir(parents=True)
+    (repo_dir / "model.bin").write_bytes(b"test")
+    monkeypatch.setattr(manager, "_get_modelscope_cache_dir", lambda: cache_root)
+    monkeypatch.setattr(manager, "_get_hf_cache_dir", lambda: tmp_path / "empty-hf")
+
+    models = manager.list_downloaded_models()
+
+    assert len(models) == 1
+    assert models[0].cache_path == str(repo_dir.resolve())
+
+    deleted = manager.delete_model("sensevoice", "iic/SenseVoiceSmall")
+
+    assert deleted == repo_dir.resolve()
+    assert not repo_dir.exists()

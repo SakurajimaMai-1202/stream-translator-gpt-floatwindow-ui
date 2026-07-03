@@ -66,12 +66,41 @@ $fingerprintStream = [IO.MemoryStream]::new($fingerprintBytes)
 $fingerprint = (Get-FileHash -InputStream $fingerprintStream -Algorithm SHA256).Hash
 $fingerprintStream.Dispose()
 
+$validationScript = @"
+import importlib
+import sys
+import torch
+
+profile = '$Profile'
+required = ['qwen_asr', 'funasr', 'torchaudio']
+if profile in ('cuda', 'cpu'):
+    required.extend(['faster_whisper', 'whisper', 'omnivad'])
+if profile == 'cuda':
+    required.append('nemo.collections.asr.models')
+
+for name in required:
+    importlib.import_module(name)
+
+if profile == 'cuda' and not torch.version.cuda:
+    raise SystemExit('CUDA profile requires a CUDA PyTorch runtime')
+if profile == 'rocm' and not getattr(torch.version, 'hip', None):
+    raise SystemExit('ROCm profile requires a ROCm/HIP PyTorch runtime')
+if profile == 'cpu' and (torch.version.cuda or getattr(torch.version, 'hip', None)):
+    raise SystemExit('CPU profile requires a CPU-only PyTorch runtime')
+
+print(f'{profile.upper()} Runtime import check OK {torch.__version__}')
+"@
+
 if (-not $Force -and (Test-Path $manifestPath)) {
     $existing = Get-Content $manifestPath -Raw -Encoding utf8 | ConvertFrom-Json
     if ($existing.schema -eq 2 -and $existing.profile -eq $Profile -and $existing.fingerprint -eq $fingerprint) {
         $cachedPackage = Join-Path $runtimeCache "Lib\site-packages\stream_translator_gpt"
         if (Test-Path $cachedPackage) { Remove-Item $cachedPackage -Recurse -Force }
         Copy-Item $patchedPackage $cachedPackage -Recurse -Force
+        & (Join-Path $runtimeCache "python.exe") -c $validationScript
+        if ($LASTEXITCODE -ne 0) {
+            throw "$profileLabel cached runtime validation failed. Rebuild the runtime with -Force after fixing the build Python dependencies."
+        }
         Write-Host "$profileLabel Runtime unchanged; using cache: $runtimeCache" -ForegroundColor Green
         exit 0
     }
@@ -140,30 +169,6 @@ $pthContent = ".`r`nLib`r`nDLLs`r`nLib\site-packages`r`nimport site`r`n"
 $versionInfo = & $pythonExe -c "import json, sys, torch; cuda = torch.version.cuda; hip = getattr(torch.version, 'hip', None); backend = 'rocm' if hip else ('cuda' if cuda else 'cpu'); print(json.dumps({'python': sys.version.split()[0], 'torch': torch.__version__, 'torch_backend': backend, 'cuda': cuda, 'hip': hip, 'cuda_available': torch.cuda.is_available(), 'device_count': torch.cuda.device_count()}))"
 $versions = $versionInfo | ConvertFrom-Json
 
-$validationScript = @"
-import importlib
-import sys
-import torch
-
-profile = '$Profile'
-required = ['qwen_asr', 'funasr', 'torchaudio']
-if profile in ('cuda', 'cpu'):
-    required.extend(['faster_whisper', 'whisper', 'omnivad'])
-if profile == 'cuda':
-    required.append('nemo.collections.asr.models')
-
-for name in required:
-    importlib.import_module(name)
-
-if profile == 'cuda' and not torch.version.cuda:
-    raise SystemExit('CUDA profile requires a CUDA PyTorch runtime')
-if profile == 'rocm' and not getattr(torch.version, 'hip', None):
-    raise SystemExit('ROCm profile requires a ROCm/HIP PyTorch runtime')
-if profile == 'cpu' and (torch.version.cuda or getattr(torch.version, 'hip', None)):
-    raise SystemExit('CPU profile requires a CPU-only PyTorch runtime')
-
-print(f'{profile.upper()} Runtime import check OK {torch.__version__}')
-"@
 & (Join-Path $runtimeCache "python.exe") -c $validationScript
 if ($LASTEXITCODE -ne 0) { throw "$profileLabel Runtime validation failed" }
 

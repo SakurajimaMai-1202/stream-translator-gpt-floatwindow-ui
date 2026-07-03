@@ -48,6 +48,42 @@ def _apply_hf_proxy(proxy: str):
         pass
 
 
+def _resolve_modelscope_repo_path(repo_id: str) -> str:
+    """Prefer a portable local ModelScope cache before allowing FunASR to download."""
+    model = (repo_id or '').strip()
+    if not model:
+        return model
+
+    expanded = Path(os.path.expandvars(os.path.expanduser(model)))
+    if expanded.exists():
+        return str(expanded.resolve())
+
+    if '/' not in model:
+        return model
+
+    namespace, name = model.split('/', 1)
+    candidates: list[Path] = []
+
+    modelscope_cache = os.environ.get('MODELSCOPE_CACHE')
+    if modelscope_cache:
+        cache_root = Path(os.path.expandvars(os.path.expanduser(modelscope_cache)))
+        candidates.append(cache_root / 'models' / namespace / name)
+        candidates.append(cache_root / namespace / name)
+
+    cwd = Path.cwd()
+    candidates.extend([
+        cwd / 'models' / 'huggingface' / 'modelscope' / 'models' / namespace / name,
+        cwd / 'models' / 'huggingface' / 'modelscope' / namespace / name,
+        cwd / 'models' / name,
+    ])
+
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_dir():
+            return str(candidate.resolve())
+
+    return model
+
+
 def _normalize_duplicate_text(text: str) -> str:
     return re.sub(r'[\W_]+', '', text or '', flags=re.UNICODE).casefold()
 
@@ -595,9 +631,10 @@ class SenseVoiceTranscriber(AudioTranscriber):
         self.language = self._normalize_language(language)
         self.device = device or 'cpu'
         self.model_id = model or 'iic/SenseVoiceSmall'
+        self.model_path = _resolve_modelscope_repo_path(self.model_id)
         self.model = self._quiet_call(
             AutoModel,
-            model=self.model_id,
+            model=self.model_path,
             trust_remote_code=True,
             device=self.device,
             disable_update=True,

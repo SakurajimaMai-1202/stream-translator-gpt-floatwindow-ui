@@ -5,7 +5,7 @@ pytest.importorskip("scipy")
 pytest.importorskip("torch")
 
 from stream_translator_gpt.asr_preload import build_asr_config, resolve_preload_config
-from stream_translator_gpt.audio_transcriber import NemoASRTranscriber
+from stream_translator_gpt.audio_transcriber import NemoASRTranscriber, _resolve_modelscope_repo_path
 
 
 class _FakeProps:
@@ -98,6 +98,21 @@ def test_sensevoice_preload_skips_unsupported_rocm_igpu(monkeypatch):
     resolved = resolve_preload_config(config)
 
     assert resolved.sensevoice_device == "cuda:1"
+
+
+def test_sensevoice_modelscope_repo_prefers_portable_local_cache(monkeypatch, tmp_path):
+    cache_root = tmp_path / "modelscope"
+    local_model = cache_root / "models" / "iic" / "SenseVoiceSmall"
+    local_model.mkdir(parents=True)
+    monkeypatch.setenv("MODELSCOPE_CACHE", str(cache_root))
+
+    assert _resolve_modelscope_repo_path("iic/SenseVoiceSmall") == str(local_model.resolve())
+
+
+def test_sensevoice_modelscope_repo_keeps_repo_id_when_cache_missing(monkeypatch, tmp_path):
+    monkeypatch.setenv("MODELSCOPE_CACHE", str(tmp_path / "modelscope"))
+
+    assert _resolve_modelscope_repo_path("iic/SenseVoiceSmall") == "iic/SenseVoiceSmall"
 
 
 def test_parakeet_ctc_ja_uses_hf_nemo_file(tmp_path):

@@ -255,6 +255,14 @@ class ModelDownloadManager:
         namespace, name = repo_id.split("/", 1)
         return (self._get_modelscope_cache_dir() / "models" / namespace / name).resolve()
 
+    def _get_modelscope_model_dirs(self, repo_id: str) -> List[Path]:
+        namespace, name = repo_id.split("/", 1)
+        cache_dir = self._get_modelscope_cache_dir()
+        return [
+            (cache_dir / "models" / namespace / name).resolve(),
+            (cache_dir / namespace / name).resolve(),
+        ]
+
     def _resolve_sensevoice_download_python(self) -> str:
         app_root = get_app_root()
         candidates = [
@@ -312,7 +320,10 @@ class ModelDownloadManager:
         normalized_model_id = self._validate_model_id(engine, model_id)
         if engine == "sensevoice":
             cache_root = self._get_modelscope_cache_dir().resolve()
-            repo_dir = self._get_modelscope_model_dir(normalized_model_id)
+            repo_dir = next(
+                (candidate for candidate in self._get_modelscope_model_dirs(normalized_model_id) if candidate.exists()),
+                self._get_modelscope_model_dir(normalized_model_id),
+            )
         else:
             repo_id = self._normalize_repo_id(engine, normalized_model_id)
             cache_root = self._get_hf_cache_dir().resolve()
@@ -336,8 +347,9 @@ class ModelDownloadManager:
         models: List[DownloadedModelInfo] = []
 
         for model_id in sorted(SUPPORTED_SENSEVOICE_MODELS):
-            model_dir = self._get_modelscope_model_dir(model_id)
-            if model_dir.exists() and model_dir.is_dir():
+            for model_dir in self._get_modelscope_model_dirs(model_id):
+                if not model_dir.exists() or not model_dir.is_dir():
+                    continue
                 models.append(
                     DownloadedModelInfo(
                         engine="sensevoice",
@@ -347,6 +359,7 @@ class ModelDownloadManager:
                         cache_path=str(model_dir),
                     )
                 )
+                break
 
         # 優先使用 huggingface_hub 的 cache 掃描
         try:

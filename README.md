@@ -358,7 +358,7 @@ Sakura 系列很適合日文翻譯，但多數 Sakura 模型採非商用授權�
 <details>
 <summary><strong>為什麼 requirements.txt 沒一起安裝 PyTorch？</strong></summary>
 
-PyTorch 必須依照 CUDA 版本選擇 cu118、cu121、cu124 等不同來源，無法在 requirements 裡替所有使用者寫死。
+PyTorch 必須依照 runtime profile 選擇 CPU / CUDA / ROCm 不同 build。CPU 版要 CPU-only torch；CUDA 版要對應 cuXXX；ROCm 版要能提供 `torch.version.hip` 的 ROCm/HIP build，因此無法在 `requirements.txt` 裡替所有使用者寫死。
 
 </details>
 
@@ -366,20 +366,52 @@ PyTorch 必須依照 CUDA 版本選擇 cu118、cu121、cu124 等不同來源，�
 
 ## 從原始碼執行
 
-一般使用者建議使用打包版。以下流程適合開發、除錯或自行打包。
+一般使用者建議使用打包版。以下流程適合開發、除錯或自行打包。原始碼執行不會自動幫你安裝正確的 PyTorch 變體；請依目標 profile 先準備 CUDA / CPU / ROCm 對應環境。
+
+### 1. 準備 Python 依賴
 
 ```powershell
 python -m venv .venv
-.venv\Scripts\Activate.ps1
+.\.venv\Scripts\Activate.ps1
 
-# 依自己的 CUDA 版本安裝 PyTorch，以下以 CUDA 12.4 為例
-pip install torch --extra-index-url https://download.pytorch.org/whl/cu124
+# 依目標 profile 安裝 PyTorch，三選一：
 
-pip install -r app/requirements.txt
+# CPU 開發 / CPU package
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
 
-copy app\config.example.yaml app\config.yaml
-cd app
-python main.py
+# CUDA 開發 / CUDA package，請依自己的驅動與 PyTorch 支援版本調整 cuXXX
+# pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu128
+
+# ROCm 開發 / ROCm package
+# 請使用可在 Windows ROCm/HIP 環境運作的 PyTorch；需能讓 torch.version.hip 有值。
+
+pip install -r .\app\requirements.txt
+pip install -e .\stream-translator-gpt
+```
+
+CUDA 版若要開發或打包 Parakeet CTC JA，還要安裝：
+
+```powershell
+pip install -r .\app\requirements_cuda_parakeet.txt
+```
+
+### 2. 準備前端
+
+```powershell
+cd .\app\frontend
+npm install
+npm run build
+cd ..\..
+```
+
+開發時也可以另開一個 terminal 執行 `npm run dev`，再由 PyQt WebView 連到 Vite dev server。若只想確認完整流程，先跑 `npm run build` 產生靜態檔最穩。
+
+### 3. 啟動桌面程式
+
+```powershell
+copy .\app\config.example.yaml .\app\config.yaml
+cd .\app
+python .\main.py
 ```
 
 本地 LLM 和 ffmpeg 的建議位置：
@@ -391,6 +423,8 @@ floatwindow/
 ├── ffmpeg-8.1-essentials_build/
 └── stream-translator-gpt/
 ```
+
+SenseVoiceSmall 若不想等線上下載，可從 Release 下載 `StreamTranslator-SenseVoiceSmall-Model-v1.3.4.zip`，解壓到 `app\models\huggingface\modelscope\models\iic\SenseVoiceSmall` 或打包後程式根目錄的同名 `models` 路徑。
 
 ---
 
@@ -406,10 +440,13 @@ stream-translator-gpt-floatwindow-ui/
 │   ├── services.py                 # FastAPI 後端與靜態檔服務
 │   ├── backend/                    # REST API、設定、模型管理、核心流程
 │   ├── frontend/                   # Vue 3 + Tailwind CSS + TypeScript
+│   ├── packaging/                  # runtime profile 打包、驗證與 release 腳本
+│   ├── docs/                       # 打包、runtime profile、模型包與 release 文件
 │   ├── config.example.yaml         # 設定範本
 │   ├── requirements.txt            # 執行用依賴
-│   └── requirements_full.txt       # 打包用依賴
-├── stream-translator-gpt/          # 核心轉錄翻譯引擎 fork
+│   ├── requirements_full.txt       # 打包用依賴
+│   └── requirements_cuda_parakeet.txt # CUDA Parakeet CTC JA 額外依賴
+├── stream-translator-gpt/          # 核心轉錄翻譯引擎 fork，本專案會同步修改
 └── README.md
 ```
 
@@ -438,6 +475,86 @@ stream-translator-gpt-floatwindow-ui/
 |------|------|
 | Python | 3.10-3.12，依目標 profile 準備 CUDA / CPU / ROCm 對應 PyTorch |
 | Node.js | 18+，僅前端建構需要 |
+| PyInstaller | 自行打包需安裝 `app/requirements_full.txt` |
+| Build Python | 打包時用 `STREAM_TRANSLATOR_BUILD_PYTHON` 指向對應 profile 的 Python |
+
+### Runtime Profile 與打包
+
+目前維護三個 runtime profile：
+
+| Profile | 輸出 | 用途 |
+|------|------|------|
+| `cuda` | `app/dist-cuda/StreamTranslator-win64-CUDA` | NVIDIA CUDA 正式版；包含 Faster-Whisper 全系列、Qwen3-ASR、SenseVoiceSmall、Parakeet CTC JA |
+| `cpu` | `app/dist-cpu/StreamTranslator-win64-CPU` | CPU-only 版；使用 CPU-only PyTorch，支援遠端 API、字幕分享、Qwen3-ASR 0.6B、SenseVoiceSmall、faster-whisper small / medium |
+| `rocm` | `app/dist-rocm/StreamTranslator-win64-ROCm-Experimental` | AMD ROCm/HIP 實驗版；Qwen3-ASR 與 SenseVoiceSmall 已有 AMD 實機可用案例，package 仍保留 Experimental |
+
+打包前先檢查 build Python：
+
+```powershell
+cd .\app
+
+.\check_runtime_profile_env.ps1 -Profile cuda -Python "D:\Python\cuda-runtime\python.exe"
+.\check_runtime_profile_env.ps1 -Profile cpu -Python "D:\Python\cpu-runtime\python.exe"
+.\check_runtime_profile_env.ps1 -Profile rocm -Python "D:\Python\rocm-runtime\python.exe"
+```
+
+打包指令：
+
+```powershell
+cd .\app
+
+$env:STREAM_TRANSLATOR_BUILD_PYTHON = "D:\Python\cuda-runtime\python.exe"
+.\build_release.ps1 -Profile cuda -Version 1.3.4
+
+$env:STREAM_TRANSLATOR_BUILD_PYTHON = "D:\Python\cpu-runtime\python.exe"
+.\build_release.ps1 -Profile cpu -Version 1.3.4
+
+$env:STREAM_TRANSLATOR_BUILD_PYTHON = "D:\Python\rocm-runtime\python.exe"
+.\build_release.ps1 -Profile rocm -Version 1.3.4
+```
+
+打包後驗證：
+
+```powershell
+.\validate_runtime_artifact.ps1 -Profile cuda
+.\validate_runtime_artifact.ps1 -Profile cpu -ExpectedTorchBackend cpu
+.\validate_runtime_artifact.ps1 -Profile rocm
+```
+
+CUDA / CPU / ROCm 的 App Update 只能覆蓋同 profile 完整包。不要用 CUDA App Update 覆蓋 CPU 或 ROCm 完整包。
+
+### Release Asset 整理
+
+Full package 會輸出完整 zip，GitHub Release 使用 `.part01`、`.part02` 這種分割檔。請同步提供：
+
+- `merge-full-package.bat`
+- `SHA256SUMS-v1.3.4.txt`
+- `RELEASE_NOTES_v1.3.4_zh-TW.md`
+- 三個 `StreamTranslator-*-App-Update.zip`
+- 三組 Full package 分割檔
+- 可選的 `StreamTranslator-SenseVoiceSmall-Model-v1.3.4.zip`
+
+SenseVoiceSmall 模型包可用：
+
+```powershell
+cd .\app
+.\packaging\build_sensevoice_model_package.ps1 -Version 1.3.4
+```
+
+若模型在其他資料夾：
+
+```powershell
+.\packaging\build_sensevoice_model_package.ps1 -Version 1.3.4 -SourcePath "D:\Models\SenseVoiceSmall"
+```
+
+### 重要開發注意
+
+- 轉錄引擎以單一 ASR 後端互斥為原則，不要讓 Qwen3-ASR、SenseVoiceSmall、Parakeet、Faster-Whisper 同時啟用。
+- CUDA / ROCm 預設避開內顯；ROCm 若要測 AMD APU / iGPU，必須手動允許 integrated GPU。
+- Qwen3-ASR 在 CUDA / ROCm 預設 `bfloat16`；CPU profile 使用 `float32`。
+- Parakeet CTC JA 只開在 CUDA profile，不放進 CPU / ROCm。
+- SenseVoiceSmall 會優先檢查本機 ModelScope cache / 模型包路徑，找不到才交由 FunASR 走線上來源。
+- 相關設計文件請看 `app/docs/RUNTIME_PROFILES_zh-TW.md`、`app/docs/PACKAGING_zh-TW.md`、`app/docs/SENSEVOICE_MODEL_PACKAGE_zh-TW.md`。
 
 ---
 

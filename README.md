@@ -145,7 +145,7 @@ App Update 只能覆蓋同 profile 完整包；不要用 CUDA App Update 覆蓋 
 | 設定 | 建議 |
 |------|------|
 | 音源 | 直播網址選 URL；遊戲或影片選系統音訊；真人講話選麥克風 |
-| ASR | 多語混用先用 `Qwen/Qwen3-ASR-1.7B`；日文場景可選 JA fine-tune |
+| ASR | CUDA / ROCm 多語混用先用 `Qwen/Qwen3-ASR-1.7B`；CPU 先用 `Qwen/Qwen3-ASR-0.6B` 或 SenseVoiceSmall |
 | 翻譯 | 有 API Key 可用 GPT/Gemini；要本地離線可用 llama.cpp 或 LM Studio |
 | 目標語言 | 例如繁體中文、英文、日文 |
 
@@ -156,7 +156,7 @@ App Update 只能覆蓋同 profile 完整包；不要用 CUDA App Update 覆蓋 
 | 類別 | 說明 |
 |------|------|
 | 音源輸入 | URL 直播、本地音檔、麥克風、系統音訊 WASAPI Loopback |
-| 語音辨識 | Qwen3-ASR、Qwen3-ASR JA fine-tune、faster-whisper、OpenAI Whisper API |
+| 語音辨識 | Qwen3-ASR、Qwen3-ASR JA fine-tune、SenseVoiceSmall、Parakeet CTC JA、faster-whisper、OpenAI Whisper API |
 | 語音切片 | Silero VAD、FireRed VAD， |
 | 翻譯後端 | OpenAI GPT、Google Gemini、本地 OpenAI-compatible LLM |
 | 浮動字幕 | 置頂字幕視窗，可調字體、顏色、透明度、顯示行數 |
@@ -173,39 +173,45 @@ App Update 只能覆蓋同 profile 完整包；不要用 CUDA App Update 覆蓋 
 
 | 情境 | 建議 |
 |------|------|
-| 多語言混用 | ASR 用 `Qwen/Qwen3-ASR-1.7B` |
-| 日文內容為主 | ASR 可改用 `neosophie/Qwen3-ASR-1.7B-JA` |
+| NVIDIA CUDA 顯卡 | 優先下載 CUDA 版；ASR 用 `Qwen/Qwen3-ASR-1.7B`，日文可試 `neosophie/Qwen3-ASR-1.7B-JA` 或 Parakeet CTC JA |
+| AMD ROCm 顯卡 | 優先下載 ROCm Experimental；Qwen3-ASR 0.6B / 1.7B / 1.7B-JA 可用，SenseVoiceSmall 仍視 AMD 環境列為 experimental |
+| 沒有獨立顯卡 | 下載 CPU 版；ASR 先用 `Qwen/Qwen3-ASR-0.6B`、SenseVoiceSmall 或 faster-whisper small / medium |
+| 日文內容為主 | CUDA 可試 Parakeet CTC JA；CUDA / ROCm 可用 Qwen3-ASR 1.7B-JA；CPU 建議先試 SenseVoiceSmall |
 | 12GB 顯卡想跑本地翻譯 | `Qwen3-ASR-1.7B + Hy-MT2-7B Q4_K_M` 或 `Gemma 4 E4B Q4` |
 | 12GB 顯卡想長時間穩定直播 | `Qwen3-ASR-1.7B + Hy-MT2-1.8B Q4_K_M` |
-| 不想佔本地顯存 | ASR 跑本地，翻譯用 GPT / Gemini API |
+| 不想佔本地顯存 | ASR 跑較小本地模型，翻譯用 GPT / Gemini API；或 ASR 直接用 OpenAI Whisper API |
+
+SenseVoiceSmall 建議搭配 `StreamTranslator-SenseVoiceSmall-Model-v1.3.4.zip` 模型包使用。解壓到主程式資料夾後，CUDA / CPU / ROCm 三版可共用同一份 `models\huggingface\modelscope\models\iic\SenseVoiceSmall`，避免首次啟動時從 ModelScope 或 Hugging Face 下載過慢。
 
 實際顯存會受到 context 長度、KV cache、GPU offload、llama.cpp / LM Studio / Ollama 設定影響。下面的表格是選型方向，不是絕對值。
 
 ### 顯卡組合
 
-| 顯卡 | 推薦組合 | 評價 | 適合情境 |
+| 硬體 | 推薦組合 | 評價 | 適合情境 |
 |------|----------|------|----------|
-| 6GB | Qwen3-ASR-0.6B 或 faster-whisper small + API 翻譯 | 穩 | 入門、低延遲 |
-| 8GB | Qwen3-ASR-0.6B + Hy-MT2-1.8B Q4_K_M | 很穩 | 本地翻譯入門 |
-| 12GB 穩定 | Qwen3-ASR-1.7B + Hy-MT2-1.8B Q4_K_M | 很穩 | 長時間直播、多語字幕 |
-| 12GB 品質 | Qwen3-ASR-1.7B + Hy-MT2-7B Q4_K_M | 可用但偏緊 | 多語翻譯品質優先 |
-| 12GB 泛用 | Qwen3-ASR-1.7B + Gemma 4 E4B Q4 | 可用但偏緊 | 泛用翻譯、速度與品質平衡 |
-| 12GB 日文 | Qwen3-ASR-1.7B / JA fine-tune + Sakura 7B IQ4_XS | 可用 | 日文、Galgame、輕小說語氣 |
-| 16GB+ 日文品質 | Qwen3-ASR-1.7B + Sakura 14B IQ4 / Q4 | 推薦 | 日中品質優先 |
-| 16GB+ 多語品質 | Qwen3-ASR-1.7B + Hy-MT2-7B Q6_K | 推薦 | 多語翻譯品質優先 |
+| CPU-only | SenseVoiceSmall / Qwen3-ASR-0.6B / faster-whisper small 或 medium + API 翻譯 | 可用但速度看 CPU | 無獨顯、測試、字幕分享、遠端 API 流程 |
+| NVIDIA 6GB | Qwen3-ASR-0.6B 或 faster-whisper small + API 翻譯 | 穩 | 入門、低延遲、顯存保守 |
+| NVIDIA 8GB | Qwen3-ASR-0.6B + Hy-MT2-1.8B Q4_K_M；日文可試 Parakeet CTC JA + API 翻譯 | 穩 | 本地翻譯入門、日文 CTC 實驗 |
+| NVIDIA 12GB 穩定 | Qwen3-ASR-1.7B + Hy-MT2-1.8B Q4_K_M | 很穩 | 長時間直播、多語字幕 |
+| NVIDIA 12GB 品質 | Qwen3-ASR-1.7B + Hy-MT2-7B Q4_K_M 或 Gemma 4 E4B Q4 | 可用但偏緊 | 多語翻譯品質優先 |
+| NVIDIA 12GB 日文 | Qwen3-ASR-1.7B-JA / Parakeet CTC JA + Sakura 7B IQ4_XS | 可用 | 日文、Galgame、輕小說語氣 |
+| NVIDIA 16GB+ | Qwen3-ASR-1.7B + Sakura 14B Q4 / Hy-MT2-7B Q6_K | 推薦 | 日文或多語品質優先 |
+| AMD ROCm 16GB+ | Qwen3-ASR-1.7B / 1.7B-JA + 4B～7B Q4 翻譯模型 | experimental | AMD ROCm/HIP 使用者；Radeon RX 9070 XT 已有實機確認 |
 
-12GB 顯卡的甜蜜點是 **Qwen3-ASR-1.7B + 4B～7B Q4 翻譯模型**。Hy-MT2-7B Q4_K_M 和 Gemma 4 E4B Q4 值得優先嘗試；如果重視穩定和長時間運行，Hy-MT2-1.8B Q4_K_M 會更保守。
+12GB NVIDIA 顯卡的甜蜜點是 **Qwen3-ASR-1.7B + 4B～7B Q4 翻譯模型**。Hy-MT2-7B Q4_K_M 和 Gemma 4 E4B Q4 值得優先嘗試；如果重視穩定和長時間運行，Hy-MT2-1.8B Q4_K_M 會更保守。ROCm 版預設會避開 AMD 內顯 / APU，若要測試整合顯卡，請在 Runtime Profile 裡手動允許 integrated GPU。
 
 ### ASR 選擇
 
-| ASR | 適合情境 |
-|-----|----------|
-| `Qwen/Qwen3-ASR-1.7B` | 預設推薦，多語混用、品質優先 |
-| `neosophie/Qwen3-ASR-1.7B-JA` | 日文內容為主，可作為可選模型 |
-| `grider-transwithai/parakeet-ctc-1.1b-ja` | CUDA 版日文 CTC experimental；預設 bfloat16，實測穩態顯存約 4GB，載入峰值略高 |
-| Qwen3-ASR-0.6B | 顯存較小、低延遲、保守配置 |
-| faster-whisper large-v3-turbo | Whisper 系列穩定性、泛用多語 |
-| OpenAI Whisper API | 不想在本機跑 ASR，或想節省顯存 |
+| ASR | 支援版本 | 適合情境 |
+|-----|----------|----------|
+| `Qwen/Qwen3-ASR-1.7B` | CUDA / ROCm | 預設高品質，多語混用、顯存足夠時優先 |
+| `neosophie/Qwen3-ASR-1.7B-JA` | CUDA / ROCm | 日文內容為主，可作為 Qwen3-ASR 日文模型 |
+| `Qwen/Qwen3-ASR-0.6B` | CUDA / CPU / ROCm | 顯存較小、CPU 版、低延遲、保守配置 |
+| SenseVoiceSmall | CUDA / CPU / ROCm Experimental | 多語 ASR、CPU 也可用；建議下載 SenseVoiceSmall 模型包避免線上下載慢 |
+| `grider-transwithai/parakeet-ctc-1.1b-ja` | CUDA only experimental | 日文 CTC；預設 bfloat16，實測穩態顯存約 4GB，載入峰值略高 |
+| faster-whisper small / medium | CUDA / CPU | Whisper 系列穩定性佳；CPU 版建議 small / medium，速度視 CPU 而定 |
+| faster-whisper large-v3 / large-v3-turbo | CUDA | Whisper 泛用多語，適合 NVIDIA 顯卡 |
+| OpenAI Whisper API | CUDA / CPU / ROCm | 不想在本機跑 ASR，或想節省顯存；需要 API Key 與網路 |
 
 ### 本地翻譯模型
 
@@ -303,14 +309,14 @@ Sakura 系列很適合日文翻譯，但多數 Sakura 模型採非商用授權�
 <details>
 <summary><strong>有沒有 CPU 模式？</strong></summary>
 
-沒有。本專案目標是即時語音辨識與翻譯，CPU-only 延遲太高，不符合使用目標。
+有。v1.3.4 起提供 CPU Full package，使用 CPU-only PyTorch runtime，不會攜帶 CUDA / ROCm torch。CPU 版保留字幕分享、遠端 API、模型管理與本地 ASR 能力，但即時性取決於 CPU；建議先用 Qwen3-ASR 0.6B、SenseVoiceSmall 或 faster-whisper small / medium。
 
 </details>
 
 <details>
 <summary><strong>為什麼第一次啟動很久？</strong></summary>
 
-第一次使用模型時可能需要下載或載入權重。Qwen3-ASR 與 faster-whisper 模型大小從數百 MB 到數 GB 不等，請確認網路和磁碟空間足夠。
+第一次使用模型時可能需要下載或載入權重。Qwen3-ASR、faster-whisper、SenseVoiceSmall 與 Parakeet CTC JA 的模型大小從數百 MB 到數 GB 不等，請確認網路和磁碟空間足夠。SenseVoiceSmall 可直接下載 `StreamTranslator-SenseVoiceSmall-Model-v1.3.4.zip` 模型包，解壓到主程式資料夾後可避免首次線上下載。
 
 </details>
 

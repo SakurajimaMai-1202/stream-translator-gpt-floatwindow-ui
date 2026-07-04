@@ -158,14 +158,16 @@ AMD Instinct
 .\build_release.ps1 -Profile rocm
 ```
 
-相容入口仍保留：
+相容入口仍保留為 alias：
 
 ```powershell
 .\build_cuda_release.ps1
 .\build_cuda_runtime.ps1
 ```
 
-這兩個等同於 `-Profile cuda`。
+這兩個等同於 `-Profile cuda`，只為了避免舊自動化或舊文件失效。新的打包流程請使用 `app/build_release.ps1 -Profile ...`。
+
+`app/packaging/` 內的 `build_profile_release.ps1`、`build_profile_runtime.ps1` 與 `runtime_profile_packaging.ps1` 是內部實作層；開發者不需要直接呼叫。舊版 one-profile 打包流程已移到 `app/packaging/legacy/`，僅供歷史回溯。
 
 各 profile 需要由對應的 build Python 環境提供正確 torch runtime。打包腳本會驗證：
 
@@ -183,7 +185,7 @@ AMD Instinct
 
 `build_runtime.ps1` 也會做同樣的前置檢查，CUDA / ROCm 的 torch backend 不符合時會在複製 runtime 前停止。
 
-runtime cache 會寫入 `_runtime/runtime-version.json`，其中 `profile` 表示發行 profile，`torch_backend` 表示實際 torch backend。CPU profile 如果用 CUDA torch 打包，`profile` 會是 `cpu`，`torch_backend` 會是 `cuda`，並以 `policy_forces_cpu: true` 表示功能層仍強制 CPU。
+runtime cache 會寫入 `_runtime/runtime-version.json`，其中 `profile` 表示發行 profile，`torch_backend` 表示實際 torch backend。v1.3.4 起正式 CPU 包建議使用 CPU-only torch，因此 `profile` 會是 `cpu`，`torch_backend` 會是 `cpu`，並以 `policy_forces_cpu: true` 表示功能層強制 CPU。
 
 full package 的 `config.yaml` 會依 profile 注入 runtime 預設：
 
@@ -194,14 +196,14 @@ full package 的 `config.yaml` 會依 profile 注入 runtime 預設：
 
 ```powershell
 .\validate_runtime_artifact.ps1 -Profile cuda
-.\validate_runtime_artifact.ps1 -Profile cpu -ExpectedTorchBackend cuda
+.\validate_runtime_artifact.ps1 -Profile cpu -ExpectedTorchBackend cpu
 .\validate_runtime_artifact.ps1 -Profile rocm
 ```
 
 目前尚未具備 ROCm/HIP build Python 時，可用：
 
 ```powershell
-.\validate_runtime_matrix.ps1 -CpuExpectedTorchBackend cuda -AllowMissingRocm
+.\validate_runtime_matrix.ps1 -CpuExpectedTorchBackend cpu -AllowMissingRocm
 ```
 
 最終完成門檻是不帶 `-AllowMissingRocm` 也通過。

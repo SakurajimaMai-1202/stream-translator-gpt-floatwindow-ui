@@ -12,6 +12,9 @@ build-runtime-cache/
 build-gui/
 build-gui-dist/
 dist-cuda/
+release-v*
+release-v*/
+release-v*-*/
 *.log
 
 # Node
@@ -32,9 +35,11 @@ Thumbs.db
 
 # Build
 frontend/dist/
+frontend/scratch/
 backend/static/
 models/
 output/
+tests/.tmp-*/
 
 # Environment
 .env
@@ -42,6 +47,7 @@ output/
 
 # Configuration (contains API keys and sensitive info)
 config.yaml
+config.yaml.lock
 
 # Test scripts
 check_routes.py

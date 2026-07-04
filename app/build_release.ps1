@@ -10,5 +10,5 @@ param(
 $releaseArgs = @{ Profile = $Profile; Version = $Version }
 if ($ForceRuntime) { $releaseArgs.ForceRuntime = $true }
 if ($SkipFullZip) { $releaseArgs.SkipFullZip = $true }
-& (Join-Path $PSScriptRoot "packaging\build_release.ps1") @releaseArgs
+& (Join-Path $PSScriptRoot "packaging\build_profile_release.ps1") @releaseArgs
 exit $LASTEXITCODE

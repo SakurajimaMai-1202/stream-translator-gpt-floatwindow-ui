@@ -61,6 +61,11 @@ app/frontend/dist/
 app/backend/static/
 app/dist-*/
 app/build-*/
+app/release-v*
+app/release-v*/
+app/release-v*-*/
+app/frontend/scratch/
+app/tests/.tmp-*/
 app/release-v*-assets/
 
 # ── 通用建構產物 ─────────────────────────────────────────────
@@ -92,6 +97,7 @@ version_info.txt
 .env.local
 .env.production
 app/config.yaml
+app/config.yaml.lock
 config.yaml
 
 # ── 日誌 ──────────────────────────────────────────────────────

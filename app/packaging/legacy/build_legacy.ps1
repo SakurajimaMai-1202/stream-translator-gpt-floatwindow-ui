@@ -2,7 +2,8 @@
 # UI2 portable packaging script (onedir mode, PyQt6-WebEngine compatible)
 
 $ErrorActionPreference = "Stop"
-$packagingDir = $PSScriptRoot
+$legacyDir = $PSScriptRoot
+$packagingDir = Split-Path -Parent $legacyDir
 $scriptDir   = Split-Path -Parent $packagingDir
 $frontendDir = Join-Path $scriptDir "frontend"
 $backendDir  = Join-Path $scriptDir "backend"

@@ -138,13 +138,13 @@ function Get-RuntimeProfileDocText {
         $models = @(
             "Qwen3-ASR offline: 0.6B / 1.7B / 1.7B-JA",
             "Qwen3-ASR streaming: experimental；上游明確列 CUDA / Apple Silicon / CPU，未正式列 ROCm",
-            "SenseVoiceSmall: experimental；需 AMD 實機 ASR smoke test 後再提升狀態",
+            "SenseVoiceSmall: 已由 AMD ROCm 實機驗證可用",
             "Faster-Whisper GPU 不正式承諾；必要時請改用 CUDA 或 CPU 包"
         )
         $notes = @(
             "本版本是 AMD ROCm Experimental，不是 NVIDIA CUDA 版。",
             "Qwen3-ASR 在 CUDA / ROCm profile 預設使用 bf16。",
-            "SenseVoiceSmall 在 ROCm profile 先列 experimental；package validation 不等於 AMD GPU ASR inference 已通過。",
+            "SenseVoiceSmall 已通過 AMD ROCm 實機測試；仍建議使用 smoke_sensevoice_asr.ps1 在目標機器確認音訊與模型 cache。",
             "預設裝置策略為 auto_discrete，會避免選到 AMD 內顯 / APU；沒有 ROCm 獨顯時會在診斷中標示未驗證。",
             "Radeon RX 9070 XT 已由使用者實機測試確認可用。"
         )

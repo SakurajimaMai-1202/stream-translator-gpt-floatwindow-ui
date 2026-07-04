@@ -100,7 +100,7 @@ Get-ChildItem $builtApp -File -Filter "qtwebengine_devtools_resources.debug.pak"
 Write-Host "[3/6] Build or reuse $profileLabel Runtime" -ForegroundColor Yellow
 $runtimeArgs = @()
 if ($ForceRuntime) { $runtimeArgs += "-Force" }
-& (Join-Path $packagingDir "build_cuda_runtime.ps1") -Profile $Profile @runtimeArgs
+& (Join-Path $packagingDir "build_profile_runtime.ps1") -Profile $Profile @runtimeArgs
 if ($LASTEXITCODE -ne 0) { throw "Runtime build failed" }
 
 Write-Host "[4/6] Create App Update package" -ForegroundColor Yellow

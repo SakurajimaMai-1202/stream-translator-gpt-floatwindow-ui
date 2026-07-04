@@ -7,5 +7,5 @@ param(
 
 $runtimeArgs = @{ Profile = $Profile }
 if ($Force) { $runtimeArgs.Force = $true }
-& (Join-Path $PSScriptRoot "packaging\build_runtime.ps1") @runtimeArgs
+& (Join-Path $PSScriptRoot "packaging\build_profile_runtime.ps1") @runtimeArgs
 exit $LASTEXITCODE

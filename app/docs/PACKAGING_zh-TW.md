@@ -28,7 +28,7 @@
 .\build_runtime.ps1 -Profile rocm
 ```
 
-舊入口仍保留：
+舊入口仍保留為相容 alias：
 
 ```powershell
 .\build_cuda_release.ps1
@@ -36,6 +36,8 @@
 ```
 
 這兩個舊入口等同於 `-Profile cuda`。
+
+`app/packaging/` 目錄放的是內部實作，不是主要操作入口。開發者日常打包請優先使用 `app/build_release.ps1`、`app/build_runtime.ps1`、`app/check_runtime_profile_env.ps1` 與 validator wrapper。`app/packaging/legacy/` 只保留舊版 one-profile 打包流程，除非回溯歷史問題，否則不建議使用。
 
 ## Build Python 要求
 
@@ -88,28 +90,28 @@ $env:STREAM_TRANSLATOR_BUILD_PYTHON = "F:\AI\floatwindow\app\venv\Scripts\python
 
 ```powershell
 .\validate_runtime_artifact.ps1 -Profile cuda
-.\validate_runtime_artifact.ps1 -Profile cpu -ExpectedTorchBackend cuda
+.\validate_runtime_artifact.ps1 -Profile cpu -ExpectedTorchBackend cpu
 .\validate_runtime_artifact.ps1 -Profile rocm
 ```
 
-若 CPU 是用純 CPU torch build Python 打包，請改用：
+若開發機暫時只能用 CUDA torch 建出 policy-only CPU 包，才改用：
 
 ```powershell
-.\validate_runtime_artifact.ps1 -Profile cpu -ExpectedTorchBackend cpu
+.\validate_runtime_artifact.ps1 -Profile cpu -ExpectedTorchBackend cuda
 ```
 
-目前本機已驗證的 CPU 包是 policy-only CPU 包，所以 `profile` 是 `cpu`，但 `torch_backend` 是 `cuda`，且 `policy_forces_cpu` 是 `true`。
+正式 v1.3.4 CPU 包建議使用 CPU-only torch build Python，所以 `profile` 是 `cpu`，`torch_backend` 是 `cpu`，且 `policy_forces_cpu` 是 `true`。
 
 也可以一次檢查整個矩陣：
 
 ```powershell
-.\validate_runtime_matrix.ps1 -CpuExpectedTorchBackend cuda -AllowMissingRocm
+.\validate_runtime_matrix.ps1 -CpuExpectedTorchBackend cpu -AllowMissingRocm
 ```
 
 正式完成三種 profile 實包後，請移除 `-AllowMissingRocm`：
 
 ```powershell
-.\validate_runtime_matrix.ps1 -CpuExpectedTorchBackend cuda
+.\validate_runtime_matrix.ps1 -CpuExpectedTorchBackend cpu
 ```
 
 ## Config 注入

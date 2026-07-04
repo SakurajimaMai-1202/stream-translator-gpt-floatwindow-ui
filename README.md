@@ -134,11 +134,12 @@ App Update 只能覆蓋同 profile 完整包；不要用 CUDA App Update 覆蓋 
 1. 從 GitHub Release 依硬體下載 CUDA / CPU / ROCm Experimental 其中一組 Full package 分割包，合併後解壓。
 2. 解壓到一個不要含特殊符號的資料夾，例如 `D:\Apps\StreamTranslator`。
 3. 執行 `Stream Translator.exe`。
-4. 在首頁選擇音源。預設會使用 URL 串流模式。
-5. 選擇輸入語言、目標語言、ASR 模型與翻譯後端。
-6. 按下「啟動即時轉譯」。
+4. 第一次使用前，建議先到「系統設定 > ASR模型管理」預下載需要的 ASR 模型，例如 Qwen3-ASR、Faster-Whisper、SenseVoiceSmall 或 Parakeet CTC JA。
+5. 回到首頁選擇音源。預設會使用 URL 串流模式。
+6. 選擇輸入語言、目標語言、ASR 模型與翻譯後端。
+7. 按下「啟動即時轉譯」。
 
-第一次使用 Qwen3-ASR 或 faster-whisper 時，模型可能需要下載或載入，等待時間會比較長。
+第一次使用 Qwen3-ASR、Faster-Whisper、SenseVoiceSmall 或 Parakeet CTC JA 時，模型可能需要下載或載入，等待時間會比較長；先在 ASR模型管理頁下載可避免啟動轉譯時卡在模型下載。
 
 ### 最少要設定什麼
 

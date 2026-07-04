@@ -55,7 +55,7 @@ CPU profile 會把預設的 Qwen3 `bfloat16` 改成 `float32`，避免 CPU runti
 | Faster-Whisper | GPU 不正式承諾；必要時走 CPU fallback |
 | Qwen3-ASR offline | 0.6B / 1.7B / 1.7B-JA |
 | Qwen3-ASR streaming | 先列 experimental，不當正式承諾 |
-| SenseVoiceSmall | experimental；需 AMD 實機 ASR smoke test 後再提升狀態 |
+| SenseVoiceSmall | 已由 AMD ROCm 實機驗證可用；package 仍標示 Experimental |
 | Qwen3-ASR default dtype | `bfloat16` |
 | 預設 device policy | `auto_discrete` |
 
@@ -224,17 +224,17 @@ ROCm：
 
 - Qwen3-ASR 0.6B，`bfloat16`
 - Qwen3-ASR 1.7B，依 VRAM 測試
-- SenseVoiceSmall 短音檔轉錄；未通過 AMD 實機前維持 experimental
+- SenseVoiceSmall 短音檔轉錄；已由 AMD ROCm 實機驗證可用
 
 ## 待辦
 
 1. 在實機 CUDA / CPU / ROCm build Python 上各跑一次 `build_runtime.ps1`。
 2. 在三種 full package 中驗證 `config.yaml` 的 `runtime.profile` 注入。
-3. 補實機 smoke test 結果，尤其是 ROCm streaming、SenseVoiceSmall ROCm 與 CPU 速度。
+3. 補實機 smoke test 結果，尤其是 ROCm streaming、不同 AMD 顯卡相容性與 CPU 速度。
 
 ## ROCm 無卡建置與診斷
 
-目前建置機可以驗證 ROCm runtime package 結構、`torch.version.hip`、`qwen_asr` import、`runtime.profile: rocm` 注入與 artifact matrix，但如果建置機沒有 AMD ROCm 顯卡，就不能宣稱 ROCm GPU ASR inference 已實機通過。
+目前建置機可以驗證 ROCm runtime package 結構、`torch.version.hip`、`qwen_asr` import、`runtime.profile: rocm` 注入與 artifact matrix。SenseVoiceSmall 已由 AMD ROCm 實機驗證可用；其他 AMD 顯卡與 ROCm streaming 仍建議持續收集診斷結果。
 
 ROCm release 應維持 `Experimental`，並把驗證狀態拆開：
 
@@ -243,7 +243,7 @@ package_validated: yes
 runtime_import_validated: yes
 torch_execution_validated: depends on target machine
 gpu_inference_validated: no, unless diagnose_runtime.ps1 passes on AMD GPU
-asr_inference_validated: no, unless a real ASR smoke test was run
+asr_inference_validated: SenseVoiceSmall yes on tested AMD ROCm machine; otherwise depends on target machine
 ```
 
 包內會附上 `diagnose_runtime.ps1`。有 AMD 顯卡的測試者在 package 根目錄執行：
@@ -267,9 +267,9 @@ asr_inference_validated: no, unless a real ASR smoke test was run
 - Qwen3-ASR package 是否可 import。
 - selector 最後選到的 `device_map`。
 - 輕量 torch tensor execution smoke 結果。
-- `asr_inference_validated` 固定為 `false`，直到另外跑完整音檔 ASR smoke test。
+- `asr_inference_validated` 依實機 smoke test 結果填寫；SenseVoiceSmall 已有 AMD ROCm 實機通過案例。
 
-這樣即使本機沒有 ROCm 卡，也能先發出結構正確、標示保守的 ROCm Experimental 包；真正的 AMD GPU 實機結果則用診斷 log 回收。
+這樣即使本機沒有 ROCm 卡，也能先發出結構正確、標示保守的 ROCm Experimental 包；不同 AMD GPU 的實機結果仍用診斷 log 回收。
 ## CUDA Parakeet CTC JA 補充
 
 - CUDA profile 另支援 `Parakeet CTC JA`，狀態為 experimental。

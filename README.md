@@ -174,7 +174,7 @@ App Update 只能覆蓋同 profile 完整包；不要用 CUDA App Update 覆蓋 
 | 情境 | 建議 |
 |------|------|
 | NVIDIA CUDA 顯卡 | 優先下載 CUDA 版；ASR 用 `Qwen/Qwen3-ASR-1.7B`，日文可試 `neosophie/Qwen3-ASR-1.7B-JA` 或 Parakeet CTC JA |
-| AMD ROCm 顯卡 | 優先下載 ROCm Experimental；Qwen3-ASR 0.6B / 1.7B / 1.7B-JA 可用，SenseVoiceSmall 仍視 AMD 環境列為 experimental |
+| AMD ROCm 顯卡 | 優先下載 ROCm Experimental；Qwen3-ASR 0.6B / 1.7B / 1.7B-JA 與 SenseVoiceSmall 已實機驗證可用 |
 | 沒有獨立顯卡 | 下載 CPU 版；ASR 先用 `Qwen/Qwen3-ASR-0.6B`、SenseVoiceSmall 或 faster-whisper small / medium |
 | 日文內容為主 | CUDA 可試 Parakeet CTC JA；CUDA / ROCm 可用 Qwen3-ASR 1.7B-JA；CPU 建議先試 SenseVoiceSmall |
 | 12GB 顯卡想跑本地翻譯 | `Qwen3-ASR-1.7B + Hy-MT2-7B Q4_K_M` 或 `Gemma 4 E4B Q4` |
@@ -196,7 +196,7 @@ SenseVoiceSmall 建議搭配 `StreamTranslator-SenseVoiceSmall-Model-v1.3.4.zip`
 | NVIDIA 12GB 品質 | Qwen3-ASR-1.7B + Hy-MT2-7B Q4_K_M 或 Gemma 4 E4B Q4 | 可用但偏緊 | 多語翻譯品質優先 |
 | NVIDIA 12GB 日文 | Qwen3-ASR-1.7B-JA / Parakeet CTC JA + Sakura 7B IQ4_XS | 可用 | 日文、Galgame、輕小說語氣 |
 | NVIDIA 16GB+ | Qwen3-ASR-1.7B + Sakura 14B Q4 / Hy-MT2-7B Q6_K | 推薦 | 日文或多語品質優先 |
-| AMD ROCm 16GB+ | Qwen3-ASR-1.7B / 1.7B-JA + 4B～7B Q4 翻譯模型 | experimental | AMD ROCm/HIP 使用者；Radeon RX 9070 XT 已有實機確認 |
+| AMD ROCm 16GB+ | Qwen3-ASR-1.7B / 1.7B-JA / SenseVoiceSmall + 4B～7B Q4 翻譯模型 | 已實機驗證，package 仍為 experimental | AMD ROCm/HIP 使用者；Radeon RX 9070 XT 已有實機確認 |
 
 12GB NVIDIA 顯卡的甜蜜點是 **Qwen3-ASR-1.7B + 4B～7B Q4 翻譯模型**。Hy-MT2-7B Q4_K_M 和 Gemma 4 E4B Q4 值得優先嘗試；如果重視穩定和長時間運行，Hy-MT2-1.8B Q4_K_M 會更保守。ROCm 版預設會避開 AMD 內顯 / APU，若要測試整合顯卡，請在 Runtime Profile 裡手動允許 integrated GPU。
 
@@ -207,7 +207,7 @@ SenseVoiceSmall 建議搭配 `StreamTranslator-SenseVoiceSmall-Model-v1.3.4.zip`
 | `Qwen/Qwen3-ASR-1.7B` | CUDA / ROCm | 預設高品質，多語混用、顯存足夠時優先 |
 | `neosophie/Qwen3-ASR-1.7B-JA` | CUDA / ROCm | 日文內容為主，可作為 Qwen3-ASR 日文模型 |
 | `Qwen/Qwen3-ASR-0.6B` | CUDA / CPU / ROCm | 顯存較小、CPU 版、低延遲、保守配置 |
-| SenseVoiceSmall | CUDA / CPU / ROCm Experimental | 多語 ASR、CPU 也可用；建議下載 SenseVoiceSmall 模型包避免線上下載慢 |
+| SenseVoiceSmall | CUDA / CPU / ROCm | 多語 ASR、CPU 也可用；ROCm 已實機驗證可用；建議下載 SenseVoiceSmall 模型包避免線上下載慢 |
 | `grider-transwithai/parakeet-ctc-1.1b-ja` | CUDA only experimental | 日文 CTC；預設 bfloat16，實測穩態顯存約 4GB，載入峰值略高 |
 | faster-whisper small / medium | CUDA / CPU | Whisper 系列穩定性佳；CPU 版建議 small / medium，速度視 CPU 而定 |
 | faster-whisper large-v3 / large-v3-turbo | CUDA | Whisper 泛用多語，適合 NVIDIA 顯卡 |

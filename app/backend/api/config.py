@@ -72,8 +72,7 @@ async def update_section(section: str, data: Dict[str, Any], request: Request):
                 data['custom_presets'] = current_presets
                 logger.info(f"Preserved custom_presets: {list(current_presets.keys())}")
         
-        get_config_manager().update_section(section, data)
-        full_config = get_config_manager().get_config()
+        full_config = get_config_manager().update_config({section: data})
         await publish_app_event("config.updated", {
             "section": section,
             "config": full_config,
@@ -176,7 +175,11 @@ async def import_config_file(request: Request, file: UploadFile = File(...)):
             "config": imported_config,
             "source_client_id": request.headers.get("X-Client-Id", ""),
         })
-        return {"success": True, "message": "配置檔案已成功匯入"}
+        return {
+            "success": True,
+            "message": "配置檔案已成功匯入",
+            "data": imported_config,
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"匯入檔案失敗: {str(e)}")
 

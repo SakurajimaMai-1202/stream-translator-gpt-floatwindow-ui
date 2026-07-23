@@ -80,3 +80,36 @@ def test_write_failure_is_not_reported_as_success(tmp_path, monkeypatch):
         assert "read-only destination" in str(error)
     else:
         raise AssertionError("write failure must propagate to the API")
+
+
+def test_repeated_config_reads_use_memory_cache(tmp_path, monkeypatch):
+    manager = ConfigManager(tmp_path / "config.yaml")
+    manager.update_section("general", {"log_level": "DEBUG"})
+    first = manager.get_config()
+
+    def fail_disk_read():
+        raise AssertionError("unchanged config should not be parsed again")
+
+    monkeypatch.setattr(manager, "_read_current_config", fail_disk_read)
+    second = manager.get_config()
+
+    assert second == first
+
+
+def test_config_cache_refreshes_after_external_write(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    reader = ConfigManager(config_path)
+    writer = ConfigManager(config_path)
+
+    assert reader.get_config()["general"]["log_level"] == "INFO"
+    writer.update_section("general", {"log_level": "WARNING"})
+
+    assert reader.get_config()["general"]["log_level"] == "WARNING"
+
+
+def test_get_config_returns_isolated_snapshot(tmp_path):
+    manager = ConfigManager(tmp_path / "config.yaml")
+    snapshot = manager.get_config()
+    snapshot["general"]["log_level"] = "MUTATED"
+
+    assert manager.get_config()["general"]["log_level"] == "INFO"

@@ -54,10 +54,17 @@ transcription:
   simul_streaming_encoder: whisper
   use_openai_transcription_api: false
   use_qwen3_asr: true
+  use_sensevoice_asr: false
+  use_nemo_asr: false
   qwen3_asr_model: Qwen/Qwen3-ASR-1.7B
   qwen3_dtype: bfloat16
   qwen3_load_in_4bit: false
   qwen3_rms_threshold: 0.005
+  sensevoice_model: iic/SenseVoiceSmall
+  nemo_asr_model: grider-transwithai/parakeet-ctc-1.1b-ja
+  nemo_asr_device: auto
+  nemo_asr_decoding: ctc
+  nemo_asr_dtype: bfloat16
   asr_corrections_enabled: false
   asr_corrections_case_sensitive: false
   asr_correction_rules: []

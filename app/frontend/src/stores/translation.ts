@@ -80,9 +80,9 @@ export const useTranslationStore = defineStore('translation', () => {
   });
 
   // Actions
-  async function loadConfig() {
+  async function loadConfig(force = false) {
     try {
-      config.value = await configApi.getConfig();
+      config.value = await configApi.getConfig(force);
     } catch (error: any) {
       errorMessage.value = `載入配置失敗: ${error.message}`;
     }
@@ -99,8 +99,7 @@ export const useTranslationStore = defineStore('translation', () => {
 
   async function saveConfig(newConfig: Config) {
     try {
-      await configApi.updateConfig(newConfig);
-      await loadConfig();
+      config.value = await configApi.updateConfig(newConfig);
       statusMessage.value = '配置已儲存';
       setTimeout(() => statusMessage.value = '', 3000);
     } catch (error: any) {
@@ -111,8 +110,7 @@ export const useTranslationStore = defineStore('translation', () => {
 
   async function resetConfig() {
     try {
-      await configApi.resetConfig();
-      await loadConfig();
+      config.value = await configApi.resetConfig();
       statusMessage.value = '設定已重置為預設值';
       setTimeout(() => statusMessage.value = '', 3000);
     } catch (error: any) {
@@ -134,8 +132,7 @@ export const useTranslationStore = defineStore('translation', () => {
 
   async function importConfig(file: File) {
     try {
-      await configApi.importConfig(file);
-      await loadConfig(); // 重新載入設定
+      config.value = await configApi.importConfig(file);
       statusMessage.value = '設定已匯入';
       setTimeout(() => statusMessage.value = '', 3000);
     } catch (error: any) {
@@ -143,6 +140,11 @@ export const useTranslationStore = defineStore('translation', () => {
       console.error(error);
       throw error;
     }
+  }
+
+  function applyConfigSnapshot(snapshot: Config) {
+    configApi.applySnapshot(snapshot);
+    config.value = snapshot;
   }
 
   async function startTranslation(url: string) {
@@ -357,6 +359,7 @@ export const useTranslationStore = defineStore('translation', () => {
 
     // Actions
     loadConfig,
+    applyConfigSnapshot,
     loadRuntimeStatus,
     saveConfig,
     resetConfig,

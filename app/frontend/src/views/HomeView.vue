@@ -452,13 +452,13 @@ async function saveHomeConfigToBackend() {
       backend: translationEnabled.value ? selectedBackend.value : 'none',
       target_language: selectedOutputLanguage.value,
     };
-    await Promise.all([
-      configApi.updateSection('input', inputPatch),
-      configApi.updateSection('transcription', transcriptionPatch),
-      configApi.updateSection('translation', translationPatch),
-    ]);
+    const updatedConfig = await configApi.updateConfig({
+      input: inputPatch,
+      transcription: transcriptionPatch,
+      translation: translationPatch,
+    });
+    store.applyConfigSnapshot(updatedConfig);
     // 更新本地 store 快照
-    await store.loadConfig();
     lastAppliedHomeConfigSnapshot.value = buildHomeConfigSnapshotFromConfig(store.config);
   } catch (e) {
     console.warn('[HomeView] 自動保存 config 失敗:', e);
@@ -664,12 +664,18 @@ async function syncHomeStateFromBackend(force = false, syncLlama = false) {
 
 useAppSyncEvents({
   onConfigUpdated: async (payload) => {
+    if (payload.config) store.applyConfigSnapshot(payload.config);
+    else await store.loadConfig(true);
     await syncHomeStateFromBackend(true, payload.section === '*' || payload.section === 'llama');
   },
-  onConfigReset: async () => {
+  onConfigReset: async (payload) => {
+    if (payload.config) store.applyConfigSnapshot(payload.config);
+    else await store.loadConfig(true);
     await syncHomeStateFromBackend(true, true);
   },
-  onConfigImported: async () => {
+  onConfigImported: async (payload) => {
+    if (payload.config) store.applyConfigSnapshot(payload.config);
+    else await store.loadConfig(true);
     await syncHomeStateFromBackend(true, true);
   },
   onTranslationStarted: async () => {

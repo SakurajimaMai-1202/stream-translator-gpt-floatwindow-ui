@@ -2,8 +2,9 @@
 param(
     [ValidateSet("cuda", "cpu", "rocm")]
     [string]$Profile = "cuda",
-    [string]$Version = "1.3.4",
+    [string]$Version = "1.3.5",
     [switch]$ForceRuntime,
+    [switch]$ReuseRuntimeCache,
     [switch]$SkipFullZip
 )
 
@@ -98,10 +99,43 @@ Get-ChildItem $builtApp -File -Filter "qtwebengine_devtools_resources.debug.pak"
     Remove-Item -Force
 
 Write-Host "[3/6] Build or reuse $profileLabel Runtime" -ForegroundColor Yellow
-$runtimeArgs = @()
-if ($ForceRuntime) { $runtimeArgs += "-Force" }
-& (Join-Path $packagingDir "build_profile_runtime.ps1") -Profile $Profile @runtimeArgs
-if ($LASTEXITCODE -ne 0) { throw "Runtime build failed" }
+if ($ReuseRuntimeCache) {
+    $manifestPath = Join-Path $runtimeCache "runtime-version.json"
+    $runtimePython = Join-Path $runtimeCache "python.exe"
+    if (-not (Test-Path $manifestPath) -or -not (Test-Path $runtimePython)) {
+        throw "Reusable $profileLabel runtime cache is incomplete: $runtimeCache"
+    }
+
+    $manifest = Get-Content $manifestPath -Raw -Encoding utf8 | ConvertFrom-Json
+    if ($manifest.profile -ne $Profile) {
+        throw "Runtime cache profile is '$($manifest.profile)', expected '$Profile'."
+    }
+    $expectedBackend = if ($Profile -eq "rocm") { "rocm" } else { $Profile }
+    if ($manifest.torch_backend -ne $expectedBackend) {
+        throw "Runtime cache torch backend is '$($manifest.torch_backend)', expected '$expectedBackend'."
+    }
+
+    $cachedPackage = Join-Path $runtimeCache "Lib\site-packages\stream_translator_gpt"
+    if (Test-Path $cachedPackage) { Remove-Item $cachedPackage -Recurse -Force }
+    Copy-Item (Join-Path $projectRoot "stream-translator-gpt\stream_translator_gpt") $cachedPackage -Recurse -Force
+
+    $requiredImports = @("qwen_asr", "funasr", "torchaudio")
+    if ($Profile -in @("cuda", "cpu")) {
+        $requiredImports += @("faster_whisper", "whisper", "omnivad")
+    }
+    if ($Profile -eq "cuda") {
+        $requiredImports += "nemo.collections.asr.models"
+    }
+    $importList = ($requiredImports | ForEach-Object { "'$_'" }) -join ","
+    & $runtimePython -c "import importlib; [importlib.import_module(name) for name in [$importList]]; print('$profileLabel reusable runtime import check OK')"
+    if ($LASTEXITCODE -ne 0) { throw "$profileLabel reusable runtime validation failed" }
+    Write-Host "$profileLabel validated runtime cache reused: $runtimeCache" -ForegroundColor Green
+} else {
+    $runtimeArgs = @()
+    if ($ForceRuntime) { $runtimeArgs += "-Force" }
+    & (Join-Path $packagingDir "build_profile_runtime.ps1") -Profile $Profile @runtimeArgs
+    if ($LASTEXITCODE -ne 0) { throw "Runtime build failed" }
+}
 
 Write-Host "[4/6] Create App Update package" -ForegroundColor Yellow
 if (Test-Path $distDir) { Remove-Item $distDir -Recurse -Force }

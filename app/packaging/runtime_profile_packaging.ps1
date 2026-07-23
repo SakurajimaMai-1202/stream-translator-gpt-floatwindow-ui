@@ -81,7 +81,7 @@ function Get-RuntimeProfileDocText {
         [Parameter(Mandatory = $true)]
         [ValidateSet("cuda", "cpu", "rocm")]
         [string]$RuntimeProfile,
-        [string]$Version = "1.3.4",
+        [string]$Version = "1.3.5",
         [Parameter(Mandatory = $true)]
         [ValidateSet("portable_guide", "update_notes", "readme")]
         [string]$Document
@@ -221,6 +221,11 @@ $name v$Version 更新說明
 
 本次更新重點
 ------------
+- 全應用配置改為記憶體快取與檔案變更偵測，避免每次進入設定頁都重新解析完整 config.yaml。
+- 前端共用同一份配置快照與進行中的讀取請求，切換首頁、設定與 Llama 頁面時不再重複下載配置。
+- 設定保存、重置、匯入與跨視窗同步會直接套用後端回傳快照，減少重複讀取與 UI 等待。
+- 首頁的輸入、ASR 與翻譯設定合併為一次寫入；一般設定變更不再每次重新執行硬體偵測。
+- 保留原子寫入、跨程序鎖與外部 config.yaml 修改偵測，避免效能優化造成設定覆蓋。
 - CUDA / CPU / ROCm 共用同一份主程式碼，依 runtime profile 切換預設值與 package 名稱。
 - 新增 runtime profile 設定與打包驗證，避免 CUDA、CPU、ROCm package 混用 runtime。
 - 新增顯卡選擇策略，預設使用 auto_discrete，避免誤選內顯。
@@ -281,7 +286,7 @@ function Write-RuntimeProfileDocs {
         [Parameter(Mandatory = $true)]
         [ValidateSet("cuda", "cpu", "rocm")]
         [string]$RuntimeProfile,
-        [string]$Version = "1.3.4"
+        [string]$Version = "1.3.5"
     )
 
     if (-not (Test-Path $Destination)) {

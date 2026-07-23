@@ -261,8 +261,9 @@ function debouncedAutoSave() {
   _settingsAutoSaveTimer = setTimeout(async () => {
     _settingsAutoSaveTimer = null;
     try {
+      const runtimeChanged = !configsEqual(store.config.runtime, localConfig.value.runtime);
       await store.saveConfig(localConfig.value);
-      await store.loadRuntimeStatus();
+      if (runtimeChanged) await store.loadRuntimeStatus();
       autoSaveStatus.value = 'saved';
       if (autoSaveStatusTimeout) clearTimeout(autoSaveStatusTimeout);
       autoSaveStatusTimeout = setTimeout(() => {
@@ -707,17 +708,22 @@ async function applyStoreConfigToLocalConfig(config?: any, syncLlama = false) {
 
 useAppSyncEvents({
   onConfigUpdated: async (payload) => {
-    await store.loadConfig();
-    await store.loadRuntimeStatus();
+    if (payload.config) store.applyConfigSnapshot(payload.config);
+    else await store.loadConfig(true);
+    if (payload.section === '*' || payload.section === 'runtime') {
+      await store.loadRuntimeStatus();
+    }
     await applyStoreConfigToLocalConfig(store.config, payload.section === '*' || payload.section === 'llama');
   },
-  onConfigReset: async () => {
-    await store.loadConfig();
+  onConfigReset: async (payload) => {
+    if (payload.config) store.applyConfigSnapshot(payload.config);
+    else await store.loadConfig(true);
     await store.loadRuntimeStatus();
     await applyStoreConfigToLocalConfig(store.config, true);
   },
-  onConfigImported: async () => {
-    await store.loadConfig();
+  onConfigImported: async (payload) => {
+    if (payload.config) store.applyConfigSnapshot(payload.config);
+    else await store.loadConfig(true);
     await store.loadRuntimeStatus();
     await applyStoreConfigToLocalConfig(store.config, true);
   },
@@ -734,8 +740,10 @@ watch(() => route.query.tab, (newTab) => {
 }, { immediate: true });
 
 onMounted(async () => {
-  await store.loadConfig();
-  await store.loadRuntimeStatus();
+  await Promise.all([
+    store.loadConfig(),
+    store.loadRuntimeStatus()
+  ]);
   await applyStoreConfigToLocalConfig(store.config, true);
   
   // 從 URL 參數設定 tab
@@ -836,7 +844,6 @@ async function handleCancel() {
 async function resetToDefault() {
   if (confirm('確定要重置為後端預設值嗎？此操作無法復原。')) {
     await store.resetConfig();
-    await store.loadConfig();
     await applyStoreConfigToLocalConfig(store.config, true);
   }
 }
@@ -1021,8 +1028,8 @@ async function handleFileChange(event: Event) {
   try {
     await store.importConfig(file);
     // 重新載入頁面配置以反映更改
-    await store.loadConfig();
-    router.go(0); // 簡單刷新頁面確保所有狀態更新
+    await store.loadRuntimeStatus();
+    await applyStoreConfigToLocalConfig(store.config, true);
   } catch (error) {
     console.error('匯入失敗:', error);
   }

@@ -225,6 +225,7 @@ class ConfigManager:
         """
         self.config_path = config_path if config_path else settings.CONFIG_FILE
         self.config = self._load_or_create()
+        self._file_signature = self._get_file_signature()
     
     def _load_or_create(self) -> Dict[str, Any]:
         """載入配置，若不存在則建立預設值"""
@@ -354,6 +355,14 @@ class ConfigManager:
         migrated, _changed = self._migrate_legacy_config(merged)
         return migrated
 
+    def _get_file_signature(self):
+        """Return a cheap signature used to detect external config changes."""
+        try:
+            stat = self.config_path.stat()
+            return (stat.st_mtime_ns, stat.st_size)
+        except FileNotFoundError:
+            return None
+
     @contextmanager
     def _config_lock(self):
         """Serialize read-merge-write updates from the UI and backend processes."""
@@ -388,10 +397,15 @@ class ConfigManager:
                     fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
     
     def get_config(self) -> Dict[str, Any]:
-        """獲取完整配置"""
-        with self._config_lock():
-            self.config = self._read_current_config()
-        return self.config
+        """Return cached config, reloading only after an external file change."""
+        signature = self._get_file_signature()
+        if signature != self._file_signature:
+            with self._config_lock():
+                signature = self._get_file_signature()
+                if signature != self._file_signature:
+                    self.config = self._read_current_config()
+                    self._file_signature = signature
+        return self._deep_copy(self.config)
 
     def _resolve_translation_api_keys(self, config: Dict[str, Any]) -> Dict[str, str]:
         """
@@ -901,8 +915,10 @@ class ConfigManager:
             current = self._read_current_config()
             updated = self._deep_merge(current, updates)
             self._save(updated)
+            signature = self._get_file_signature()
         self.config = updated
-        return self.config
+        self._file_signature = signature
+        return self._deep_copy(self.config)
             
     def update_section(self, section: str, data: Dict[str, Any]):
         """更新配置區段，保留 UI 沒送回來的既有設定。"""
@@ -912,3 +928,4 @@ class ConfigManager:
         """重置為預設配置"""
         self.config = self._deep_copy(self.DEFAULT_CONFIG)
         self.save()
+        self._file_signature = self._get_file_signature()

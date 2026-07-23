@@ -46,7 +46,7 @@ Stream Translator FloatWindow 是一個給 Windows 使用的即時字幕翻譯�
 
 ### 一般使用者推薦
 
-建議從 GitHub Release 依照硬體下載對應的 v1.3.4 完整包，合併分割檔後解壓執行：
+建議從 GitHub Release 依照硬體下載對應的 v1.3.5 完整包，合併分割檔後解壓執行：
 
 - GitHub Release：<https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest>
 
@@ -58,19 +58,20 @@ Stream Translator FloatWindow 是一個給 Windows 使用的即時字幕翻譯�
 | CPU | `StreamTranslator-win64-CPU-Full.zip.part01` | CPU 相容版，使用 CPU-only PyTorch runtime |
 | ROCm Experimental | `StreamTranslator-win64-ROCm-Experimental-Full.zip.part01` ~ `.part02` | AMD ROCm/HIP 實驗版 |
 | App Update | `StreamTranslator-*-App-Update.zip` | 僅適合同 profile 完整包覆蓋更新 |
-| SHA256 | `SHA256SUMS-v1.3.4.txt` | 驗證下載與合併後檔案完整性 |
+| SHA256 | `SHA256SUMS-v1.3.5.txt` | 驗證下載與合併後檔案完整性 |
 
 GitHub Release 因為單檔容量限制，Full package 以分割包提供。
 
 請不要下載 GitHub 自動產生的 `Source code (zip)` 當作執行版；那只是原始碼，不能直接雙擊啟動。
 
-### v1.3.4 重要注意事項
+### v1.3.5 重要注意事項
 
-v1.3.4 是目前建議使用的修正版。v1.3.2 與 v1.3.3 已知存在設定頁與轉錄選項相關問題，可能造成 UI 閃爍、設定頁凍結，或 ASR 選項狀態不一致。已下載 v1.3.2 / v1.3.3 的使用者請直接升級 v1.3.4。
+v1.3.5 是目前建議使用的版本，重點改善整個應用的配置讀取、保存與跨視窗同步速度。v1.3.2 與 v1.3.3 已知存在設定頁與轉錄選項相關問題，請直接升級 v1.3.5。
 
-- v1.3.2：不建議繼續使用，請升級 v1.3.4。
-- v1.3.3：包含部分修正，但打包後仍可能在設定頁點選轉錄/ASR 選項時凍結，請升級 v1.3.4。
+- v1.3.2：不建議繼續使用，請升級 v1.3.5。
+- v1.3.3：包含部分修正，但打包後仍可能在設定頁點選轉錄/ASR 選項時凍結，請升級 v1.3.5。
 - v1.3.4：修正設定頁凍結與 ASR 選項互斥問題；CPU 版改用 CPU-only PyTorch runtime，Full package 顯著縮小。
+- v1.3.5：配置讀取改用快取與外部修改偵測，減少重複 YAML 解析、重複 API 請求、重複磁碟寫入與不必要的硬體偵測。
 
 ### GitHub 分割包
 
@@ -90,8 +91,8 @@ v1.3.4 是目前建議使用的修正版。v1.3.2 與 v1.3.3 已知存在設定�
 
 - 建議一起下載：
   - `merge-full-package.bat`
-  - `SHA256SUMS-v1.3.4.txt`
-  - `RELEASE_NOTES_v1.3.4_zh-TW.md`
+  - `SHA256SUMS-v1.3.5.txt`
+  - `RELEASE_NOTES_v1.3.5_zh-TW.md`
 
 合併分割包後會得到對應的 Full zip：
 
@@ -115,7 +116,7 @@ try {
 }
 ```
 
-也可以使用 7-Zip 或其他支援分割檔的工具，從 `.part01` 開始合併/解壓。合併後請依照 `SHA256SUMS-v1.3.4.txt` 驗證檔案完整性。
+也可以使用 7-Zip 或其他支援分割檔的工具，從 `.part01` 開始合併/解壓。合併後請依照 `SHA256SUMS-v1.3.5.txt` 驗證檔案完整性。
 
 如果只是從同 profile 舊版更新，可以下載對應的 App Update：
 
@@ -505,13 +506,13 @@ cd .\app
 cd .\app
 
 $env:STREAM_TRANSLATOR_BUILD_PYTHON = "D:\Python\cuda-runtime\python.exe"
-.\build_release.ps1 -Profile cuda -Version 1.3.4
+.\build_release.ps1 -Profile cuda -Version 1.3.5
 
 $env:STREAM_TRANSLATOR_BUILD_PYTHON = "D:\Python\cpu-runtime\python.exe"
-.\build_release.ps1 -Profile cpu -Version 1.3.4
+.\build_release.ps1 -Profile cpu -Version 1.3.5
 
 $env:STREAM_TRANSLATOR_BUILD_PYTHON = "D:\Python\rocm-runtime\python.exe"
-.\build_release.ps1 -Profile rocm -Version 1.3.4
+.\build_release.ps1 -Profile rocm -Version 1.3.5
 ```
 
 打包後驗證：
@@ -529,8 +530,8 @@ CUDA / CPU / ROCm 的 App Update 只能覆蓋同 profile 完整包。不要用 C
 Full package 會輸出完整 zip，GitHub Release 使用 `.part01`、`.part02` 這種分割檔。請同步提供：
 
 - `merge-full-package.bat`
-- `SHA256SUMS-v1.3.4.txt`
-- `RELEASE_NOTES_v1.3.4_zh-TW.md`
+- `SHA256SUMS-v1.3.5.txt`
+- `RELEASE_NOTES_v1.3.5_zh-TW.md`
 - 三個 `StreamTranslator-*-App-Update.zip`
 - 三組 Full package 分割檔
 - 可選的 `StreamTranslator-SenseVoiceSmall-Model-v1.3.4.zip`

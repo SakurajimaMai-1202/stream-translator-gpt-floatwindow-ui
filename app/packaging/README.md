@@ -14,6 +14,19 @@ Use `app/build_release.ps1` for normal release builds:
 .\build_release.ps1 -Profile rocm
 ```
 
+When dependencies have not changed and the three validated runtime caches
+already exist, refresh only the application code and reuse each cache:
+
+```powershell
+.\build_release.ps1 -Profile cuda -ReuseRuntimeCache
+.\build_release.ps1 -Profile cpu -ReuseRuntimeCache
+.\build_release.ps1 -Profile rocm -ReuseRuntimeCache
+```
+
+This mode validates the runtime manifest, torch backend, and required imports
+before assembling a new package. It is useful on a build machine without an AMD
+GPU because it does not attempt to reconstruct the ROCm PyTorch environment.
+
 The legacy CUDA wrappers are still available:
 
 ```powershell

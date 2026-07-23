@@ -4,6 +4,8 @@ const API_BASE = '/api';
 
 const CLIENT_ID_STORAGE_KEY = 'stream-translator-client-id';
 let cachedClientId = '';
+let cachedConfig: Config | null = null;
+let pendingConfigRequest: Promise<Config> | null = null;
 
 export function getClientId(): string {
   if (cachedClientId) {
@@ -118,23 +120,37 @@ export interface RuntimeStatus {
 }
 
 export const configApi = {
-  async getConfig(): Promise<Config> {
-    const response = await axios.get(`${API_BASE}/config`);
-    // 後端返回 {success: true, data: {...}}
-    return response.data.data || response.data;
+  async getConfig(force = false): Promise<Config> {
+    if (!force && cachedConfig) return cachedConfig;
+    if (pendingConfigRequest) return pendingConfigRequest;
+
+    pendingConfigRequest = axios.get(`${API_BASE}/config`).then((response) => {
+      cachedConfig = response.data.data || response.data;
+      return cachedConfig!;
+    }).finally(() => {
+      pendingConfigRequest = null;
+    });
+    return pendingConfigRequest;
   },
 
-  async updateConfig(config: Config): Promise<void> {
+  async updateConfig(config: Config): Promise<Config> {
     // 使用 PUT 進行完整配置更新
-    await axios.put(`${API_BASE}/config`, config);
+    const response = await axios.put(`${API_BASE}/config`, config);
+    cachedConfig = response.data.data || config;
+    return cachedConfig!;
   },
 
-  async updateSection(section: string, data: any): Promise<void> {
-    await axios.patch(`${API_BASE}/config/${section}`, data);
+  async updateSection(section: string, data: any): Promise<any> {
+    const response = await axios.patch(`${API_BASE}/config/${section}`, data);
+    const updatedSection = response.data.data ?? data;
+    if (cachedConfig) cachedConfig = { ...cachedConfig, [section]: updatedSection };
+    return updatedSection;
   },
 
-  async resetConfig(): Promise<void> {
-    await axios.post(`${API_BASE}/config/reset`);
+  async resetConfig(): Promise<Config> {
+    const response = await axios.post(`${API_BASE}/config/reset`);
+    cachedConfig = response.data.data || response.data;
+    return cachedConfig!;
   },
 
   async exportConfig(): Promise<void> {
@@ -151,14 +167,25 @@ export const configApi = {
     link.remove();
   },
 
-  async importConfig(file: File): Promise<void> {
+  async importConfig(file: File): Promise<Config> {
     const formData = new FormData();
     formData.append('file', file);
-    await axios.post(`${API_BASE}/config/import/file`, formData, {
+    const response = await axios.post(`${API_BASE}/config/import/file`, formData, {
       headers: {
         'Content-Type': 'multipart/form-data'
       }
     });
+    cachedConfig = response.data.data;
+    return cachedConfig!;
+  },
+
+  applySnapshot(config: Config): Config {
+    cachedConfig = config;
+    return cachedConfig;
+  },
+
+  invalidateCache(): void {
+    cachedConfig = null;
   }
 };
 

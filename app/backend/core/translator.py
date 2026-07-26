@@ -59,6 +59,23 @@ def _parse_structured_subtitle_event(line: str) -> Optional[Dict[str, Any]]:
     return payload
 
 
+def _extract_latency_metrics(line: str) -> tuple[str, Dict[str, float]]:
+    match = re.search(r'\s*\[Latency:\s*(.*?)\]\s*$', line)
+    if not match:
+        return line, {}
+
+    key_map = {
+        "ASR": "asr_latency_ms",
+        "LLM": "llm_latency_ms",
+        "Queue": "translation_queue_latency_ms",
+        "Total": "total_latency_ms",
+    }
+    metrics: Dict[str, float] = {}
+    for label, value in re.findall(r'(ASR|LLM|Queue|Total)\s+([\d.]+)ms', match.group(1)):
+        metrics[key_map[label]] = float(value)
+    return line[:match.start()].rstrip(), metrics
+
+
 def _apply_source_pythonpath(env: Dict[str, str], cwd: str) -> None:
     package_source = Path(cwd) / 'stream-translator-gpt'
     if not package_source.exists():
@@ -248,7 +265,8 @@ class TranslationContext:
             'disable_asr_overlap_deduplication', 'disable_subtitle_assembler',
             'subtitle_assembler_wait_ms', 'subtitle_assembler_max_duration',
             'subtitle_assembler_gap_threshold',
-            'use_json_result', 'retry_if_translation_fails', 'output_timestamps', 'emit_json_events',
+            'use_json_result', 'retry_if_translation_fails', 'output_timestamps',
+            'show_latency_log', 'emit_json_events',
             'hide_transcribe_result', 'output_proxy', 'output_file_path', 'cqhttp_url',
             'cqhttp_token', 'discord_webhook_url', 'telegram_token', 'telegram_chat_id',
             'vad_backend', 'firered_vad_model_path', 'preload_asr_model', 'keep_asr_loaded',
@@ -482,6 +500,8 @@ class TranslationContext:
                             except (TypeError, ValueError, json.JSONDecodeError) as exc:
                                 logger.warning(f"Invalid structured subtitle event: {exc}")
                             continue
+
+                        clean_line, latency_metrics = _extract_latency_metrics(clean_line)
                         
                         # 處理並過濾日誌行
                         if any(marker in clean_line for marker in ['[INFO]', '[ERROR]', '[WARNING]', '[DEBUG]']):
@@ -544,12 +564,19 @@ class TranslationContext:
                                 pending_subtitles[timestamp]["translated"] = remaining_text
                             else:
                                 pending_subtitles[timestamp]["original"] = remaining_text
+                            pending_subtitles[timestamp].update(latency_metrics)
                             
                             # 即時發送給前端 (包含原文與翻譯現況)
                             data = {
                                 "timestamp": timestamp,
                                 "original": pending_subtitles[timestamp]["original"],
-                                "translated": pending_subtitles[timestamp]["translated"]
+                                "translated": pending_subtitles[timestamp]["translated"],
+                                "asr_latency_ms": pending_subtitles[timestamp].get("asr_latency_ms"),
+                                "llm_latency_ms": pending_subtitles[timestamp].get("llm_latency_ms"),
+                                "translation_queue_latency_ms": pending_subtitles[timestamp].get(
+                                    "translation_queue_latency_ms"
+                                ),
+                                "total_latency_ms": pending_subtitles[timestamp].get("total_latency_ms"),
                             }
                             logger.info(f"[Subtitle] Emit: {data}")
                             self._broadcast({"type": "subtitle", "data": data})

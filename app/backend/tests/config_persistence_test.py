@@ -4,7 +4,7 @@ from pathlib import Path
 import yaml
 
 from backend.core.config_manager import ConfigManager
-from backend.core.translator import _parse_structured_subtitle_event
+from backend.core.translator import _extract_latency_metrics, _parse_structured_subtitle_event
 
 
 APP_DIR = Path(__file__).resolve().parents[2]
@@ -144,6 +144,7 @@ def test_translation_pipeline_controls_are_supported_by_runtime_cli_contract():
         "subtitle_assembler_wait_ms",
         "subtitle_assembler_max_duration",
         "subtitle_assembler_gap_threshold",
+        "show_latency_log",
         "emit_json_events",
     }
 
@@ -216,3 +217,19 @@ def test_desktop_backend_parses_structured_subtitle_latency_event():
 
     assert payload["translated"] == "你好"
     assert payload["total_latency_ms"] == 812.4
+
+
+def test_desktop_backend_extracts_legacy_latency_log_without_polluting_translation():
+    text, metrics = _extract_latency_metrics(
+        "00:00:01,000 --> 00:00:02,000 你好 "
+        "[Latency: ASR 420ms | LLM 1211ms | Queue 35ms | Total 2080ms]"
+    )
+
+    assert text.endswith("你好")
+    assert "[Latency:" not in text
+    assert metrics == {
+        "asr_latency_ms": 420.0,
+        "llm_latency_ms": 1211.0,
+        "translation_queue_latency_ms": 35.0,
+        "total_latency_ms": 2080.0,
+    }

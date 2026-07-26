@@ -916,6 +916,7 @@ class ConfigManager:
         
         args.update({
             'emit_json_events': True,
+            'show_latency_log': True,
             'output_file_path': resolved_output_file_path,
             'output_timestamps': output_notification.get('output_timestamps', True),  # 預設開啟
             'hide_transcribe_result': output_notification.get('hide_transcribe_result', False),

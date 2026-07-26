@@ -37,20 +37,21 @@ def main(url, **kwargs):
     # Extract args
     loopback = kwargs.get('loopback', False)
     device_index = kwargs.get('device_index')
-    device_recording_interval = kwargs.get('device_recording_interval', 0.5)
+    device_recording_interval = kwargs.get('device_recording_interval', 0.1)
     format = kwargs.get('format', 'ba/wa*')
     cookies = kwargs.get('cookies')
     input_proxy = kwargs.get('input_proxy')
     realtime_processing = kwargs.get('realtime_processing', False)
-    min_audio_length = kwargs.get('min_audio_length', 0.5)
-    max_audio_length = kwargs.get('max_audio_length', 30.0)
-    target_audio_length = kwargs.get('target_audio_length', 5.0)
-    continuous_no_speech_threshold = kwargs.get('continuous_no_speech_threshold', 1.0)
+    min_audio_length = kwargs.get('min_audio_length', 0.7)
+    max_audio_length = kwargs.get('max_audio_length', 6.0)
+    target_audio_length = kwargs.get('target_audio_length', 3.0)
+    continuous_no_speech_threshold = kwargs.get('continuous_no_speech_threshold', 0.5)
     disable_dynamic_no_speech_threshold = kwargs.get('disable_dynamic_no_speech_threshold', False)
-    prefix_retention_length = kwargs.get('prefix_retention_length', 0.5)
+    prefix_retention_length = kwargs.get('prefix_retention_length', 0.25)
     vad_threshold = kwargs.get('vad_threshold', 0.35)
     disable_dynamic_vad_threshold = kwargs.get('disable_dynamic_vad_threshold', False)
     vad_every_n_frames = kwargs.get('vad_every_n_frames', 1)
+    disable_vad = kwargs.get('disable_vad', False)
     vad_backend = kwargs.get('vad_backend', 'silero')
     firered_vad_model_path = kwargs.get('firered_vad_model_path')
 
@@ -203,7 +204,7 @@ def main(url, **kwargs):
             vad_threshold=vad_threshold,
             dynamic_vad_threshold=not disable_dynamic_vad_threshold,
             vad_every_n_frames=vad_every_n_frames,
-            disable_vad=False,
+            disable_vad=disable_vad,
             vad_backend=vad_backend,
             firered_vad_model_path=firered_vad_model_path,
         )
@@ -563,7 +564,7 @@ def cli():
     parser.add_argument(
         '--device_recording_interval',
         type=float,
-        default=0.5,
+        default=0.1,
         help=
         'The shorter the recording interval, the lower the latency, but it will increase CPU usage. It is recommended to set it between 0.1 and 1.0.'
     )
@@ -571,19 +572,19 @@ def cli():
     parser.add_argument('--mic', action='store_true', help='Use microphone instead of system audio (loopback).')
     parser.add_argument('--loopback', action='store_true', help='Directly capture system audio output (Windows WASAPI loopback).')
 
-    parser.add_argument('--min_audio_length', type=float, default=0.5, help='Minimum slice audio length in seconds.')
-    parser.add_argument('--max_audio_length', type=float, default=30.0, help='Maximum slice audio length in seconds.')
+    parser.add_argument('--min_audio_length', type=float, default=0.7, help='Minimum slice audio length in seconds.')
+    parser.add_argument('--max_audio_length', type=float, default=6.0, help='Maximum slice audio length in seconds.')
     parser.add_argument(
         '--target_audio_length',
         type=float,
-        default=5.0,
+        default=3.0,
         help=
         'When dynamic no speech threshold is enabled (enabled by default), the program will slice the audio as close to this length as possible.'
     )
     parser.add_argument(
         '--continuous_no_speech_threshold',
         type=float,
-        default=1.0,
+        default=0.5,
         help=
         'Slice if there is no speech during this number of seconds. If the dynamic no speech threshold is enabled (enabled by default), the actual threshold will be dynamically adjusted based on this value.'
     )
@@ -592,7 +593,7 @@ def cli():
                         help='Set this flag to disable dynamic no speech threshold.')
     parser.add_argument('--prefix_retention_length',
                         type=float,
-                        default=0.5,
+                        default=0.25,
                         help='The length of the retention prefix audio during slicing.')
     parser.add_argument(
         '--vad_threshold',
@@ -604,6 +605,13 @@ def cli():
     parser.add_argument('--disable_dynamic_vad_threshold',
                         action='store_true',
                         help='Set this flag to disable dynamic VAD threshold.')
+    parser.add_argument('--disable_vad',
+                        action='store_true',
+                        help='Disable voice activity detection and slice audio by length only.')
+    parser.add_argument('--vad_every_n_frames',
+                        type=int,
+                        default=1,
+                        help='Run VAD once every N audio frames while a segment is active.')
     parser.add_argument('--vad_backend',
                         type=str,
                         choices=['silero', 'firered'],

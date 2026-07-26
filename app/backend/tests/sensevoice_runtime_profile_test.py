@@ -175,3 +175,37 @@ def test_unsupported_faster_whisper_still_falls_back_to_qwen_on_rocm():
 
     assert args["use_qwen3_asr"] is True
     assert args["use_sensevoice_asr"] is False
+
+
+def test_live_audio_settings_map_to_runtime_args():
+    config = _config_for("cuda")
+    config["input"]["device_recording_interval"] = 0.1
+    config["audio_slicing_vad"] = {
+        "min_audio_length": 0.7,
+        "target_audio_length": 3.0,
+        "max_audio_length": 6.0,
+        "continuous_no_speech_threshold": 0.5,
+        "disable_dynamic_no_speech_threshold": True,
+        "prefix_retention_length": 0.25,
+        "vad_enabled": False,
+        "vad_threshold": 0.35,
+        "disable_dynamic_vad_threshold": True,
+        "vad_every_n_frames": 3,
+        "vad_backend": "silero",
+        "firered_vad_model_path": "",
+    }
+
+    args = _manager().to_main_args(config)
+
+    assert args["device_recording_interval"] == 0.1
+    assert args["min_audio_length"] == 0.7
+    assert args["target_audio_length"] == 3.0
+    assert args["max_audio_length"] == 6.0
+    assert args["continuous_no_speech_threshold"] == 0.5
+    assert args["disable_dynamic_no_speech_threshold"] is True
+    assert args["prefix_retention_length"] == 0.25
+    assert args["disable_vad"] is True
+    assert args["vad_threshold"] == 0.35
+    assert args["disable_dynamic_vad_threshold"] is True
+    assert args["vad_every_n_frames"] == 3
+    assert args["vad_backend"] == "silero"

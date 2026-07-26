@@ -122,22 +122,19 @@ const localConfig = ref<any>({
     cookies: '',
     proxy: '',
     timeout: 30,
-    device_recording_interval: 0.5
+    device_recording_interval: 0.1
   },
   audio_slicing_vad: {
-    min_audio_length: 3.0,
-    max_audio_length: 30.0,
-    chunk_gap_threshold: 0.5,
-    prefix_retention_length: 0.5,
+    min_audio_length: 0.7,
+    max_audio_length: 6.0,
+    target_audio_length: 3.0,
+    continuous_no_speech_threshold: 0.5,
+    disable_dynamic_no_speech_threshold: false,
+    prefix_retention_length: 0.25,
     vad_enabled: true,
-    vad_threshold: 0.5,
-    vad_neg_threshold: 0.35,
-    vad_min_speech_duration_ms: 250,
-    vad_min_silence_duration_ms: 100,
-    vad_window_size_samples: 512,
-    vad_speech_pad_ms: 30,
-    vad_every_n_frames: 2,
-    realtime_processing: false,
+    vad_threshold: 0.35,
+    disable_dynamic_vad_threshold: false,
+    vad_every_n_frames: 1,
     vad_backend: 'silero',
     firered_vad_model_path: ''
   },
@@ -1186,11 +1183,11 @@ async function handleFileChange(event: Event) {
                   <span class="tooltip-container text-white/40 hover:text-blue-300 transition text-sm">
                     ⓘ
                     <span class="tooltip-text">
-                      僅用於設備/Loopback 模式。間隔越短延遲越低但 CPU 越高，建議 0.5（預設）
+                      僅用於設備/Loopback 模式。間隔越短延遲越低但 CPU 使用率越高，直播建議 0.1 秒。
                     </span>
                   </span>
                 </label>
-                <input v-model.number="localConfig.input.device_recording_interval" type="number" step="0.1" min="0.1" max="1.0" placeholder="0.5"
+                <input v-model.number="localConfig.input.device_recording_interval" type="number" step="0.05" min="0.05" max="1.0" placeholder="0.1"
                   class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
               </div>
             </div>
@@ -1203,29 +1200,45 @@ async function handleFileChange(event: Event) {
             <!-- 音訊切片 -->
             <div class="bg-white/5 rounded-xl p-4 border border-white/10">
               <h3 class="text-lg font-semibold text-blue-300 mb-4">🔊 音訊切片</h3>
-              <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 <div>
                   <label class="block text-white/70 text-sm mb-1">最小音訊長度 (秒)</label>
-                  <input v-model.number="localConfig.audio_slicing_vad.min_audio_length" type="number" step="0.1"
+                  <input v-model.number="localConfig.audio_slicing_vad.min_audio_length" type="number" step="0.1" min="0.1" max="30"
                     class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
+                </div>
+                <div>
+                  <label class="block text-white/70 text-sm mb-1">目標音訊長度 (秒)</label>
+                  <input v-model.number="localConfig.audio_slicing_vad.target_audio_length" type="number" step="0.1" min="0.1" max="60"
+                    class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
+                  <p class="text-xs text-white/40 mt-1">動態句尾判斷會盡量在接近此長度時完成片段。</p>
                 </div>
                 <div>
                   <label class="block text-white/70 text-sm mb-1">最大音訊長度 (秒)</label>
-                  <input v-model.number="localConfig.audio_slicing_vad.max_audio_length" type="number" step="0.1"
+                  <input v-model.number="localConfig.audio_slicing_vad.max_audio_length" type="number" step="0.1" min="0.1" max="120"
                     class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
                 </div>
                 <div>
-                  <label class="block text-white/70 text-sm mb-1">片段間隙閾值 (秒)</label>
-                  <input v-model.number="localConfig.audio_slicing_vad.chunk_gap_threshold" type="number" step="0.1"
+                  <label class="block text-white/70 text-sm mb-1">句尾連續靜音 (秒)</label>
+                  <input v-model.number="localConfig.audio_slicing_vad.continuous_no_speech_threshold" type="number"
+                    step="0.05" min="0.1" max="5"
                     class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
+                  <p class="text-xs text-white/40 mt-1">偵測到連續靜音後結束片段；直播建議 0.4 到 0.7 秒。</p>
                 </div>
                 <div>
-                  <label class="block text-white/70 text-sm mb-1">前段音訊保留長度 (秒)</label>
+                  <label class="block text-white/70 text-sm mb-1">前綴重疊長度 (秒)</label>
                   <input v-model.number="localConfig.audio_slicing_vad.prefix_retention_length" type="number"
-                    step="0.1" min="0" max="5"
+                    step="0.05" min="0" max="5"
                     class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
                   <p class="text-xs text-white/40 mt-1">將上一片段結尾接到下一片段開頭；設為 0 可完全停用。</p>
                 </div>
+                <label class="flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer">
+                  <input v-model="localConfig.audio_slicing_vad.disable_dynamic_no_speech_threshold" type="checkbox"
+                    class="w-5 h-5 accent-blue-500 mt-0.5" />
+                  <span>
+                    <span class="block text-white font-medium">停用動態句尾門檻</span>
+                    <span class="block text-xs text-white/40 mt-1">勾選後固定使用句尾連續靜音值，不再依片段長度調整。</span>
+                  </span>
+                </label>
               </div>
             </div>
 
@@ -1259,82 +1272,27 @@ async function handleFileChange(event: Event) {
                     <span class="tooltip-container text-white/40 hover:text-blue-300 transition text-xs">
                       ⓘ
                       <span class="tooltip-text">
-                        聲音被判定為語音的閾值。範圍 0.0 ~ 1.0，預設 0.5。數值越低越靈敏。
+                        聲音被判定為語音的閾值。範圍 0.0 ~ 1.0，預設 0.35。數值越低越靈敏。
                       </span>
                     </span>
                   </label>
                   <input v-model.number="localConfig.audio_slicing_vad.vad_threshold" type="number" step="0.05" min="0" max="1"
                     class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
                 </div>
+                <label class="flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer">
+                  <input v-model="localConfig.audio_slicing_vad.disable_dynamic_vad_threshold" type="checkbox"
+                    class="w-5 h-5 accent-blue-500 mt-0.5" />
+                  <span>
+                    <span class="block text-white font-medium">停用動態 VAD 門檻</span>
+                    <span class="block text-xs text-white/40 mt-1">勾選後固定使用上方語音閾值。</span>
+                  </span>
+                </label>
                 <div>
-                  <label class="block text-white/70 text-sm mb-1 flex items-center gap-1.5">
-                    負向閾值
-                    <span class="tooltip-container text-white/40 hover:text-blue-300 transition text-xs">
-                      ⓘ
-                      <span class="tooltip-text">
-                        判定語音結束的閾值。範圍 0.0 ~ 1.0，預設 0.35。
-                      </span>
-                    </span>
-                  </label>
-                  <input v-model.number="localConfig.audio_slicing_vad.vad_neg_threshold" type="number" step="0.05" min="0" max="1"
+                  <label class="block text-white/70 text-sm mb-1">VAD 計算頻率</label>
+                  <input v-model.number="localConfig.audio_slicing_vad.vad_every_n_frames" type="number"
+                    min="1" max="10" step="1"
                     class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
-                </div>
-                <div>
-                  <label class="block text-white/70 text-sm mb-1">最短語音持續 (ms)</label>
-                  <input v-model.number="localConfig.audio_slicing_vad.vad_min_speech_duration_ms" type="number"
-                    class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
-                </div>
-                <div>
-                  <label class="block text-white/70 text-sm mb-1">最短靜音持續 (ms)</label>
-                  <input v-model.number="localConfig.audio_slicing_vad.vad_min_silence_duration_ms" type="number"
-                    class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
-                </div>
-                <div>
-                  <label class="block text-white/70 text-sm mb-1">視窗大小 (samples)</label>
-                  <input v-model.number="localConfig.audio_slicing_vad.vad_window_size_samples" type="number"
-                    class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
-                </div>
-                <div>
-                  <label class="block text-white/70 text-sm mb-1">語音填充 (ms)</label>
-                  <input v-model.number="localConfig.audio_slicing_vad.vad_speech_pad_ms" type="number"
-                    class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
-                </div>
-              </div>
-            </div>
-
-            <!-- CPU 優化設定（非直播音源） -->
-            <div class="bg-white/5 rounded-xl p-4 border border-white/10">
-              <h3 class="text-lg font-semibold text-yellow-300 mb-1">⚡ 非直播 CPU 優化</h3>
-              <p class="text-white/50 text-xs mb-4">適用於本地檔案或非直播 URL，直播音源無需調整</p>
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label class="block text-white/70 text-sm mb-1 flex items-center gap-1.5">
-                    VAD 跳幀頻率
-                    <span class="tooltip-container text-white/40 hover:text-blue-300 transition text-xs">
-                      ⓘ
-                      <span class="tooltip-text">
-                        1 = 每幀都呼叫（無優化），2 = 約減少 50% CPU，3 = 約減少 67% CPU。提高此值可降低 CPU 負擔。
-                      </span>
-                    </span>
-                  </label>
-                  <input v-model.number="localConfig.audio_slicing_vad.vad_every_n_frames" type="number" min="1" max="10" step="1"
-                    class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
-                </div>
-                <div class="flex flex-col justify-center">
-                  <label class="flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer hover:bg-white/10 transition">
-                    <input v-model="localConfig.audio_slicing_vad.realtime_processing" type="checkbox" class="w-5 h-5 accent-yellow-400 mt-0.5" />
-                    <div>
-                      <span class="text-white font-medium flex items-center gap-1.5">
-                        實時節流模式
-                        <span class="tooltip-container text-white/40 hover:text-yellow-300 transition text-sm">
-                          ⓘ
-                          <span class="tooltip-text">
-                            音頻讀取速度限制為實時速度，CPU 降至最低，但處理時間等同音頻時長。
-                          </span>
-                        </span>
-                      </span>
-                    </div>
-                  </label>
+                  <p class="text-xs text-white/40 mt-1">1 為每個 32 ms frame 計算；提高可降低 CPU，但會增加判斷延遲。</p>
                 </div>
               </div>
             </div>

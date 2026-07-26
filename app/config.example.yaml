@@ -21,27 +21,20 @@ input:
   proxy: ''
   source_type: youtube
   timeout: 30
-  device_recording_interval: 0.5
+  device_recording_interval: 0.1
   audio_source: url
   device_index: null
 audio_slicing_vad:
-  min_audio_length: 0.5
-  max_audio_length: 8
-  target_audio_length: 5.0
-  continuous_no_speech_threshold: 1.0
+  min_audio_length: 0.7
+  max_audio_length: 6.0
+  target_audio_length: 3.0
+  continuous_no_speech_threshold: 0.5
   disable_dynamic_no_speech_threshold: false
   vad_threshold: 0.35
   disable_dynamic_vad_threshold: false
-  prefix_retention_length: 0.5
-  chunk_gap_threshold: 0.5
+  prefix_retention_length: 0.25
   vad_enabled: true
-  vad_neg_threshold: 0.35
-  vad_min_speech_duration_ms: 250
-  vad_min_silence_duration_ms: 100
-  vad_window_size_samples: 512
-  vad_speech_pad_ms: 30
-  vad_every_n_frames: 2
-  realtime_processing: false
+  vad_every_n_frames: 1
   vad_backend: silero
   firered_vad_model_path: ''
 transcription:

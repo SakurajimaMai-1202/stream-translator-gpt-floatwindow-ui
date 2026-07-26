@@ -223,6 +223,7 @@ class TranslationContext:
             'min_audio_length', 'max_audio_length', 'target_audio_length',
             'continuous_no_speech_threshold', 'disable_dynamic_no_speech_threshold',
             'prefix_retention_length', 'vad_threshold', 'disable_dynamic_vad_threshold',
+            'disable_vad', 'vad_every_n_frames',
             'model', 'language', 'use_faster_whisper', 'use_simul_streaming',
             'use_openai_transcription_api', 'use_qwen3_asr', 'openai_transcription_model', 'whisper_filters',
             'transcription_initial_prompt', 'disable_transcription_context', 'qwen3_context',

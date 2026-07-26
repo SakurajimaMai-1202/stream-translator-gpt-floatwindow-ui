@@ -21,6 +21,10 @@ export interface SubtitleLine {
   translated: string;
   timestamp: number; // 前端接收時間
   backend_timestamp?: string; // 後端傳來的字串時間戳 (00:00:01 -> 00:00:03)
+  asr_latency_ms?: number | null;
+  llm_latency_ms?: number | null;
+  translation_queue_latency_ms?: number | null;
+  total_latency_ms?: number | null;
 }
 
 export const useTranslationStore = defineStore('translation', () => {
@@ -256,6 +260,10 @@ export const useTranslationStore = defineStore('translation', () => {
           // 直接更新該筆（原文或翻譯擴充）
           (subtitles.value[existingIdx] as any).original = data.original || '';
           (subtitles.value[existingIdx] as any).translated = data.translated || '';
+          (subtitles.value[existingIdx] as any).asr_latency_ms = data.asr_latency_ms ?? null;
+          (subtitles.value[existingIdx] as any).llm_latency_ms = data.llm_latency_ms ?? null;
+          (subtitles.value[existingIdx] as any).translation_queue_latency_ms = data.translation_queue_latency_ms ?? null;
+          (subtitles.value[existingIdx] as any).total_latency_ms = data.total_latency_ms ?? null;
           // 觸發 Vue reactive 更新：重新賍予同一個
           const updated = { ...subtitles.value[existingIdx] };
           subtitles.value.splice(existingIdx, 1, updated);
@@ -270,7 +278,11 @@ export const useTranslationStore = defineStore('translation', () => {
             original: data.original || '',
             translated: data.translated || '',
             timestamp: Date.now(),
-            backend_timestamp: backendTs
+            backend_timestamp: backendTs,
+            asr_latency_ms: data.asr_latency_ms ?? null,
+            llm_latency_ms: data.llm_latency_ms ?? null,
+            translation_queue_latency_ms: data.translation_queue_latency_ms ?? null,
+            total_latency_ms: data.total_latency_ms ?? null
           };
           subtitles.value.push(newSubtitle);
           console.log('[Store] Added new subtitle to store, total:', subtitles.value.length);

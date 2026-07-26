@@ -11,6 +11,7 @@ const fontWeight = ref(700);
 const showOriginal = ref(true);
 const showTranslated = ref(true);
 const showTimestamp = ref(false);
+const showLatency = ref(false);
 const position = ref<'top' | 'bottom'>('bottom');
 const autoScroll = ref(true);
 const maxDisplayCount = ref(5);
@@ -33,6 +34,7 @@ function buildSettings() {
     showOriginal: showOriginal.value,
     showTranslated: showTranslated.value,
     showTimestamp: showTimestamp.value,
+    showLatency: showLatency.value,
     position: position.value,
     autoScroll: autoScroll.value,
     maxDisplayCount: maxDisplayCount.value,
@@ -106,6 +108,7 @@ async function loadSettingsFromBackend() {
     showOriginal.value = settings.showOriginal ?? showOriginal.value;
     showTranslated.value = settings.showTranslated ?? showTranslated.value;
     showTimestamp.value = settings.showTimestamp ?? showTimestamp.value;
+    showLatency.value = settings.showLatency ?? showLatency.value;
     position.value = settings.position ?? position.value;
     autoScroll.value = settings.autoScroll ?? autoScroll.value;
     maxDisplayCount.value = settings.maxDisplayCount ?? maxDisplayCount.value;
@@ -141,6 +144,7 @@ onMounted(async () => {
         showOriginal.value = settings.showOriginal ?? showOriginal.value;
         showTranslated.value = settings.showTranslated ?? showTranslated.value;
         showTimestamp.value = settings.showTimestamp ?? showTimestamp.value;
+        showLatency.value = settings.showLatency ?? showLatency.value;
         position.value = settings.position ?? position.value;
         autoScroll.value = settings.autoScroll ?? autoScroll.value;
         maxDisplayCount.value = settings.maxDisplayCount ?? maxDisplayCount.value;
@@ -167,7 +171,7 @@ onUnmounted(() => {
   }
 });
 
-watch([fontSize, fontWeight, showOriginal, showTranslated, showTimestamp, position, autoScroll, maxDisplayCount, textColor, translatedColor, timestampColor, backgroundColor, backgroundOpacity], () => {
+watch([fontSize, fontWeight, showOriginal, showTranslated, showTimestamp, showLatency, position, autoScroll, maxDisplayCount, textColor, translatedColor, timestampColor, backgroundColor, backgroundOpacity], () => {
   scheduleSaveSettings();
 });
 
@@ -247,6 +251,10 @@ const activeTab = ref<'display' | 'color'>('display');
             <span class="text-white text-sm group-hover:text-blue-300 transition">顯示時間戳</span>
           </label>
           <label class="flex items-center gap-3 cursor-pointer group">
+            <input v-model="showLatency" type="checkbox" class="w-5 h-5 accent-blue-500" />
+            <span class="text-white text-sm group-hover:text-blue-300 transition">顯示處理延遲</span>
+          </label>
+          <label class="flex items-center gap-3 cursor-pointer group">
             <input v-model="autoScroll" type="checkbox" class="w-5 h-5 accent-blue-500" />
             <span class="text-white text-sm group-hover:text-blue-300 transition">自動捲動</span>
           </label>
@@ -296,6 +304,9 @@ const activeTab = ref<'display' | 'color'>('display');
             class="p-4 rounded-lg text-center"
           >
             <div v-if="showTimestamp" :style="{ color: timestampColor, fontSize: '10px', opacity: 0.7 }" class="mb-1">00:00:10</div>
+            <div v-if="showLatency" :style="{ color: timestampColor, fontSize: '10px', opacity: 0.78 }" class="mb-1 font-mono">
+              ASR 420ms · 排隊 35ms · 翻譯 1.21s · 總計 2.08s
+            </div>
             <div v-if="showOriginal" :style="{ color: textColor, textShadow: '1px 1px 3px rgba(0,0,0,0.8)' }">こんにちは</div>
             <div v-if="showTranslated" :style="{ color: translatedColor, textShadow: '1px 1px 3px rgba(0,0,0,0.8)' }" class="font-bold mt-1">你好</div>
           </div>

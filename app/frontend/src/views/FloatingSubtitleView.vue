@@ -11,6 +11,7 @@ const opacity = ref(100);
 const showOriginal = ref(true);
 const showTranslated = ref(true);
 const showTimestamp = ref(false);
+const showLatency = ref(false);
 const position = ref<'top' | 'bottom'>('bottom');
 const autoScroll = ref(true);
 const maxDisplayCount = ref(5);
@@ -34,6 +35,10 @@ const subtitleHistory = ref<Array<{
   original: string;
   translated: string;
   timestamp: Date;
+  asr_latency_ms?: number | null;
+  llm_latency_ms?: number | null;
+  translation_queue_latency_ms?: number | null;
+  total_latency_ms?: number | null;
 }>>([]); 
 
 // 滾動容器引用
@@ -80,6 +85,10 @@ function addOrUpdateSubtitle(newSub: any, source: string = 'Store') {
     subtitleHistory.value[existingIndex].original = newSub.original || '';
     subtitleHistory.value[existingIndex].translated = newSub.translated || '';
     subtitleHistory.value[existingIndex].timestamp = new Date(); // 更新最後收到時間
+    subtitleHistory.value[existingIndex].asr_latency_ms = newSub.asr_latency_ms ?? null;
+    subtitleHistory.value[existingIndex].llm_latency_ms = newSub.llm_latency_ms ?? null;
+    subtitleHistory.value[existingIndex].translation_queue_latency_ms = newSub.translation_queue_latency_ms ?? null;
+    subtitleHistory.value[existingIndex].total_latency_ms = newSub.total_latency_ms ?? null;
   } else {
     // 沒找到，新增一筆
     subtitleHistory.value.push({
@@ -87,7 +96,11 @@ function addOrUpdateSubtitle(newSub: any, source: string = 'Store') {
       timestamp_id: ts || '',
       original: newSub.original || '',
       translated: newSub.translated || '',
-      timestamp: new Date()
+      timestamp: new Date(),
+      asr_latency_ms: newSub.asr_latency_ms ?? null,
+      llm_latency_ms: newSub.llm_latency_ms ?? null,
+      translation_queue_latency_ms: newSub.translation_queue_latency_ms ?? null,
+      total_latency_ms: newSub.total_latency_ms ?? null
     });
   }
   
@@ -149,6 +162,7 @@ function applySettings(settings: any, external = false) {
   showOriginal.value = settings.showOriginal ?? showOriginal.value;
   showTranslated.value = settings.showTranslated ?? showTranslated.value;
   showTimestamp.value = settings.showTimestamp ?? showTimestamp.value;
+  showLatency.value = settings.showLatency ?? showLatency.value;
   position.value = settings.position ?? position.value;
   autoScroll.value = settings.autoScroll ?? autoScroll.value;
   maxDisplayCount.value = settings.maxDisplayCount ?? maxDisplayCount.value;
@@ -220,6 +234,20 @@ function formatTimestamp(date: Date): string {
   return date.toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute: '2-digit' });
 }
 
+function formatLatency(value?: number | null): string {
+  if (value == null || !Number.isFinite(value)) return '';
+  return value >= 1000 ? `${(value / 1000).toFixed(2)}s` : `${Math.round(value)}ms`;
+}
+
+function latencyParts(sub: typeof subtitleHistory.value[number]): string[] {
+  const parts: string[] = [];
+  if (sub.asr_latency_ms != null) parts.push(`ASR ${formatLatency(sub.asr_latency_ms)}`);
+  if (sub.translation_queue_latency_ms != null) parts.push(`排隊 ${formatLatency(sub.translation_queue_latency_ms)}`);
+  if (sub.llm_latency_ms != null) parts.push(`翻譯 ${formatLatency(sub.llm_latency_ms)}`);
+  if (sub.total_latency_ms != null) parts.push(`總計 ${formatLatency(sub.total_latency_ms)}`);
+  return parts;
+}
+
 // 儲存設定到 localStorage
 function buildSettings() {
   return {
@@ -229,6 +257,7 @@ function buildSettings() {
     showOriginal: showOriginal.value,
     showTranslated: showTranslated.value,
     showTimestamp: showTimestamp.value,
+    showLatency: showLatency.value,
     position: position.value,
     autoScroll: autoScroll.value,
     maxDisplayCount: maxDisplayCount.value,
@@ -248,6 +277,7 @@ async function saveSettings() {
     showOriginal: showOriginal.value,
     showTranslated: showTranslated.value,
     showTimestamp: showTimestamp.value,
+    showLatency: showLatency.value,
     position: position.value,
     autoScroll: autoScroll.value,
     maxDisplayCount: maxDisplayCount.value,
@@ -318,6 +348,7 @@ onMounted(async () => {
         showOriginal.value = settings.showOriginal ?? showOriginal.value;
         showTranslated.value = settings.showTranslated ?? showTranslated.value;
         showTimestamp.value = settings.showTimestamp ?? showTimestamp.value;
+        showLatency.value = settings.showLatency ?? showLatency.value;
         position.value = settings.position ?? position.value;
         autoScroll.value = settings.autoScroll ?? autoScroll.value;
         maxDisplayCount.value = settings.maxDisplayCount ?? maxDisplayCount.value;
@@ -390,7 +421,7 @@ function handleStorageChange(e: StorageEvent) {
 }
 
 // 自動儲存設定（初始化完成後才觸發）
-watch([fontSize, fontWeight, opacity, showOriginal, showTranslated, showTimestamp, position, autoScroll, maxDisplayCount, textColor, translatedColor, timestampColor, backgroundColor, backgroundOpacity], () => {
+watch([fontSize, fontWeight, opacity, showOriginal, showTranslated, showTimestamp, showLatency, position, autoScroll, maxDisplayCount, textColor, translatedColor, timestampColor, backgroundColor, backgroundOpacity], () => {
   if (!isInitializing.value && !isApplyingExternalSettings.value) {
     scheduleSaveSettings();
   }
@@ -478,6 +509,13 @@ async function stopTranslation() {
           <!-- 時間戳 -->
           <div v-if="showTimestamp" class="text-xs opacity-70 font-mono mb-1" :style="{ color: timestampColor }">
             {{ formatTimestamp(sub.timestamp) }}
+          </div>
+          <div
+            v-if="showLatency && latencyParts(sub).length"
+            class="subtitle-latency mb-1"
+            :style="{ color: timestampColor }"
+          >
+            {{ latencyParts(sub).join(' · ') }}
           </div>
           
           <!-- 原文 -->
@@ -657,6 +695,10 @@ async function stopTranslation() {
             <span class="text-white text-sm">顯示時間戳</span>
           </label>
           <label class="flex items-center gap-2 cursor-pointer">
+            <input v-model="showLatency" type="checkbox" class="w-4 h-4 accent-blue-500" />
+            <span class="text-white text-sm">顯示處理延遲</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer">
             <input v-model="autoScroll" type="checkbox" class="w-4 h-4 accent-blue-500" />
             <span class="text-white text-sm">自動捲動</span>
           </label>
@@ -729,6 +771,14 @@ async function stopTranslation() {
 .subtitle-list span {
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+.subtitle-latency {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: clamp(10px, 0.55em, 13px);
+  font-weight: 500;
+  line-height: 1.25;
+  opacity: 0.78;
 }
 
 .subtitle-floating-controls {

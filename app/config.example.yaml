@@ -135,6 +135,7 @@ subtitle_settings:
   showOriginal: true
   showTranslated: true
   showTimestamp: true
+  showLatency: false
   position: bottom
   autoScroll: true
   maxDisplayCount: 30

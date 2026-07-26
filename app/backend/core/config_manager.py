@@ -167,6 +167,7 @@ class ConfigManager:
             'showOriginal': True,
             'showTranslated': True,
             'showTimestamp': False,
+            'showLatency': False,
             'position': 'bottom',
             'autoScroll': True,
             'maxDisplayCount': 5,

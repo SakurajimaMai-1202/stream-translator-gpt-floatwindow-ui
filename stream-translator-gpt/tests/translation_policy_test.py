@@ -120,6 +120,39 @@ def test_paired_exporter_skips_original_only_task():
     assert [task.segment_id for task in received] == [2]
 
 
+def test_subtitle_event_includes_latency_breakdown():
+    exporter = ResultExporter(
+        cqhttp_url=None,
+        cqhttp_token=None,
+        discord_webhook_url=None,
+        telegram_token=None,
+        telegram_chat_id=None,
+        output_file_path=None,
+        proxy=None,
+        output_whisper_result=True,
+        output_timestamps=False,
+    )
+    exporter.subtitle_share_queue = queue.SimpleQueue()
+    task = _task(3)
+    task.translation = "譯文"
+    task.asr_latency_ms = 420.25
+    task.translation_queue_latency_ms = 35.4
+    task.llm_latency_ms = 1210.8
+    task.total_latency_ms = 2080.1
+    input_queue = queue.SimpleQueue()
+    input_queue.put(task)
+    input_queue.put(None)
+
+    exporter.loop(input_queue)
+
+    event = exporter.subtitle_share_queue.get()
+    assert event["event"] == "subtitle"
+    assert event["data"]["asr_latency_ms"] == 420.2
+    assert event["data"]["translation_queue_latency_ms"] == 35.4
+    assert event["data"]["llm_latency_ms"] == 1210.8
+    assert event["data"]["total_latency_ms"] == 2080.1
+
+
 def test_overlap_deduplication_is_conservative_for_cjk_and_latin():
     assert remove_text_overlap(
         "今日は新しいゲームを",

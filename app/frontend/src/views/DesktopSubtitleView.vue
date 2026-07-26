@@ -2,7 +2,18 @@
 import { ref, onMounted, onUnmounted, nextTick } from 'vue';
 
 // ─── 狀態 ───────────────────────────────────────────────
-const subtitles = ref<Array<{ id: number; original: string; translated: string; timestamp_id?: string }>>([]);
+type DesktopSubtitle = {
+  id: number;
+  original: string;
+  translated: string;
+  timestamp_id?: string;
+  asr_latency_ms?: number | null;
+  llm_latency_ms?: number | null;
+  translation_queue_latency_ms?: number | null;
+  total_latency_ms?: number | null;
+};
+
+const subtitles = ref<DesktopSubtitle[]>([]);
 const status = ref<'connecting' | 'connected' | 'waiting' | 'error'>('connecting');
 const statusText = ref('連線中...');
 const showPanel = ref(false);
@@ -11,6 +22,7 @@ const showPanel = ref(false);
 const fontSize = ref(Number(localStorage.getItem('dfw_fontSize') || 32));
 const showOriginal = ref(localStorage.getItem('dfw_showOriginal') !== 'false');
 const showTranslated = ref(localStorage.getItem('dfw_showTranslated') !== 'false');
+const showLatency = ref(localStorage.getItem('dfw_showLatency') === 'true');
 const maxItems = ref(Number(localStorage.getItem('dfw_maxItems') || 100));
 const layout = ref<'bottom' | 'top' | 'side'>(
   (localStorage.getItem('dfw_layout') as any) || 'bottom'
@@ -109,7 +121,7 @@ async function connect() {
   };
 }
 
-function addOrUpdateSubtitle(data: { timestamp?: string; original: string; translated: string }) {
+function addOrUpdateSubtitle(data: Omit<DesktopSubtitle, 'id' | 'timestamp_id'> & { timestamp?: string }) {
   if (!data.original && !data.translated) return;
 
   const ts = data.timestamp || '';
@@ -118,6 +130,10 @@ function addOrUpdateSubtitle(data: { timestamp?: string; original: string; trans
     if (idx !== -1) {
       subtitles.value[idx].original = data.original || '';
       subtitles.value[idx].translated = data.translated || '';
+      subtitles.value[idx].asr_latency_ms = data.asr_latency_ms ?? null;
+      subtitles.value[idx].llm_latency_ms = data.llm_latency_ms ?? null;
+      subtitles.value[idx].translation_queue_latency_ms = data.translation_queue_latency_ms ?? null;
+      subtitles.value[idx].total_latency_ms = data.total_latency_ms ?? null;
       // 更新不新增，不需要捲動
       return;
     }
@@ -127,6 +143,10 @@ function addOrUpdateSubtitle(data: { timestamp?: string; original: string; trans
     id: Date.now() + Math.random(),
     original: data.original || '',
     translated: data.translated || '',
+    asr_latency_ms: data.asr_latency_ms ?? null,
+    llm_latency_ms: data.llm_latency_ms ?? null,
+    translation_queue_latency_ms: data.translation_queue_latency_ms ?? null,
+    total_latency_ms: data.total_latency_ms ?? null,
     ...(ts ? { timestamp_id: ts } : {})
   });
 
@@ -144,6 +164,7 @@ function saveSettings() {
   localStorage.setItem('dfw_fontSize', String(fontSize.value));
   localStorage.setItem('dfw_showOriginal', String(showOriginal.value));
   localStorage.setItem('dfw_showTranslated', String(showTranslated.value));
+  localStorage.setItem('dfw_showLatency', String(showLatency.value));
   localStorage.setItem('dfw_maxItems', String(maxItems.value));
   localStorage.setItem('dfw_layout', layout.value);
   localStorage.setItem('dfw_bgOpacity', String(bgOpacity.value));
@@ -159,6 +180,20 @@ onUnmounted(() => {
 
 function clearHistory() {
   subtitles.value = [];
+}
+
+function formatLatency(value?: number | null): string {
+  if (value == null || !Number.isFinite(value)) return '';
+  return value >= 1000 ? `${(value / 1000).toFixed(2)}s` : `${Math.round(value)}ms`;
+}
+
+function latencyLabel(sub: DesktopSubtitle): string {
+  const parts: string[] = [];
+  if (sub.asr_latency_ms != null) parts.push(`ASR ${formatLatency(sub.asr_latency_ms)}`);
+  if (sub.translation_queue_latency_ms != null) parts.push(`排隊 ${formatLatency(sub.translation_queue_latency_ms)}`);
+  if (sub.llm_latency_ms != null) parts.push(`翻譯 ${formatLatency(sub.llm_latency_ms)}`);
+  if (sub.total_latency_ms != null) parts.push(`總計 ${formatLatency(sub.total_latency_ms)}`);
+  return parts.join(' · ');
 }
 </script>
 
@@ -248,6 +283,10 @@ function clearHistory() {
             <input type="checkbox" v-model="showTranslated" @change="saveSettings" />
             顯示翻譯
           </label>
+          <label class="toggle-row">
+            <input type="checkbox" v-model="showLatency" @change="saveSettings" />
+            顯示處理延遲
+          </label>
         </div>
       </aside>
     </Transition>
@@ -286,6 +325,9 @@ function clearHistory() {
               class="sub-line translated"
               :style="{ fontSize: fontSize + 'px' }">
               {{ sub.translated }}
+            </div>
+            <div v-if="showLatency && latencyLabel(sub)" class="latency-line">
+              {{ latencyLabel(sub) }}
             </div>
           </div>
         </TransitionGroup>
@@ -631,6 +673,16 @@ function clearHistory() {
   font-weight: 700;
   margin-top: 6px;
   text-shadow: var(--sub-shadow);
+}
+
+.latency-line {
+  margin-top: 0.35rem;
+  color: var(--status-label);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.25;
+  opacity: 0.8;
 }
 
 /* ─── 跳至底部按鈕 ─── */

@@ -175,6 +175,16 @@ const localConfig = ref<any>({
     translation_timeout: 10,
     processing_proxy: '',
     use_json_result: false,
+    translation_model_family: 'auto',
+    translation_output_format: 'auto',
+    translation_max_concurrency: 0,
+    translation_max_output_tokens: 128,
+    paired_subtitle_mode: true,
+    deduplicate_asr_overlap: true,
+    subtitle_assembler_enabled: true,
+    subtitle_assembler_wait_ms: 400,
+    subtitle_assembler_max_duration: 6.0,
+    subtitle_assembler_gap_threshold: 0.8,
     use_smart_prompt: true,
     smart_prompt_enabled: true,
     translation_prompt: '',
@@ -2011,12 +2021,33 @@ async function handleFileChange(event: Event) {
               <h3 class="text-lg font-semibold text-blue-300 mb-4">🔧 進階設定</h3>
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
+                  <label class="block text-white/70 font-semibold mb-2">模型翻譯策略</label>
+                  <UiSelect v-model="localConfig.translation.translation_model_family" :options="[
+                    { value: 'auto', label: '自動判斷' },
+                    { value: 'hy_mt2', label: 'Hy-MT2 專用翻譯模型' },
+                    { value: 'generic_chat', label: '通用聊天模型（Gemma 等）' },
+                    { value: 'structured_api', label: '結構化 API（OpenAI / Gemini）' }
+                  ]" />
+                  <p class="text-white/40 text-xs mt-1">本地模型名稱不明確時，請手動指定策略。</p>
+                </div>
+
+                <div>
+                  <label class="block text-white/70 font-semibold mb-2">輸出格式</label>
+                  <UiSelect v-model="localConfig.translation.translation_output_format" :options="[
+                    { value: 'auto', label: '自動' },
+                    { value: 'text', label: '純文字' },
+                    { value: 'json', label: 'JSON' }
+                  ]" />
+                  <p class="text-white/40 text-xs mt-1">Hy-MT2 固定使用純文字；支援的 API 才會使用 JSON。</p>
+                </div>
+
+                <div>
                   <label class="block text-white/70 font-semibold mb-2 flex items-center gap-1.5">
                     歷史訊息數量
                     <span class="tooltip-container text-white/40 hover:text-blue-300 transition text-sm">
                       ⓘ
                       <span class="tooltip-text">
-                        0 = 並行獨立翻譯各句，大於 0 = 串行翻譯並提供上下文資訊（能更準確地翻譯對話上下文）。
+                        提供最近字幕作為理解背景。大於 0 時會強制單工翻譯，避免上下文順序錯亂。
                       </span>
                     </span>
                   </label>
@@ -2038,6 +2069,74 @@ async function handleFileChange(event: Event) {
                     class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
                 </div>
 
+                <div>
+                  <label class="block text-white/70 font-semibold mb-2">最大並行翻譯數</label>
+                  <input v-model.number="localConfig.translation.translation_max_concurrency" type="number" min="0" max="8"
+                    class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
+                  <p class="text-white/40 text-xs mt-1">0 使用策略預設；本地模型建議 1，線上 API 建議 2。</p>
+                </div>
+
+                <div>
+                  <label class="block text-white/70 font-semibold mb-2">每段最大輸出 Token</label>
+                  <input v-model.number="localConfig.translation.translation_max_output_tokens" type="number" min="16" max="2048" step="16"
+                    class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
+                  <p class="text-white/40 text-xs mt-1">直播短字幕建議 128，較長字幕可使用 192 或 256。</p>
+                </div>
+
+                <div class="md:col-span-2">
+                  <label class="flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer hover:bg-white/10 transition">
+                    <input v-model="localConfig.translation.paired_subtitle_mode" type="checkbox"
+                      class="w-5 h-5 accent-blue-500 mt-0.5" />
+                    <div>
+                      <span class="text-white font-medium">原文與翻譯成對顯示</span>
+                      <p class="text-white/50 text-sm mt-1">翻譯完成前不顯示該組字幕；翻譯失敗時略過整組，避免原文與譯文錯位。</p>
+                    </div>
+                  </label>
+                </div>
+
+                <div>
+                  <label class="flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer">
+                    <input v-model="localConfig.translation.deduplicate_asr_overlap" type="checkbox"
+                      class="w-5 h-5 accent-blue-500 mt-0.5" />
+                    <span>
+                      <span class="block text-white font-medium">跨片段重疊去重</span>
+                      <span class="block text-white/50 text-sm mt-1">翻譯前移除相鄰 ASR 片段重複的開頭文字。</span>
+                    </span>
+                  </label>
+                </div>
+
+                <div>
+                  <label class="flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer">
+                    <input v-model="localConfig.translation.subtitle_assembler_enabled" type="checkbox"
+                      class="w-5 h-5 accent-blue-500 mt-0.5" />
+                    <span>
+                      <span class="block text-white font-medium">字幕組句器</span>
+                      <span class="block text-white/50 text-sm mt-1">不完整句短暫等待下一個 ASR 片段，再一起翻譯。</span>
+                    </span>
+                  </label>
+                </div>
+
+                <template v-if="localConfig.translation.subtitle_assembler_enabled">
+                  <div>
+                    <label class="block text-white/70 font-semibold mb-2">組句等待上限 (ms)</label>
+                    <input v-model.number="localConfig.translation.subtitle_assembler_wait_ms" type="number"
+                      min="0" max="2000" step="50"
+                      class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
+                  </div>
+                  <div>
+                    <label class="block text-white/70 font-semibold mb-2">組句最大音訊跨度 (秒)</label>
+                    <input v-model.number="localConfig.translation.subtitle_assembler_max_duration" type="number"
+                      min="1" max="20" step="0.5"
+                      class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
+                  </div>
+                  <div>
+                    <label class="block text-white/70 font-semibold mb-2">可合併片段間隔 (秒)</label>
+                    <input v-model.number="localConfig.translation.subtitle_assembler_gap_threshold" type="number"
+                      min="0" max="5" step="0.1"
+                      class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
+                  </div>
+                </template>
+
                 <div class="md:col-span-2">
                   <label class="block text-white/70 font-semibold mb-2 flex items-center gap-1.5">
                     處理代理伺服器 <span class="text-white/40 text-xs">(選填)</span>
@@ -2052,15 +2151,6 @@ async function handleFileChange(event: Event) {
                     class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
                 </div>
 
-                <div class="md:col-span-2">
-                  <label class="flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer hover:bg-white/10 transition">
-                    <input v-model="localConfig.translation.use_json_result" type="checkbox" class="w-5 h-5 accent-blue-500 mt-0.5" />
-                    <div class="flex-1">
-                      <span class="text-white font-medium">使用 JSON 結果格式</span>
-                      <p class="text-white/50 text-sm mt-1">針對某些本地部署的模型，在 LLM 翻譯中使用 JSON 結果格式</p>
-                    </div>
-                  </label>
-                </div>
               </div>
             </div>
 

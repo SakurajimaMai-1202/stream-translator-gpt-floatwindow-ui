@@ -209,3 +209,39 @@ def test_live_audio_settings_map_to_runtime_args():
     assert args["disable_dynamic_vad_threshold"] is True
     assert args["vad_every_n_frames"] == 3
     assert args["vad_backend"] == "silero"
+
+
+def test_translation_backend_selects_provider_without_api_key_heuristics():
+    config = _config_for("cuda")
+    config["general"] = {
+        "openai_api_key": "openai-key",
+        "google_api_key": "google-key",
+    }
+    config["translation"] = {
+        "backend": "custom:local-hymt",
+        "translation_prompt": "翻譯為繁體中文",
+        "translation_model_family": "hy_mt2",
+        "translation_output_format": "text",
+        "translation_max_concurrency": 1,
+        "translation_max_output_tokens": 128,
+        "paired_subtitle_mode": True,
+        "custom_models": [{
+            "name": "local-hymt",
+            "model_name": "localllm",
+            "base_url": "http://127.0.0.1:8080",
+            "api_key": "local",
+        }],
+    }
+
+    args = _manager().to_main_args(config)
+
+    assert args["translation_provider"] == "openai_compatible"
+    assert args["translation_model_family"] == "hy_mt2"
+    assert args["translation_output_format"] == "text"
+    assert args["translation_max_concurrency"] == 1
+    assert args["translation_max_output_tokens"] == 128
+    assert args["disable_paired_subtitle_mode"] is False
+    assert args["disable_asr_overlap_deduplication"] is False
+    assert args["disable_subtitle_assembler"] is False
+    assert args["subtitle_assembler_wait_ms"] == 400
+    assert args["google_api_key"] == "google-key"

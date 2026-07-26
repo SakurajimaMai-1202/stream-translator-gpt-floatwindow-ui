@@ -109,6 +109,16 @@ class ConfigManager:
             'processing_proxy': '',
             'use_json_result': False,
             'retry_if_translation_fails': True,
+            'translation_model_family': 'auto',
+            'translation_output_format': 'auto',
+            'translation_max_concurrency': 0,
+            'translation_max_output_tokens': 128,
+            'paired_subtitle_mode': True,
+            'deduplicate_asr_overlap': True,
+            'subtitle_assembler_enabled': True,
+            'subtitle_assembler_wait_ms': 400,
+            'subtitle_assembler_max_duration': 6.0,
+            'subtitle_assembler_gap_threshold': 0.8,
             'api_key': '',
             'use_smart_prompt': True,
             'smart_prompt_enabled': True,
@@ -782,9 +792,27 @@ class ConfigManager:
             args['translation_glossary'] = None
         
         # 翻譯參數
+        translation_backend = str(translation_config.get('backend', '') or '')
+        if translation_backend == 'gemini':
+            translation_provider = 'gemini'
+        elif translation_backend.startswith('custom:') or translation_backend in {'llama', 'localllm'}:
+            translation_provider = 'openai_compatible'
+        else:
+            translation_provider = 'openai'
         args.update({
+            'translation_provider': translation_provider,
             'translation_history_size': translation_config.get('translation_history_size', 0),
             'translation_timeout': translation_config.get('translation_timeout', 10),
+            'translation_model_family': translation_config.get('translation_model_family', 'auto'),
+            'translation_output_format': translation_config.get('translation_output_format', 'auto'),
+            'translation_max_concurrency': translation_config.get('translation_max_concurrency', 0),
+            'translation_max_output_tokens': translation_config.get('translation_max_output_tokens', 128),
+            'disable_paired_subtitle_mode': not translation_config.get('paired_subtitle_mode', True),
+            'disable_asr_overlap_deduplication': not translation_config.get('deduplicate_asr_overlap', True),
+            'disable_subtitle_assembler': not translation_config.get('subtitle_assembler_enabled', True),
+            'subtitle_assembler_wait_ms': translation_config.get('subtitle_assembler_wait_ms', 400),
+            'subtitle_assembler_max_duration': translation_config.get('subtitle_assembler_max_duration', 6.0),
+            'subtitle_assembler_gap_threshold': translation_config.get('subtitle_assembler_gap_threshold', 0.8),
             'gpt_model': translation_config.get('gpt_model', 'gpt-4o-mini'),
             'gemini_model': translation_config.get('gemini_model', 'gemini-2.0-flash-exp'),
             'gpt_base_url': translation_config.get('gpt_base_url', ''),

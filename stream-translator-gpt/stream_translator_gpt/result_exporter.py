@@ -32,6 +32,10 @@ def _format_latency_log(task: TranslationTask) -> str:
         parts.append(f"ASR {task.asr_latency_ms:.0f}ms")
     if task.llm_latency_ms is not None:
         parts.append(f"LLM {task.llm_latency_ms:.0f}ms")
+    if task.translation_queue_latency_ms is not None:
+        parts.append(f"Queue {task.translation_queue_latency_ms:.0f}ms")
+    if task.total_latency_ms is not None:
+        parts.append(f"Total {task.total_latency_ms:.0f}ms")
     if not parts:
         return ""
     return f" [Latency: {' | '.join(parts)}]"
@@ -43,7 +47,7 @@ class ResultExporter(LoopWorkerBase):
                  telegram_chat_id: int, output_file_path: str, proxy: str, output_whisper_result: bool,
                  output_timestamps: bool, subtitle_share_push_url: str | None = None,
                  subtitle_share_token: str | None = None, show_latency_log: bool = False,
-                 gui_callback=None) -> None:
+                 gui_callback=None, require_translation: bool = False) -> None:
         self.proxies = {"http": proxy, "https": proxy} if proxy else None
         self.cqhttp_queue = None
         self.discord_queue = None
@@ -57,6 +61,7 @@ class ResultExporter(LoopWorkerBase):
         self.output_file_path = output_file_path  # 保留以判斷是否為 SRT
         self.show_latency_log = show_latency_log
         self.gui_callback = gui_callback  # GUI 回呼函式
+        self.require_translation = require_translation
 
         if subtitle_share_push_url and self.subtitle_share_push_url != subtitle_share_push_url:
             print(f"{WARNING}Replaced subtitle share push host with 127.0.0.1: {self.subtitle_share_push_url}")
@@ -174,6 +179,13 @@ class ResultExporter(LoopWorkerBase):
                     self.subtitle_share_queue.put(None)
                 break
 
+            if self.require_translation and not task.translation:
+                print(
+                    f"{WARNING}Skipping paired subtitle {task.segment_id}: translation unavailable",
+                    flush=True,
+                )
+                continue
+
             # GUI 回呼
             if self.gui_callback:
                 try:
@@ -240,5 +252,10 @@ class ResultExporter(LoopWorkerBase):
                         "translated": task.translation or "",
                         "asr_latency_ms": _format_latency_ms(task.asr_latency_ms),
                         "llm_latency_ms": _format_latency_ms(task.llm_latency_ms),
+                        "translation_queue_latency_ms": _format_latency_ms(task.translation_queue_latency_ms),
+                        "total_latency_ms": _format_latency_ms(task.total_latency_ms),
+                        "segment_id": task.segment_id,
+                        "translation_provider": task.translation_provider,
+                        "translation_model": task.translation_model,
                     },
                 })

@@ -232,6 +232,21 @@ Sakura 系列很適合日文翻譯，但多數 Sakura 模型採非商用授權�
 | OpenAI GPT | `https://api.openai.com/v1` | 品質穩、設定簡單，需要 API Key |
 | Google Gemini | 留空或依設定頁提示 | 成本與速度彈性，需要 API Key |
 | llama.cpp | `http://127.0.0.1:8080/v1` | 本地離線翻譯 |
+
+### 翻譯模型策略
+
+翻譯後端負責連線，模型策略負責提示詞、輸出格式與預設並行數，兩者可以分開選擇：
+
+| 策略 | 適用模型 | Prompt / 輸出 | 預設並行 |
+|---|---|---|---:|
+| 自動 | 已知模型名稱或線上 API | 依 provider 與模型名稱判斷 | 自動 |
+| Hy-MT2 | Hy-MT2-1.8B / 7B | 單一 user prompt、純文字 | 1 |
+| 通用聊天模型 | Gemma、Qwen、其他 GGUF | system + user、純文字 | 1 |
+| 結構化 API | OpenAI、Gemini | JSON 優先 | 2 |
+
+本地 GGUF 若對外只回報 `localllm` 等通用名稱，請手動選擇模型策略。啟用「原文與翻譯成對顯示」後，翻譯完成前不會送出該組字幕；翻譯失敗也不會先顯示原文。翻譯 worker 與下一段 ASR 會並行工作，但字幕仍依 `segment_id` 順序提交。
+
+Hy-MT2 建議使用純文字輸出、最大輸出 `128` tokens、並行數 `1`。線上 OpenAI / Gemini API 可從並行數 `2` 開始測試。啟用翻譯歷史後系統會強制單工，避免上下文順序錯亂。
 | LM Studio | `http://127.0.0.1:1234/v1` | 本地模型管理較方便 |
 
 ---

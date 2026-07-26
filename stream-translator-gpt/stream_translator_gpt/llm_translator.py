@@ -1,58 +1,58 @@
-import json
 import os
 import queue
 import threading
 import time
 
-import re
 from collections import deque
 from datetime import datetime, timedelta, timezone
 
 from .common import TranslationTask, LoopWorkerBase, ApiKeyPool, INFO
-
-# 每次請求最多注入的術語條數，防止術語表過長撐爆 prompt
-_GLOSSARY_MAX_INJECT = 20
-
-
-# The double quotes in the values of JSON have not been escaped, so manual escaping is necessary.
-def _escape_specific_quotes(input_string):
-    quote_positions = [i for i, char in enumerate(input_string) if char == '"']
-
-    if len(quote_positions) <= 4:
-        return input_string
-
-    for i in range(3, len(quote_positions) - 1):
-        position = quote_positions[i]
-        input_string = input_string[:position] + '\\"' + input_string[position + 1:]
-        quote_positions = [pos + 1 if pos > position else pos for pos in quote_positions]
-
-    return input_string
-
-
-def _parse_json_completion(completion):
-    pattern = re.compile(r'\{.*}', re.DOTALL)
-    json_match = pattern.search(completion)
-
-    if not json_match:
-        return completion
-
-    json_str = json_match.group(0)
-    json_str = _escape_specific_quotes(json_str)
-
-    try:
-        json_obj = json.loads(json_str)
-        translate_text = json_obj.get('translation', None)
-        if not translate_text:
-            return completion
-        return translate_text
-    except json.JSONDecodeError:
-        return completion
-
+from .translation_policy import (
+    TranslationRequest,
+    TranslationResult,
+    create_prompt_strategy,
+    get_capabilities,
+    parse_translation_output,
+    resolve_model_family,
+    resolve_output_format,
+)
 
 def _is_task_timeout(task: TranslationTask, timeout: float) -> bool:
     if timeout == 0.0:
         return False
     return datetime.now(timezone.utc) - task.start_time > timedelta(seconds=timeout)
+
+
+class TranslationProvider:
+    name = "unknown"
+
+    def translate(self, client: "LLMClient", task: TranslationTask) -> None:
+        raise NotImplementedError
+
+
+class OpenAIProvider(TranslationProvider):
+    name = "openai"
+
+    def translate(self, client: "LLMClient", task: TranslationTask) -> None:
+        client._translate_by_gpt(task)
+
+
+class OpenAICompatibleProvider(OpenAIProvider):
+    name = "openai_compatible"
+
+
+class GeminiProvider(TranslationProvider):
+    name = "gemini"
+
+    def translate(self, client: "LLMClient", task: TranslationTask) -> None:
+        client._translate_by_gemini(task)
+
+
+_PROVIDER_TYPES = {
+    "openai": OpenAIProvider,
+    "openai_compatible": OpenAICompatibleProvider,
+    "gemini": GeminiProvider,
+}
 
 
 class LLMClient():
@@ -69,7 +69,11 @@ class LLMClient():
                  proxy: str,
                  use_json_result: bool,
                  gemini_base_url: str = None,
-                 glossary: dict = None) -> None:
+                 glossary: dict = None,
+                 model_family: str = "auto",
+                 output_format: str = "auto",
+                 max_output_tokens: int = 128,
+                 provider: str | None = None) -> None:
         if llm_type not in (self.LLM_TYPE.GPT, self.LLM_TYPE.GEMINI):
             raise ValueError(f'Unknow LLM type: {llm_type}')
         print(f'{INFO}Using {model} API as translation engine.')
@@ -77,81 +81,53 @@ class LLMClient():
         self.model = model
         self.prompt = prompt
         self.history_size = history_size
-        self.history_messages = []
         self.proxy = proxy
-        self.use_json_result = use_json_result
         self.gemini_base_url = gemini_base_url
         self.glossary = glossary or {}
-        # 依 prompt 內容判斷是否為中文情境（用於決定術語格式）
-        self._is_zh = bool(re.search(r'[\u4e00-\u9fff]', prompt))
-        # 依 model 名稱偵測是否為 Hy-MT 翻譯模型
-        model_lower = str(model).lower()
-        self._is_hymt = 'hymt' in model_lower or 'hy-mt' in model_lower
+        provider = provider or (
+            "gemini" if llm_type == self.LLM_TYPE.GEMINI else (
+                "openai_compatible" if os.environ.get("OPENAI_BASE_URL") else "openai"
+            )
+        )
+        self.provider = provider
+        self.provider_adapter = _PROVIDER_TYPES.get(provider, OpenAIProvider)()
+        self.model_family = resolve_model_family(model_family, model, provider)
+        self.capabilities = get_capabilities(self.model_family)
+        requested_format = "json" if use_json_result and output_format == "auto" else output_format
+        self.output_format = resolve_output_format(requested_format, self.capabilities)
+        self.prompt_strategy = create_prompt_strategy(self.model_family, prompt, self.output_format)
+        self.max_output_tokens = max(16, int(max_output_tokens or 128))
+        self.history_pairs = deque(maxlen=max(0, history_size))
+        self._history_lock = threading.Lock()
+        print(
+            f"{INFO}Translation policy: provider={provider}, family={self.model_family}, "
+            f"format={self.output_format}, max_tokens={self.max_output_tokens}"
+        )
 
+    def _history_snapshot(self) -> tuple[str, str]:
+        if not self.history_size:
+            return "", ""
+        with self._history_lock:
+            if not self.history_pairs:
+                return "", ""
+            return self.history_pairs[-1]
 
-    def _filter_glossary(self, transcript: str) -> dict:
-        """只保留 transcript 中實際出現的術語，並限制最多 _GLOSSARY_MAX_INJECT 條。
-        
-        做法：先做大小寫不敏感子字串匹配，再依原文長度降序排序（優先較長/較精確的詞）。
-        這樣能在 token 最省的情況下只注入有用的術語。
-        """
-        if not self.glossary:
-            return {}
-        transcript_lower = transcript.lower()
-        matched = {src: tgt for src, tgt in self.glossary.items()
-                   if src.lower() in transcript_lower}
-        # 依原文長度由長到短排序，取前 N 條
-        sorted_items = sorted(matched.items(), key=lambda kv: len(kv[0]), reverse=True)
-        return dict(sorted_items[:_GLOSSARY_MAX_INJECT])
+    def _prepare_prompt(self, task: TranslationTask):
+        previous_original, previous_translation = self._history_snapshot()
+        request = TranslationRequest(
+            segment_id=task.segment_id,
+            source_text=task.transcript or "",
+            previous_original=previous_original,
+            previous_translation=previous_translation,
+            glossary=self.glossary,
+        )
+        return self.prompt_strategy.prepare(request)
 
-    def _build_user_content(self, transcript: str) -> str:
-        """組合含術語表的 user message。
-        
-        格式（緊湊、token 友善）：
-          中文情境: "術語參考：A→B, C→D\n{prompt}：\n{transcript}"
-          英文情境: "Glossary: A→B, C→D\n{prompt}:\n{transcript}"
-        無匹配術語時直接回傳 "{prompt}:\n{transcript}"（與原始行為相同）。
-        """
-        relevant = self._filter_glossary(transcript)
-        if relevant:
-            import sys
-            print(f"[Glossary Match] Input: '{transcript}' -> Matched: {relevant}", file=sys.stderr, flush=True)
-            if self._is_hymt:
-                # 建立換行的 "A 翻译成 B" 列表
-                glossary_lines = []
-                for src, tgt in relevant.items():
-                    glossary_lines.append(f"{src} 翻译成 {tgt}")
-                glossary_block = "\n".join(glossary_lines)
-                
-                # 組合 Hy-MT 專屬的 Instruction Prompt 結構
-                return (
-                    f"参考下面的翻译：\n"
-                    f"{glossary_block}\n\n"
-                    f"{self.prompt}\n\n"
-                    f"{transcript}"
-                )
-            else:
-                pairs = ', '.join(f'{s}→{t}' for s, t in relevant.items())
-                if self._is_zh:
-                    glossary_line = f'術語參考：{pairs}'
-                else:
-                    glossary_line = f'Glossary: {pairs}'
-                return f'{glossary_line}\n{self.prompt}:\n{transcript}'
-        return f'{self.prompt}:\n{transcript}'
-
-
-    def _append_history_message(self, user_content: str, assistant_content: str):
-        if not user_content or not assistant_content:
+    def _append_history_message(self, source_text: str, assistant_content: str):
+        if not self.history_size or not source_text or not assistant_content:
             return
-        self.history_messages.extend([{
-            'role': 'user',
-            'content': user_content
-        }, {
-            'role': 'assistant',
-            'content': assistant_content
-        }])
-        while (len(self.history_messages) > self.history_size * 2):
-            self.history_messages.pop(0)
+        with self._history_lock:
+            self.history_pairs.append((source_text, assistant_content))
 
     def _translate_by_gpt(self, translation_task: TranslationTask):
         # https://platform.openai.com/docs/api-reference/chat/create?lang=python
@@ -160,68 +136,63 @@ class LLMClient():
 
         ApiKeyPool.use_openai_api()
         client = OpenAI(http_client=httpx.Client(proxy=self.proxy))
-        system_prompt = 'You are a professional translator. Translate the text accurately and concisely. Do not output any explanation or extra text.'
-        if self.use_json_result:
-            system_prompt += " Output the answer in json format, key is translation."
-        messages = [{'role': 'system', 'content': system_prompt}]
-        messages.extend(self.history_messages)
-        user_content = self._build_user_content(translation_task.transcript)
-        messages.append({'role': 'user', 'content': user_content})
+        prepared = self._prepare_prompt(translation_task)
+        messages = []
+        if prepared.system_instruction:
+            messages.append({'role': 'system', 'content': prepared.system_instruction})
+        messages.append({'role': 'user', 'content': prepared.user_content})
 
         try:
-            # 使用自定義 base_url 時使用通用參數，避免不兼容
-            if self.model.startswith('o1'):
-                # o1 系列模型使用 reasoning_effort
+            is_official_openai = self.provider == "openai"
+            is_reasoning_model = str(self.model).lower().startswith(("o1", "o3", "o4", "gpt-5"))
+            if is_official_openai and is_reasoning_model:
                 completion = client.chat.completions.create(
                     model=self.model,
                     messages=messages,
                     reasoning_effort='minimal',
+                    max_completion_tokens=self.max_output_tokens,
                 )
             else:
-                # 其他模型（包括 gpt-3/4/5 和自定義模型）
-                # 不使用 response_format 和 stop，提高兼容性
                 create_params = {
                     'model': self.model,
                     'messages': messages,
-                    'temperature': 0,
-                    'top_p': 0.9,
+                    'temperature': prepared.temperature,
+                    'top_p': prepared.top_p,
                 }
-                
-                # 只有在使用原版 OpenAI API 時才添加這些參數
-                import os
-                if not os.environ.get('OPENAI_BASE_URL') or 'api.openai.com' in os.environ.get('OPENAI_BASE_URL', ''):
-                    if self.use_json_result:
+                if is_official_openai:
+                    create_params["max_completion_tokens"] = self.max_output_tokens
+                    if prepared.output_format == "json":
                         create_params['response_format'] = {"type": "json_object"}
                     else:
                         create_params['stop'] = ['\n']
+                else:
+                    create_params["max_tokens"] = self.max_output_tokens
+                    if self.model_family == "hy_mt2":
+                        create_params["extra_body"] = {
+                            "top_k": prepared.top_k,
+                            "repeat_penalty": prepared.repetition_penalty,
+                        }
                 
                 completion = client.chat.completions.create(**create_params)
 
-            translation_task.translation = completion.choices[0].message.content
-            if self.use_json_result:
-                translation_task.translation = _parse_json_completion(translation_task.translation)
+            translation_task.translation = parse_translation_output(
+                completion.choices[0].message.content,
+                prepared.output_format,
+            )
+            usage = getattr(completion, "usage", None)
+            if usage is not None:
+                translation_task.translation_prompt_tokens = getattr(usage, "prompt_tokens", None)
+                translation_task.translation_completion_tokens = getattr(usage, "completion_tokens", None)
             
             # 調試：顯示翻譯結果
             print(f'[DEBUG] GPT 響應: {translation_task.translation[:100] if translation_task.translation else "空"}', flush=True)
             
         except Exception as e:
             translation_task.translation_failed = True
+            translation_task.translation_error = str(e)
             print(f'[ERROR] GPT 翻譯錯誤: {e}', flush=True)
             return
-        if self.history_size:
-            self._append_history_message(user_content, translation_task.translation)
-
-    @staticmethod
-    def _gpt_to_gemini(gpt_messages: list):
-        gemini_messages = []
-        for gpt_message in gpt_messages:
-            gemini_message = {}
-            gemini_message['role'] = gpt_message['role']
-            if gemini_message['role'] == 'assistant':
-                gemini_message['role'] = 'model'
-            gemini_message['parts'] = [{'text': gpt_message['content']}]
-            gemini_messages.append(gemini_message)
-        return gemini_messages
+        self._append_history_message(translation_task.transcript, translation_task.translation)
 
     def _translate_by_gemini(self, translation_task: TranslationTask):
         # https://ai.google.dev/tutorials/python_quickstart
@@ -239,22 +210,18 @@ class LLMClient():
 
         client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"), http_options=http_options)
 
-        system_prompt = 'You are a professional translator. Translate the text accurately and concisely. Do not output any explanation or extra text.'
-        if self.use_json_result:
-            system_prompt += " Output the answer in json format, key is translation."
-
-        messages = self._gpt_to_gemini(self.history_messages)
-        user_content = self._build_user_content(translation_task.transcript)
-        messages.append({'role': 'user', 'parts': [{'text': user_content}]})
+        prepared = self._prepare_prompt(translation_task)
+        messages = [{'role': 'user', 'parts': [{'text': prepared.user_content}]}]
 
         config = types.GenerateContentConfig(
             candidate_count=1,
-            temperature=0.0,
-            top_p=0.9,
-            stop_sequences=None if self.use_json_result else ['\n'],
-            system_instruction=system_prompt,
+            temperature=prepared.temperature,
+            top_p=prepared.top_p,
+            max_output_tokens=self.max_output_tokens,
+            stop_sequences=None if prepared.output_format == "json" else ['\n'],
+            system_instruction=prepared.system_instruction,
             thinking_config=types.ThinkingConfig(include_thoughts=False),
-            response_mime_type='application/json' if self.use_json_result else 'text/plain',
+            response_mime_type='application/json' if prepared.output_format == "json" else 'text/plain',
             safety_settings=[
                 types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
                 types.SafetySetting(category='HARM_CATEGORY_HATE_SPEECH', threshold='BLOCK_NONE'),
@@ -264,54 +231,83 @@ class LLMClient():
 
         try:
             response = client.models.generate_content(model=self.model, contents=messages, config=config)
-            translation_task.translation = response.text
-            if self.use_json_result:
-                translation_task.translation = _parse_json_completion(translation_task.translation)
+            translation_task.translation = parse_translation_output(response.text, prepared.output_format)
         except Exception as e:
             translation_task.translation_failed = True
+            translation_task.translation_error = str(e)
             print(e)
             return
-        if self.history_size:
-            self._append_history_message(user_content, translation_task.translation)
+        self._append_history_message(translation_task.transcript, translation_task.translation)
 
     def translate(self, translation_task: TranslationTask):
         llm_started_at = time.perf_counter()
         translation_task._llm_latency_started_at = llm_started_at
+        translation_task.translation_provider = self.provider
+        translation_task.translation_model = self.model
+        if translation_task.translation_queued_at is not None:
+            translation_task.translation_queue_latency_ms = (
+                llm_started_at - translation_task.translation_queued_at
+            ) * 1000
         try:
-            if self.llm_type == self.LLM_TYPE.GPT:
-                self._translate_by_gpt(translation_task)
-            elif self.llm_type == self.LLM_TYPE.GEMINI:
-                self._translate_by_gemini(translation_task)
-            else:
-                raise ValueError(f'Unknow LLM type: {self.llm_type}')
+            self.provider_adapter.translate(self, translation_task)
         finally:
             translation_task.llm_latency_ms = (time.perf_counter() - llm_started_at) * 1000
+            translation_task.total_latency_ms = (
+                time.perf_counter() - translation_task.created_at_monotonic
+            ) * 1000
+            translation_task.translation_result = TranslationResult(
+                segment_id=translation_task.segment_id,
+                translation=translation_task.translation or "",
+                provider=self.provider,
+                model=self.model,
+                queue_latency_ms=translation_task.translation_queue_latency_ms,
+                generation_latency_ms=translation_task.llm_latency_ms,
+                prompt_tokens=translation_task.translation_prompt_tokens,
+                completion_tokens=translation_task.translation_completion_tokens,
+                error=translation_task.translation_error,
+            )
+            translation_task._translation_inflight = False
 
 
 class ParallelTranslator(LoopWorkerBase):
-    PARALLEL_MAX_NUMBER = 10
-
-    def __init__(self, llm_client: LLMClient, timeout: int, retry_if_translation_fails: bool):
+    def __init__(
+        self,
+        llm_client: LLMClient,
+        timeout: int,
+        retry_if_translation_fails: bool,
+        max_concurrency: int = 2,
+    ):
         self.llm_client = llm_client
         self.timeout = timeout
         self.retry_if_translation_fails = retry_if_translation_fails
+        self.max_concurrency = max(1, int(max_concurrency))
         self.processing_queue = deque()
 
     def _trigger(self, translation_task: TranslationTask):
+        if translation_task._translation_inflight:
+            return
         if not translation_task.start_time:
             translation_task.start_time = datetime.now(timezone.utc)
+        if translation_task.translation_queued_at is None:
+            translation_task.translation_queued_at = time.perf_counter()
         translation_task.translation_failed = False
         translation_task.llm_latency_ms = None
+        translation_task._translation_attempts += 1
+        translation_task._translation_inflight = True
         thread = threading.Thread(target=self.llm_client.translate, args=(translation_task,))
         thread.daemon = True
         thread.start()
 
     def _retrigger_failed_tasks(self):
         for task in self.processing_queue:
-            if task.translation_failed and not _is_task_timeout(task, self.timeout):
+            if (
+                task.translation_failed
+                and not task._translation_inflight
+                and task._translation_attempts < 2
+                and not _is_task_timeout(task, self.timeout)
+            ):
                 self._trigger(task)
                 print(f'Translation failed: {task.transcript}')
-                time.sleep(1)
 
     def _mark_timeout_latency(self, task: TranslationTask):
         if task.llm_latency_ms is None and task._llm_latency_started_at is not None:
@@ -322,7 +318,14 @@ class ParallelTranslator(LoopWorkerBase):
         while self.processing_queue and (
                 (self.processing_queue[0].translation and self.processing_queue[0].llm_latency_ms is not None) or
                 _is_task_timeout(self.processing_queue[0], self.timeout) or
-                (self.processing_queue[0].translation_failed and self.processing_queue[0].llm_latency_ms is not None and not self.retry_if_translation_fails)):
+                (
+                    self.processing_queue[0].translation_failed
+                    and self.processing_queue[0].llm_latency_ms is not None
+                    and (
+                        not self.retry_if_translation_fails
+                        or self.processing_queue[0]._translation_attempts >= 2
+                    )
+                )):
             task = self.processing_queue.popleft()
             if not task.translation:
                 if _is_task_timeout(task, self.timeout):
@@ -335,7 +338,12 @@ class ParallelTranslator(LoopWorkerBase):
 
     def loop(self, input_queue: queue.SimpleQueue[TranslationTask], output_queue: queue.SimpleQueue[TranslationTask]):
         while True:
-            if not input_queue.empty() and len(self.processing_queue) < self.PARALLEL_MAX_NUMBER:
+            active_count = sum(task._translation_inflight for task in self.processing_queue)
+            if (
+                not input_queue.empty()
+                and len(self.processing_queue) < self.max_concurrency
+                and active_count < self.max_concurrency
+            ):
                 task = input_queue.get()
                 if task is None:
                     while len(self.processing_queue) > 0:

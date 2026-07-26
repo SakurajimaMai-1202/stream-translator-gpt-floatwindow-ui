@@ -128,6 +128,28 @@ def test_vad_controls_are_supported_by_runtime_cli_contract():
         assert f"kwargs.get('{key}', {value})" in runtime_source
 
 
+def test_translation_pipeline_controls_are_supported_by_runtime_cli_contract():
+    translator_source = TRANSLATOR_SOURCE.read_text(encoding="utf-8")
+    runtime_source = RUNTIME_MAIN_SOURCE.read_text(encoding="utf-8")
+    flags = {
+        "translation_provider",
+        "translation_model_family",
+        "translation_output_format",
+        "translation_max_concurrency",
+        "translation_max_output_tokens",
+        "disable_paired_subtitle_mode",
+        "disable_asr_overlap_deduplication",
+        "disable_subtitle_assembler",
+        "subtitle_assembler_wait_ms",
+        "subtitle_assembler_max_duration",
+        "subtitle_assembler_gap_threshold",
+    }
+
+    for flag in flags:
+        assert f"'{flag}'" in translator_source
+        assert f"'--{flag}'" in runtime_source
+
+
 def test_write_failure_is_not_reported_as_success(tmp_path, monkeypatch):
     manager = ConfigManager(tmp_path / "config.yaml")
 

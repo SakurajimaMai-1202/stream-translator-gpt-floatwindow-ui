@@ -24,7 +24,9 @@ from .audio_getter import (
 )
 from .audio_slicer import AudioSlicer
 from .audio_transcriber import OpenaiWhisper, FasterWhisper, SimulStreaming, RemoteOpenaiTranscriber, Qwen3ASRTranscriber, HFTranscriber, NemoASRTranscriber, SenseVoiceTranscriber
-from .llm_translator import LLMClient, ParallelTranslator, SerialTranslator
+from .llm_translator import LLMClient, ParallelTranslator
+from .translation_policy import get_capabilities, resolve_model_family
+from .subtitle_segmenter import SubtitleSegmenter
 from .result_exporter import ResultExporter
 from .subtitle_sharing import DEFAULT_PUBLIC_HOST, DEFAULT_PUBLIC_PORT, SubtitleShareServer, create_task_id
 from .asr_preload import PreloadedTranscriberManager, build_asr_config
@@ -122,6 +124,17 @@ def main(url, **kwargs):
     translation_glossary = kwargs.get('translation_glossary')
     translation_timeout = kwargs.get('translation_timeout', 10)
     retry_if_translation_fails = kwargs.get('retry_if_translation_fails', False)
+    translation_model_family = kwargs.get('translation_model_family', 'auto')
+    translation_output_format = kwargs.get('translation_output_format', 'auto')
+    translation_max_concurrency = kwargs.get('translation_max_concurrency', 0)
+    translation_max_output_tokens = kwargs.get('translation_max_output_tokens', 128)
+    paired_subtitle_mode = not kwargs.get('disable_paired_subtitle_mode', False)
+    translation_provider = kwargs.get('translation_provider', 'auto')
+    deduplicate_asr_overlap = not kwargs.get('disable_asr_overlap_deduplication', False)
+    subtitle_assembler_enabled = not kwargs.get('disable_subtitle_assembler', False)
+    subtitle_assembler_wait_ms = kwargs.get('subtitle_assembler_wait_ms', 400)
+    subtitle_assembler_max_duration = kwargs.get('subtitle_assembler_max_duration', 6.0)
+    subtitle_assembler_gap_threshold = kwargs.get('subtitle_assembler_gap_threshold', 0.8)
 
     output_file_path = kwargs.get('output_file_path')
     output_proxy = kwargs.get('output_proxy')
@@ -154,8 +167,9 @@ def main(url, **kwargs):
     # Init queues
     getter_to_slicer_queue = queue.SimpleQueue()
     slicer_to_transcriber_queue = queue.SimpleQueue()
-    transcriber_to_translator_queue = queue.SimpleQueue()
-    translator_to_exporter_queue = queue.SimpleQueue() if translation_prompt else transcriber_to_translator_queue
+    transcriber_to_segmenter_queue = queue.SimpleQueue()
+    segmenter_to_translator_queue = queue.SimpleQueue()
+    translator_to_exporter_queue = queue.SimpleQueue() if translation_prompt else segmenter_to_translator_queue
 
     # Init workers
     with ThreadPoolExecutor() as executor:
@@ -304,7 +318,23 @@ def main(url, **kwargs):
                         glossary = {}
                 except (ValueError, TypeError):
                     pass
-            if google_api_key:
+            provider = translation_provider
+            if provider == "auto":
+                provider = "gemini" if google_api_key else (
+                    "openai_compatible" if gpt_base_url else "openai"
+                )
+            translation_model = gemini_model if provider == "gemini" else gpt_model
+            model_family = resolve_model_family(
+                translation_model_family,
+                translation_model,
+                provider,
+            )
+            capabilities = get_capabilities(model_family)
+            max_concurrency = int(translation_max_concurrency or 0)
+            max_concurrency = max_concurrency or capabilities.default_max_concurrency
+            if translation_history_size:
+                max_concurrency = 1
+            if provider == "gemini":
                 llm_client = LLMClient(
                     llm_type=LLMClient.LLM_TYPE.GEMINI,
                     model=gemini_model,
@@ -314,6 +344,10 @@ def main(url, **kwargs):
                     use_json_result=use_json_result,
                     gemini_base_url=gemini_base_url,
                     glossary=glossary,
+                    model_family=model_family,
+                    output_format=translation_output_format,
+                    max_output_tokens=translation_max_output_tokens,
+                    provider=provider,
                 )
             else:
                 llm_client = LLMClient(
@@ -324,19 +358,17 @@ def main(url, **kwargs):
                     proxy=processing_proxy,
                     use_json_result=use_json_result,
                     glossary=glossary,
+                    model_family=model_family,
+                    output_format=translation_output_format,
+                    max_output_tokens=translation_max_output_tokens,
+                    provider=provider,
                 )
-            if translation_history_size == 0:
-                return ParallelTranslator(
-                    llm_client=llm_client,
-                    timeout=translation_timeout,
-                    retry_if_translation_fails=retry_if_translation_fails,
-                )
-            else:
-                return SerialTranslator(
-                    llm_client=llm_client,
-                    timeout=translation_timeout,
-                    retry_if_translation_fails=retry_if_translation_fails,
-                )
+            return ParallelTranslator(
+                llm_client=llm_client,
+                timeout=translation_timeout,
+                retry_if_translation_fails=retry_if_translation_fails,
+                max_concurrency=max_concurrency,
+            )
 
         translator_future = executor.submit(init_translator)
         exporter_future = executor.submit(
@@ -353,6 +385,7 @@ def main(url, **kwargs):
             subtitle_share_push_url=subtitle_share_push_url,
             subtitle_share_token=subtitle_share_token,
             show_latency_log=show_latency_log,
+            require_translation=bool(translation_prompt and paired_subtitle_mode),
         )
 
         audio_getter = audio_getter_future.result()
@@ -360,6 +393,13 @@ def main(url, **kwargs):
         transcriber = transcriber_future.result()
         translator = translator_future.result()
         exporter = exporter_future.result()
+        segmenter = SubtitleSegmenter(
+            deduplicate_overlap=deduplicate_asr_overlap,
+            assembler_enabled=subtitle_assembler_enabled,
+            assembler_wait_ms=subtitle_assembler_wait_ms,
+            assembler_max_duration=subtitle_assembler_max_duration,
+            assembler_gap_threshold=subtitle_assembler_gap_threshold,
+        )
 
     if hasattr(audio_getter, '_exit_handler'):
         signal.signal(signal.SIGINT, audio_getter._exit_handler)
@@ -376,12 +416,17 @@ def main(url, **kwargs):
     start_daemon_thread(
         transcriber.loop,
         input_queue=slicer_to_transcriber_queue,
-        output_queue=transcriber_to_translator_queue,
+        output_queue=transcriber_to_segmenter_queue,
+    )
+    start_daemon_thread(
+        segmenter.loop,
+        input_queue=transcriber_to_segmenter_queue,
+        output_queue=segmenter_to_translator_queue,
     )
     if translator:
         start_daemon_thread(
             translator.loop,
-            input_queue=transcriber_to_translator_queue,
+            input_queue=segmenter_to_translator_queue,
             output_queue=translator_to_exporter_queue,
         )
     exporter_thread = start_daemon_thread(
@@ -748,6 +793,58 @@ def cli():
         type=int,
         default=10,
         help='If the GPT / Gemini translation exceeds this number of seconds, the translation will be discarded.')
+    parser.add_argument(
+        '--translation_model_family',
+        choices=['auto', 'hy_mt2', 'generic_chat', 'structured_api'],
+        default='auto',
+        help='Prompt and output policy used for the selected translation model.')
+    parser.add_argument(
+        '--translation_provider',
+        choices=['auto', 'openai', 'openai_compatible', 'gemini'],
+        default='auto',
+        help='Translation transport provider. API keys are used only for authentication.')
+    parser.add_argument(
+        '--translation_output_format',
+        choices=['auto', 'text', 'json'],
+        default='auto',
+        help='Translation response format. Auto follows the selected model family.')
+    parser.add_argument(
+        '--translation_max_concurrency',
+        type=int,
+        default=0,
+        help='Maximum concurrent translation requests. 0 uses the model-family preset.')
+    parser.add_argument(
+        '--translation_max_output_tokens',
+        type=int,
+        default=128,
+        help='Maximum generated tokens for each subtitle translation.')
+    parser.add_argument(
+        '--disable_paired_subtitle_mode',
+        action='store_true',
+        help='Allow original-only output when a subtitle translation fails.')
+    parser.add_argument(
+        '--disable_asr_overlap_deduplication',
+        action='store_true',
+        help='Disable removal of repeated text at adjacent ASR segment boundaries.')
+    parser.add_argument(
+        '--disable_subtitle_assembler',
+        action='store_true',
+        help='Disable the short wait that combines adjacent incomplete ASR segments.')
+    parser.add_argument(
+        '--subtitle_assembler_wait_ms',
+        type=int,
+        default=400,
+        help='Maximum wait for the next ASR segment when the current subtitle is incomplete.')
+    parser.add_argument(
+        '--subtitle_assembler_max_duration',
+        type=float,
+        default=6.0,
+        help='Maximum audio time span of an assembled subtitle.')
+    parser.add_argument(
+        '--subtitle_assembler_gap_threshold',
+        type=float,
+        default=0.8,
+        help='Maximum gap in seconds between ASR segments that may be assembled.')
     parser.add_argument(
         '--processing_proxy',
         type=str,

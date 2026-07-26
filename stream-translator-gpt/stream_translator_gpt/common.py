@@ -1,6 +1,8 @@
 import os
 import re
 import threading
+import itertools
+import time
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from urllib.parse import urlparse
@@ -23,8 +25,12 @@ ERROR = f'{RED}[ERROR]{ENDC} '
 
 
 class TranslationTask:
+    _segment_counter = itertools.count(1)
+    _segment_counter_lock = threading.Lock()
 
     def __init__(self, audio: np.array, time_range: tuple[float, float]):
+        with self._segment_counter_lock:
+            self.segment_id = next(self._segment_counter)
         self.audio = audio
         self.raw_transcript = None
         self.transcript = None
@@ -35,6 +41,18 @@ class TranslationTask:
         self.asr_latency_ms = None
         self.llm_latency_ms = None
         self._llm_latency_started_at = None
+        self.created_at_monotonic = time.perf_counter()
+        self.translation_queued_at = None
+        self.translation_queue_latency_ms = None
+        self.total_latency_ms = None
+        self.translation_provider = None
+        self.translation_model = None
+        self.translation_error = None
+        self.translation_result = None
+        self.translation_prompt_tokens = None
+        self.translation_completion_tokens = None
+        self._translation_attempts = 0
+        self._translation_inflight = False
 
 
 class LoopWorkerBase(ABC):

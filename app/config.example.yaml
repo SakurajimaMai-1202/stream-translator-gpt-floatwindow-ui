@@ -84,6 +84,16 @@ translation:
   processing_proxy: null
   use_json_result: false
   retry_if_translation_fails: true
+  translation_model_family: auto
+  translation_output_format: auto
+  translation_max_concurrency: 0
+  translation_max_output_tokens: 128
+  paired_subtitle_mode: true
+  deduplicate_asr_overlap: true
+  subtitle_assembler_enabled: true
+  subtitle_assembler_wait_ms: 400
+  subtitle_assembler_max_duration: 6.0
+  subtitle_assembler_gap_threshold: 0.8
   custom_models:
   - name: localllm
     base_url: http://127.0.0.1:8080

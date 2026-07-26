@@ -7,6 +7,7 @@ from .audio_getter import StreamAudioGetter, LocalFileAudioGetter, DeviceAudioGe
 from .audio_slicer import AudioSlicer
 from .common import ClientPool, INFO, is_url, start_daemon_thread
 from .result_exporter import ResultExporter
+from .subtitle_segmenter import SubtitleSegmenter
 
 
 class PipelineController:
@@ -84,8 +85,26 @@ def create_translator(options: dict):
         except (ValueError, TypeError):
             pass
 
-    from .llm_translator import LLMClient, ParallelTranslator, SerialTranslator
-    if options.get("google_api_key"):
+    from .llm_translator import LLMClient, ParallelTranslator
+    from .translation_policy import get_capabilities, resolve_model_family
+    provider = options.get("translation_provider") or (
+        "gemini" if options.get("google_api_key") else (
+            "openai_compatible" if options.get("openai_base_url") else "openai"
+        )
+    )
+    model = options.get("gemini_model") if provider == "gemini" else options.get("gpt_model")
+    model_family = resolve_model_family(
+        options.get("translation_model_family"),
+        model,
+        provider,
+    )
+    capabilities = get_capabilities(model_family)
+    requested_concurrency = int(options.get("translation_max_concurrency") or 0)
+    max_concurrency = requested_concurrency or capabilities.default_max_concurrency
+    if options.get("translation_history_size", 0):
+        max_concurrency = 1
+
+    if provider == "gemini":
         llm_client = LLMClient(
             llm_type=LLMClient.LLM_TYPE.GEMINI,
             model=options.get("gemini_model"),
@@ -95,6 +114,10 @@ def create_translator(options: dict):
             use_json_result=options.get("use_json_result"),
             gemini_base_url=options.get("gemini_base_url"),
             glossary=glossary,
+            model_family=model_family,
+            output_format=options.get("translation_output_format", "auto"),
+            max_output_tokens=options.get("translation_max_output_tokens", 128),
+            provider=provider,
         )
     else:
         llm_client = LLMClient(
@@ -105,20 +128,18 @@ def create_translator(options: dict):
             proxy=options.get("processing_proxy"),
             use_json_result=options.get("use_json_result"),
             glossary=glossary,
+            model_family=model_family,
+            output_format=options.get("translation_output_format", "auto"),
+            max_output_tokens=options.get("translation_max_output_tokens", 128),
+            provider=provider,
         )
 
-    if options.get("translation_history_size", 0) == 0:
-        return ParallelTranslator(
-            llm_client=llm_client,
-            timeout=options.get("translation_timeout", 10),
-            retry_if_translation_fails=options.get("retry_if_translation_fails", True),
-        )
-    else:
-        return SerialTranslator(
-            llm_client=llm_client,
-            timeout=options.get("translation_timeout", 10),
-            retry_if_translation_fails=options.get("retry_if_translation_fails", True),
-        )
+    return ParallelTranslator(
+        llm_client=llm_client,
+        timeout=options.get("translation_timeout", 10),
+        retry_if_translation_fails=options.get("retry_if_translation_fails", True),
+        max_concurrency=max_concurrency,
+    )
 
 
 def create_exporter(options: dict, subtitle_share_push_url: str | None, subtitle_share_token: str | None):
@@ -133,8 +154,22 @@ def create_exporter(options: dict, subtitle_share_push_url: str | None, subtitle
         output_whisper_result=not bool(options.get("hide_transcribe_result")),
         output_timestamps=bool(options.get("output_timestamps")),
         show_latency_log=bool(options.get("show_latency_log")),
+        require_translation=bool(
+            options.get("translation_prompt")
+            and not options.get("disable_paired_subtitle_mode", False)
+        ),
         subtitle_share_push_url=subtitle_share_push_url,
         subtitle_share_token=subtitle_share_token,
+    )
+
+
+def create_subtitle_segmenter(options: dict):
+    return SubtitleSegmenter(
+        deduplicate_overlap=not options.get("disable_asr_overlap_deduplication", False),
+        assembler_enabled=not options.get("disable_subtitle_assembler", False),
+        assembler_wait_ms=options.get("subtitle_assembler_wait_ms", 400),
+        assembler_max_duration=options.get("subtitle_assembler_max_duration", 6.0),
+        assembler_gap_threshold=options.get("subtitle_assembler_gap_threshold", 0.8),
     )
 
 
@@ -160,8 +195,9 @@ def run_inprocess_pipeline(url: str,
 
     getter_to_slicer_queue = queue.SimpleQueue()
     slicer_to_transcriber_queue = queue.SimpleQueue()
-    transcriber_to_translator_queue = queue.SimpleQueue()
-    translator_to_exporter_queue = queue.SimpleQueue() if options.get("translation_prompt") else transcriber_to_translator_queue
+    transcriber_to_segmenter_queue = queue.SimpleQueue()
+    segmenter_to_translator_queue = queue.SimpleQueue()
+    translator_to_exporter_queue = queue.SimpleQueue() if options.get("translation_prompt") else segmenter_to_translator_queue
 
     audio_getter = create_audio_getter(url, options)
     if controller is not None:
@@ -169,6 +205,7 @@ def run_inprocess_pipeline(url: str,
 
     slicer = create_slicer(options)
     translator = create_translator(options)
+    segmenter = create_subtitle_segmenter(options)
     exporter = create_exporter(options, subtitle_share_push_url, subtitle_share_token)
 
     print(f"{INFO}Initialization complete, starting up...")
@@ -176,10 +213,13 @@ def run_inprocess_pipeline(url: str,
     start_daemon_thread(slicer.loop, input_queue=getter_to_slicer_queue, output_queue=slicer_to_transcriber_queue)
     start_daemon_thread(transcriber.loop,
                         input_queue=slicer_to_transcriber_queue,
-                        output_queue=transcriber_to_translator_queue)
+                        output_queue=transcriber_to_segmenter_queue)
+    start_daemon_thread(segmenter.loop,
+                        input_queue=transcriber_to_segmenter_queue,
+                        output_queue=segmenter_to_translator_queue)
     if translator:
         start_daemon_thread(translator.loop,
-                            input_queue=transcriber_to_translator_queue,
+                            input_queue=segmenter_to_translator_queue,
                             output_queue=translator_to_exporter_queue)
     exporter_thread = start_daemon_thread(exporter.loop, input_queue=translator_to_exporter_queue)
 

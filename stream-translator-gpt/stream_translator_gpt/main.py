@@ -64,6 +64,7 @@ def main(url, **kwargs):
     hide_transcribe_result = kwargs.get('hide_transcribe_result', False)
     output_timestamps = kwargs.get('output_timestamps', False)
     show_latency_log = kwargs.get('show_latency_log', False)
+    emit_json_events = kwargs.get('emit_json_events', False)
     disable_transcription_context = kwargs.get('disable_transcription_context', False)
     transcription_initial_prompt = kwargs.get('transcription_initial_prompt')
     asr_corrections_enabled = kwargs.get('asr_corrections_enabled', False)
@@ -386,6 +387,7 @@ def main(url, **kwargs):
             subtitle_share_token=subtitle_share_token,
             show_latency_log=show_latency_log,
             require_translation=bool(translation_prompt and paired_subtitle_mode),
+            emit_json_events=emit_json_events,
         )
 
         audio_getter = audio_getter_future.result()
@@ -864,6 +866,10 @@ def cli():
     parser.add_argument('--show_latency_log',
                         action='store_true',
                         help='Print ASR and LLM latency in terminal logs.')
+    parser.add_argument(
+        '--emit_json_events',
+        action='store_true',
+        help='Emit machine-readable subtitle events for the desktop application.')
     parser.add_argument('--hide_transcribe_result', action='store_true', help='Hide the result of Whisper transcribe.')
     parser.add_argument(
         '--output_proxy',

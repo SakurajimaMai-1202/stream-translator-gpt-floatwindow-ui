@@ -915,6 +915,7 @@ class ConfigManager:
             resolved_output_file_path = manual_output_file_path
         
         args.update({
+            'emit_json_events': True,
             'output_file_path': resolved_output_file_path,
             'output_timestamps': output_notification.get('output_timestamps', True),  # 預設開啟
             'hide_transcribe_result': output_notification.get('hide_transcribe_result', False),

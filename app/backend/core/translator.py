@@ -22,6 +22,8 @@ from backend.core.portable_paths import apply_model_cache_environment
 
 logger = logging.getLogger(__name__)
 
+_SUBTITLE_EVENT_PREFIX = "__ST_SUBTITLE_EVENT__"
+
 _SENSITIVE_ARG_NAMES = {
     "--openai_api_key",
     "--google_api_key",
@@ -46,6 +48,15 @@ def _redact_command_args(cmd: List[str]) -> List[str]:
             hide_next = True
 
     return redacted
+
+
+def _parse_structured_subtitle_event(line: str) -> Optional[Dict[str, Any]]:
+    if not line.startswith(_SUBTITLE_EVENT_PREFIX):
+        return None
+    payload = json.loads(line[len(_SUBTITLE_EVENT_PREFIX):])
+    if not isinstance(payload, dict):
+        raise ValueError("subtitle event payload must be an object")
+    return payload
 
 
 def _apply_source_pythonpath(env: Dict[str, str], cwd: str) -> None:
@@ -237,7 +248,7 @@ class TranslationContext:
             'disable_asr_overlap_deduplication', 'disable_subtitle_assembler',
             'subtitle_assembler_wait_ms', 'subtitle_assembler_max_duration',
             'subtitle_assembler_gap_threshold',
-            'use_json_result', 'retry_if_translation_fails', 'output_timestamps',
+            'use_json_result', 'retry_if_translation_fails', 'output_timestamps', 'emit_json_events',
             'hide_transcribe_result', 'output_proxy', 'output_file_path', 'cqhttp_url',
             'cqhttp_token', 'discord_webhook_url', 'telegram_token', 'telegram_chat_id',
             'vad_backend', 'firered_vad_model_path', 'preload_asr_model', 'keep_asr_loaded',
@@ -443,6 +454,7 @@ class TranslationContext:
             def read_output():
                 import time
                 pending_subtitles = {}  # timestamp -> dict
+                structured_timestamps = {}
                 hide_transcribe_result = self.config.get('output_notification', {}).get('hide_transcribe_result', False)
                 try:
                     for line in self.process.stdout:
@@ -458,6 +470,18 @@ class TranslationContext:
                         
                         # 移除 ANSI 顏色碼
                         clean_line = re.sub(r'\x1b\[[0-9;]*m', '', line)
+
+                        if clean_line.startswith(_SUBTITLE_EVENT_PREFIX):
+                            try:
+                                data = _parse_structured_subtitle_event(clean_line)
+                                timestamp = str(data.get("timestamp") or "")
+                                if timestamp:
+                                    structured_timestamps[timestamp] = time.time()
+                                logger.info(f"[Subtitle JSON] Emit segment={data.get('segment_id')}")
+                                self._broadcast({"type": "subtitle", "data": data})
+                            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                                logger.warning(f"Invalid structured subtitle event: {exc}")
+                            continue
                         
                         # 處理並過濾日誌行
                         if any(marker in clean_line for marker in ['[INFO]', '[ERROR]', '[WARNING]', '[DEBUG]']):
@@ -504,6 +528,9 @@ class TranslationContext:
                         if timestamp_match:
                             timestamp = f"{timestamp_match.group(1)} -> {timestamp_match.group(2)}"
                             remaining_text = clean_line[timestamp_match.end():].strip()
+
+                            if timestamp in structured_timestamps:
+                                continue
                             
                             # 初始化該時間戳的字典
                             if timestamp not in pending_subtitles:
@@ -542,6 +569,9 @@ class TranslationContext:
                         for ts in list(pending_subtitles.keys()):
                             if current_time - pending_subtitles[ts]["created_at"] > 30:
                                 del pending_subtitles[ts]
+                        for ts in list(structured_timestamps.keys()):
+                            if current_time - structured_timestamps[ts] > 30:
+                                del structured_timestamps[ts]
                                 
                 except Exception as e:
                     logger.error(f"Read thread error: {e}")

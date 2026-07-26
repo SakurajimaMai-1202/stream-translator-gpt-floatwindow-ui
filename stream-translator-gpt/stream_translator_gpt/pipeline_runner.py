@@ -154,6 +154,7 @@ def create_exporter(options: dict, subtitle_share_push_url: str | None, subtitle
         output_whisper_result=not bool(options.get("hide_transcribe_result")),
         output_timestamps=bool(options.get("output_timestamps")),
         show_latency_log=bool(options.get("show_latency_log")),
+        emit_json_events=bool(options.get("emit_json_events")),
         require_translation=bool(
             options.get("translation_prompt")
             and not options.get("disable_paired_subtitle_mode", False)

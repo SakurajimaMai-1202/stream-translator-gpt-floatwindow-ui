@@ -1,3 +1,4 @@
+import json
 import queue
 import threading
 import time
@@ -151,6 +152,38 @@ def test_subtitle_event_includes_latency_breakdown():
     assert event["data"]["translation_queue_latency_ms"] == 35.4
     assert event["data"]["llm_latency_ms"] == 1210.8
     assert event["data"]["total_latency_ms"] == 2080.1
+
+
+def test_machine_readable_subtitle_event_includes_latency(capsys):
+    exporter = ResultExporter(
+        cqhttp_url=None,
+        cqhttp_token=None,
+        discord_webhook_url=None,
+        telegram_token=None,
+        telegram_chat_id=None,
+        output_file_path=None,
+        proxy=None,
+        output_whisper_result=True,
+        output_timestamps=False,
+        emit_json_events=True,
+    )
+    task = _task(4)
+    task.translation = "譯文"
+    task.total_latency_ms = 987.6
+    input_queue = queue.SimpleQueue()
+    input_queue.put(task)
+    input_queue.put(None)
+
+    exporter.loop(input_queue)
+
+    marker_line = next(
+        line for line in capsys.readouterr().out.splitlines()
+        if line.startswith("__ST_SUBTITLE_EVENT__")
+    )
+    payload = json.loads(marker_line.removeprefix("__ST_SUBTITLE_EVENT__"))
+    assert payload["segment_id"] == 4
+    assert payload["translated"] == "譯文"
+    assert payload["total_latency_ms"] == 987.6
 
 
 def test_overlap_deduplication_is_conservative_for_cjk_and_latin():

@@ -1,3 +1,4 @@
+import json
 import os
 import queue
 from urllib.parse import urlencode, urlparse, urlunparse
@@ -6,6 +7,8 @@ import requests
 
 from .common import TranslationTask, LoopWorkerBase, sec2str, start_daemon_thread, BOLD, ENDC, WARNING
 from .subtitle_sharing import format_srt_timestamp
+
+SUBTITLE_EVENT_PREFIX = "__ST_SUBTITLE_EVENT__"
 
 
 def normalize_subtitle_share_push_url(url: str | None) -> str | None:
@@ -47,7 +50,8 @@ class ResultExporter(LoopWorkerBase):
                  telegram_chat_id: int, output_file_path: str, proxy: str, output_whisper_result: bool,
                  output_timestamps: bool, subtitle_share_push_url: str | None = None,
                  subtitle_share_token: str | None = None, show_latency_log: bool = False,
-                 gui_callback=None, require_translation: bool = False) -> None:
+                 gui_callback=None, require_translation: bool = False,
+                 emit_json_events: bool = False) -> None:
         self.proxies = {"http": proxy, "https": proxy} if proxy else None
         self.cqhttp_queue = None
         self.discord_queue = None
@@ -62,6 +66,7 @@ class ResultExporter(LoopWorkerBase):
         self.show_latency_log = show_latency_log
         self.gui_callback = gui_callback  # GUI 回呼函式
         self.require_translation = require_translation
+        self.emit_json_events = emit_json_events
 
         if subtitle_share_push_url and self.subtitle_share_push_url != subtitle_share_push_url:
             print(f"{WARNING}Replaced subtitle share push host with 127.0.0.1: {self.subtitle_share_push_url}")
@@ -186,6 +191,31 @@ class ResultExporter(LoopWorkerBase):
                 )
                 continue
 
+            subtitle_timestamp = (
+                f'{format_srt_timestamp(task.time_range[0])} -> {format_srt_timestamp(task.time_range[1])}'
+            )
+            subtitle_event_data = {
+                "timestamp": subtitle_timestamp,
+                "original": task.transcript or "",
+                "translated": task.translation or "",
+                "asr_latency_ms": _format_latency_ms(task.asr_latency_ms),
+                "llm_latency_ms": _format_latency_ms(task.llm_latency_ms),
+                "translation_queue_latency_ms": _format_latency_ms(task.translation_queue_latency_ms),
+                "total_latency_ms": _format_latency_ms(task.total_latency_ms),
+                "segment_id": task.segment_id,
+                "translation_provider": task.translation_provider,
+                "translation_model": task.translation_model,
+            }
+            if self.emit_json_events:
+                print(
+                    SUBTITLE_EVENT_PREFIX + json.dumps(
+                        subtitle_event_data,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                    flush=True,
+                )
+
             # GUI 回呼
             if self.gui_callback:
                 try:
@@ -241,21 +271,7 @@ class ResultExporter(LoopWorkerBase):
                 self.file_queue.put(text_to_file)
 
             if self.subtitle_share_queue:
-                subtitle_timestamp = (
-                    f'{format_srt_timestamp(task.time_range[0])} -> {format_srt_timestamp(task.time_range[1])}'
-                )
                 self.subtitle_share_queue.put({
                     "event": "subtitle",
-                    "data": {
-                        "timestamp": subtitle_timestamp,
-                        "original": task.transcript or "",
-                        "translated": task.translation or "",
-                        "asr_latency_ms": _format_latency_ms(task.asr_latency_ms),
-                        "llm_latency_ms": _format_latency_ms(task.llm_latency_ms),
-                        "translation_queue_latency_ms": _format_latency_ms(task.translation_queue_latency_ms),
-                        "total_latency_ms": _format_latency_ms(task.total_latency_ms),
-                        "segment_id": task.segment_id,
-                        "translation_provider": task.translation_provider,
-                        "translation_model": task.translation_model,
-                    },
+                    "data": subtitle_event_data,
                 })

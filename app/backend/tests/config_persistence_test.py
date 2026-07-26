@@ -4,6 +4,7 @@ from pathlib import Path
 import yaml
 
 from backend.core.config_manager import ConfigManager
+from backend.core.translator import _parse_structured_subtitle_event
 
 
 APP_DIR = Path(__file__).resolve().parents[2]
@@ -143,6 +144,7 @@ def test_translation_pipeline_controls_are_supported_by_runtime_cli_contract():
         "subtitle_assembler_wait_ms",
         "subtitle_assembler_max_duration",
         "subtitle_assembler_gap_threshold",
+        "emit_json_events",
     }
 
     for flag in flags:
@@ -204,3 +206,13 @@ def test_subtitle_latency_style_has_independent_color():
 
     assert defaults["showLatency"] is False
     assert defaults["latencyColor"] == "#7DD3FC"
+
+
+def test_desktop_backend_parses_structured_subtitle_latency_event():
+    payload = _parse_structured_subtitle_event(
+        '__ST_SUBTITLE_EVENT__{"timestamp":"00:00:01,000 -> 00:00:02,000",'
+        '"original":"hello","translated":"你好","total_latency_ms":812.4}'
+    )
+
+    assert payload["translated"] == "你好"
+    assert payload["total_latency_ms"] == 812.4

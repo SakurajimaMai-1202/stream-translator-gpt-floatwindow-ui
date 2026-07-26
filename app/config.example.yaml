@@ -142,6 +142,7 @@ subtitle_settings:
   textColor: '#55ffff'
   translatedColor: '#FFDD00'
   timestampColor: '#888888'
+  latencyColor: '#7DD3FC'
   backgroundColor: '#ffffff'
   backgroundOpacity: 5
 ui:

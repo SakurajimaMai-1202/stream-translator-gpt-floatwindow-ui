@@ -23,6 +23,7 @@ const fontSize = ref(Number(localStorage.getItem('dfw_fontSize') || 32));
 const showOriginal = ref(localStorage.getItem('dfw_showOriginal') !== 'false');
 const showTranslated = ref(localStorage.getItem('dfw_showTranslated') !== 'false');
 const showLatency = ref(localStorage.getItem('dfw_showLatency') === 'true');
+const latencyColor = ref(localStorage.getItem('dfw_latencyColor') || '#7DD3FC');
 const maxItems = ref(Number(localStorage.getItem('dfw_maxItems') || 100));
 const layout = ref<'bottom' | 'top' | 'side'>(
   (localStorage.getItem('dfw_layout') as any) || 'bottom'
@@ -165,6 +166,7 @@ function saveSettings() {
   localStorage.setItem('dfw_showOriginal', String(showOriginal.value));
   localStorage.setItem('dfw_showTranslated', String(showTranslated.value));
   localStorage.setItem('dfw_showLatency', String(showLatency.value));
+  localStorage.setItem('dfw_latencyColor', latencyColor.value);
   localStorage.setItem('dfw_maxItems', String(maxItems.value));
   localStorage.setItem('dfw_layout', layout.value);
   localStorage.setItem('dfw_bgOpacity', String(bgOpacity.value));
@@ -287,6 +289,10 @@ function latencyLabel(sub: DesktopSubtitle): string {
             <input type="checkbox" v-model="showLatency" @change="saveSettings" />
             顯示處理延遲
           </label>
+          <label class="setting-color-row">
+            <span>延遲文字顏色</span>
+            <input type="color" v-model="latencyColor" @change="saveSettings" />
+          </label>
         </div>
       </aside>
     </Transition>
@@ -326,8 +332,12 @@ function latencyLabel(sub: DesktopSubtitle): string {
               :style="{ fontSize: fontSize + 'px' }">
               {{ sub.translated }}
             </div>
-            <div v-if="showLatency && latencyLabel(sub)" class="latency-line">
-              {{ latencyLabel(sub) }}
+            <div
+              v-if="showLatency && latencyLabel(sub)"
+              class="latency-line"
+              :style="{ color: latencyColor }"
+            >
+              <span v-if="sub.timestamp_id">{{ sub.timestamp_id }} · </span>{{ latencyLabel(sub) }}
             </div>
           </div>
         </TransitionGroup>
@@ -584,6 +594,24 @@ function latencyLabel(sub: DesktopSubtitle): string {
   margin-bottom: 4px;
 }
 .toggle-row input { width: 18px; height: 18px; accent-color: #818cf8; }
+.setting-color-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  color: var(--toggle-label);
+  font-size: 14px;
+}
+.setting-color-row input[type=color] {
+  width: 42px;
+  height: 28px;
+  padding: 2px;
+  border: 1px solid var(--layout-btn-border);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
 
 .layout-btns { display: flex; gap: 8px; }
 .layout-btn {
@@ -677,7 +705,6 @@ function latencyLabel(sub: DesktopSubtitle): string {
 
 .latency-line {
   margin-top: 0.35rem;
-  color: var(--status-label);
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 12px;
   font-weight: 500;

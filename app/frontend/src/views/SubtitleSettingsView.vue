@@ -20,6 +20,7 @@ const maxDisplayCount = ref(5);
 const textColor = ref('#FFFFFF');
 const translatedColor = ref('#FFDD00');
 const timestampColor = ref('#888888'); // 時間碼顏色(灰色)
+const latencyColor = ref('#7DD3FC');
 const backgroundColor = ref('#000000');
 const backgroundOpacity = ref(50);
 
@@ -41,6 +42,7 @@ function buildSettings() {
     textColor: textColor.value,
     translatedColor: translatedColor.value,
     timestampColor: timestampColor.value,
+    latencyColor: latencyColor.value,
     backgroundColor: backgroundColor.value,
     backgroundOpacity: backgroundOpacity.value
   };
@@ -115,6 +117,7 @@ async function loadSettingsFromBackend() {
     textColor.value = settings.textColor ?? textColor.value;
     translatedColor.value = settings.translatedColor ?? translatedColor.value;
     timestampColor.value = settings.timestampColor ?? timestampColor.value;
+    latencyColor.value = settings.latencyColor ?? latencyColor.value;
     backgroundColor.value = settings.backgroundColor ?? backgroundColor.value;
     backgroundOpacity.value = settings.backgroundOpacity ?? backgroundOpacity.value;
     return true;
@@ -151,6 +154,7 @@ onMounted(async () => {
         textColor.value = settings.textColor ?? textColor.value;
         translatedColor.value = settings.translatedColor ?? translatedColor.value;
         timestampColor.value = settings.timestampColor ?? timestampColor.value;
+        latencyColor.value = settings.latencyColor ?? latencyColor.value;
         backgroundColor.value = settings.backgroundColor ?? backgroundColor.value;
         backgroundOpacity.value = settings.backgroundOpacity ?? backgroundOpacity.value;
       } catch (e) {
@@ -171,7 +175,7 @@ onUnmounted(() => {
   }
 });
 
-watch([fontSize, fontWeight, showOriginal, showTranslated, showTimestamp, showLatency, position, autoScroll, maxDisplayCount, textColor, translatedColor, timestampColor, backgroundColor, backgroundOpacity], () => {
+watch([fontSize, fontWeight, showOriginal, showTranslated, showTimestamp, showLatency, position, autoScroll, maxDisplayCount, textColor, translatedColor, timestampColor, latencyColor, backgroundColor, backgroundOpacity], () => {
   scheduleSaveSettings();
 });
 
@@ -279,6 +283,11 @@ const activeTab = ref<'display' | 'color'>('display');
             <input v-model="timestampColor" type="color" class="w-full h-12 rounded-lg cursor-pointer bg-transparent border-2 border-white/20" />
             <p class="text-white/50 text-xs mt-1">{{ timestampColor }}</p>
           </div>
+          <div>
+            <label class="block text-white/90 text-sm mb-2 font-medium">延遲文字顏色</label>
+            <input v-model="latencyColor" type="color" class="w-full h-12 rounded-lg cursor-pointer bg-transparent border-2 border-white/20" />
+            <p class="text-white/50 text-xs mt-1">{{ latencyColor }}</p>
+          </div>
         </div>
         
         <div>
@@ -303,9 +312,11 @@ const activeTab = ref<'display' | 'color'>('display');
             }"
             class="p-4 rounded-lg text-center"
           >
-            <div v-if="showTimestamp" :style="{ color: timestampColor, fontSize: '10px', opacity: 0.7 }" class="mb-1">00:00:10</div>
-            <div v-if="showLatency" :style="{ color: timestampColor, fontSize: '10px', opacity: 0.78 }" class="mb-1 font-mono">
-              ASR 420ms · 排隊 35ms · 翻譯 1.21s · 總計 2.08s
+            <div v-if="showTimestamp || showLatency" class="mb-1 font-mono" style="font-size: 10px; opacity: 0.78">
+              <span v-if="showTimestamp" :style="{ color: timestampColor }">00:00:10</span>
+              <span v-if="showLatency" :style="{ color: latencyColor }">
+                <span v-if="showTimestamp"> · </span>ASR 420ms · 排隊 35ms · 翻譯 1.21s · 總計 2.08s
+              </span>
             </div>
             <div v-if="showOriginal" :style="{ color: textColor, textShadow: '1px 1px 3px rgba(0,0,0,0.8)' }">こんにちは</div>
             <div v-if="showTranslated" :style="{ color: translatedColor, textShadow: '1px 1px 3px rgba(0,0,0,0.8)' }" class="font-bold mt-1">你好</div>

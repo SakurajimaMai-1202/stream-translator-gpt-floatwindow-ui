@@ -197,3 +197,10 @@ def test_get_config_returns_isolated_snapshot(tmp_path):
     snapshot["general"]["log_level"] = "MUTATED"
 
     assert manager.get_config()["general"]["log_level"] == "INFO"
+
+
+def test_subtitle_latency_style_has_independent_color():
+    defaults = ConfigManager.DEFAULT_CONFIG["subtitle_settings"]
+
+    assert defaults["showLatency"] is False
+    assert defaults["latencyColor"] == "#7DD3FC"

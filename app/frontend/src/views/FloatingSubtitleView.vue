@@ -20,6 +20,7 @@ const maxDisplayCount = ref(5);
 const textColor = ref('#FFFFFF');
 const translatedColor = ref('#FFDD00'); // 更亮一點的黃色
 const timestampColor = ref('#888888'); // 時間碼顏色(灰色)
+const latencyColor = ref('#7DD3FC');
 const backgroundColor = ref('#000000');
 const backgroundOpacity = ref(50);
 
@@ -169,6 +170,7 @@ function applySettings(settings: any, external = false) {
   textColor.value = settings.textColor ?? textColor.value;
   translatedColor.value = settings.translatedColor ?? translatedColor.value;
   timestampColor.value = settings.timestampColor ?? timestampColor.value;
+  latencyColor.value = settings.latencyColor ?? latencyColor.value;
   backgroundColor.value = settings.backgroundColor ?? backgroundColor.value;
   backgroundOpacity.value = settings.backgroundOpacity ?? backgroundOpacity.value;
   if (external) {
@@ -264,6 +266,7 @@ function buildSettings() {
     textColor: textColor.value,
     translatedColor: translatedColor.value,
     timestampColor: timestampColor.value,
+    latencyColor: latencyColor.value,
     backgroundColor: backgroundColor.value,
     backgroundOpacity: backgroundOpacity.value
   };
@@ -284,6 +287,7 @@ async function saveSettings() {
     textColor: textColor.value,
     translatedColor: translatedColor.value,
     timestampColor: timestampColor.value,
+    latencyColor: latencyColor.value,
     backgroundColor: backgroundColor.value,
     backgroundOpacity: backgroundOpacity.value
   };
@@ -355,6 +359,7 @@ onMounted(async () => {
         textColor.value = settings.textColor ?? textColor.value;
         translatedColor.value = settings.translatedColor ?? translatedColor.value;
         timestampColor.value = settings.timestampColor ?? timestampColor.value;
+        latencyColor.value = settings.latencyColor ?? latencyColor.value;
         backgroundColor.value = settings.backgroundColor ?? backgroundColor.value;
         backgroundOpacity.value = settings.backgroundOpacity ?? backgroundOpacity.value;
         console.log('✅ 成功載入字幕設定:', {
@@ -421,7 +426,7 @@ function handleStorageChange(e: StorageEvent) {
 }
 
 // 自動儲存設定（初始化完成後才觸發）
-watch([fontSize, fontWeight, opacity, showOriginal, showTranslated, showTimestamp, showLatency, position, autoScroll, maxDisplayCount, textColor, translatedColor, timestampColor, backgroundColor, backgroundOpacity], () => {
+watch([fontSize, fontWeight, opacity, showOriginal, showTranslated, showTimestamp, showLatency, position, autoScroll, maxDisplayCount, textColor, translatedColor, timestampColor, latencyColor, backgroundColor, backgroundOpacity], () => {
   if (!isInitializing.value && !isApplyingExternalSettings.value) {
     scheduleSaveSettings();
   }
@@ -507,15 +512,19 @@ async function stopTranslation() {
       <div v-if="displaySubtitles.length > 0" class="subtitle-list space-y-3" :class="autoScroll ? 'scroll-smooth' : ''">
         <div v-for="sub in displaySubtitles" :key="sub.id" class="text-left leading-relaxed">
           <!-- 時間戳 -->
-          <div v-if="showTimestamp" class="text-xs opacity-70 font-mono mb-1" :style="{ color: timestampColor }">
-            {{ formatTimestamp(sub.timestamp) }}
-          </div>
           <div
-            v-if="showLatency && latencyParts(sub).length"
-            class="subtitle-latency mb-1"
-            :style="{ color: timestampColor }"
+            v-if="showTimestamp || (showLatency && latencyParts(sub).length)"
+            class="subtitle-metadata mb-1"
           >
-            {{ latencyParts(sub).join(' · ') }}
+            <span v-if="showTimestamp" :style="{ color: timestampColor }">
+              {{ formatTimestamp(sub.timestamp) }}
+            </span>
+            <span
+              v-if="showLatency && latencyParts(sub).length"
+              :style="{ color: latencyColor }"
+            >
+              <span v-if="showTimestamp" aria-hidden="true"> · </span>{{ latencyParts(sub).join(' · ') }}
+            </span>
           </div>
           
           <!-- 原文 -->
@@ -720,6 +729,10 @@ async function stopTranslation() {
             <label class="block text-white/70 text-sm mb-1">時間碼顏色</label>
             <input v-model="timestampColor" type="color" class="w-full h-10 rounded cursor-pointer bg-transparent" />
           </div>
+          <div>
+            <label class="block text-white/70 text-sm mb-1">延遲文字顏色</label>
+            <input v-model="latencyColor" type="color" class="w-full h-10 rounded cursor-pointer bg-transparent" />
+          </div>
         </div>
         
         <div>
@@ -773,7 +786,7 @@ async function stopTranslation() {
   word-break: break-word;
 }
 
-.subtitle-latency {
+.subtitle-metadata {
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: clamp(10px, 0.55em, 13px);
   font-weight: 500;

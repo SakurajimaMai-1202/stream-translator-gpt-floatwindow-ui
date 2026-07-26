@@ -174,6 +174,7 @@ class ConfigManager:
             'textColor': '#FFFFFF',
             'translatedColor': '#FFDD00',
             'timestampColor': '#888888',
+            'latencyColor': '#7DD3FC',
             'backgroundColor': '#000000',
             'backgroundOpacity': 50
         },

@@ -81,7 +81,7 @@ function Get-RuntimeProfileDocText {
         [Parameter(Mandatory = $true)]
         [ValidateSet("cuda", "cpu", "rocm")]
         [string]$RuntimeProfile,
-        [string]$Version = "1.3.5",
+        [string]$Version = "1.3.6",
         [Parameter(Mandatory = $true)]
         [ValidateSet("portable_guide", "update_notes", "readme")]
         [string]$Document
@@ -221,21 +221,17 @@ $name v$Version 更新說明
 
 本次更新重點
 ------------
-- 全應用配置改為記憶體快取與檔案變更偵測，避免每次進入設定頁都重新解析完整 config.yaml。
-- 前端共用同一份配置快照與進行中的讀取請求，切換首頁、設定與 Llama 頁面時不再重複下載配置。
-- 設定保存、重置、匯入與跨視窗同步會直接套用後端回傳快照，減少重複讀取與 UI 等待。
-- 首頁的輸入、ASR 與翻譯設定合併為一次寫入；一般設定變更不再每次重新執行硬體偵測。
-- 保留原子寫入、跨程序鎖與外部 config.yaml 修改偵測，避免效能優化造成設定覆蓋。
-- CUDA / CPU / ROCm 共用同一份主程式碼，依 runtime profile 切換預設值與 package 名稱。
-- 新增 runtime profile 設定與打包驗證，避免 CUDA、CPU、ROCm package 混用 runtime。
-- 新增顯卡選擇策略，預設使用 auto_discrete，避免誤選內顯。
-- 輸入語言已拆分繁體中文與簡體中文；Qwen3-ASR 會映射為 Chinese。
-- CUDA 版新增 Parakeet CTC 1.1B JA experimental；僅限日文輸入，使用 NVIDIA NeMo 與 grider-transwithai/parakeet-ctc-1.1b-ja。
-- 設定頁「模型管理」更名為「ASR模型管理」，並修正第一次點入時落到一般設定的問題。
-- 轉錄選項會整理為單一 ASR 後端，避免 Qwen3-ASR / SenseVoiceSmall / Parakeet CTC JA 同時被選取。
-- ROCm Experimental 版補齊 FunASR runtime，修正 SenseVoiceSmall 因缺少 funasr 無法啟動的問題。
-- 每個 package 會附上 diagnose_runtime.ps1，用於收集目標機器的 runtime / GPU / Qwen3-ASR / FunASR 狀態。
-- 每個 package 會附上 smoke_sensevoice_asr.ps1，可用短音檔驗證 SenseVoiceSmall 真實 ASR 推論。
+- 翻譯管線會依 Hy-MT2、一般聊天模型與結構化線上 API 選擇不同 prompt、取樣參數與輸出解析策略。
+- Hy-MT2 使用專用純文字提示格式；Gemma 等一般模型使用聊天提示；OpenAI / Gemini 可使用結構化輸出。
+- 原文與譯文維持成對提交，翻譯工作可平行執行，但字幕會依 segment_id 保持原始順序。
+- 新增 ASR 重疊文字去重與短句組句器，降低重複字幕並改善過短片段的翻譯語境。
+- 新增直播低延遲音訊參數：擷取間隔、最短／目標／最長片段、句尾靜音、前綴保留與動態 VAD。
+- UI、config.yaml 與實際音訊管線使用相同欄位，移除未接入管線的舊設定混淆。
+- 浮動與桌面字幕視窗可顯示每句 ASR、排隊、翻譯及總處理延遲。
+- 延遲狀態會顯示在時間後方，並可獨立調整文字顏色。
+- 新增機器可讀字幕事件；舊 runtime 仍可透過 latency log 相容顯示 ASR／翻譯延遲。
+- 保留 v1.3.5 的配置快取、原子寫入、跨程序鎖與外部 config.yaml 修改偵測。
+- CUDA / CPU / ROCm 繼續共用同一份功能程式碼，依 runtime profile 提供不同 torch 與 ASR 能力。
 
 本版本支援範圍
 --------------
@@ -286,7 +282,7 @@ function Write-RuntimeProfileDocs {
         [Parameter(Mandatory = $true)]
         [ValidateSet("cuda", "cpu", "rocm")]
         [string]$RuntimeProfile,
-        [string]$Version = "1.3.5"
+        [string]$Version = "1.3.6"
     )
 
     if (-not (Test-Path $Destination)) {

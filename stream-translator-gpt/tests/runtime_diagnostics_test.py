@@ -53,6 +53,8 @@ def test_rocm_diagnostics_without_discrete_gpu_marks_gpu_validation_false():
             return fake_torch
         if name == "qwen_asr":
             return type("FakeQwen", (), {"__version__": "test"})()
+        if name == "funasr":
+            return type("FakeFunASR", (), {"__version__": "test"})()
         raise ImportError(name)
 
     original_import = diagnostics.importlib.import_module
@@ -80,6 +82,8 @@ def test_rocm_diagnostics_selects_discrete_amd_gpu():
             return fake_torch
         if name == "qwen_asr":
             return type("FakeQwen", (), {"__version__": "test"})()
+        if name == "funasr":
+            return type("FakeFunASR", (), {"__version__": "test"})()
         raise ImportError(name)
 
     original_import = diagnostics.importlib.import_module
@@ -111,6 +115,8 @@ def test_rocm_diagnostics_marks_unsupported_gfx_and_falls_back_to_cpu():
             return fake_torch
         if name == "qwen_asr":
             return type("FakeQwen", (), {"__version__": "test"})()
+        if name == "funasr":
+            return type("FakeFunASR", (), {"__version__": "test"})()
         raise ImportError(name)
 
     original_import = diagnostics.importlib.import_module

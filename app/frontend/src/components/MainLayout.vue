@@ -3,7 +3,7 @@ import { useRouter, useRoute } from 'vue-router';
 
 const router = useRouter();
 const route = useRoute();
-const appVersion = import.meta.env.VITE_APP_VERSION || '1.3.5';
+const appVersion = import.meta.env.VITE_APP_VERSION || '1.3.6';
 
 // Define navigation items
 const primaryNavigation = [

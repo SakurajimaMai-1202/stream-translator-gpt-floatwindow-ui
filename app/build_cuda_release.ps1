@@ -1,6 +1,6 @@
 #!/usr/bin/env pwsh
 param(
-    [string]$Version = "1.3.5",
+    [string]$Version = "1.3.6",
     [switch]$ForceRuntime,
     [switch]$ReuseRuntimeCache,
     [switch]$SkipFullZip

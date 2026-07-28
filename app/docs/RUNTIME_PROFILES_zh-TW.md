@@ -30,7 +30,6 @@ app/dist-rocm
 | --- | --- |
 | Faster-Whisper | 全系列 |
 | Qwen3-ASR offline | 0.6B / 1.7B / 1.7B-JA |
-| Qwen3-ASR streaming | 0.6B Streaming，experimental，English only |
 | SenseVoiceSmall | compatibility，offline sliced transcription |
 | Qwen3-ASR default dtype | `bfloat16` |
 | 預設 device policy | `auto_discrete` |
@@ -41,7 +40,6 @@ app/dist-rocm
 | --- | --- |
 | Faster-Whisper | small / medium，慢速 |
 | Qwen3-ASR offline | 0.6B |
-| Qwen3-ASR streaming | 0.6B Streaming，experimental，English only，速度待測 |
 | SenseVoiceSmall | compatibility，CPU 可用，速度待測 |
 | Qwen3-ASR default dtype | `float32` |
 | 預設 device policy | `cpu` |
@@ -54,12 +52,10 @@ CPU profile 會把預設的 Qwen3 `bfloat16` 改成 `float32`，避免 CPU runti
 | --- | --- |
 | Faster-Whisper | GPU 不正式承諾；必要時走 CPU fallback |
 | Qwen3-ASR offline | 0.6B / 1.7B / 1.7B-JA |
-| Qwen3-ASR streaming | 先列 experimental，不當正式承諾 |
 | SenseVoiceSmall | 已由 AMD ROCm 實機驗證可用；package 仍標示 Experimental |
 | Qwen3-ASR default dtype | `bfloat16` |
 | 預設 device policy | `auto_discrete` |
 
-ROCm streaming 只列 experimental，原因是上游頁面明確寫 CUDA / Apple Silicon / CPU，沒有寫 ROCm。
 
 ## Runtime Config
 

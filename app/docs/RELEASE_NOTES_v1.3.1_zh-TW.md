@@ -27,7 +27,6 @@
 
 - Faster-Whisper 全系列
 - Qwen3-ASR offline：0.6B / 1.7B / 1.7B-JA
-- Qwen3-ASR streaming：0.6B Streaming，experimental，English only
 
 注意事項：
 
@@ -43,7 +42,6 @@
 
 - Faster-Whisper：small / medium，速度較慢
 - Qwen3-ASR offline：0.6B
-- Qwen3-ASR streaming：0.6B Streaming，experimental，English only，速度待測
 - 保留 OpenAI API 遠端 ASR / 翻譯能力
 
 注意事項：
@@ -59,7 +57,6 @@
 支援範圍：
 
 - Qwen3-ASR offline：0.6B / 1.7B / 1.7B-JA
-- Qwen3-ASR streaming：先列 experimental；上游明確列 CUDA / Apple Silicon / CPU，未正式列 ROCm
 - Faster-Whisper GPU 不正式承諾；必要時請改用 CUDA 或 CPU 包
 
 注意事項：

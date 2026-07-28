@@ -18,6 +18,12 @@ input:
   url: https://www.youtube.com/watch?v=EXAMPLE
   format: ba/wa*
   cookies: ''
+  cookies_by_site:
+    youtube: ''
+    tiktok: ''
+    twitter: ''
+    twitch: ''
+    bilibili: ''
   proxy: ''
   source_type: youtube
   timeout: 30

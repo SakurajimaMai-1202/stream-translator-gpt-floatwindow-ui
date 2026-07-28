@@ -80,8 +80,6 @@ export interface RuntimeCapabilities {
   qwen3_default_dtype: string;
   qwen3_offline_models: string[];
   qwen3_asr_model_ids: string[];
-  qwen3_streaming_status: string;
-  qwen3_streaming_note: string;
   sensevoice_status: string;
   sensevoice_models: string[];
   sensevoice_model_ids: string[];

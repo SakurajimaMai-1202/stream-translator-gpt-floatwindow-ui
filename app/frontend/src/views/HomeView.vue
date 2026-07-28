@@ -682,6 +682,7 @@ useAppSyncEvents({
     await store.syncRunningState();
   },
   onTranslationStopped: async () => {
+    store.clearStatus();
     await store.syncRunningState();
   }
 });

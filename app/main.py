@@ -3,6 +3,7 @@ UI2 主程式
 PyQt6 + WebView + FastAPI 整合啟動器
 """
 
+import os
 import sys
 import logging
 import socket
@@ -56,7 +57,9 @@ class UI2Application:
         self.dev_mode = dev_mode
         self.disable_gpu = disable_gpu
         if self.disable_gpu:
-            logger.info("停用語音網頁硬體加速 (AA_ShareOpenGLContexts, AA_UseDesktopOpenGL)")
+            QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
+            QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseSoftwareOpenGL)
+            logger.info("WebView 使用 Qt Software OpenGL")
         else:
             # 設定 OpenGL 上下文共享，解決 WebView 閃爍問題
             QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
@@ -310,7 +313,12 @@ def main():
     parser.add_argument(
         '--disable-gpu',
         action='store_true',
-        help='停用 GPU 網頁硬體加速（解決某些顯示卡閃爍或黑屏問題）'
+        help='停用 WebView GPU 硬體加速'
+    )
+    parser.add_argument(
+        '--enable-webview-gpu',
+        action='store_true',
+        help='在 Windows 明確啟用 WebView GPU 合成（預設使用軟體合成）'
     )
     args = parser.parse_args()
 
@@ -322,12 +330,19 @@ def main():
         is_frozen = getattr(sys, 'frozen', False)
         dev_mode = (not args.prod) and (not is_frozen)
         
-        if args.disable_gpu:
-            import os
-            os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu --disable-gpu-compositing"
-            logger.info("已設定 Chromium 旗標以停用 GPU 加速")
+        disable_webview_gpu = args.disable_gpu or (
+            sys.platform == "win32" and not args.enable_webview_gpu
+        )
+        if disable_webview_gpu:
+            existing_flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "").strip()
+            software_flags = "--disable-gpu --disable-gpu-compositing"
+            os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = " ".join(
+                part for part in (existing_flags, software_flags) if part
+            )
+            os.environ.setdefault("QT_OPENGL", "software")
+            logger.info("已設定 Chromium 旗標以停用 WebView GPU 合成")
             
-        app = UI2Application(dev_mode=dev_mode, disable_gpu=args.disable_gpu)
+        app = UI2Application(dev_mode=dev_mode, disable_gpu=disable_webview_gpu)
         exit_code = app.run()
         app.cleanup()
         sys.exit(exit_code)

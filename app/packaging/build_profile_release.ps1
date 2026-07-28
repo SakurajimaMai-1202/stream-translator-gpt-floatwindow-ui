@@ -5,7 +5,12 @@ param(
     [string]$Version = "1.3.6",
     [switch]$ForceRuntime,
     [switch]$ReuseRuntimeCache,
-    [switch]$SkipFullZip
+    [switch]$SkipFullZip,
+    [string]$SharedGuiDir = "",
+    [string]$SevenZipPath = "",
+    [ValidateRange(0, 9)][int]$CompressionLevel = 7,
+    [ValidateRange(1, 128)][int]$CopyThreads = 16,
+    [switch]$SkipRuntimeDependenciesInAppUpdate
 )
 
 $ErrorActionPreference = "Stop"
@@ -14,6 +19,7 @@ $scriptDir = Split-Path -Parent $packagingDir
 $projectRoot = Split-Path -Parent $scriptDir
 $frontendDir = Join-Path $scriptDir "frontend"
 . (Join-Path $packagingDir "runtime_profile_packaging.ps1")
+. (Join-Path $packagingDir "release_build_tools.ps1")
 
 $packageInfo = Get-RuntimeProfilePackageInfo -RuntimeProfile $Profile
 $profileLabel = $packageInfo.Label
@@ -25,26 +31,37 @@ $appName = "Stream Translator"
 $packageName = $packageInfo.PackageName
 $releaseRoot = Join-Path $distDir $packageName
 $runtimeCache = Join-Path $scriptDir "build-runtime-cache\$($packageInfo.RuntimeCacheName)"
-$pythonCandidates = @(
-    $env:STREAM_TRANSLATOR_BUILD_PYTHON,
-    (Join-Path $scriptDir "venv\Scripts\python.exe"),
-    (Join-Path $scriptDir "..\.venv\Scripts\python.exe"),
-    (Join-Path $scriptDir "dist-hotfix\Stream Translator\_runtime\python.exe"),
-    (Join-Path $scriptDir "dist\Stream Translator\_runtime\python.exe")
-) | Where-Object { $_ -and (Test-Path $_) }
-$pythonExe = $null
-foreach ($candidate in $pythonCandidates) {
-    $oldPreference = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    & $candidate -c "import PyInstaller, sys; print(sys.executable)" *> $null
-    $candidateExitCode = $LASTEXITCODE
-    $ErrorActionPreference = $oldPreference
-    if ($candidateExitCode -eq 0) {
-        $pythonExe = (Resolve-Path $candidate).Path
-        break
-    }
+$sevenZipExe = Resolve-SevenZipPath -RequestedPath $SevenZipPath
+$sharedGuiPath = if ($SharedGuiDir) {
+    $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($SharedGuiDir)
+} else {
+    ""
 }
-if (-not $pythonExe) { throw "No usable build Python with PyInstaller found" }
+
+$pythonExe = $null
+if (-not $sharedGuiPath) {
+    $pythonCandidates = @(
+        $env:STREAM_TRANSLATOR_BUILD_PYTHON,
+        (Join-Path $scriptDir "venv\Scripts\python.exe"),
+        (Join-Path $scriptDir "..\.venv\Scripts\python.exe"),
+        (Join-Path $scriptDir "dist-hotfix\Stream Translator\_runtime\python.exe"),
+        (Join-Path $scriptDir "dist\Stream Translator\_runtime\python.exe")
+    ) | Where-Object { $_ -and (Test-Path $_) }
+    foreach ($candidate in $pythonCandidates) {
+        $oldPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        & $candidate -c "import PyInstaller, sys; print(sys.executable)" *> $null
+        $candidateExitCode = $LASTEXITCODE
+        $ErrorActionPreference = $oldPreference
+        if ($candidateExitCode -eq 0) {
+            $pythonExe = (Resolve-Path $candidate).Path
+            break
+        }
+    }
+    if (-not $pythonExe) { throw "No usable build Python with PyInstaller found" }
+} elseif (-not (Test-Path -LiteralPath $sharedGuiPath -PathType Container)) {
+    throw "Shared GUI directory not found: $sharedGuiPath"
+}
 
 function Copy-ProfileConfig {
     param(
@@ -74,29 +91,35 @@ function Set-RuntimeManifestAppVersion {
     }
 }
 
-Write-Host "[1/6] Build frontend" -ForegroundColor Yellow
-Push-Location $frontendDir
-try {
-    if (-not (Test-Path "node_modules")) { npm install }
-    $previousViteVersion = $env:VITE_APP_VERSION
-    $env:VITE_APP_VERSION = $Version
-    npx vite build
-    if ($LASTEXITCODE -ne 0) { throw "Vite build failed" }
-} finally {
-    $env:VITE_APP_VERSION = $previousViteVersion
-    Pop-Location
+if ($sharedGuiPath) {
+    Write-Host "[1/6] Reuse shared frontend and GUI build" -ForegroundColor Green
+    Write-Host "[2/6] Shared GUI: $sharedGuiPath" -ForegroundColor Green
+    $builtApp = $sharedGuiPath
+} else {
+    Write-Host "[1/6] Build frontend" -ForegroundColor Yellow
+    Push-Location $frontendDir
+    try {
+        if (-not (Test-Path "node_modules")) { npm install }
+        $previousViteVersion = $env:VITE_APP_VERSION
+        $env:VITE_APP_VERSION = $Version
+        & (Join-Path $frontendDir "node_modules\.bin\vite.cmd") build
+        if ($LASTEXITCODE -ne 0) { throw "Vite build failed" }
+    } finally {
+        $env:VITE_APP_VERSION = $previousViteVersion
+        Pop-Location
+    }
+
+    Write-Host "[2/6] Build GUI onedir" -ForegroundColor Yellow
+    Push-Location $scriptDir
+    try {
+        & $pythonExe -m PyInstaller (Join-Path $packagingDir "stream-translator-llm-gui.spec") --noconfirm --distpath $pyInstallerDist --workpath $pyInstallerWork
+        if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed" }
+    } finally { Pop-Location }
+
+    $builtApp = Join-Path $pyInstallerDist $appName
+    Get-ChildItem $builtApp -File -Filter "qtwebengine_devtools_resources.debug.pak" -Recurse -ErrorAction SilentlyContinue |
+        Remove-Item -Force
 }
-
-Write-Host "[2/6] Build GUI onedir" -ForegroundColor Yellow
-Push-Location $scriptDir
-try {
-    & $pythonExe -m PyInstaller (Join-Path $packagingDir "stream-translator-llm-gui.spec") --noconfirm --distpath $pyInstallerDist --workpath $pyInstallerWork
-    if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed" }
-} finally { Pop-Location }
-
-$builtApp = Join-Path $pyInstallerDist $appName
-Get-ChildItem $builtApp -File -Filter "qtwebengine_devtools_resources.debug.pak" -Recurse -ErrorAction SilentlyContinue |
-    Remove-Item -Force
 
 Write-Host "[3/6] Build or reuse $profileLabel Runtime" -ForegroundColor Yellow
 if ($ReuseRuntimeCache) {
@@ -138,10 +161,10 @@ if ($ReuseRuntimeCache) {
 }
 
 Write-Host "[4/6] Create App Update package" -ForegroundColor Yellow
-if (Test-Path $distDir) { Remove-Item $distDir -Recurse -Force }
+Remove-BuildDirectoryFast -Path $distDir -AllowedRoot $scriptDir
 New-Item $distDir -ItemType Directory -Force | Out-Null
 $updateRoot = Join-Path $distDir "App-Update"
-Copy-Item $builtApp $updateRoot -Recurse
+Invoke-FastDirectoryCopy -Source $builtApp -Destination $updateRoot -Threads $CopyThreads
 $updatePackageDir = Join-Path $updateRoot "_runtime\Lib\site-packages"
 New-Item $updatePackageDir -ItemType Directory -Force | Out-Null
 Copy-Item (Join-Path $projectRoot "stream-translator-gpt\stream_translator_gpt") $updatePackageDir -Recurse -Force
@@ -156,23 +179,36 @@ $runtimeUpdateExcludePatterns = @(
     "PyInstaller", "pyinstaller-*", "_pytest", "pytest", "pytest-*",
     "~orch", "~orch-*", "__editable__*", "*.egg-link"
 )
-if (Test-Path $runtimePackageDir) {
-    Get-ChildItem $runtimePackageDir -Force | Where-Object {
-        $name = $_.Name
-        -not ($runtimeUpdateExcludePatterns | Where-Object { $name -like $_ })
-    } | ForEach-Object {
-        Copy-Item $_.FullName $updatePackageDir -Recurse -Force
-    }
+if ((Test-Path $runtimePackageDir) -and -not $SkipRuntimeDependenciesInAppUpdate) {
+    Invoke-FastDirectoryCopyExcluding `
+        -Source $runtimePackageDir `
+        -Destination $updatePackageDir `
+        -Exclude $runtimeUpdateExcludePatterns `
+        -Threads $CopyThreads
+} elseif ($SkipRuntimeDependenciesInAppUpdate) {
+    Write-Host "Quick mode: runtime dependency copy omitted from App Update" -ForegroundColor DarkYellow
 }
+$appUpdateBuildInfo = [ordered]@{
+    schema = 1
+    profile = $Profile
+    version = $Version
+    runtime_dependencies_included = (-not $SkipRuntimeDependenciesInAppUpdate)
+}
+[IO.File]::WriteAllText(
+    (Join-Path $updateRoot "app-update-build.json"),
+    ($appUpdateBuildInfo | ConvertTo-Json) + [Environment]::NewLine,
+    [Text.UTF8Encoding]::new($false)
+)
 Copy-Item (Join-Path $scriptDir "diagnose_runtime.ps1") $updateRoot
 Copy-Item (Join-Path $scriptDir "smoke_sensevoice_asr.ps1") $updateRoot
 Write-RuntimeProfileDocs -Destination $updateRoot -RuntimeProfile $Profile -Version $Version
-Push-Location $distDir
-try { & tar.exe -a -c -f $packageInfo.AppUpdateZip "App-Update" } finally { Pop-Location }
+$appUpdateZipPath = Join-Path $distDir $packageInfo.AppUpdateZip
+Compress-ReleaseDirectory -SevenZipPath $sevenZipExe -WorkingDirectory $distDir -ItemName "App-Update" -Destination $appUpdateZipPath -CompressionLevel $CompressionLevel
+Test-ReleaseZip -SevenZipPath $sevenZipExe -Path $appUpdateZipPath
 
 Write-Host "[5/6] Assemble first-use full package" -ForegroundColor Yellow
-Copy-Item $builtApp $releaseRoot -Recurse
-Copy-Item $runtimeCache (Join-Path $releaseRoot "_runtime") -Recurse
+Invoke-FastDirectoryCopy -Source $builtApp -Destination $releaseRoot -Threads $CopyThreads
+Invoke-FastDirectoryCopy -Source $runtimeCache -Destination (Join-Path $releaseRoot "_runtime") -Threads $CopyThreads
 Set-RuntimeManifestAppVersion -RuntimeDir (Join-Path $releaseRoot "_runtime")
 New-Item (Join-Path $releaseRoot "models\huggingface\hub") -ItemType Directory -Force | Out-Null
 Copy-ProfileConfig (Join-Path $releaseRoot "config.yaml")
@@ -198,8 +234,9 @@ if (Test-Path $llamaSource) {
 
 if (-not $SkipFullZip) {
     Write-Host "[6/6] Compress full package" -ForegroundColor Yellow
-    Push-Location $distDir
-    try { & tar.exe -a -c -f $packageInfo.FullZip $packageName } finally { Pop-Location }
+    $fullZipPath = Join-Path $distDir $packageInfo.FullZip
+    Compress-ReleaseDirectory -SevenZipPath $sevenZipExe -WorkingDirectory $distDir -ItemName $packageName -Destination $fullZipPath -CompressionLevel $CompressionLevel
+    Test-ReleaseZip -SevenZipPath $sevenZipExe -Path $fullZipPath
 } else {
     Write-Host "[6/6] Full package compression skipped" -ForegroundColor DarkYellow
 }

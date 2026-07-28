@@ -153,6 +153,7 @@ export const useTranslationStore = defineStore('translation', () => {
 
   async function startTranslation(url: string) {
     try {
+      statusMessage.value = '';
       const response = await translationApi.start({
         audio_source: 'url',
         url: url,
@@ -193,11 +194,13 @@ export const useTranslationStore = defineStore('translation', () => {
       isRunning.value = false;
       currentUrl.value = '';
       currentTaskId.value = '';
+      statusMessage.value = '';
     }
   }
 
   async function syncRunningState() {
     try {
+      const wasRunning = isRunning.value;
       const status = await translationApi.getStatus();
       const runningTask = status.tasks?.find((task: any) => task.is_running) || null;
 
@@ -215,6 +218,9 @@ export const useTranslationStore = defineStore('translation', () => {
         currentTaskId.value = '';
         if (connectedTaskId) {
           disconnectEventSource();
+        }
+        if (wasRunning) {
+          statusMessage.value = '';
         }
       }
     } catch (error: any) {

@@ -38,6 +38,7 @@ frontend/dist/
 frontend/scratch/
 backend/static/
 models/
+cookies/
 output/
 tests/.tmp-*/
 

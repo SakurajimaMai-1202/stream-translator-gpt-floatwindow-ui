@@ -19,8 +19,6 @@ class RuntimeCapabilities:
     qwen3_default_dtype: str
     qwen3_offline_models: tuple[str, ...]
     qwen3_asr_model_ids: tuple[str, ...]
-    qwen3_streaming_status: SupportStatus
-    qwen3_streaming_note: str
     sensevoice_status: SupportStatus
     sensevoice_models: tuple[str, ...]
     sensevoice_model_ids: tuple[str, ...]
@@ -48,8 +46,6 @@ _CAPABILITIES: dict[RuntimeProfile, RuntimeCapabilities] = {
         qwen3_default_dtype="bfloat16",
         qwen3_offline_models=("0.6B", "1.7B", "1.7B-JA"),
         qwen3_asr_model_ids=("Qwen/Qwen3-ASR-0.6B", "Qwen/Qwen3-ASR-1.7B", "neosophie/Qwen3-ASR-1.7B-JA"),
-        qwen3_streaming_status="experimental",
-        qwen3_streaming_note="0.6B Streaming, English only.",
         sensevoice_status="compatibility",
         sensevoice_models=("SenseVoiceSmall",),
         sensevoice_model_ids=("iic/SenseVoiceSmall",),
@@ -75,8 +71,6 @@ _CAPABILITIES: dict[RuntimeProfile, RuntimeCapabilities] = {
         qwen3_default_dtype="float32",
         qwen3_offline_models=("0.6B",),
         qwen3_asr_model_ids=("Qwen/Qwen3-ASR-0.6B",),
-        qwen3_streaming_status="experimental",
-        qwen3_streaming_note="0.6B Streaming, English only, performance not guaranteed.",
         sensevoice_status="compatibility",
         sensevoice_models=("SenseVoiceSmall",),
         sensevoice_model_ids=("iic/SenseVoiceSmall",),
@@ -102,8 +96,6 @@ _CAPABILITIES: dict[RuntimeProfile, RuntimeCapabilities] = {
         qwen3_default_dtype="bfloat16",
         qwen3_offline_models=("0.6B", "1.7B", "1.7B-JA"),
         qwen3_asr_model_ids=("Qwen/Qwen3-ASR-0.6B", "Qwen/Qwen3-ASR-1.7B", "neosophie/Qwen3-ASR-1.7B-JA"),
-        qwen3_streaming_status="experimental",
-        qwen3_streaming_note="0.6B Streaming, English only, no formal upstream ROCm promise.",
         sensevoice_status="experimental",
         sensevoice_models=("SenseVoiceSmall",),
         sensevoice_model_ids=("iic/SenseVoiceSmall",),

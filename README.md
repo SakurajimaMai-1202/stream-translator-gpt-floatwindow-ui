@@ -261,7 +261,7 @@ Hy-MT2 建議使用純文字輸出、最大輸出 `128` tokens、並行數 `1`�
 3. 選擇 ASR 與目標語言。
 4. 啟動即時轉譯。
 
-部分 YouTube 影片或直播需要 cookies，請在設定頁的輸入選項填入 `cookies.txt`。
+部分平台內容需要登入狀態。可在「輸入選項 > 網站 Cookies」選擇 YouTube、TikTok、X、Twitch 或 Bilibili，並從已登入的 Firefox 更新平台專用 Cookies，或匯入該平台的 Netscape `cookies.txt`；程式會依輸入網址自動選用。
 
 ### 擷取電腦播放音訊
 
@@ -341,7 +341,9 @@ Hy-MT2 建議使用純文字輸出、最大輸出 `128` tokens、並行數 `1`�
 <details>
 <summary><strong>YouTube 或直播網址讀不到怎麼辦？</strong></summary>
 
-先確認網址可在瀏覽器播放。若影片需要登入或年齡驗證，請用瀏覽器擴充套件匯出 `cookies.txt`，再到設定頁的 Input / Cookies 填入路徑。
+先確認網址可在瀏覽器播放。若內容需要登入或年齡驗證，請到「輸入選項 > 網站 Cookies」選擇平台，再從已登入的 Firefox 更新，或匯入 Netscape `cookies.txt`。Windows 新版 Edge、Chrome、Brave 與 Chromium 可能因 App-Bound Encryption 無法由 yt-dlp 直接解密；這不是單純更新 yt-dlp 就能排除的問題。請勿停用瀏覽器安全加密，也不要以系統管理員權限執行本程式。
+
+程式會過濾匯入內容，只保留所選平台網域，並依輸入網址自動套用；不同平台的 Cookies 不會混用。
 
 </details>
 
@@ -588,6 +590,29 @@ Full package 會輸出完整 zip，GitHub Release 使用 `.part01`、`.part02` �
 
 - `merge-full-package.bat`
 - `SHA256SUMS-v1.3.6.txt`
+
+三版本建議使用共享 GUI 打包入口，避免重複執行三次 Vite 與 PyInstaller：
+
+```powershell
+cd app
+
+# 日常驗證：共用 GUI 只建一次，不壓縮 Full ZIP
+.\build_all_profiles.ps1 -Version 1.3.6 -Mode Quick -ReuseRuntimeCache
+
+# 正式發佈：標準 Deflate 高壓縮、分割、重新合併與 SHA256 驗證
+.\build_all_profiles.ps1 `
+  -Version 1.3.6 `
+  -Mode Final `
+  -ReuseRuntimeCache `
+  -CompressionLevel 7 `
+  -SplitSizeMiB 1900 `
+  -CopyThreads 16
+```
+
+統一流程使用 `robocopy /MT` 複製大型目錄，使用 7-Zip 多執行緒壓縮。
+Final 產物會放在 `app/release-v<版本>-assets/`，並包含
+`release-manifest-v<版本>.json`、`SHA256SUMS-v<版本>.txt`、
+`merge-full-package.bat` 與各 profile 的 App Update／Full package 分割檔。
 - `RELEASE_NOTES_v1.3.6_zh-TW.md`
 - 三個 `StreamTranslator-*-App-Update.zip`
 - 三組 Full package 分割檔

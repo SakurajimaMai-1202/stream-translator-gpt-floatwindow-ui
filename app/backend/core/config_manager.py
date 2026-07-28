@@ -13,6 +13,7 @@ import tempfile
 import time
 from contextlib import contextmanager
 from backend.config import settings
+from backend.core.cookie_manager import resolve_cookie_path
 from backend.core.runtime_profiles import get_runtime_capabilities
 
 class ConfigManager:
@@ -43,6 +44,13 @@ class ConfigManager:
             'url': '',
             'format': 'ba/wa*',
             'cookies': '',
+            'cookies_by_site': {
+                'youtube': '',
+                'tiktok': '',
+                'twitter': '',
+                'twitch': '',
+                'bilibili': '',
+            },
             'proxy': '',
             'source_type': 'youtube',
             'timeout': 30,
@@ -641,7 +649,7 @@ class ConfigManager:
             'use_loopback': use_loopback,
             'proxy': '',  # 全域代理
             'format': input_config.get('format', 'ba/wa*'),
-            'cookies': input_config.get('cookies', ''),
+            'cookies': resolve_cookie_path(url, input_config),
             'input_proxy': input_config.get('proxy', ''),
             'device_index': input_config.get('device_index'),
             'device_recording_interval': input_config.get('device_recording_interval', 0.1),

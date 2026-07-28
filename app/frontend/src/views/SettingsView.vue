@@ -37,9 +37,24 @@ const logLevelOptions: UiSelectOption[] = [
 ];
 const sourceTypeOptions: UiSelectOption[] = [
   { value: 'youtube', label: 'YouTube' },
+  { value: 'tiktok', label: 'TikTok' },
   { value: 'twitch', label: 'Twitch' },
   { value: 'bilibili', label: 'Bilibili' },
   { value: 'x', label: 'X (Twitter)' },
+];
+const cookiePlatformOptions: UiSelectOption[] = [
+  { value: 'youtube', label: 'YouTube' },
+  { value: 'tiktok', label: 'TikTok' },
+  { value: 'twitter', label: 'X (Twitter)' },
+  { value: 'twitch', label: 'Twitch' },
+  { value: 'bilibili', label: 'Bilibili' },
+];
+const cookieBrowserOptions: UiSelectOption[] = [
+  { value: 'chrome', label: 'Google Chrome' },
+  { value: 'edge', label: 'Microsoft Edge' },
+  { value: 'firefox', label: 'Mozilla Firefox' },
+  { value: 'brave', label: 'Brave' },
+  { value: 'chromium', label: 'Chromium' },
 ];
 const whisperModelSelectOptions = computed<UiSelectOption[]>(() =>
   allFasterWhisperModels
@@ -120,6 +135,13 @@ const localConfig = ref<any>({
     source_type: 'youtube',
     format: 'ba/wa*',
     cookies: '',
+    cookies_by_site: {
+      youtube: '',
+      tiktok: '',
+      twitter: '',
+      twitch: '',
+      bilibili: ''
+    },
     proxy: '',
     timeout: 30,
     device_recording_interval: 0.1
@@ -216,6 +238,85 @@ const localConfig = ref<any>({
   }
 });
 const isSaving = ref(false);
+const cookiePlatform = ref('youtube');
+const cookieBrowser = ref('chrome');
+const cookieBrowserProfile = ref('');
+const cookieImporting = ref(false);
+const cookieFileInput = ref<HTMLInputElement | null>(null);
+const cookieImportResult = ref<{ type: 'success' | 'error'; message: string } | null>(null);
+const selectedPlatformCookiePath = computed(() =>
+  localConfig.value?.input?.cookies_by_site?.[cookiePlatform.value] || ''
+);
+const selectedBrowserMayLockCookies = computed(() =>
+  ['chrome', 'edge', 'brave', 'chromium'].includes(cookieBrowser.value)
+);
+watch(cookiePlatform, () => {
+  cookieImportResult.value = null;
+});
+
+async function importCookiesFromBrowser() {
+  cookieImporting.value = true;
+  cookieImportResult.value = null;
+  try {
+    const response = await axios.post('/api/cookies/import-browser', {
+      platform: cookiePlatform.value,
+      browser: cookieBrowser.value,
+      profile: cookieBrowserProfile.value.trim(),
+    });
+    const result = response.data?.data;
+    if (!localConfig.value.input.cookies_by_site) {
+      localConfig.value.input.cookies_by_site = {};
+    }
+    localConfig.value.input.cookies_by_site[cookiePlatform.value] = result.path;
+    cookieImportResult.value = {
+      type: 'success',
+      message: `${result.platform_label} Cookies 已更新（${result.cookie_count} 筆）`,
+    };
+  } catch (error: any) {
+    cookieImportResult.value = {
+      type: 'error',
+      message: error.response?.data?.detail || error.message || 'Cookies 更新失敗',
+    };
+  } finally {
+    cookieImporting.value = false;
+  }
+}
+
+function selectCookieFile() {
+  cookieFileInput.value?.click();
+}
+
+async function importCookiesFromFile(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+
+  cookieImporting.value = true;
+  cookieImportResult.value = null;
+  try {
+    const formData = new FormData();
+    formData.append('platform', cookiePlatform.value);
+    formData.append('cookie_file', file);
+    const response = await axios.post('/api/cookies/import-file', formData);
+    const result = response.data?.data;
+    if (!localConfig.value.input.cookies_by_site) {
+      localConfig.value.input.cookies_by_site = {};
+    }
+    localConfig.value.input.cookies_by_site[cookiePlatform.value] = result.path;
+    cookieImportResult.value = {
+      type: 'success',
+      message: `${result.platform_label} Cookies 已匯入（${result.cookie_count} 筆）`,
+    };
+  } catch (error: any) {
+    cookieImportResult.value = {
+      type: 'error',
+      message: error.response?.data?.detail || error.message || 'cookies.txt 匯入失敗',
+    };
+  } finally {
+    cookieImporting.value = false;
+    input.value = '';
+  }
+}
 const settingsTabIds = new Set([
   'general',
   'input',
@@ -1168,11 +1269,88 @@ async function handleFileChange(event: Event) {
                   class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
               </div>
 
-              <div class="md:col-span-2">
-                <label class="block text-white/70 font-semibold mb-2">Cookies 檔案路徑</label>
-                <input v-model="localConfig.input.cookies" type="text" placeholder="./youtubecookies.txt"
-                  class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
-                <p class="text-white/40 text-sm mt-1">用於存取需要登入的直播</p>
+              <div class="md:col-span-2 border-t border-white/10 pt-5">
+                <div class="flex items-center justify-between gap-3 mb-4">
+                  <div>
+                    <h3 class="text-white font-semibold">網站 Cookies</h3>
+                    <p class="text-white/40 text-sm mt-1">從已登入的瀏覽器更新平台專用 Cookies</p>
+                  </div>
+                  <span
+                    v-if="selectedPlatformCookiePath"
+                    class="text-xs px-2 py-1 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/25"
+                  >
+                    已設定
+                  </span>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <label class="block text-white/70 font-semibold mb-2">平台</label>
+                    <UiSelect v-model="cookiePlatform" :options="cookiePlatformOptions" />
+                  </div>
+                  <div>
+                    <label class="block text-white/70 font-semibold mb-2">瀏覽器</label>
+                    <UiSelect v-model="cookieBrowser" :options="cookieBrowserOptions" />
+                    <p v-if="selectedBrowserMayLockCookies" class="text-amber-300/70 text-xs mt-2">
+                      Windows 新版 Chromium 可能無法直接解密；可改用 Firefox 或匯入 cookies.txt
+                    </p>
+                  </div>
+                  <div>
+                    <label class="block text-white/70 font-semibold mb-2">瀏覽器 Profile</label>
+                    <input
+                      v-model="cookieBrowserProfile"
+                      type="text"
+                      placeholder="留空使用預設 Profile"
+                      class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400"
+                    />
+                  </div>
+                </div>
+
+                <div class="mt-4 flex flex-col md:flex-row md:items-center gap-3">
+                  <button
+                    type="button"
+                    :disabled="cookieImporting"
+                    class="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition"
+                    @click="importCookiesFromBrowser"
+                  >
+                    {{ cookieImporting ? '更新中...' : '從瀏覽器更新' }}
+                  </button>
+                  <input
+                    ref="cookieFileInput"
+                    type="file"
+                    accept=".txt,text/plain"
+                    class="hidden"
+                    @change="importCookiesFromFile"
+                  />
+                  <button
+                    type="button"
+                    :disabled="cookieImporting"
+                    class="px-4 py-2 bg-white/10 hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition"
+                    @click="selectCookieFile"
+                  >
+                    匯入 cookies.txt
+                  </button>
+                  <p
+                    v-if="cookieImportResult"
+                    class="text-sm"
+                    :class="cookieImportResult.type === 'success' ? 'text-emerald-300' : 'text-rose-300'"
+                  >
+                    {{ cookieImportResult.message }}
+                  </p>
+                  <p v-else-if="selectedPlatformCookiePath" class="text-white/45 text-sm truncate">
+                    {{ selectedPlatformCookiePath }}
+                  </p>
+                </div>
+
+                <div class="mt-5">
+                  <label class="block text-white/70 font-semibold mb-2">其他網站 Cookies（Fallback）</label>
+                  <input
+                    v-model="localConfig.input.cookies"
+                    type="text"
+                    placeholder="未匹配平台時使用的 cookies.txt"
+                    class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400"
+                  />
+                </div>
               </div>
 
               <div>
@@ -1360,7 +1538,6 @@ async function handleFileChange(event: Event) {
                   <div class="text-white/60 text-sm mb-2">ASR capability</div>
                   <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
                     <div class="text-white/80">Qwen3 dtype: <span class="text-cyan-200">{{ runtimeCapabilities?.qwen3_default_dtype || '-' }}</span></div>
-                    <div class="text-white/80">Qwen3 streaming: <span class="text-yellow-200">{{ runtimeCapabilities?.qwen3_streaming_status || '-' }}</span></div>
                     <div class="text-white/80">Faster-Whisper: <span class="text-cyan-200">{{ runtimeCapabilities?.faster_whisper_status || '-' }}</span></div>
                     <div class="text-white/80">SenseVoice: <span class="text-cyan-200">{{ runtimeCapabilities?.sensevoice_status || '-' }}</span></div>
                     <div class="text-white/80">Parakeet CTC JA: <span class="text-cyan-200">{{ runtimeCapabilities?.parakeet_status || '-' }}</span></div>

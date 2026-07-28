@@ -16,7 +16,7 @@ v1.3.2 是 CUDA / CPU / ROCm 三版本同步更新。這版重點是把 runtime 
 - Parakeet 預設使用 `bfloat16`；目前已可正式跑，穩態顯存約 4GB，載入峰值會略高。
 - Parakeet 載入流程改用 NVIDIA NeMo，並加入參數量、buffer、CUDA allocated / reserved / max allocated 診斷。
 - CUDA runtime profile 驗證會檢查 NeMo、FunASR、torchaudio、Qwen3-ASR、Faster-Whisper 與 PyInstaller。
-- 保留 Faster-Whisper 全系列、Qwen3-ASR 0.6B / 1.7B / 1.7B-JA、Qwen3 streaming experimental 與 SenseVoiceSmall compatibility。
+- 保留 Faster-Whisper 全系列、Qwen3-ASR 0.6B / 1.7B / 1.7B-JA 與 SenseVoiceSmall compatibility。
 
 ## CPU 版
 
@@ -24,13 +24,11 @@ v1.3.2 是 CUDA / CPU / ROCm 三版本同步更新。這版重點是把 runtime 
 - CPU profile 會強制 CPU device policy，避免誤用顯卡。
 - Faster-Whisper 建議使用 small / medium。
 - Qwen3-ASR offline 支援 0.6B。
-- Qwen3-ASR streaming 0.6B 仍列 experimental，速度需依機器測試。
 - SenseVoiceSmall CPU 可用，不先標慢速；實際速度受 CPU 與音訊長度影響。
 
 ## ROCm Experimental
 
 - Qwen3-ASR offline 支援 0.6B / 1.7B / 1.7B-JA，CUDA / ROCm 預設使用 `bfloat16`。
-- Qwen3-ASR streaming 仍列 experimental，因上游明確列 CUDA / Apple Silicon / CPU，未正式列 ROCm。
 - SenseVoiceSmall 在 ROCm profile 先列 experimental，需更多 AMD 實機 ASR smoke test 後再提升狀態。
 - Radeon RX 9070 XT 已由使用者實機測試確認可用。
 - 裝置策略預設使用 auto discrete GPU，避免選到 AMD 內顯 / APU 或虛擬顯示裝置。

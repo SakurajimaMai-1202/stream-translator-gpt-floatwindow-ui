@@ -126,9 +126,44 @@ CPU 與 ROCm 包會分別寫成 `cpu` / `rocm`。CPU 包會同步寫入 `device_
 
 重點：
 
-- CUDA：正式支援 Faster-Whisper 全系列、Qwen3-ASR offline 0.6B / 1.7B / 1.7B-JA；Qwen3 streaming 先列 experimental；SenseVoiceSmall 列 compatibility。
-- CPU：正式列 Faster-Whisper small / medium 慢速、Qwen3-ASR offline 0.6B；Qwen3 streaming 速度待測；SenseVoiceSmall 列 compatibility，CPU 可用但速度待測。
-- ROCm：正式列 Qwen3-ASR offline 0.6B / 1.7B / 1.7B-JA；streaming 只列 experimental，不作正式承諾；SenseVoiceSmall 已由 AMD ROCm 實機驗證可用。
+- CUDA：正式支援 Faster-Whisper 全系列、Qwen3-ASR offline 0.6B / 1.7B / 1.7B-JA；SenseVoiceSmall 列 compatibility。
+- CPU：正式列 Faster-Whisper small / medium 慢速、Qwen3-ASR offline 0.6B；SenseVoiceSmall 列 compatibility，CPU 可用但速度待測。
+- ROCm：正式列 Qwen3-ASR offline 0.6B / 1.7B / 1.7B-JA；SenseVoiceSmall 已由 AMD ROCm 實機驗證可用。
+
+## 三版本統一快速打包
+
+三版 GUI 與前端程式碼相同，實際功能差異由各包的 `config.yaml`、
+`runtime-version.json` 與 Runtime Capability API 決定。因此 Vite 與
+PyInstaller 可以只建置一次，再分別組裝 CUDA、CPU 與 ROCm runtime。
+
+快速驗證：
+
+```powershell
+.\build_all_profiles.ps1 -Version 1.3.6 -Mode Quick -ReuseRuntimeCache
+```
+
+正式發佈：
+
+```powershell
+.\build_all_profiles.ps1 `
+  -Version 1.3.6 `
+  -Mode Final `
+  -ReuseRuntimeCache `
+  -CompressionLevel 7 `
+  -SplitSizeMiB 1900 `
+  -CopyThreads 16
+```
+
+- 大型目錄使用 `robocopy /MT`，exit code `0` 到 `7` 視為成功。
+- Quick 的 App Update 只包含 GUI 與核心引擎，不重複複製 ASR runtime
+  相依套件；Final 預設保留相容更新所需依賴。
+- ZIP 使用標準 Deflate 與 7-Zip 多執行緒壓縮，維持一般解壓工具相容性。
+- Full ZIP 完成後才切成 `.part01`、`.part02` 等檔案。
+- 分割完成後會重新合併、比對原始 SHA256，並再次執行 ZIP 測試。
+- 上傳資料集中會產生 `release-manifest-v<版本>.json` 與
+  `SHA256SUMS-v<版本>.txt`。
+- 統一流程只重用三個已驗證 runtime cache。依賴變更時，必須先使用正確
+  profile 的 Build Python 個別重建 runtime，不能用 CUDA 環境重建 CPU 或 ROCm。
 
 ## Runtime diagnostics
 

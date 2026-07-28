@@ -384,13 +384,14 @@ PyTorch 必須依照 runtime profile 選擇 CPU / CUDA / ROCm 不同 build。CPU
 
 ## 從原始碼執行
 
-一般使用者建議使用打包版。以下流程適合開發、除錯或自行打包。原始碼執行不會自動幫你安裝正確的 PyTorch 變體；請依目標 profile 先準備 CUDA / CPU / ROCm 對應環境。
+一般使用者建議使用打包版。以下流程適合開發、除錯或自行打包。原始碼執行與打包腳本都不會自動安裝正確的 PyTorch 變體；請依目標 profile 分別準備 CUDA / CPU / ROCm Build Python，三種環境不要混用。
 
 ### 1. 準備 Python 依賴
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
 
 # 依目標 profile 安裝 PyTorch，三選一：
 
@@ -405,6 +406,12 @@ pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
 
 pip install -r .\app\requirements.txt
 pip install -e .\stream-translator-gpt
+```
+
+若要自行打包，Build Python 還必須安裝 PyInstaller：
+
+```powershell
+pip install -r .\app\requirements_full.txt
 ```
 
 CUDA 版若要開發或打包 Parakeet CTC JA，還要安裝：
@@ -442,11 +449,38 @@ floatwindow/
 └── stream-translator-gpt/
 ```
 
-SenseVoiceSmall 若不想等線上下載，可從 Release 下載 `StreamTranslator-SenseVoiceSmall-Model-v1.3.4.zip`，解壓到 `app\models\huggingface\modelscope\models\iic\SenseVoiceSmall` 或打包後程式根目錄的同名 `models` 路徑。
+SenseVoiceSmall 若不想等線上下載，可從 Release 下載 [`StreamTranslator-SenseVoiceSmall-Model-v1.3.4.zip`](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/download/v1.3.4/StreamTranslator-SenseVoiceSmall-Model-v1.3.4.zip)，解壓到 `app\models\huggingface\modelscope\models\iic\SenseVoiceSmall` 或打包後程式根目錄的同名 `models` 路徑。
 
 ---
 
 ## 開發者資訊
+
+### GitHub 原始碼是否足以打包
+
+可以，但不是 clone 後直接執行一條指令就能產生三個完整包。GitHub 儲存庫提供共用功能原始碼與完整打包流程；大型 runtime、第三方執行檔、模型與建置產物不納入版本控制，開發者必須先準備對應環境。
+
+GitHub 已包含：
+
+- `app/build_release.ps1`、`app/build_runtime.ps1` 與三版共用的 `app/packaging/` 實作。
+- PyInstaller spec、CUDA / CPU / ROCm profile 注入、App Update / Full package 組裝與驗證腳本。
+- `app/requirements*.txt`、Vue `package-lock.json`、`config.example.yaml`、後端／前端原始碼與 `stream-translator-gpt` 核心引擎。
+- runtime 診斷、SenseVoiceSmall smoke test、模型包工具與繁體中文打包文件。
+
+GitHub 不包含：
+
+- `app/build-runtime-cache/`、`app/dist-*`、`node_modules/`、使用者 `config.yaml` 與下載後的 `models/`。
+- CUDA / CPU / ROCm 的 PyTorch 與 ASR Python runtime；`-ReuseRuntimeCache` 只能重用建置機上既有且驗證通過的 cache。
+- `ffmpeg-8.1-essentials_build/` 與 `llama/` 第三方二進位檔。Full package 若要內附它們，需由開發者另外準備。
+
+Fresh clone 建議先確認：
+
+1. 安裝 Python 3.10-3.12、Node.js 18+、npm、Git 與 Windows 內建 `tar.exe`。
+2. 為 `cuda`、`cpu`、`rocm` 建立三個獨立 Build Python，先安裝該 profile 的 PyTorch，再安裝 `app/requirements_full.txt`；CUDA 另裝 `app/requirements_cuda_parakeet.txt`。
+3. ROCm Build Python 必須是真正提供 `torch.version.hip` 的 Windows ROCm/HIP 環境；沒有 AMD 顯卡仍可重用已驗證 ROCm cache，但不能從 CUDA / CPU 環境重建 ROCm runtime。
+4. 若 Full package 必須內附 FFmpeg，請準備 `ffmpeg-8.1-essentials_build\ffmpeg-8.1-essentials_build\bin\ffmpeg.exe` 與 `ffprobe.exe`。
+5. 若要內附 llama.cpp，請將 `llama-server.exe` 與所需 DLL 放在專案根目錄的 `llama\`。
+
+目前 GitHub 的檔案足以重建 GUI、三種 profile package 與驗證產物；但模型與第三方 runtime 仍需依授權及硬體環境另外下載或準備。
 
 ### 專案結構
 
@@ -506,7 +540,7 @@ stream-translator-gpt-floatwindow-ui/
 | `cpu` | `app/dist-cpu/StreamTranslator-win64-CPU` | CPU-only 版；使用 CPU-only PyTorch，支援遠端 API、字幕分享、Qwen3-ASR 0.6B、SenseVoiceSmall、faster-whisper small / medium |
 | `rocm` | `app/dist-rocm/StreamTranslator-win64-ROCm-Experimental` | AMD ROCm/HIP 實驗版；Qwen3-ASR 與 SenseVoiceSmall 已有 AMD 實機可用案例，package 仍保留 Experimental |
 
-打包前先檢查 build Python：
+打包前先檢查 Build Python。三個 profile 應分別指向不同環境：
 
 ```powershell
 cd .\app
@@ -516,7 +550,7 @@ cd .\app
 .\check_runtime_profile_env.ps1 -Profile rocm -Python "D:\Python\rocm-runtime\python.exe"
 ```
 
-打包指令：
+打包指令。`-Version` 請改成準備發佈的版本：
 
 ```powershell
 cd .\app

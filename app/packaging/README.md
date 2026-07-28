@@ -75,11 +75,7 @@ Validate built artifacts from `app`:
 .\validate_runtime_artifact.ps1 -Profile rocm
 ```
 
-For a CUDA-only development machine that intentionally builds a policy-only CPU
-package from a CUDA torch runtime:
-
-```powershell
-.\validate_runtime_matrix.ps1 -CpuExpectedTorchBackend cuda -AllowMissingRocm
-```
+CPU release builds require a CPU-only PyTorch build environment. CUDA or ROCm
+torch must not be used to create the CPU runtime.
 
 See `app/docs/PACKAGING_zh-TW.md` for the profile matrix, package names, and build Python requirements.

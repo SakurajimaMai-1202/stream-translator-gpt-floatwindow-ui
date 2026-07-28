@@ -10,8 +10,9 @@
 #   1. 建立 venv（建議 Python 3.10–3.12）：
 #      python -m venv venv
 #
-#   2. 先裝 CUDA 版 PyTorch（必須最先裝，避免抓到錯誤變體）：
-#      venv\Scripts\pip install torch --extra-index-url https://download.pytorch.org/whl/cu124
+#   2. 先安裝目標 profile 的 PyTorch（CUDA / CPU / ROCm 必須使用不同環境）：
+#      CPU 範例：
+#      venv\Scripts\pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
 #
 #   3. 安裝本檔所有依賴：
 #      venv\Scripts\pip install -r requirements_full.txt
@@ -22,8 +23,8 @@
 #   5. （可選）若要啟用 Qwen3-ASR 4-bit 量化：
 #      venv\Scripts\pip install bitsandbytes
 #
-#   6. 執行打包：
-#      .\build_exe.ps1
+#   6. 執行目標 profile 打包：
+#      .\build_release.ps1 -Profile cpu -Version 1.3.6
 
 # ── 先安裝應用執行依賴 ──────────────────────────────────────
 -r requirements.txt

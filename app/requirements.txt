@@ -9,7 +9,7 @@
 #
 # 不會安裝：
 # - CUDA Toolkit / cuDNN / NVIDIA Driver
-# - CUDA 版 PyTorch（需手動安裝；本專案不提供 CPU 模式文件）
+# - CUDA / CPU / ROCm PyTorch（需依目標 profile 手動安裝正確變體）
 # - ffmpeg 執行檔
 # - Node.js / npm
 # - llama-server.exe 與其 DLL

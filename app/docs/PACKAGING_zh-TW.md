@@ -46,7 +46,7 @@
 | Profile | Build Python 內的 torch 要求 |
 | --- | --- |
 | `cuda` | CUDA 版 PyTorch，`torch.version.cuda` 必須存在 |
-| `cpu` | CPU 或 GPU 版 PyTorch 皆可，但打包後設定會強制 CPU profile；建議用 CPU 版降低體積 |
+| `cpu` | CPU-only PyTorch；目前打包腳本會拒絕 CUDA / ROCm torch，避免產物夾帶錯誤 GPU runtime |
 | `rocm` | ROCm/HIP 版 PyTorch，`torch.version.hip` 必須存在 |
 
 範例：
@@ -67,7 +67,7 @@ $env:STREAM_TRANSLATOR_BUILD_PYTHON = "F:\AI\floatwindow\app\venv\Scripts\python
 
 - `cuda` 必須顯示 `cuda` 欄位。
 - `rocm` 必須顯示 `hip` 欄位。
-- `cpu` 若顯示 CUDA/HIP 會出現警告，代表可以打 CPU profile，但 runtime 仍包含 GPU 版 torch，檔案會比較大。
+- `cpu` 必須顯示 CPU backend；若偵測到 CUDA/HIP，打包會停止，請改用 CPU-only Build Python。
 
 `build_runtime.ps1` 會在複製 runtime 前做同樣檢查。若用 CUDA torch 去跑 `-Profile rocm`，會在前置檢查階段直接停止，不會先複製大型 runtime。
 
@@ -94,13 +94,7 @@ $env:STREAM_TRANSLATOR_BUILD_PYTHON = "F:\AI\floatwindow\app\venv\Scripts\python
 .\validate_runtime_artifact.ps1 -Profile rocm
 ```
 
-若開發機暫時只能用 CUDA torch 建出 policy-only CPU 包，才改用：
-
-```powershell
-.\validate_runtime_artifact.ps1 -Profile cpu -ExpectedTorchBackend cuda
-```
-
-正式 v1.3.4 CPU 包建議使用 CPU-only torch build Python，所以 `profile` 是 `cpu`，`torch_backend` 是 `cpu`，且 `policy_forces_cpu` 是 `true`。
+正式 CPU 包必須使用 CPU-only torch Build Python，所以 `profile` 是 `cpu`，`torch_backend` 是 `cpu`，且 `policy_forces_cpu` 是 `true`。
 
 也可以一次檢查整個矩陣：
 

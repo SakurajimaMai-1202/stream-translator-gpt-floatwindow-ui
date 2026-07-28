@@ -74,7 +74,7 @@ LLAMA_TESTING_GUIDE.md
 PROJECT_SUMMARY.md
 TESTING.md
 README.md
-README.txt
+!README.txt
 !docs/README.md
 !packaging/README.md
 

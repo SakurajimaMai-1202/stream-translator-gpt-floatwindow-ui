@@ -184,7 +184,7 @@ App Update 只能覆蓋同 profile 完整包；不要用 CUDA App Update 覆蓋 
 | 12GB 顯卡想長時間穩定直播 | `Qwen3-ASR-1.7B + Hy-MT2-1.8B Q4_K_M` |
 | 不想佔本地顯存 | ASR 跑較小本地模型，翻譯用 GPT / Gemini API；或 ASR 直接用 OpenAI Whisper API |
 
-SenseVoiceSmall 建議搭配 `StreamTranslator-SenseVoiceSmall-Model-v1.3.4.zip` 模型包使用。解壓到主程式資料夾後，CUDA / CPU / ROCm 三版可共用同一份 `models\huggingface\modelscope\models\iic\SenseVoiceSmall`，避免首次啟動時從 ModelScope 或 Hugging Face 下載過慢。
+SenseVoiceSmall 建議搭配 [`StreamTranslator-SenseVoiceSmall-Model-v1.3.4.zip`](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/download/v1.3.4/StreamTranslator-SenseVoiceSmall-Model-v1.3.4.zip) 模型包使用。解壓到主程式資料夾後，CUDA / CPU / ROCm 三版可共用同一份 `models\huggingface\modelscope\models\iic\SenseVoiceSmall`，避免首次啟動時從 ModelScope 或 Hugging Face 下載過慢。
 
 實際顯存會受到 context 長度、KV cache、GPU offload、llama.cpp / LM Studio / Ollama 設定影響。下面的表格是選型方向，不是絕對值。
 

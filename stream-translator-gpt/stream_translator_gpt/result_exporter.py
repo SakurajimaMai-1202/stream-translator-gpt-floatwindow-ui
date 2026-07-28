@@ -1,6 +1,7 @@
 import json
 import os
 import queue
+import time
 from urllib.parse import urlencode, urlparse, urlunparse
 
 import requests
@@ -9,6 +10,7 @@ from .common import TranslationTask, LoopWorkerBase, sec2str, start_daemon_threa
 from .subtitle_sharing import format_srt_timestamp
 
 SUBTITLE_EVENT_PREFIX = "__ST_SUBTITLE_EVENT__"
+DISCORD_MAX_RATE_LIMIT_RETRIES = 5
 
 
 def normalize_subtitle_share_push_url(url: str | None) -> str | None:
@@ -42,6 +44,35 @@ def _format_latency_log(task: TranslationTask) -> str:
     if not parts:
         return ""
     return f" [Latency: {' | '.join(parts)}]"
+
+
+def _parse_nonnegative_float(value) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return max(0.0, parsed)
+
+
+def _discord_retry_after(response) -> float | None:
+    delays = [
+        _parse_nonnegative_float(response.headers.get("Retry-After")),
+        _parse_nonnegative_float(response.headers.get("X-RateLimit-Reset-After")),
+    ]
+    try:
+        payload = response.json()
+    except (ValueError, requests.exceptions.JSONDecodeError):
+        payload = None
+    if isinstance(payload, dict):
+        delays.append(_parse_nonnegative_float(payload.get("retry_after")))
+    valid_delays = [delay for delay in delays if delay is not None]
+    return max(valid_delays) if valid_delays else None
+
+
+def _discord_bucket_delay(response) -> float | None:
+    if response.headers.get("X-RateLimit-Remaining") != "0":
+        return None
+    return _discord_retry_after(response)
 
 
 class ResultExporter(LoopWorkerBase):
@@ -117,12 +148,29 @@ class ResultExporter(LoopWorkerBase):
                 if not chunks:
                     chunks = ['\u200b']
                 for sub_text in chunks:
-                    data = {'content': sub_text}
-                    response = requests.post(webhook_url, json=data, timeout=10, proxies=self.proxies)
-                    if response.status_code >= 300:
-                        print(f"Discord webhook failed: {response.status_code} {response.text}")
+                    self._post_discord_chunk(webhook_url, sub_text)
             except Exception as e:
                 print(f"Discord webhook error: {e}")
+
+    def _post_discord_chunk(self, webhook_url: str, text: str) -> bool:
+        data = {'content': text}
+        for attempt in range(DISCORD_MAX_RATE_LIMIT_RETRIES + 1):
+            response = requests.post(webhook_url, json=data, timeout=10, proxies=self.proxies)
+            if response.status_code == 429:
+                retry_after = _discord_retry_after(response)
+                if retry_after is None or attempt >= DISCORD_MAX_RATE_LIMIT_RETRIES:
+                    print(f"Discord webhook failed: {response.status_code} {response.text}")
+                    return False
+                time.sleep(retry_after)
+                continue
+            if response.status_code >= 300:
+                print(f"Discord webhook failed: {response.status_code} {response.text}")
+                return False
+            bucket_delay = _discord_bucket_delay(response)
+            if bucket_delay:
+                time.sleep(bucket_delay)
+            return True
+        return False
 
     def _send_message_to_telegram(self, token: str, chat_id: int):
         while True:

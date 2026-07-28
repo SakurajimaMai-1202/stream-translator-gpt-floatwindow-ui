@@ -24,7 +24,7 @@
 #      venv\Scripts\pip install bitsandbytes
 #
 #   6. 執行目標 profile 打包：
-#      .\build_release.ps1 -Profile cpu -Version 1.3.6
+#      .\build_release.ps1 -Profile cpu -Version 1.3.7
 
 # ── 先安裝應用執行依賴 ──────────────────────────────────────
 -r requirements.txt

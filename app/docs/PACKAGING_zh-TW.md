@@ -139,14 +139,14 @@ PyInstaller 可以只建置一次，再分別組裝 CUDA、CPU 與 ROCm runtime�
 快速驗證：
 
 ```powershell
-.\build_all_profiles.ps1 -Version 1.3.6 -Mode Quick -ReuseRuntimeCache
+.\build_all_profiles.ps1 -Version 1.3.7 -Mode Quick -ReuseRuntimeCache
 ```
 
 正式發佈：
 
 ```powershell
 .\build_all_profiles.ps1 `
-  -Version 1.3.6 `
+  -Version 1.3.7 `
   -Mode Final `
   -ReuseRuntimeCache `
   -CompressionLevel 7 `

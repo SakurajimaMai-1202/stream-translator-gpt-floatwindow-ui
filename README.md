@@ -455,32 +455,39 @@ SenseVoiceSmall 若不想等線上下載，可從 Release 下載 [`StreamTransla
 
 ## 開發者資訊
 
-### GitHub 原始碼是否足以打包
+### 原始碼與建置範圍
 
-可以，但不是 clone 後直接執行一條指令就能產生三個完整包。GitHub 儲存庫提供共用功能原始碼與完整打包流程；大型 runtime、第三方執行檔、模型與建置產物不納入版本控制，開發者必須先準備對應環境。
+本儲存庫包含產生 CUDA、CPU 與 ROCm 三種 Windows 發行包所需的專案原始碼、建置腳本及驗證工具。為控制儲存庫大小並遵守第三方元件的發佈條件，Python runtime、模型、外部執行檔與建置產物不納入版本控制；執行可重現建置前，必須先在建置機上準備對應依賴。
 
-GitHub 已包含：
+| 類別 | 儲存庫內容 |
+|------|------------|
+| 應用程式 | PyQt6 桌面程式、FastAPI 後端、Vue 前端、設定範本與靜態資源 |
+| 核心引擎 | `stream-translator-gpt` 轉錄、翻譯、音訊切段與輸出流程 |
+| 建置流程 | `app/build_release.ps1`、`app/build_runtime.ps1`、PyInstaller spec 與 `app/packaging/` 共用實作 |
+| Runtime profiles | CUDA / CPU / ROCm 設定注入、Runtime manifest、App Update 與 Full package 組裝 |
+| 品質檢查 | 單一產物與三 profile 矩陣驗證、runtime 診斷、SenseVoiceSmall smoke test |
+| 依賴與文件 | `app/requirements*.txt`、Vue lockfile、模型包工具及繁體中文建置文件 |
 
-- `app/build_release.ps1`、`app/build_runtime.ps1` 與三版共用的 `app/packaging/` 實作。
-- PyInstaller spec、CUDA / CPU / ROCm profile 注入、App Update / Full package 組裝與驗證腳本。
-- `app/requirements*.txt`、Vue `package-lock.json`、`config.example.yaml`、後端／前端原始碼與 `stream-translator-gpt` 核心引擎。
-- runtime 診斷、SenseVoiceSmall smoke test、模型包工具與繁體中文打包文件。
+下列項目由建置環境提供，不會提交至 GitHub：
 
-GitHub 不包含：
+| 項目 | 建置要求 |
+|------|----------|
+| Build Python | CUDA、CPU 與 ROCm 必須使用各自獨立且符合 profile 的 PyTorch 環境 |
+| Runtime cache | `app/build-runtime-cache/` 為本機建置產物；`-ReuseRuntimeCache` 僅接受已通過 manifest 與 import 驗證的 cache |
+| 模型 | 下載後的 `models/` 不納入版本控制，使用者可於首次啟動時下載或部署獨立模型包 |
+| FFmpeg | 若 Full package 需要內附，請提供 `ffmpeg-8.1-essentials_build\ffmpeg-8.1-essentials_build\bin\ffmpeg.exe` 與 `ffprobe.exe` |
+| llama.cpp | 若需要內附本地 LLM server，請將 `llama-server.exe` 與相依 DLL 放在專案根目錄的 `llama\` |
+| 建置輸出 | `app/dist-*`、`node_modules/`、使用者 `config.yaml` 與其他暫存檔均由建置流程在本機產生 |
 
-- `app/build-runtime-cache/`、`app/dist-*`、`node_modules/`、使用者 `config.yaml` 與下載後的 `models/`。
-- CUDA / CPU / ROCm 的 PyTorch 與 ASR Python runtime；`-ReuseRuntimeCache` 只能重用建置機上既有且驗證通過的 cache。
-- `ffmpeg-8.1-essentials_build/` 與 `llama/` 第三方二進位檔。Full package 若要內附它們，需由開發者另外準備。
+#### 建置前置條件
 
-Fresh clone 建議先確認：
+1. 安裝 Python 3.10-3.12、Node.js 18+、npm、Git，以及提供 `tar.exe` 的 Windows 10/11 環境。
+2. 為 `cuda`、`cpu`、`rocm` 建立獨立 Build Python；先安裝目標 profile 的 PyTorch，再安裝 `app/requirements_full.txt`。
+3. CUDA Build Python 另須安裝 `app/requirements_cuda_parakeet.txt`，以納入 Parakeet CTC JA 所需的 NVIDIA NeMo runtime。
+4. ROCm Build Python 必須提供有效的 `torch.version.hip`。沒有 AMD 顯卡的建置機可以重用已驗證的 ROCm runtime cache，但不能以 CUDA 或 CPU 環境重建 ROCm runtime。
+5. 執行打包前，使用 `app/check_runtime_profile_env.ps1` 驗證 Build Python；打包完成後，使用 artifact validator 檢查 profile、PyTorch backend、必要 imports 與輸出結構。
 
-1. 安裝 Python 3.10-3.12、Node.js 18+、npm、Git 與 Windows 內建 `tar.exe`。
-2. 為 `cuda`、`cpu`、`rocm` 建立三個獨立 Build Python，先安裝該 profile 的 PyTorch，再安裝 `app/requirements_full.txt`；CUDA 另裝 `app/requirements_cuda_parakeet.txt`。
-3. ROCm Build Python 必須是真正提供 `torch.version.hip` 的 Windows ROCm/HIP 環境；沒有 AMD 顯卡仍可重用已驗證 ROCm cache，但不能從 CUDA / CPU 環境重建 ROCm runtime。
-4. 若 Full package 必須內附 FFmpeg，請準備 `ffmpeg-8.1-essentials_build\ffmpeg-8.1-essentials_build\bin\ffmpeg.exe` 與 `ffprobe.exe`。
-5. 若要內附 llama.cpp，請將 `llama-server.exe` 與所需 DLL 放在專案根目錄的 `llama\`。
-
-目前 GitHub 的檔案足以重建 GUI、三種 profile package 與驗證產物；但模型與第三方 runtime 仍需依授權及硬體環境另外下載或準備。
+完成上述外部依賴準備後，即可使用儲存庫內的共用流程重建 GUI、三種 runtime profile、App Update、Full package 與驗證產物。
 
 ### 專案結構
 

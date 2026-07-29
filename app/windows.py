@@ -275,14 +275,7 @@ class HomeWindow(WebViewWindow):
                 'height': geometry.height()
             }
             
-            config = self.config_manager.get_config()
-            if 'ui' not in config:
-                config['ui'] = {}
-            if 'windows' not in config['ui']:
-                config['ui']['windows'] = {}
-            
-            config['ui']['windows']['main_window'] = window_config
-            self.config_manager.save()
+            self.config_manager.save_window_state('main_window', window_config)
             logger.info(f"已儲存主視窗配置: {window_config}")
         except Exception as e:
             logger.error(f"儲存主視窗配置失敗: {e}")
@@ -410,6 +403,11 @@ class FloatingSubtitleWindow(WebViewWindow):
         self.setWindowOpacity(0.0)
         
         self.config_manager = config_manager
+        self._geometry_tracking_ready = False
+        self._geometry_save_timer = QTimer(self)
+        self._geometry_save_timer.setSingleShot(True)
+        self._geometry_save_timer.setInterval(250)
+        self._geometry_save_timer.timeout.connect(self._save_window_geometry)
         self.setWindowTitle("字幕")
         app = QApplication.instance()
         if app is not None:
@@ -514,6 +512,7 @@ class FloatingSubtitleWindow(WebViewWindow):
         self._drag_pos = None
         self._resize_edge = None
         self._margin = 10
+        self._geometry_tracking_ready = True
 
     def _install_event_filter(self):
         """遞迴安裝事件過濾器到所有子元件"""
@@ -667,6 +666,25 @@ class FloatingSubtitleWindow(WebViewWindow):
     
     def mouseReleaseEvent(self, event):
          super().mouseReleaseEvent(event)
+
+    def moveEvent(self, event):
+        super().moveEvent(event)
+        self._schedule_geometry_save()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._schedule_geometry_save()
+
+    def closeEvent(self, event):
+        self._geometry_save_timer.stop()
+        self._save_window_geometry()
+        if self.settings_window is not None:
+            self.settings_window.close()
+        super().closeEvent(event)
+
+    def _schedule_geometry_save(self):
+        if self._geometry_tracking_ready and self.config_manager:
+            self._geometry_save_timer.start()
     
     def _save_window_geometry(self):
         """儲存視窗位置和大小到配置"""
@@ -683,18 +701,7 @@ class FloatingSubtitleWindow(WebViewWindow):
                 'visible': self.isVisible()
             }
             
-            # 獲取當前配置
-            config = self.config_manager.get_config()
-            if 'ui' not in config:
-                config['ui'] = {}
-            if 'windows' not in config['ui']:
-                config['ui']['windows'] = {}
-            
-            # 更新字幕視窗配置
-            config['ui']['windows']['floating_subtitle'] = window_config
-            
-            # 儲存配置
-            self.config_manager.save()
+            self.config_manager.save_window_state('floating_subtitle', window_config)
             logger.debug(f"已儲存字幕視窗配置: {window_config}")
         except Exception as e:
             logger.error(f"儲存字幕視窗配置失敗: {e}")

@@ -30,14 +30,40 @@ function preventUnexpectedPageZoom() {
 app.use(pinia)
 app.use(router)
 
-// 動態注入 Qt WebChannel 腳本以避免 Vite 構建錯誤
-if ((window as any).qt || window.location.protocol === 'qrc:') {
-    const script = document.createElement('script');
-    script.src = 'qrc:///qtwebchannel/qwebchannel.js';
-    document.head.appendChild(script);
+function loadQtWebChannel(): Promise<void> {
+    if ((window as any).QWebChannel) return Promise.resolve();
 
-    // 在桌面版 WebView 中鎖定頁面縮放，避免下拉選單滾動觸發持續放大
-    preventUnexpectedPageZoom();
+    return new Promise((resolve, reject) => {
+        const existing = document.querySelector<HTMLScriptElement>('script[data-qt-webchannel]');
+        if (existing) {
+            existing.addEventListener('load', () => resolve(), { once: true });
+            existing.addEventListener('error', () => reject(new Error('Qt WebChannel script failed to load')), { once: true });
+            return;
+        }
+
+        const script = document.createElement('script');
+        script.src = 'qrc:///qtwebchannel/qwebchannel.js';
+        script.dataset.qtWebchannel = 'true';
+        script.onload = () => resolve();
+        script.onerror = () => reject(new Error('Qt WebChannel script failed to load'));
+        document.head.appendChild(script);
+    });
 }
 
-app.mount('#app')
+async function bootstrap() {
+    const isQtWebView = !!(window as any).qt || window.location.protocol === 'qrc:';
+    if (isQtWebView) {
+        try {
+            await loadQtWebChannel();
+        } catch (error) {
+            console.error('Qt WebChannel 初始化腳本載入失敗:', error);
+        }
+
+        // 在桌面版 WebView 中鎖定頁面縮放，避免下拉選單滾動觸發持續放大
+        preventUnexpectedPageZoom();
+    }
+
+    app.mount('#app');
+}
+
+void bootstrap();

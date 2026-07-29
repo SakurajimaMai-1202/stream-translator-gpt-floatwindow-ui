@@ -124,6 +124,7 @@ function addOrUpdateSubtitle(newSub: any, source: string = 'Store') {
 let subtitleChannel: BroadcastChannel | null = null;
 // 使用 BroadcastChannel 接收設定變更
 let settingsChannel: BroadcastChannel | null = null;
+let webChannelInitPromise: Promise<boolean> | null = null;
 
 function initSubtitleChannel() {
   try {
@@ -151,6 +152,32 @@ function initSettingsChannel() {
   } catch (error) {
     console.error('設定 BroadcastChannel 初始化失敗:', error);
   }
+}
+
+function initQtWebChannel(): Promise<boolean> {
+  if (window.bridge?.requestOpenSettings) return Promise.resolve(true);
+  if (!window.qt?.webChannelTransport || !window.QWebChannel) {
+    return Promise.resolve(false);
+  }
+  if (webChannelInitPromise) return webChannelInitPromise;
+
+  webChannelInitPromise = new Promise((resolve) => {
+    try {
+      new window.QWebChannel(window.qt!.webChannelTransport, (channel: any) => {
+        window.bridge = channel.objects.bridge;
+        const connected = !!window.bridge?.requestOpenSettings;
+        console.log(connected ? 'WebChannel 已連接' : 'WebChannel 缺少字幕視窗 bridge');
+        resolve(connected);
+      });
+    } catch (error) {
+      console.error('WebChannel 初始化失敗:', error);
+      resolve(false);
+    }
+  }).finally(() => {
+    webChannelInitPromise = null;
+  });
+
+  return webChannelInitPromise;
 }
 
 function applySettings(settings: any, external = false) {
@@ -387,11 +414,8 @@ onMounted(async () => {
   // 監聯 storage 事件作為備用
   window.addEventListener('storage', handleStorageChange);
   
-  if (window.qt && window.qt.webChannelTransport) {
-    new window.QWebChannel(window.qt.webChannelTransport, (channel: any) => {
-      window.bridge = channel.objects.bridge;
-      console.log('WebChannel 已連接');
-    });
+  if (window.qt?.webChannelTransport) {
+    void initQtWebChannel();
   }
 });
 
@@ -454,14 +478,20 @@ declare global {
   }
 }
 
-function openSettings() {
-  // 如果在 Qt 環境中，使用橋接
-  if (window.bridge && window.bridge.requestOpenSettings) {
-    window.bridge.requestOpenSettings();
-  } else {
-    // 否則顯示內嵌面板（開發模式）
-    showSettings.value = !showSettings.value;
+async function openSettings() {
+  // 正式 Qt 視窗只能開啟獨立設定視窗，不可退回字幕視窗內的面板。
+  if (window.qt?.webChannelTransport) {
+    const connected = await initQtWebChannel();
+    if (connected && window.bridge?.requestOpenSettings) {
+      window.bridge.requestOpenSettings();
+    } else {
+      console.error('字幕設定視窗 bridge 尚未就緒');
+    }
+    return;
   }
+
+  // 一般瀏覽器開發模式沒有 Qt 視窗，才使用內嵌設定面板。
+  showSettings.value = !showSettings.value;
 }
 
 function closeSubtitleWindow() {

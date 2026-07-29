@@ -48,6 +48,10 @@ directly at the ZIP root so extracting into an existing package replaces the
 running application. Full archives keep their profile package directory as the
 ZIP root.
 
+GUI builds always pass PyInstaller `--clean`. The fixed work directory must not
+reuse an older Analysis result, otherwise a newly built Vite bundle can be
+silently omitted from the packaged executable.
+
 The three-profile command always reuses and validates the existing
 `cuda-runtime`, `cpu-runtime`, and `rocm-runtime` caches. Rebuild a changed
 runtime separately with the correct profile-specific Build Python before

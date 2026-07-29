@@ -112,7 +112,7 @@ if ($sharedGuiPath) {
     Write-Host "[2/6] Build GUI onedir" -ForegroundColor Yellow
     Push-Location $scriptDir
     try {
-        & $pythonExe -m PyInstaller (Join-Path $packagingDir "stream-translator-llm-gui.spec") --noconfirm --distpath $pyInstallerDist --workpath $pyInstallerWork
+        & $pythonExe -m PyInstaller (Join-Path $packagingDir "stream-translator-llm-gui.spec") --noconfirm --clean --distpath $pyInstallerDist --workpath $pyInstallerWork
         if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed" }
     } finally { Pop-Location }
 

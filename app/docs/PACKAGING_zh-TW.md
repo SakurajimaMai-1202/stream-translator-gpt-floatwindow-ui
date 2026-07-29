@@ -160,6 +160,8 @@ PyInstaller 可以只建置一次，再分別組裝 CUDA、CPU 與 ROCm runtime�
 - App Update ZIP 根目錄直接包含 `Stream Translator.exe`、`_internal` 與
   `_runtime`，解壓到既有同 profile 完整包時才會覆蓋實際執行內容；不可
   額外包一層 `App-Update` 資料夾。
+- PyInstaller GUI 建置固定使用 `--clean`，避免沿用舊 Analysis 而把前一次
+  的 `backend/static` 包進新版 EXE。
 - ZIP 使用標準 Deflate 與 7-Zip 多執行緒壓縮，維持一般解壓工具相容性。
 - Full ZIP 完成後才切成 `.part01`、`.part02` 等檔案。
 - 分割完成後會重新合併、比對原始 SHA256，並再次執行 ZIP 測試。

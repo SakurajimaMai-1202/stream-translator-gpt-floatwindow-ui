@@ -98,7 +98,8 @@ function Compress-ReleaseDirectory {
         [Parameter(Mandatory = $true)][string]$WorkingDirectory,
         [Parameter(Mandatory = $true)][string]$ItemName,
         [Parameter(Mandatory = $true)][string]$Destination,
-        [ValidateRange(0, 9)][int]$CompressionLevel = 7
+        [ValidateRange(0, 9)][int]$CompressionLevel = 7,
+        [switch]$ArchiveRootContents
     )
 
     if (-not (Test-Path -LiteralPath (Join-Path $WorkingDirectory $ItemName))) {
@@ -108,9 +109,16 @@ function Compress-ReleaseDirectory {
         Remove-Item -LiteralPath $Destination -Force
     }
 
-    Push-Location $WorkingDirectory
+    $archiveWorkingDirectory = $WorkingDirectory
+    $archiveItem = $ItemName
+    if ($ArchiveRootContents) {
+        $archiveWorkingDirectory = Join-Path $WorkingDirectory $ItemName
+        $archiveItem = ".\*"
+    }
+
+    Push-Location $archiveWorkingDirectory
     try {
-        & $SevenZipPath a -tzip -mm=Deflate "-mx=$CompressionLevel" -mmt=on $Destination $ItemName | Out-Host
+        & $SevenZipPath a -tzip -mm=Deflate "-mx=$CompressionLevel" -mmt=on $Destination $archiveItem | Out-Host
         if ($LASTEXITCODE -ne 0) {
             throw "7-Zip compression failed with exit code $LASTEXITCODE`: $Destination"
         }

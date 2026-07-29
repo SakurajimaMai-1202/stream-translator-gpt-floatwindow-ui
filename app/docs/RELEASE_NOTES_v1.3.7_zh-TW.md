@@ -35,6 +35,7 @@ v1.3.7 是執行體驗、Cookie 管理與三版本打包流程更新。CUDA、CP
 - Final package 使用多執行緒 7-Zip Deflate 壓縮。
 - Full package 自動分割成 `.partNN`，並執行重組 SHA256 與 ZIP 完整性驗證。
 - Release 同時提供三版 App Update、分割 Full package、合併批次檔、manifest 與 SHA256 清單。
+- App Update ZIP 已修正為根目錄直接包含主程式內容，解壓到既有同 profile 完整包即可正確覆蓋 UI 與後端程式。
 
 ## 更新注意事項
 

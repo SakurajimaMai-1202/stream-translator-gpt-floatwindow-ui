@@ -43,6 +43,11 @@ packages or copying unchanged ASR runtime dependencies.
 the original/recombined SHA256, tests the recombined ZIP, and writes a release
 manifest plus checksum file.
 
+App Update archives place `Stream Translator.exe`, `_internal`, and `_runtime`
+directly at the ZIP root so extracting into an existing package replaces the
+running application. Full archives keep their profile package directory as the
+ZIP root.
+
 The three-profile command always reuses and validates the existing
 `cuda-runtime`, `cpu-runtime`, and `rocm-runtime` caches. Rebuild a changed
 runtime separately with the correct profile-specific Build Python before

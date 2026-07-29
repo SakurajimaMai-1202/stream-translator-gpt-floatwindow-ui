@@ -203,7 +203,13 @@ Copy-Item (Join-Path $scriptDir "diagnose_runtime.ps1") $updateRoot
 Copy-Item (Join-Path $scriptDir "smoke_sensevoice_asr.ps1") $updateRoot
 Write-RuntimeProfileDocs -Destination $updateRoot -RuntimeProfile $Profile -Version $Version
 $appUpdateZipPath = Join-Path $distDir $packageInfo.AppUpdateZip
-Compress-ReleaseDirectory -SevenZipPath $sevenZipExe -WorkingDirectory $distDir -ItemName "App-Update" -Destination $appUpdateZipPath -CompressionLevel $CompressionLevel
+Compress-ReleaseDirectory `
+    -SevenZipPath $sevenZipExe `
+    -WorkingDirectory $distDir `
+    -ItemName "App-Update" `
+    -Destination $appUpdateZipPath `
+    -CompressionLevel $CompressionLevel `
+    -ArchiveRootContents
 Test-ReleaseZip -SevenZipPath $sevenZipExe -Path $appUpdateZipPath
 
 Write-Host "[5/6] Assemble first-use full package" -ForegroundColor Yellow

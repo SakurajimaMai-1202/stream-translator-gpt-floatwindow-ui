@@ -157,6 +157,9 @@ PyInstaller 可以只建置一次，再分別組裝 CUDA、CPU 與 ROCm runtime�
 - 大型目錄使用 `robocopy /MT`，exit code `0` 到 `7` 視為成功。
 - Quick 的 App Update 只包含 GUI 與核心引擎，不重複複製 ASR runtime
   相依套件；Final 預設保留相容更新所需依賴。
+- App Update ZIP 根目錄直接包含 `Stream Translator.exe`、`_internal` 與
+  `_runtime`，解壓到既有同 profile 完整包時才會覆蓋實際執行內容；不可
+  額外包一層 `App-Update` 資料夾。
 - ZIP 使用標準 Deflate 與 7-Zip 多執行緒壓縮，維持一般解壓工具相容性。
 - Full ZIP 完成後才切成 `.part01`、`.part02` 等檔案。
 - 分割完成後會重新合併、比對原始 SHA256，並再次執行 ZIP 測試。

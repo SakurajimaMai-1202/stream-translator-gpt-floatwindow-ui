@@ -15,6 +15,7 @@ from contextlib import contextmanager
 from backend.config import settings
 from backend.core.cookie_manager import resolve_cookie_path
 from backend.core.runtime_profiles import get_runtime_capabilities
+from backend.core.asr_model_capabilities import coerce_model_language
 
 class ConfigManager:
     """配置管理器 - 處理所有配置相關操作"""
@@ -83,15 +84,17 @@ class ConfigManager:
             'use_openai_transcription_api': False,
             'use_qwen3_asr': True,
             'use_sensevoice_asr': False,
+            'use_fun_asr': False,
             'use_nemo_asr': False,
             'qwen3_asr_model': 'Qwen/Qwen3-ASR-1.7B',
             'qwen3_dtype': 'bfloat16',
             'qwen3_load_in_4bit': False,
             'qwen3_rms_threshold': 0.005,
             'sensevoice_model': 'iic/SenseVoiceSmall',
-            'nemo_asr_model': 'grider-transwithai/parakeet-ctc-1.1b-ja',
+            'fun_asr_model': 'FunAudioLLM/Fun-ASR-Nano-2512',
+            'nemo_asr_model': 'nvidia/parakeet-tdt_ctc-0.6b-ja',
             'nemo_asr_device': 'auto',
-            'nemo_asr_decoding': 'ctc',
+            'nemo_asr_decoding': 'tdt',
             'nemo_asr_dtype': 'bfloat16',
             'asr_corrections_enabled': False,
             'asr_corrections_case_sensitive': False,
@@ -581,9 +584,13 @@ class ConfigManager:
         requested_transcription_backend = config['transcription'].get('backend', 'faster-whisper')
         if config['transcription'].get('model') in runtime_capabilities.sensevoice_model_ids:
             requested_transcription_backend = 'sensevoice'
+        if config['transcription'].get('model') in runtime_capabilities.fun_asr_model_ids:
+            requested_transcription_backend = 'fun-asr-nano'
         if config['transcription'].get('model') in runtime_capabilities.parakeet_model_ids:
             requested_transcription_backend = 'parakeet-ctc-ja'
-        if config['transcription'].get('use_sensevoice_asr'):
+        if config['transcription'].get('use_fun_asr'):
+            requested_transcription_backend = 'fun-asr-nano'
+        elif config['transcription'].get('use_sensevoice_asr'):
             requested_transcription_backend = 'sensevoice'
         elif config['transcription'].get('use_nemo_asr'):
             requested_transcription_backend = 'parakeet-ctc-ja'
@@ -617,8 +624,11 @@ class ConfigManager:
         qwen3_device_map = 'cpu' if runtime_capabilities.profile == 'cpu' else 'auto'
         # Qwen3-ASR 使用獨立模型欄位，其他後端沿用一般 model 欄位
         if transcription_backend == 'qwen3-asr':
+            requested_qwen3_model = config['transcription'].get('qwen3_asr_model')
+            if requested_qwen3_model == 'neosophie/Qwen3-ASR-1.7B-JA':
+                requested_qwen3_model = 'jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame'
             transcription_model = self._coerce_model_id(
-                config['transcription'].get('qwen3_asr_model'),
+                requested_qwen3_model,
                 runtime_capabilities.qwen3_asr_model_ids,
                 'Qwen/Qwen3-ASR-0.6B',
             )
@@ -628,11 +638,17 @@ class ConfigManager:
                 runtime_capabilities.sensevoice_model_ids,
                 'iic/SenseVoiceSmall',
             )
+        elif transcription_backend == 'fun-asr-nano':
+            transcription_model = self._coerce_model_id(
+                config['transcription'].get('fun_asr_model'),
+                runtime_capabilities.fun_asr_model_ids,
+                'FunAudioLLM/Fun-ASR-Nano-2512',
+            )
         elif transcription_backend == 'parakeet-ctc-ja':
             transcription_model = self._coerce_model_id(
                 config['transcription'].get('nemo_asr_model'),
                 runtime_capabilities.parakeet_model_ids,
-                'grider-transwithai/parakeet-ctc-1.1b-ja',
+                'nvidia/parakeet-tdt_ctc-0.6b-ja',
             )
         else:
             transcription_model = self._coerce_model_id(
@@ -642,6 +658,11 @@ class ConfigManager:
             )
 
         # 基本參數對映
+        transcription_language = coerce_model_language(
+            transcription_model,
+            config['transcription'].get('language', 'auto'),
+        )
+
         args = {
             # 輸入
             'url': url,
@@ -670,17 +691,18 @@ class ConfigManager:
             'vad_every_n_frames': config.get('audio_slicing_vad', {}).get('vad_every_n_frames', 1),
             'vad_backend': config.get('audio_slicing_vad', {}).get('vad_backend', 'silero'),
             'firered_vad_model_path': config.get('audio_slicing_vad', {}).get('firered_vad_model_path', ''),
-            'preload_asr_model': transcription_backend in ['qwen3-asr', 'faster-whisper', 'whisper', 'sensevoice', 'parakeet-ctc-ja'],
-            'keep_asr_loaded': transcription_backend in ['qwen3-asr', 'faster-whisper', 'whisper', 'sensevoice', 'parakeet-ctc-ja'],
+            'preload_asr_model': transcription_backend in ['qwen3-asr', 'faster-whisper', 'whisper', 'sensevoice', 'fun-asr-nano', 'parakeet-ctc-ja'],
+            'keep_asr_loaded': transcription_backend in ['qwen3-asr', 'faster-whisper', 'whisper', 'sensevoice', 'fun-asr-nano', 'parakeet-ctc-ja'],
             
             # 語音轉文字
             'model': transcription_model,
-            'language': config['transcription'].get('language', 'auto'),
+            'language': transcription_language,
             'use_faster_whisper': transcription_backend in ['faster-whisper', 'faster-whisper-simul'],
             'use_simul_streaming': 'simul' in transcription_backend,
             'use_openai_transcription_api': transcription_backend == 'openai-api',
             'use_qwen3_asr': transcription_backend == 'qwen3-asr',
             'use_sensevoice_asr': transcription_backend == 'sensevoice',
+            'use_fun_asr': transcription_backend == 'fun-asr-nano',
             'use_nemo_asr': transcription_backend == 'parakeet-ctc-ja',
             'openai_transcription_model': config['transcription'].get('openai_model', 'whisper-1'),
             'whisper_filters': config['transcription'].get('whisper_filters', []),
@@ -693,9 +715,16 @@ class ConfigManager:
             'qwen3_rms_threshold': config['transcription'].get('qwen3_rms_threshold', 0.005),
             'sensevoice_model': transcription_model if transcription_backend == 'sensevoice' else config['transcription'].get('sensevoice_model', 'iic/SenseVoiceSmall'),
             'sensevoice_device': 'cpu' if runtime_capabilities.profile == 'cpu' else 'auto',
-            'nemo_asr_model': transcription_model if transcription_backend == 'parakeet-ctc-ja' else config['transcription'].get('nemo_asr_model', 'grider-transwithai/parakeet-ctc-1.1b-ja'),
+            'fun_asr_model': transcription_model if transcription_backend == 'fun-asr-nano' else config['transcription'].get('fun_asr_model', 'FunAudioLLM/Fun-ASR-Nano-2512'),
+            'fun_asr_device': 'cpu' if runtime_capabilities.profile == 'cpu' else 'auto',
+            'nemo_asr_model': transcription_model if transcription_backend == 'parakeet-ctc-ja' else config['transcription'].get('nemo_asr_model', 'nvidia/parakeet-tdt_ctc-0.6b-ja'),
             'nemo_asr_device': 'auto',
-            'nemo_asr_decoding': 'ctc',
+            'nemo_asr_decoding': (
+                'ctc'
+                if transcription_backend == 'parakeet-ctc-ja'
+                and transcription_model == 'grider-transwithai/parakeet-ctc-1.1b-ja'
+                else config['transcription'].get('nemo_asr_decoding', 'tdt')
+            ),
             'nemo_asr_dtype': config['transcription'].get('nemo_asr_dtype', 'bfloat16'),
             'asr_corrections_enabled': config['transcription'].get('asr_corrections_enabled', False),
             'asr_corrections_case_sensitive': config['transcription'].get('asr_corrections_case_sensitive', False),

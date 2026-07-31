@@ -6,7 +6,8 @@ from typing import Any
 
 from .common import INFO
 from .audio_transcriber import (OpenaiWhisper, FasterWhisper, SimulStreaming, RemoteOpenaiTranscriber, HFTranscriber,
-                                Qwen3ASRTranscriber, NemoASRTranscriber, SenseVoiceTranscriber)
+                                Qwen3ASRTranscriber, NemoASRTranscriber, SenseVoiceTranscriber,
+                                FunASRNanoTranscriber)
 from .runtime_accelerator import resolve_qwen3_device_map
 
 
@@ -42,6 +43,8 @@ class ASRConfig:
     nemo_asr_dtype: str | None = None
     sensevoice_model: str | None = None
     sensevoice_device: str | None = None
+    fun_asr_model: str | None = None
+    fun_asr_device: str | None = None
 
     def fingerprint(self) -> tuple[tuple[str, str], ...]:
         return tuple(sorted((key, str(value)) for key, value in self.__dict__.items()))
@@ -54,10 +57,12 @@ class ASRConfig:
             extra.append(str(self.qwen3_asr_quantization or "none"))
         elif self.backend == "nemo":
             extra.append(str(self.nemo_asr_device or "auto"))
-            extra.append(str(self.nemo_asr_decoding or "ctc"))
+            extra.append(str(self.nemo_asr_decoding or "tdt"))
             extra.append(str(self.nemo_asr_dtype or "bfloat16"))
         elif self.backend == "sensevoice":
             extra.append(str(self.sensevoice_device or "auto"))
+        elif self.backend == "fun_asr":
+            extra.append(str(self.fun_asr_device or "auto"))
         suffix = f" ({', '.join(extra)})" if extra else ""
         return f"{self.backend}: {model}{suffix}"
 
@@ -79,6 +84,8 @@ def build_asr_config(options: dict[str, Any]) -> ASRConfig:
         backend = "qwen3"
     elif options.get("use_sensevoice_asr"):
         backend = "sensevoice"
+    elif options.get("use_fun_asr"):
+        backend = "fun_asr"
     elif options.get("use_nemo_asr"):
         backend = "nemo"
     elif options.get("use_simul_streaming") and options.get("use_faster_whisper"):
@@ -89,7 +96,7 @@ def build_asr_config(options: dict[str, Any]) -> ASRConfig:
         backend = "faster"
 
     model = options.get("model")
-    if backend in {"openai_api", "qwen3", "nemo", "sensevoice"}:
+    if backend in {"openai_api", "qwen3", "nemo", "sensevoice", "fun_asr"}:
         model = None
     openai_transcription_model = (options.get("openai_transcription_model") or options.get("model")) if backend == "openai_api" else None
     qwen3_asr_model = (options.get("qwen3_asr_model") or options.get("model")) if backend == "qwen3" else None
@@ -108,6 +115,8 @@ def build_asr_config(options: dict[str, Any]) -> ASRConfig:
     nemo_asr_dtype = options.get("nemo_asr_dtype") if backend == "nemo" else None
     sensevoice_model = (options.get("sensevoice_model") or options.get("model")) if backend == "sensevoice" else None
     sensevoice_device = options.get("sensevoice_device") if backend == "sensevoice" else None
+    fun_asr_model = (options.get("fun_asr_model") or options.get("model")) if backend == "fun_asr" else None
+    fun_asr_device = options.get("fun_asr_device") if backend == "fun_asr" else None
 
     return ASRConfig(
         backend=backend,
@@ -140,6 +149,8 @@ def build_asr_config(options: dict[str, Any]) -> ASRConfig:
         nemo_asr_dtype=nemo_asr_dtype,
         sensevoice_model=sensevoice_model,
         sensevoice_device=sensevoice_device,
+        fun_asr_model=fun_asr_model,
+        fun_asr_device=fun_asr_device,
     )
 
 
@@ -204,7 +215,7 @@ def create_transcriber(config: ASRConfig):
                                   proxy=config.processing_proxy,
                                   language=config.language,
                                   device=device,
-                                  decoding=config.nemo_asr_decoding or "ctc",
+                                  decoding=config.nemo_asr_decoding or "tdt",
                                   dtype=config.nemo_asr_dtype or "bfloat16",
                                   runtime_profile=config.runtime_profile or "cuda",
                                   **common_args)
@@ -217,6 +228,15 @@ def create_transcriber(config: ASRConfig):
                                      proxy=config.processing_proxy,
                                      device=device,
                                      **common_args)
+    if config.backend == "fun_asr":
+        import torch
+
+        device = resolve_fun_asr_preload_device(torch, config)
+        return FunASRNanoTranscriber(model=config.fun_asr_model,
+                                     language=config.language,
+                                     proxy=config.processing_proxy,
+                                     device=device,
+                                     **common_args)
     return OpenaiWhisper(model=config.model, language=config.language, **common_args)
 
 
@@ -224,10 +244,13 @@ def resolve_preload_config(config: ASRConfig) -> ASRConfig:
     if config.backend == "sensevoice":
         import torch
         return replace(config, sensevoice_device=resolve_sensevoice_preload_device(torch, config))
+    if config.backend == "fun_asr":
+        import torch
+        return replace(config, fun_asr_device=resolve_fun_asr_preload_device(torch, config))
     if config.backend == "nemo":
         import torch
         return replace(config, nemo_asr_device=resolve_nemo_preload_device(torch, config),
-                       nemo_asr_decoding=config.nemo_asr_decoding or "ctc",
+                       nemo_asr_decoding=config.nemo_asr_decoding or "tdt",
                        nemo_asr_dtype=config.nemo_asr_dtype or "bfloat16")
     if config.backend != "qwen3":
         return config
@@ -250,6 +273,19 @@ def resolve_sensevoice_preload_device(torch_module: Any, config: ASRConfig) -> s
     return device
 
 
+def resolve_fun_asr_preload_device(torch_module: Any, config: ASRConfig) -> str:
+    device = resolve_qwen3_device_map(
+        torch_module=torch_module,
+        requested_device_map=config.fun_asr_device,
+        runtime_profile=config.runtime_profile,
+        device_policy=config.runtime_device_policy,
+        allow_integrated_gpu=config.runtime_allow_integrated_gpu,
+    )
+    print(f"{INFO}Fun-ASR Nano preload device resolved: {device} "
+          f"(profile={config.runtime_profile}, policy={config.runtime_device_policy})")
+    return device
+
+
 def resolve_nemo_preload_device(torch_module: Any, config: ASRConfig) -> str:
     device = resolve_qwen3_device_map(
         torch_module=torch_module,
@@ -258,7 +294,7 @@ def resolve_nemo_preload_device(torch_module: Any, config: ASRConfig) -> str:
         device_policy=config.runtime_device_policy,
         allow_integrated_gpu=config.runtime_allow_integrated_gpu,
     )
-    print(f"{INFO}Parakeet CTC JA preload device resolved: {device} "
+    print(f"{INFO}NVIDIA Parakeet preload device resolved: {device} "
           f"(profile={config.runtime_profile}, policy={config.runtime_device_policy})")
     return device
 

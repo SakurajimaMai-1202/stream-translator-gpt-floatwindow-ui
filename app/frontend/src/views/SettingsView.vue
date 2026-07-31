@@ -1,18 +1,26 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue';
+import { ref, onMounted, onUnmounted, computed, watch, nextTick, toRaw, defineAsyncComponent } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import axios from 'axios';
 import { useTranslationStore } from '../stores/translation';
 import { useModelDownloadStore } from '../stores/modelDownload';
 import { useLlamaStore } from '../stores/llama';
-import LlamaSettings from '../components/LlamaSettings.vue';
 import UiSelect, { type UiSelectOption } from '../components/UiSelect.vue';
 import { useTranscriptionMutex } from '../composables/useTranscriptionMutex';
 import { useAppSyncEvents } from '../composables/useAppSyncEvents';
 import type { ModelEngine } from '../services/api';
+import {
+  ASR_LANGUAGE_OPTIONS,
+  coerceLanguageForModel,
+  isModelLanguageCompatible,
+  languageOptionsForModel,
+} from '../utils/asrCapabilities';
 
 const testingGpt = ref(false);
 const testingGemini = ref(false);
+const LlamaSettings = defineAsyncComponent(() => import('../components/LlamaSettings.vue'));
+const AsrModelGroup = defineAsyncComponent(() => import('../components/AsrModelGroup.vue'));
+const WhisperFilterSettings = defineAsyncComponent(() => import('../components/WhisperFilterSettings.vue'));
 
 const autoSaveStatus = ref<'idle' | 'saving' | 'saved' | 'error'>('idle');
 let autoSaveStatusTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -24,10 +32,17 @@ const store = useTranslationStore();
 const modelDownloadStore = useModelDownloadStore();
 const llamaStore = useLlamaStore();
 
-const allQwenModels = ['Qwen/Qwen3-ASR-0.6B', 'Qwen/Qwen3-ASR-1.7B', 'neosophie/Qwen3-ASR-1.7B-JA'];
+const allQwenModels = ['Qwen/Qwen3-ASR-0.6B', 'Qwen/Qwen3-ASR-1.7B', 'jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame'];
+const legacyQwen3JaModel = 'neosophie/Qwen3-ASR-1.7B-JA';
+const qwen3AnimeModel = 'jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame';
 const allFasterWhisperModels = ['tiny', 'base', 'small', 'medium', 'large-v2', 'large-v3', 'large-v3-turbo'];
 const allSenseVoiceModels = ['iic/SenseVoiceSmall'];
-const allParakeetModels = ['grider-transwithai/parakeet-ctc-1.1b-ja'];
+const allFunAsrModels = ['FunAudioLLM/Fun-ASR-Nano-2512', 'FunAudioLLM/Fun-ASR-MLT-Nano-2512'];
+const allParakeetModels = [
+  'nvidia/parakeet-tdt_ctc-0.6b-ja',
+  'nvidia/parakeet-tdt_ctc-1.1b',
+  'grider-transwithai/parakeet-ctc-1.1b-ja',
+];
 
 const logLevelOptions: UiSelectOption[] = [
   { value: 'DEBUG', label: 'DEBUG' },
@@ -64,21 +79,57 @@ const whisperModelSelectOptions = computed<UiSelectOption[]>(() =>
 const allQwen3AsrModelOptions: UiSelectOption[] = [
   { value: 'Qwen/Qwen3-ASR-1.7B', label: 'Qwen3-ASR-1.7B (推薦)' },
   { value: 'Qwen/Qwen3-ASR-0.6B', label: 'Qwen3-ASR-0.6B (更快)' },
-  { value: 'neosophie/Qwen3-ASR-1.7B-JA', label: 'Qwen3-ASR-1.7B-JA (Japanese fine-tune)' },
+  { value: 'jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame', label: 'Qwen3-ASR-1.7B-JA-Anime' },
 ];
 const qwen3AsrModelOptions = computed<UiSelectOption[]>(() =>
-  allQwen3AsrModelOptions.filter(option => allowedQwen3AsrModels.value.includes(String(option.value)))
+  allQwen3AsrModelOptions
+    .filter(option => allowedQwen3AsrModels.value.includes(String(option.value)))
+    .map(option => ({
+      ...option,
+      disabled: selectedSettingsAsrCapability.value?.language_mode !== 'fixed'
+        && !isModelLanguageCompatible(
+          runtimeCapabilities.value?.asr_model_capabilities,
+          String(option.value),
+          localConfig.value.transcription.language,
+        ),
+    }))
 );
 const senseVoiceModelOptions = computed<UiSelectOption[]>(() =>
   allSenseVoiceModels
     .filter(model => allowedSenseVoiceModels.value.includes(model))
-    .map(model => ({ value: model, label: 'SenseVoiceSmall' }))
+    .map(model => ({
+      value: model,
+      label: 'SenseVoiceSmall（中／粵／英／日／韓）',
+      disabled: selectedSettingsAsrCapability.value?.language_mode !== 'fixed'
+        && !isModelLanguageCompatible(
+          runtimeCapabilities.value?.asr_model_capabilities,
+          model,
+          localConfig.value.transcription.language,
+        ),
+    }))
 );
 const parakeetModelOptions = computed<UiSelectOption[]>(() =>
   allParakeetModels
     .filter(model => allowedParakeetModels.value.includes(model))
-    .map(model => ({ value: model, label: 'Parakeet CTC 1.1B JA' }))
+    .map(model => ({
+      value: model,
+      disabled: selectedSettingsAsrCapability.value?.language_mode !== 'fixed'
+        && !isModelLanguageCompatible(
+          runtimeCapabilities.value?.asr_model_capabilities,
+          model,
+          localConfig.value.transcription.language,
+        ),
+      label: model === 'nvidia/parakeet-tdt_ctc-0.6b-ja'
+        ? 'NVIDIA Parakeet 0.6B（日文）'
+        : model === 'nvidia/parakeet-tdt_ctc-1.1b'
+          ? 'NVIDIA Parakeet 1.1B（英文）'
+          : 'parakeet-ctc-1.1b-ja（日文）',
+    }))
 );
+const parakeetDecodingOptions: UiSelectOption[] = [
+  { value: 'tdt', label: 'TDT（建議）' },
+  { value: 'ctc', label: 'CTC' },
+];
 const qwen3DtypeOptions: UiSelectOption[] = [
   { value: 'bfloat16', label: 'BF16（建議，速度快、顯存較低）' },
   { value: 'float32', label: 'FP32（相容性高、顯存約兩倍）' },
@@ -94,14 +145,22 @@ const runtimeDevicePolicyOptions: UiSelectOption[] = [
   { value: 'manual', label: 'Manual' },
   { value: 'cpu', label: 'CPU' },
 ];
-const transcriptionLanguageOptions: UiSelectOption[] = [
-  { value: 'auto', label: '自動偵測' },
-  { value: 'ja', label: '日文' },
-  { value: 'en', label: '英文' },
-  { value: 'zh-tw', label: '繁體中文' },
-  { value: 'zh-cn', label: '簡體中文' },
-  { value: 'ko', label: '韓文' },
+const vadBackendOptions: UiSelectOption[] = [
+  { value: 'silero', label: 'Silero VAD' },
+  { value: 'firered', label: 'FireRed VAD' },
 ];
+const translationModelFamilyOptions: UiSelectOption[] = [
+  { value: 'auto', label: '自動判斷' },
+  { value: 'hy_mt2', label: 'Hy-MT2 專用翻譯模型' },
+  { value: 'generic_chat', label: '通用聊天模型（Gemma 等）' },
+  { value: 'structured_api', label: '結構化 API（OpenAI / Gemini）' },
+];
+const translationOutputFormatOptions: UiSelectOption[] = [
+  { value: 'auto', label: '自動' },
+  { value: 'text', label: '純文字' },
+  { value: 'json', label: 'JSON' },
+];
+const fallbackTranscriptionLanguageOptions = ASR_LANGUAGE_OPTIONS;
 const targetLanguageOptions: UiSelectOption[] = [
   { value: 'Traditional Chinese', label: '繁體中文' },
   { value: 'Simplified Chinese', label: '簡體中文' },
@@ -175,9 +234,9 @@ const localConfig = ref<any>({
     qwen3_dtype: 'bfloat16',
     qwen3_load_in_4bit: false,
     sensevoice_model: 'iic/SenseVoiceSmall',
-    nemo_asr_model: 'grider-transwithai/parakeet-ctc-1.1b-ja',
+    nemo_asr_model: 'nvidia/parakeet-tdt_ctc-0.6b-ja',
     nemo_asr_device: 'auto',
-    nemo_asr_decoding: 'ctc',
+    nemo_asr_decoding: 'tdt',
     nemo_asr_dtype: 'bfloat16',
     asr_corrections_enabled: false,
     asr_corrections_case_sensitive: false,
@@ -246,6 +305,22 @@ const cookieFileInput = ref<HTMLInputElement | null>(null);
 const cookieImportResult = ref<{ type: 'success' | 'error'; message: string } | null>(null);
 const selectedPlatformCookiePath = computed(() =>
   localConfig.value?.input?.cookies_by_site?.[cookiePlatform.value] || ''
+);
+const funAsrModelOptions = computed<UiSelectOption[]>(() =>
+  allFunAsrModels
+    .filter(model => allowedFunAsrModels.value.includes(model))
+    .map(model => ({
+      value: model,
+      label: model.endsWith('MLT-Nano-2512')
+        ? 'Fun-ASR MLT Nano（31 種語言）'
+        : 'Fun-ASR Nano（中文／英文／日文）',
+      disabled: selectedSettingsAsrCapability.value?.language_mode !== 'fixed'
+        && !isModelLanguageCompatible(
+          runtimeCapabilities.value?.asr_model_capabilities,
+          model,
+          localConfig.value.transcription.language,
+        ),
+    }))
 );
 const selectedBrowserMayLockCookies = computed(() =>
   ['chrome', 'edge', 'brave', 'chromium'].includes(cookieBrowser.value)
@@ -360,28 +435,58 @@ const translationBackendOptions = computed<UiSelectOption[]>(() => {
   return [...base, ...customOptions];
 });
 
-// 自動保存 debounce timer
-let _settingsAutoSaveTimer: ReturnType<typeof setTimeout> | null = null;
+// Each config section saves independently so a small UI edit does not traverse,
+// serialize, replace, and re-render the complete configuration tree.
+const sectionSaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const sectionSaveInFlight = new Map<string, Promise<void>>();
 
-function debouncedAutoSave() {
-  autoSaveStatus.value = 'saving';
-  if (_settingsAutoSaveTimer !== null) clearTimeout(_settingsAutoSaveTimer);
-  _settingsAutoSaveTimer = setTimeout(async () => {
-    _settingsAutoSaveTimer = null;
+function markAutoSaveCompleted() {
+  autoSaveStatus.value = 'saved';
+  if (autoSaveStatusTimeout) clearTimeout(autoSaveStatusTimeout);
+  autoSaveStatusTimeout = setTimeout(() => {
+    autoSaveStatus.value = 'idle';
+  }, 3000);
+}
+
+async function saveSectionNow(section: string): Promise<void> {
+  const existing = sectionSaveInFlight.get(section);
+  if (existing) await existing;
+  const sectionSnapshot = structuredClone(toRaw(localConfig.value[section] ?? {}));
+  const runtimeChanged = section === 'runtime'
+    && !configsEqual(store.config.runtime, sectionSnapshot);
+  const request = (async () => {
     try {
-      const runtimeChanged = !configsEqual(store.config.runtime, localConfig.value.runtime);
-      await store.saveConfig(localConfig.value);
+      await store.saveConfigSection(section, sectionSnapshot);
       if (runtimeChanged) await store.loadRuntimeStatus();
-      autoSaveStatus.value = 'saved';
-      if (autoSaveStatusTimeout) clearTimeout(autoSaveStatusTimeout);
-      autoSaveStatusTimeout = setTimeout(() => {
-        autoSaveStatus.value = 'idle';
-      }, 3000);
+      markAutoSaveCompleted();
     } catch (e) {
-      console.warn('[SettingsView] 自動保存失敗:', e);
+      console.warn(`[SettingsView] ${section} 自動保存失敗:`, e);
       autoSaveStatus.value = 'error';
+      throw e;
+    } finally {
+      sectionSaveInFlight.delete(section);
     }
-  }, 1000);
+  })();
+  sectionSaveInFlight.set(section, request);
+  await request;
+}
+
+function debouncedAutoSaveSection(section: string) {
+  autoSaveStatus.value = 'saving';
+  const currentTimer = sectionSaveTimers.get(section);
+  if (currentTimer) clearTimeout(currentTimer);
+  sectionSaveTimers.set(section, setTimeout(() => {
+    sectionSaveTimers.delete(section);
+    void saveSectionNow(section);
+  }, 1000));
+}
+
+async function flushPendingSectionSaves() {
+  const pendingSections = [...sectionSaveTimers.keys()];
+  for (const timer of sectionSaveTimers.values()) clearTimeout(timer);
+  sectionSaveTimers.clear();
+  await Promise.all(pendingSections.map((section) => saveSectionNow(section)));
+  await Promise.all(sectionSaveInFlight.values());
 }
 
 async function testConnection(backend: 'gpt' | 'gemini') {
@@ -435,6 +540,9 @@ const termSearchQuery = ref('');
 const newAsrCanonical = ref('');
 const newAsrAliases = ref('');
 const asrCorrectionSearchQuery = ref('');
+const LARGE_LIST_BATCH_SIZE = 100;
+const glossaryRenderLimit = ref(LARGE_LIST_BATCH_SIZE);
+const asrCorrectionRenderLimit = ref(LARGE_LIST_BATCH_SIZE);
 
 // 自訂模型
 const showCustomModelDialog = ref(false);
@@ -498,10 +606,42 @@ const filteredAsrCorrections = computed(() => {
 // 互斥邏輯: 轉錄引擎互斥規則
 const runtimeStatus = computed(() => store.runtimeStatus);
 const runtimeCapabilities = computed(() => runtimeStatus.value?.capabilities || null);
+const selectedSettingsAsrModelId = computed<string>(() => {
+  const transcription = localConfig.value.transcription;
+  if (transcription.use_qwen3_asr) return transcription.qwen3_asr_model;
+  if (transcription.use_sensevoice_asr) return transcription.sensevoice_model;
+  if (transcription.use_fun_asr) return transcription.fun_asr_model;
+  if (transcription.use_nemo_asr) return transcription.nemo_asr_model;
+  return transcription.model;
+});
+const visibleGlossary = computed(() => filteredGlossary.value.slice(0, glossaryRenderLimit.value));
+const visibleAsrCorrections = computed(() => filteredAsrCorrections.value.slice(0, asrCorrectionRenderLimit.value));
+
+watch(termSearchQuery, () => {
+  glossaryRenderLimit.value = LARGE_LIST_BATCH_SIZE;
+});
+watch(asrCorrectionSearchQuery, () => {
+  asrCorrectionRenderLimit.value = LARGE_LIST_BATCH_SIZE;
+});
+const selectedSettingsAsrCapability = computed(() =>
+  runtimeCapabilities.value?.asr_model_capabilities?.find(
+    (item) => item.model_id === selectedSettingsAsrModelId.value
+  )
+);
+const transcriptionLanguageOptions = computed<UiSelectOption[]>(() => {
+  const options = languageOptionsForModel(
+    runtimeCapabilities.value?.asr_model_capabilities,
+    selectedSettingsAsrModelId.value,
+  );
+  return options.length > 0 ? options : fallbackTranscriptionLanguageOptions;
+});
+const isTranscriptionLanguageLocked = computed(
+  () => selectedSettingsAsrCapability.value?.language_mode === 'fixed'
+);
 const allowedLocalAsrEngines = computed<string[]>(() =>
   runtimeCapabilities.value?.local_asr_engines?.length
     ? runtimeCapabilities.value.local_asr_engines
-    : ['faster-whisper', 'simul-streaming', 'faster-whisper-simul', 'qwen3-asr', 'sensevoice', 'parakeet-ctc-ja']
+    : ['faster-whisper', 'simul-streaming', 'faster-whisper-simul', 'qwen3-asr', 'sensevoice', 'fun-asr-nano', 'parakeet-ctc-ja']
 );
 const allowedRemoteAsrEngines = computed<string[]>(() =>
   runtimeCapabilities.value?.remote_asr_engines?.length
@@ -513,6 +653,7 @@ const canUseSimulStreaming = computed(() => allowedLocalAsrEngines.value.include
 const canUseFasterWhisperSimul = computed(() => allowedLocalAsrEngines.value.includes('faster-whisper-simul'));
 const canUseQwen3Asr = computed(() => allowedLocalAsrEngines.value.includes('qwen3-asr'));
 const canUseSenseVoice = computed(() => allowedLocalAsrEngines.value.includes('sensevoice'));
+const canUseFunAsr = computed(() => allowedLocalAsrEngines.value.includes('fun-asr-nano'));
 const canUseParakeet = computed(() => allowedLocalAsrEngines.value.includes('parakeet-ctc-ja'));
 const canUseOpenAiAsr = computed(() => allowedRemoteAsrEngines.value.includes('openai-api'));
 const allowedFasterWhisperModels = computed<string[]>(() =>
@@ -530,11 +671,41 @@ const allowedSenseVoiceModels = computed<string[]>(() =>
     ? runtimeCapabilities.value.sensevoice_model_ids
     : allSenseVoiceModels
 );
+const allowedFunAsrModels = computed<string[]>(() =>
+  runtimeCapabilities.value?.fun_asr_model_ids?.length
+    ? runtimeCapabilities.value.fun_asr_model_ids
+    : allFunAsrModels
+);
 const allowedParakeetModels = computed<string[]>(() =>
   runtimeCapabilities.value?.parakeet_model_ids?.length
     ? runtimeCapabilities.value.parakeet_model_ids
     : allParakeetModels
 );
+
+function selectCompatibleSettingsModel(): boolean {
+  const transcription = localConfig.value.transcription;
+  const capabilities = runtimeCapabilities.value?.asr_model_capabilities;
+  const language = transcription.language;
+  if (isModelLanguageCompatible(capabilities, selectedSettingsAsrModelId.value, language)) return true;
+
+  let candidates: string[] = [];
+  let assign: ((model: string) => void) | null = null;
+  if (transcription.use_qwen3_asr) {
+    candidates = allowedQwen3AsrModels.value;
+    assign = (model) => { transcription.qwen3_asr_model = model; };
+  } else if (transcription.use_fun_asr) {
+    candidates = allowedFunAsrModels.value;
+    assign = (model) => { transcription.fun_asr_model = model; };
+  } else if (transcription.use_nemo_asr) {
+    candidates = allowedParakeetModels.value;
+    assign = (model) => { transcription.nemo_asr_model = model; };
+  }
+  const compatible = candidates.find((model) =>
+    isModelLanguageCompatible(capabilities, model, language)
+  );
+  if (compatible && assign) assign(compatible);
+  return !!compatible;
+}
 const qwenModelList = computed(() =>
   allQwenModels.filter(modelId => allowedQwen3AsrModels.value.includes(modelId))
 );
@@ -543,6 +714,9 @@ const fasterWhisperModelList = computed(() =>
 );
 const senseVoiceModelList = computed(() =>
   allSenseVoiceModels.filter(modelId => allowedSenseVoiceModels.value.includes(modelId))
+);
+const funAsrModelList = computed(() =>
+  allFunAsrModels.filter(modelId => allowedFunAsrModels.value.includes(modelId))
 );
 const parakeetModelList = computed(() =>
   allParakeetModels.filter(modelId => allowedParakeetModels.value.includes(modelId))
@@ -608,14 +782,23 @@ function coerceAsrSettingsForRuntime() {
   if (!allowedFasterWhisperModels.value.includes(transcription.model)) {
     transcription.model = allowedFasterWhisperModels.value[0] || 'small';
   }
+  if (transcription.qwen3_asr_model === legacyQwen3JaModel) {
+    transcription.qwen3_asr_model = qwen3AnimeModel;
+  }
+  if (!canUseFunAsr.value) {
+    transcription.use_fun_asr = false;
+  }
   if (!allowedQwen3AsrModels.value.includes(transcription.qwen3_asr_model)) {
     transcription.qwen3_asr_model = allowedQwen3AsrModels.value[0] || 'Qwen/Qwen3-ASR-0.6B';
   }
   if (!allowedSenseVoiceModels.value.includes(transcription.sensevoice_model)) {
     transcription.sensevoice_model = allowedSenseVoiceModels.value[0] || 'iic/SenseVoiceSmall';
   }
+  if (!allowedFunAsrModels.value.includes(transcription.fun_asr_model)) {
+    transcription.fun_asr_model = allowedFunAsrModels.value[0] || 'FunAudioLLM/Fun-ASR-Nano-2512';
+  }
   if (!allowedParakeetModels.value.includes(transcription.nemo_asr_model)) {
-    transcription.nemo_asr_model = allowedParakeetModels.value[0] || 'grider-transwithai/parakeet-ctc-1.1b-ja';
+    transcription.nemo_asr_model = allowedParakeetModels.value[0] || 'nvidia/parakeet-tdt_ctc-0.6b-ja';
   }
   normalizeAsrEngineSelection();
   if (
@@ -623,6 +806,7 @@ function coerceAsrSettingsForRuntime() {
     !transcription.use_simul_streaming &&
     !transcription.use_qwen3_asr &&
     !transcription.use_sensevoice_asr &&
+    !transcription.use_fun_asr &&
     !transcription.use_nemo_asr &&
     !transcription.use_openai_transcription_api
   ) {
@@ -644,12 +828,14 @@ type AsrEngine =
   | 'openai'
   | 'qwen3'
   | 'sensevoice'
+  | 'fun_asr'
   | 'parakeet';
 
 function clearExclusiveAsrEngines(transcription: any) {
   transcription.use_openai_transcription_api = false;
   transcription.use_qwen3_asr = false;
   transcription.use_sensevoice_asr = false;
+  transcription.use_fun_asr = false;
   transcription.use_nemo_asr = false;
 }
 
@@ -662,6 +848,7 @@ function clearAllAsrEngines(transcription: any) {
 function normalizeAsrEngineSelection() {
   const transcription = localConfig.value.transcription || {};
   const selectedExclusive = [
+    transcription.use_fun_asr ? 'fun_asr' : '',
     transcription.use_sensevoice_asr ? 'sensevoice' : '',
     transcription.use_nemo_asr ? 'parakeet' : '',
     transcription.use_qwen3_asr ? 'qwen3' : '',
@@ -673,6 +860,7 @@ function normalizeAsrEngineSelection() {
     transcription.use_faster_whisper = false;
     transcription.use_simul_streaming = false;
     transcription.use_sensevoice_asr = selected === 'sensevoice';
+    transcription.use_fun_asr = selected === 'fun_asr';
     transcription.use_nemo_asr = selected === 'parakeet';
     transcription.use_qwen3_asr = selected === 'qwen3';
     transcription.use_openai_transcription_api = selected === 'openai';
@@ -686,6 +874,7 @@ function isAsrEngineSelected(engine: AsrEngine): boolean {
   if (engine === 'openai') return !!transcription.use_openai_transcription_api;
   if (engine === 'qwen3') return !!transcription.use_qwen3_asr;
   if (engine === 'sensevoice') return !!transcription.use_sensevoice_asr;
+  if (engine === 'fun_asr') return !!transcription.use_fun_asr;
   if (engine === 'parakeet') return !!transcription.use_nemo_asr;
   return false;
 }
@@ -709,6 +898,7 @@ function selectAsrEngine(engine: AsrEngine) {
   if (engine === 'openai') transcription.use_openai_transcription_api = true;
   if (engine === 'qwen3') transcription.use_qwen3_asr = true;
   if (engine === 'sensevoice') transcription.use_sensevoice_asr = true;
+  if (engine === 'fun_asr') transcription.use_fun_asr = true;
   if (engine === 'parakeet') transcription.use_nemo_asr = true;
 }
 
@@ -847,6 +1037,17 @@ watch(() => route.query.tab, (newTab) => {
   syncActiveTabFromRoute(newTab);
 }, { immediate: true });
 
+watch(activeTab, async (tab) => {
+  if (tab !== 'model_management') {
+    modelDownloadStore.stopPolling();
+    return;
+  }
+  await modelDownloadStore.refreshAll();
+  if (modelDownloadStore.activeTasks.length > 0) {
+    modelDownloadStore.startPolling();
+  }
+}, { flush: 'post' });
+
 onMounted(async () => {
   await Promise.all([
     store.loadConfig(),
@@ -857,64 +1058,51 @@ onMounted(async () => {
   // 從 URL 參數設定 tab
   syncActiveTabFromRoute();
 
-  await modelDownloadStore.refreshAll();
-  if (modelDownloadStore.activeTasks.length > 0) {
-    modelDownloadStore.startPolling();
+  if (activeTab.value === 'model_management') {
+    await modelDownloadStore.refreshAll();
+    if (modelDownloadStore.activeTasks.length > 0) {
+      modelDownloadStore.startPolling();
+    }
   }
 
-  // 初始化完成後，延後建立深度 watch 避免初始化誤觸發自動保存
+  // Watch each section independently. This avoids traversing the entire config
+  // and allows PATCH /config/{section} to update only affected consumers.
   await nextTick();
-  watch(localConfig, () => {
-    if (isApplyingRemoteConfig.value) return;
-    debouncedAutoSave();
-  }, { deep: true });
+  for (const section of Object.keys(localConfig.value)) {
+    watch(() => localConfig.value[section], () => {
+      if (isApplyingRemoteConfig.value) return;
+      debouncedAutoSaveSection(section);
+    }, { deep: true, flush: 'post' });
+  }
 
   watch(runtimeCapabilities, () => {
     if (isApplyingRemoteConfig.value) return;
     coerceAsrSettingsForRuntime();
-  });
+  }, { flush: 'post' });
+
+  watch(
+    [selectedSettingsAsrModelId, () => runtimeCapabilities.value?.asr_model_capabilities],
+    () => {
+      if (isApplyingRemoteConfig.value) return;
+      if (selectedSettingsAsrCapability.value?.language_mode !== 'fixed'
+        && !selectCompatibleSettingsModel()) {
+        localConfig.value.transcription.language = 'auto';
+      }
+      localConfig.value.transcription.language = coerceLanguageForModel(
+        runtimeCapabilities.value?.asr_model_capabilities,
+        selectedSettingsAsrModelId.value,
+        localConfig.value.transcription.language,
+      );
+    },
+    { immediate: true, flush: 'post' },
+  );
 });
 
 onUnmounted(() => {
-  if (_settingsAutoSaveTimer !== null) {
-    clearTimeout(_settingsAutoSaveTimer);
-    _settingsAutoSaveTimer = null;
-  }
+  for (const timer of sectionSaveTimers.values()) clearTimeout(timer);
+  sectionSaveTimers.clear();
   modelDownloadStore.stopPolling();
 });
-
-function getModelTask(engine: ModelEngine, modelId: string) {
-  return modelDownloadStore.getTask(engine, modelId);
-}
-
-function getModelStatusText(engine: ModelEngine, modelId: string) {
-  if (modelDownloadStore.isDownloaded(engine, modelId)) return '已下載';
-  const task = getModelTask(engine, modelId);
-  if (!task) return '未下載';
-  if (task.status === 'failed') return '下載失敗';
-  if (task.status === 'completed') return '已下載';
-  if (task.status === 'downloading') return `下載中 ${(task.progress * 100).toFixed(0)}%`;
-  return '準備中';
-}
-
-function getModelStatusClass(engine: ModelEngine, modelId: string) {
-  if (modelDownloadStore.isDownloaded(engine, modelId)) return 'text-green-300';
-  const task = getModelTask(engine, modelId);
-  if (!task) return 'text-white/50';
-  if (task.status === 'failed') return 'text-red-300';
-  if (task.status === 'completed') return 'text-green-300';
-  return 'text-blue-300';
-}
-
-function canStartDownload(engine: ModelEngine, modelId: string) {
-  if (modelDownloadStore.isDownloaded(engine, modelId)) return false;
-  const task = getModelTask(engine, modelId);
-  return !task || (task.status !== 'pending' && task.status !== 'downloading');
-}
-
-async function startModelDownload(engine: ModelEngine, modelId: string) {
-  await modelDownloadStore.startDownload(engine, modelId);
-}
 
 async function applyModelStoragePath() {
   await store.saveConfig(localConfig.value);
@@ -937,14 +1125,10 @@ async function handleSave() {
 
 async function handleCancel() {
   // 離開前確保待處理的 debounce 變更都被儲存
-  if (_settingsAutoSaveTimer !== null) {
-    clearTimeout(_settingsAutoSaveTimer);
-    _settingsAutoSaveTimer = null;
-    try {
-      await store.saveConfig(localConfig.value);
-    } catch (e) {
-      console.warn('[SettingsView] 離開保存失敗:', e);
-    }
+  try {
+    await flushPendingSectionSaves();
+  } catch (e) {
+    console.warn('[SettingsView] 離開保存失敗:', e);
   }
   router.push('/');
 }
@@ -972,6 +1156,12 @@ function addTerm() {
 
 function removeTerm(index: number) {
   localConfig.value.terminology.glossary_list.splice(index, 1);
+}
+
+function removeTermEntry(term: any) {
+  const list = localConfig.value.terminology.glossary_list || [];
+  const index = list.indexOf(term);
+  if (index >= 0) removeTerm(index);
 }
 
 function importGlossary() {
@@ -1102,21 +1292,6 @@ function deleteCustomModel(index: number) {
 }
 
 // Whisper 濾鏡切換
-function toggleFilter(filterName: string, checked: boolean) {
-  if (!localConfig.value.transcription.whisper_filters) {
-    localConfig.value.transcription.whisper_filters = [];
-  }
-  
-  const filters = localConfig.value.transcription.whisper_filters;
-  const index = filters.indexOf(filterName);
-  
-  if (checked && index === -1) {
-    filters.push(filterName);
-  } else if (!checked && index !== -1) {
-    filters.splice(index, 1);
-  }
-}
-
 // 匯入匯出設定
 const fileInput = ref<HTMLInputElement | null>(null);
 
@@ -1202,9 +1377,11 @@ async function handleFileChange(event: Event) {
     </div>
 
     <!-- Content Container (Card Layout) -->
-    <div class="bg-slate-950/40 backdrop-blur-xl rounded-2xl border border-white/10 shadow-2xl p-6 sm:p-8 min-h-[550px]">
+    <!-- 長捲動內容不使用 backdrop-filter：Qt WebEngine/Chromium 在 Windows
+         重新合成大型毛玻璃 layer 時可能短暫露出底層視窗。 -->
+    <div class="bg-gradient-to-br from-slate-950/95 via-slate-950/85 to-indigo-950/65 rounded-2xl border border-white/10 shadow-2xl p-6 sm:p-8 min-h-[550px]">
           <!-- General Settings -->
-          <div v-show="activeTab === 'general'" class="space-y-6">
+          <div v-if="activeTab === 'general'" class="settings-paint-section space-y-6">
             <h2 class="text-xl font-bold text-white mb-4">一般設定</h2>
             
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -1254,7 +1431,7 @@ async function handleFileChange(event: Event) {
           </div>
 
           <!-- Input Settings -->
-          <div v-show="activeTab === 'input'" class="space-y-6">
+          <div v-if="activeTab === 'input'" class="settings-paint-section space-y-6">
             <h2 class="text-xl font-bold text-white mb-4">輸入選項</h2>
             
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -1382,7 +1559,7 @@ async function handleFileChange(event: Event) {
           </div>
 
           <!-- Audio Slicing & VAD Settings -->
-          <div v-show="activeTab === 'audio_vad'" class="space-y-6">
+          <div v-if="activeTab === 'audio_vad'" class="settings-paint-section space-y-6">
             <h2 class="text-xl font-bold text-white mb-4">音訊切片 & VAD 設定</h2>
             
             <!-- 音訊切片 -->
@@ -1443,10 +1620,7 @@ async function handleFileChange(event: Event) {
               <div v-if="localConfig.audio_slicing_vad.vad_enabled" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 <div>
                   <label class="block text-white/70 text-sm mb-1 font-semibold">VAD 演算法</label>
-                  <UiSelect v-model="localConfig.audio_slicing_vad.vad_backend" :options="[
-                    { value: 'silero', label: 'Silero VAD' },
-                    { value: 'firered', label: 'FireRed VAD' }
-                  ]" />
+                  <UiSelect v-model="localConfig.audio_slicing_vad.vad_backend" :options="vadBackendOptions" />
                 </div>
                 <div v-if="localConfig.audio_slicing_vad.vad_backend === 'firered'">
                   <label class="block text-white/70 text-sm mb-1 font-semibold">FireRed VAD 模型路徑</label>
@@ -1487,7 +1661,7 @@ async function handleFileChange(event: Event) {
           </div>
 
           <!-- Transcription Settings -->
-          <div v-show="activeTab === 'transcription'" class="space-y-6">
+          <div v-if="activeTab === 'transcription'" class="settings-paint-section space-y-6">
             <h2 class="text-xl font-bold text-white mb-4">轉錄選項</h2>
             
             <div class="bg-white/5 rounded-xl p-4 border border-white/10">
@@ -1540,7 +1714,7 @@ async function handleFileChange(event: Event) {
                     <div class="text-white/80">Qwen3 dtype: <span class="text-cyan-200">{{ runtimeCapabilities?.qwen3_default_dtype || '-' }}</span></div>
                     <div class="text-white/80">Faster-Whisper: <span class="text-cyan-200">{{ runtimeCapabilities?.faster_whisper_status || '-' }}</span></div>
                     <div class="text-white/80">SenseVoice: <span class="text-cyan-200">{{ runtimeCapabilities?.sensevoice_status || '-' }}</span></div>
-                    <div class="text-white/80">Parakeet CTC JA: <span class="text-cyan-200">{{ runtimeCapabilities?.parakeet_status || '-' }}</span></div>
+                    <div class="text-white/80">NVIDIA Parakeet: <span class="text-cyan-200">{{ runtimeCapabilities?.parakeet_status || '-' }}</span></div>
                     <div class="text-white/80">Package: <span class="text-white/70">{{ runtimeStatus?.package_suffix || '-' }}</span></div>
                   </div>
                 </div>
@@ -1637,14 +1811,27 @@ async function handleFileChange(event: Event) {
                 </label>
 
                 <label
+                  @click.prevent="canUseFunAsr && selectAsrEngine('fun_asr')"
+                  :class="['flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 transition', canUseFunAsr ? 'cursor-pointer hover:bg-white/10' : 'opacity-45 cursor-not-allowed']"
+                >
+                  <input :checked="isAsrEngineSelected('fun_asr')" :disabled="!canUseFunAsr" type="checkbox" class="w-5 h-5 accent-blue-500 mt-0.5 pointer-events-none" />
+                  <div class="flex-1">
+                    <span class="text-white font-medium">使用 Fun-ASR Nano</span>
+                    <p class="text-white/50 text-sm mt-1">
+                      可選中英日／中文方言版或 31 語言 MLT 版；目前採分段轉錄且不提供時間戳。
+                    </p>
+                  </div>
+                </label>
+
+                <label
                   @click.prevent="canUseParakeet && selectAsrEngine('parakeet')"
                   :class="['flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 transition', canUseParakeet ? 'cursor-pointer hover:bg-white/10' : 'opacity-45 cursor-not-allowed']"
                 >
                   <input :checked="isAsrEngineSelected('parakeet')" :disabled="!canUseParakeet" type="checkbox" class="w-5 h-5 accent-blue-500 mt-0.5 pointer-events-none" />
                   <div class="flex-1">
-                    <span class="text-white font-medium">Parakeet CTC JA</span>
+                    <span class="text-white font-medium">Parakeet</span>
                     <p class="text-white/50 text-sm mt-1">
-                      CUDA experimental Japanese-only ASR. Uses NVIDIA NeMo and grider-transwithai/parakeet-ctc-1.1b-ja.
+                      CUDA 實驗性離線 ASR；官方模型支援英文或日文，透過 NVIDIA NeMo 執行。
                     </p>
                   </div>
                 </label>
@@ -1656,7 +1843,7 @@ async function handleFileChange(event: Event) {
               <div>
                 <label class="block text-white/70 font-semibold mb-2">轉錄模型</label>
                 <!-- Whisper 模型選擇 -->
-                <UiSelect v-if="!localConfig.transcription.use_qwen3_asr && !localConfig.transcription.use_openai_transcription_api && !localConfig.transcription.use_sensevoice_asr && !localConfig.transcription.use_nemo_asr"
+                <UiSelect v-if="!localConfig.transcription.use_qwen3_asr && !localConfig.transcription.use_openai_transcription_api && !localConfig.transcription.use_sensevoice_asr && !localConfig.transcription.use_fun_asr && !localConfig.transcription.use_nemo_asr"
                   v-model="localConfig.transcription.model"
                   :options="whisperModelSelectOptions" />
                 <!-- OpenAI 模型選擇 -->
@@ -1668,9 +1855,17 @@ async function handleFileChange(event: Event) {
                 <UiSelect v-else-if="localConfig.transcription.use_sensevoice_asr"
                   v-model="localConfig.transcription.sensevoice_model"
                   :options="senseVoiceModelOptions" />
+                <UiSelect v-else-if="localConfig.transcription.use_fun_asr"
+                  v-model="localConfig.transcription.fun_asr_model"
+                  :options="funAsrModelOptions" />
                 <UiSelect v-else-if="localConfig.transcription.use_nemo_asr"
                   v-model="localConfig.transcription.nemo_asr_model"
                   :options="parakeetModelOptions" />
+                <div v-if="localConfig.transcription.use_nemo_asr" class="mt-4">
+                  <label class="block text-white/70 font-semibold mb-2">解碼器</label>
+                  <UiSelect v-model="localConfig.transcription.nemo_asr_decoding" :options="parakeetDecodingOptions" />
+                  <p class="text-white/45 text-xs mt-2">TDT 為官方預設；CTC 保留作相容或比較用途。模型語言會依英文／日文模型自動綁定。</p>
+                </div>
                 <!-- Qwen3-ASR 模型選擇 (下拉選單) -->
                 <UiSelect v-else-if="localConfig.transcription.use_qwen3_asr"
                   v-model="localConfig.transcription.qwen3_asr_model"
@@ -1714,7 +1909,14 @@ async function handleFileChange(event: Event) {
 
               <div>
                 <label class="block text-white/70 font-semibold mb-2">語言</label>
-                <UiSelect v-model="localConfig.transcription.language" :options="transcriptionLanguageOptions" />
+                <UiSelect
+                  v-model="localConfig.transcription.language"
+                  :options="transcriptionLanguageOptions"
+                  :disabled="isTranscriptionLanguageLocked"
+                />
+                <p v-if="isTranscriptionLanguageLocked" class="text-amber-300/80 text-xs mt-2">
+                  此模型為專用語言模型，輸入語言已自動鎖定。
+                </p>
               </div>
 
               <div class="md:col-span-2" v-if="!localConfig.transcription.use_qwen3_asr && !localConfig.transcription.use_nemo_asr">
@@ -1728,51 +1930,7 @@ async function handleFileChange(event: Event) {
               </div>
             </div>
 
-            <!-- Whisper 濾鏡 -->
-            <div class="mt-6 pt-6 border-t border-white/10">
-              <h3 class="text-lg font-semibold text-blue-300 mb-4">🔍 Whisper 結果濾鏡</h3>
-              <p class="text-white/60 text-sm mb-4">選擇要應用於 Whisper 轉錄結果的濾鏡</p>
-              <div class="space-y-3">
-                <label class="flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer hover:bg-white/10 transition">
-                  <input 
-                    type="checkbox" 
-                    :checked="localConfig.transcription.whisper_filters?.includes('emoji_filter')"
-                    @change="toggleFilter('emoji_filter', ($event.target as HTMLInputElement).checked)"
-                    class="w-5 h-5 accent-blue-500 mt-0.5" 
-                  />
-                  <div class="flex-1">
-                    <span class="text-white font-medium">Emoji 濾鏡</span>
-                    <p class="text-white/50 text-sm mt-1">過濾轉錄結果中的 emoji 表情符號</p>
-                  </div>
-                </label>
-
-                <label class="flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer hover:bg-white/10 transition">
-                  <input 
-                    type="checkbox" 
-                    :checked="localConfig.transcription.whisper_filters?.includes('repetition_filter')"
-                    @change="toggleFilter('repetition_filter', ($event.target as HTMLInputElement).checked)"
-                    class="w-5 h-5 accent-blue-500 mt-0.5" 
-                  />
-                  <div class="flex-1">
-                    <span class="text-white font-medium">重複濾鏡</span>
-                    <p class="text-white/50 text-sm mt-1">過濾重複出現的文字內容</p>
-                  </div>
-                </label>
-
-                <label class="flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer hover:bg-white/10 transition">
-                  <input 
-                    type="checkbox" 
-                    :checked="localConfig.transcription.whisper_filters?.includes('japanese_stream_filter')"
-                    @change="toggleFilter('japanese_stream_filter', ($event.target as HTMLInputElement).checked)"
-                    class="w-5 h-5 accent-blue-500 mt-0.5" 
-                  />
-                  <div class="flex-1">
-                    <span class="text-white font-medium">日文直播濾鏡</span>
-                    <p class="text-white/50 text-sm mt-1">針對日文直播內容的特殊濾鏡處理</p>
-                  </div>
-                </label>
-              </div>
-            </div>
+            <WhisperFilterSettings v-model="localConfig.transcription.whisper_filters" />
 
             <!-- 其他設定 -->
             <div class="mt-6 grid grid-cols-1 gap-6">
@@ -1786,7 +1944,7 @@ async function handleFileChange(event: Event) {
           </div>
 
           <!-- Model Management Settings -->
-          <div v-show="activeTab === 'model_management'" class="space-y-6">
+          <div v-if="activeTab === 'model_management'" class="settings-paint-section space-y-6">
             <h2 class="text-xl font-bold text-white mb-4">ASR模型管理</h2>
 
             <div class="bg-cyan-500/10 rounded-xl p-4 border border-cyan-500/20">
@@ -1830,7 +1988,31 @@ async function handleFileChange(event: Event) {
               {{ modelDownloadStore.successMessage }}
             </div>
 
-            <div class="bg-white/5 rounded-xl p-5 border border-white/10">
+            <AsrModelGroup title="Qwen3-ASR 模型" engine="qwen3-asr" :models="qwenModelList" />
+            <AsrModelGroup
+              title="SenseVoice 模型"
+              engine="sensevoice"
+              :models="senseVoiceModelList"
+              default-description="CPU capable；ROCm 在 AMD 實機驗證前維持 experimental。"
+            />
+            <AsrModelGroup
+              title="Fun-ASR Nano 模型"
+              engine="fun-asr-nano"
+              :models="funAsrModelList"
+              :descriptions="{
+                'FunAudioLLM/Fun-ASR-Nano-2512': '中文／英文／日文與中文方言模型',
+                'FunAudioLLM/Fun-ASR-MLT-Nano-2512': '31 種語言模型',
+              }"
+            />
+            <AsrModelGroup
+              title="NVIDIA Parakeet 模型"
+              engine="parakeet-ctc-ja"
+              :models="parakeetModelList"
+              default-description="CUDA experimental；英文／日文依模型固定；官方模型採 CC-BY-4.0，需 NVIDIA NeMo。"
+            />
+            <AsrModelGroup title="Faster-Whisper 模型" engine="faster-whisper" :models="fasterWhisperModelList" />
+
+            <div v-if="false" class="bg-white/5 rounded-xl p-5 border border-white/10">
               <h3 class="text-lg font-semibold text-blue-300 mb-4">Qwen3-ASR 模型</h3>
               <div class="space-y-3">
                 <div v-for="modelId in qwenModelList" :key="`qwen-${modelId}`" class="p-4 rounded-lg bg-white/5 border border-white/10">
@@ -1862,7 +2044,7 @@ async function handleFileChange(event: Event) {
               </div>
             </div>
 
-            <div class="bg-white/5 rounded-xl p-5 border border-white/10">
+            <div v-if="false" class="bg-white/5 rounded-xl p-5 border border-white/10">
               <h3 class="text-lg font-semibold text-blue-300 mb-4">SenseVoice 模型</h3>
               <div class="space-y-3">
                 <div v-for="modelId in senseVoiceModelList" :key="`sensevoice-${modelId}`" class="p-4 rounded-lg bg-white/5 border border-white/10">
@@ -1895,14 +2077,49 @@ async function handleFileChange(event: Event) {
               </div>
             </div>
 
-            <div v-if="parakeetModelList.length > 0" class="bg-white/5 rounded-xl p-5 border border-white/10">
-              <h3 class="text-lg font-semibold text-blue-300 mb-4">Parakeet CTC JA 模型</h3>
+            <div v-if="false" class="bg-white/5 rounded-xl p-5 border border-white/10">
+              <h3 class="text-lg font-semibold text-blue-300 mb-4">Fun-ASR Nano 模型</h3>
+              <div class="space-y-3">
+                <div v-for="modelId in funAsrModelList" :key="`fun-asr-${modelId}`" class="p-4 rounded-lg bg-white/5 border border-white/10">
+                  <div class="flex items-center justify-between gap-4">
+                    <div>
+                      <div class="text-white font-semibold">{{ modelId }}</div>
+                      <div class="text-white/50 text-xs mt-1">
+                        {{ modelId.includes('-MLT-') ? '31 語言模型' : '中英日與中文方言模型' }}
+                      </div>
+                      <div :class="['text-sm mt-1', getModelStatusClass('fun-asr-nano', modelId)]">
+                        {{ getModelStatusText('fun-asr-nano', modelId) }}
+                      </div>
+                    </div>
+                    <button
+                      @click="startModelDownload('fun-asr-nano', modelId)"
+                      :disabled="!canStartDownload('fun-asr-nano', modelId)"
+                      class="px-4 py-2 rounded-lg font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed bg-blue-600 hover:bg-blue-700 text-white"
+                    >
+                      {{ modelDownloadStore.isDownloaded('fun-asr-nano', modelId) ? '已下載' : '預下載' }}
+                    </button>
+                  </div>
+                  <div v-if="getModelTask('fun-asr-nano', modelId) && ['pending', 'downloading'].includes(getModelTask('fun-asr-nano', modelId)!.status)" class="mt-3">
+                    <div class="h-2 bg-white/10 rounded-full overflow-hidden">
+                      <div
+                        class="h-full bg-gradient-to-r from-blue-500 to-cyan-400 transition-all"
+                        :style="{ width: `${Math.max(5, (getModelTask('fun-asr-nano', modelId)?.progress || 0) * 100)}%` }"
+                      />
+                    </div>
+                    <div class="text-xs text-white/60 mt-1">{{ getModelTask('fun-asr-nano', modelId)?.message }}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div v-if="false" class="bg-white/5 rounded-xl p-5 border border-white/10">
+              <h3 class="text-lg font-semibold text-blue-300 mb-4">NVIDIA Parakeet 模型</h3>
               <div class="space-y-3">
                 <div v-for="modelId in parakeetModelList" :key="`parakeet-${modelId}`" class="p-4 rounded-lg bg-white/5 border border-white/10">
                   <div class="flex items-center justify-between gap-4">
                     <div>
                       <div class="text-white font-semibold">{{ modelId }}</div>
-                      <div class="text-white/50 text-xs mt-1">CUDA experimental; Japanese-only; requires NVIDIA NeMo.</div>
+                      <div class="text-white/50 text-xs mt-1">CUDA experimental；英文／日文依模型固定；官方模型採 CC-BY-4.0，需 NVIDIA NeMo。</div>
                       <div :class="['text-sm mt-1', getModelStatusClass('parakeet-ctc-ja', modelId)]">
                         {{ getModelStatusText('parakeet-ctc-ja', modelId) }}
                       </div>
@@ -1928,7 +2145,7 @@ async function handleFileChange(event: Event) {
               </div>
             </div>
 
-            <div class="bg-white/5 rounded-xl p-5 border border-white/10">
+            <div v-if="false" class="bg-white/5 rounded-xl p-5 border border-white/10">
               <h3 class="text-lg font-semibold text-blue-300 mb-4">Faster-Whisper 模型</h3>
               <div class="space-y-3">
                 <div v-for="modelId in fasterWhisperModelList" :key="`fw-${modelId}`" class="p-4 rounded-lg bg-white/5 border border-white/10">
@@ -1997,7 +2214,7 @@ async function handleFileChange(event: Event) {
           </div>
 
           <!-- Translation Settings -->
-          <div v-show="activeTab === 'translation'" class="space-y-6">
+          <div v-if="activeTab === 'translation'" class="settings-paint-section space-y-6">
             <h2 class="text-xl font-bold text-white mb-4">翻譯選項</h2>
             
             <!-- 基本翻譯設定 -->
@@ -2199,22 +2416,13 @@ async function handleFileChange(event: Event) {
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label class="block text-white/70 font-semibold mb-2">模型翻譯策略</label>
-                  <UiSelect v-model="localConfig.translation.translation_model_family" :options="[
-                    { value: 'auto', label: '自動判斷' },
-                    { value: 'hy_mt2', label: 'Hy-MT2 專用翻譯模型' },
-                    { value: 'generic_chat', label: '通用聊天模型（Gemma 等）' },
-                    { value: 'structured_api', label: '結構化 API（OpenAI / Gemini）' }
-                  ]" />
+                  <UiSelect v-model="localConfig.translation.translation_model_family" :options="translationModelFamilyOptions" />
                   <p class="text-white/40 text-xs mt-1">本地模型名稱不明確時，請手動指定策略。</p>
                 </div>
 
                 <div>
                   <label class="block text-white/70 font-semibold mb-2">輸出格式</label>
-                  <UiSelect v-model="localConfig.translation.translation_output_format" :options="[
-                    { value: 'auto', label: '自動' },
-                    { value: 'text', label: '純文字' },
-                    { value: 'json', label: 'JSON' }
-                  ]" />
+                  <UiSelect v-model="localConfig.translation.translation_output_format" :options="translationOutputFormatOptions" />
                   <p class="text-white/40 text-xs mt-1">Hy-MT2 固定使用純文字；支援的 API 才會使用 JSON。</p>
                 </div>
 
@@ -2355,7 +2563,7 @@ async function handleFileChange(event: Event) {
           </div>
 
           <!-- Llama Settings -->
-          <div v-show="activeTab === 'llama'" class="space-y-6">
+          <div v-if="activeTab === 'llama'" class="settings-paint-section space-y-6">
             <h2 class="text-xl font-bold text-white mb-4">🦙 Llama 設定</h2>
             <div class="bg-gradient-to-br from-yellow-500/10 to-orange-500/10 rounded-xl p-5 border border-yellow-500/20 mb-4">
               <p class="text-yellow-200 mb-2">💡 使用本地 llama.cpp 進行翻譯</p>
@@ -2365,7 +2573,7 @@ async function handleFileChange(event: Event) {
           </div>
 
           <!-- Terminology Settings -->
-          <div v-show="activeTab === 'terminology'" class="space-y-6">
+          <div v-if="activeTab === 'terminology'" class="settings-paint-section space-y-6">
             <h2 class="text-xl font-bold text-white mb-4">術語表</h2>
 
             <div class="bg-gradient-to-br from-cyan-500/10 to-blue-500/10 rounded-xl p-5 border border-cyan-500/20">
@@ -2410,7 +2618,7 @@ async function handleFileChange(event: Event) {
               </div>
 
               <div class="max-h-80 overflow-y-auto space-y-2">
-                <div v-for="rule in filteredAsrCorrections" :key="`${rule.canonical}-${(rule.aliases || []).join('|')}`"
+                <div v-for="rule in visibleAsrCorrections" :key="`${rule.canonical}-${(rule.aliases || []).join('|')}`"
                   class="flex items-center justify-between gap-4 p-3 bg-white/5 rounded-lg border border-white/10">
                   <div class="min-w-0">
                     <div class="text-cyan-300 font-semibold">{{ rule.canonical }}</div>
@@ -2421,6 +2629,13 @@ async function handleFileChange(event: Event) {
                 <div v-if="filteredAsrCorrections.length === 0" class="text-white/40 text-center py-6">
                   {{ (localConfig.transcription?.asr_correction_rules?.length || 0) === 0 ? '尚未新增 ASR 修正規則' : '沒有符合搜尋的規則' }}
                 </div>
+                <button
+                  v-if="visibleAsrCorrections.length < filteredAsrCorrections.length"
+                  @click="asrCorrectionRenderLimit += LARGE_LIST_BATCH_SIZE"
+                  class="w-full py-2 text-sm text-cyan-300 hover:text-cyan-200 bg-white/5 hover:bg-white/10 rounded-lg"
+                >
+                  顯示更多（尚有 {{ filteredAsrCorrections.length - visibleAsrCorrections.length }} 筆）
+                </button>
               </div>
 
               <div class="text-white/40 text-sm">共 {{ localConfig.transcription?.asr_correction_rules?.length || 0 }} 筆修正規則</div>
@@ -2469,17 +2684,24 @@ async function handleFileChange(event: Event) {
 
             <!-- 術語列表 -->
             <div class="max-h-80 overflow-y-auto space-y-2">
-              <div v-for="(term, idx) in filteredGlossary" :key="idx"
+              <div v-for="term in visibleGlossary" :key="`${term.original}-${term.translated}`"
                 class="flex items-center justify-between p-3 bg-white/5 rounded-lg border border-white/10">
                 <div class="flex-1 grid grid-cols-2 gap-4">
                   <span class="text-white">{{ term.original }}</span>
                   <span class="text-yellow-300">→ {{ term.translated }}</span>
                 </div>
-                <button @click="removeTerm(idx)" class="text-red-400 hover:text-red-300 ml-4">✕</button>
+                <button @click="removeTermEntry(term)" class="text-red-400 hover:text-red-300 ml-4">✕</button>
               </div>
               <div v-if="filteredGlossary.length === 0" class="text-white/40 text-center py-8">
                 {{ (localConfig.terminology?.glossary_list?.length || 0) === 0 ? '尚未新增術語' : '無符合搜尋的術語' }}
               </div>
+              <button
+                v-if="visibleGlossary.length < filteredGlossary.length"
+                @click="glossaryRenderLimit += LARGE_LIST_BATCH_SIZE"
+                class="w-full py-2 text-sm text-purple-300 hover:text-purple-200 bg-white/5 hover:bg-white/10 rounded-lg"
+              >
+                顯示更多（尚有 {{ filteredGlossary.length - visibleGlossary.length }} 筆）
+              </button>
             </div>
 
             <div class="text-white/40 text-sm mt-4">
@@ -2488,7 +2710,7 @@ async function handleFileChange(event: Event) {
           </div>
 
           <!-- Output & Notification Settings -->
-          <div v-show="activeTab === 'output'" class="space-y-6">
+          <div v-if="activeTab === 'output'" class="settings-paint-section space-y-6">
             <h2 class="text-xl font-bold text-white mb-4">輸出選項</h2>
             
             <div class="bg-white/5 rounded-xl p-4 border border-white/10 mb-6">
@@ -2642,6 +2864,17 @@ async function handleFileChange(event: Event) {
 </template>
 
 <style scoped>
+.settings-paint-section {
+  contain: layout style;
+  isolation: isolate;
+}
+
+.settings-paint-section > :not(.llama-settings) {
+  /* 長設定頁以直屬區塊為重繪單位，避免快速捲動時整頁重新合成。 */
+  contain: layout paint style;
+  isolation: isolate;
+}
+
 .tooltip-container {
   position: relative;
   display: inline-flex;

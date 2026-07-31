@@ -6,6 +6,11 @@ import { useLlamaStore } from '../stores/llama';
 import { translationApi, configApi, serverApi, systemApi, type AudioSource, type AudioDevice, type Config, type FfmpegCheckResult } from '../services/api';
 import UiSelect, { type UiSelectOption } from '../components/UiSelect.vue';
 import { useAppSyncEvents } from '../composables/useAppSyncEvents';
+import {
+  coerceLanguageForModel,
+  isModelLanguageCompatible,
+  languageOptionsForModel,
+} from '../utils/asrCapabilities';
 
 const router = useRouter();
 const store = useTranslationStore();
@@ -174,19 +179,17 @@ const whisperModels = ['tiny', 'base', 'small', 'medium', 'large-v2', 'large-v3'
 const qwen3AsrModels = [
   { value: 'Qwen/Qwen3-ASR-1.7B', label: 'Qwen3-ASR-1.7B (推薦)' },
   { value: 'Qwen/Qwen3-ASR-0.6B', label: 'Qwen3-ASR-0.6B (更快)' },
-  { value: 'neosophie/Qwen3-ASR-1.7B-JA', label: 'Qwen3-ASR-1.7B-JA (Japanese fine-tune)' }
+  { value: 'jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame', label: 'Qwen3-ASR-1.7B-JA-Anime' }
 ];
-const inputLanguages = [
-  { value: 'auto', label: '自動偵測' },
-  { value: 'ja', label: '日文' },
-  { value: 'en', label: '英文' },
-  { value: 'ko', label: '韓文' },
-  { value: 'zh-tw', label: '繁體中文' },
-  { value: 'zh-cn', label: '簡體中文' }
-];
+const legacyQwen3JaModel = 'neosophie/Qwen3-ASR-1.7B-JA';
+const qwen3AnimeModel = 'jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame';
 const parakeetModels = [
-  { value: 'grider-transwithai/parakeet-ctc-1.1b-ja', label: 'Parakeet CTC 1.1B JA' }
+  { value: 'nvidia/parakeet-tdt_ctc-0.6b-ja', label: 'NVIDIA Parakeet 0.6B（日文）' },
+  { value: 'nvidia/parakeet-tdt_ctc-1.1b', label: 'NVIDIA Parakeet 1.1B（英文）' },
+  { value: 'grider-transwithai/parakeet-ctc-1.1b-ja', label: 'parakeet-ctc-1.1b-ja（日文）' }
 ];
+const parakeetLanguageForModel = (modelId: string) =>
+  modelId === 'nvidia/parakeet-tdt_ctc-1.1b' ? 'en' : 'ja';
 const outputLanguages = [
   { value: 'Traditional Chinese', label: '繁體中文' },
   { value: 'Simplified Chinese', label: '簡體中文' },
@@ -215,7 +218,8 @@ const allTranscriptionEngineOptions: UiSelectOption[] = [
   { value: 'faster-whisper-simul', label: 'Faster-Whisper + SimulStreaming', group: '本機 ASR' },
   { value: 'qwen3-asr', label: 'Qwen3-ASR', group: '本機 ASR' },
   { value: 'sensevoice', label: 'SenseVoiceSmall', group: '本機 ASR' },
-  { value: 'parakeet-ctc-ja', label: 'Parakeet CTC JA', group: '本機 ASR' },
+  { value: 'fun-asr-nano', label: 'Fun-ASR Nano', group: '本機 ASR' },
+  { value: 'parakeet-ctc-ja', label: 'Parakeet', group: '本機 ASR' },
   { value: 'openai-api', label: 'OpenAI API', group: '遠端 ASR' }
 ];
 
@@ -228,20 +232,107 @@ const whisperModelOptions = computed<UiSelectOption[]>(() =>
 const qwen3AsrModelOptions = computed<UiSelectOption[]>(() =>
   qwen3AsrModels
     .filter((model) => allowedQwen3AsrModels.value.includes(model.value))
-    .map((model) => ({ value: model.value, label: model.label }))
+    .map((model) => ({
+      value: model.value,
+      label: model.label,
+      disabled: selectedAsrCapability.value?.language_mode !== 'fixed'
+        && !isModelLanguageCompatible(
+          runtimeCapabilities.value?.asr_model_capabilities,
+          model.value,
+          selectedInputLanguage.value,
+        ),
+    }))
 );
-const senseVoiceModelOptions: UiSelectOption[] = [
-  { value: 'iic/SenseVoiceSmall', label: 'SenseVoiceSmall' }
+const senseVoiceModelOptions = computed<UiSelectOption[]>(() => [
+  {
+    value: 'iic/SenseVoiceSmall',
+    label: 'SenseVoiceSmall（中／粵／英／日／韓）',
+    disabled: selectedAsrCapability.value?.language_mode !== 'fixed'
+      && !isModelLanguageCompatible(
+        runtimeCapabilities.value?.asr_model_capabilities,
+        'iic/SenseVoiceSmall',
+        selectedInputLanguage.value,
+      ),
+  }
+]);
+const allFunAsrModelOptions: UiSelectOption[] = [
+  { value: 'FunAudioLLM/Fun-ASR-Nano-2512', label: 'Fun-ASR Nano（中／英／日）' },
+  { value: 'FunAudioLLM/Fun-ASR-MLT-Nano-2512', label: 'Fun-ASR MLT Nano（31 語言）' }
 ];
+const funAsrModelOptions = computed<UiSelectOption[]>(() =>
+  allFunAsrModelOptions.map((model) => ({
+    ...model,
+    disabled: selectedAsrCapability.value?.language_mode !== 'fixed'
+      && !isModelLanguageCompatible(
+        runtimeCapabilities.value?.asr_model_capabilities,
+        String(model.value),
+        selectedInputLanguage.value,
+      ),
+  }))
+);
 const parakeetModelOptions = computed<UiSelectOption[]>(() =>
   parakeetModels
     .filter((model) => allowedParakeetModels.value.includes(model.value))
-    .map((model) => ({ value: model.value, label: model.label }))
+    .map((model) => ({
+      value: model.value,
+      label: model.label,
+      disabled: selectedAsrCapability.value?.language_mode !== 'fixed'
+        && !isModelLanguageCompatible(
+          runtimeCapabilities.value?.asr_model_capabilities,
+          model.value,
+          selectedInputLanguage.value,
+        ),
+    }))
 );
 
-const inputLanguageOptions = computed<UiSelectOption[]>(() =>
-  inputLanguages.map((lang) => ({ value: lang.value, label: lang.label }))
+const selectedAsrModelId = computed(() => {
+  if (selectedTranscriptionEngine.value === 'qwen3-asr') return selectedQwen3AsrModel.value;
+  if (selectedTranscriptionEngine.value === 'sensevoice') return selectedSenseVoiceModel.value;
+  if (selectedTranscriptionEngine.value === 'fun-asr-nano') return selectedFunAsrModel.value;
+  if (selectedTranscriptionEngine.value === 'parakeet-ctc-ja') return selectedParakeetModel.value;
+  return selectedWhisperModel.value;
+});
+const selectedAsrCapability = computed(() =>
+  runtimeCapabilities.value?.asr_model_capabilities?.find(
+    (item) => item.model_id === selectedAsrModelId.value
+  )
 );
+const inputLanguageOptions = computed<UiSelectOption[]>(() =>
+  languageOptionsForModel(
+    runtimeCapabilities.value?.asr_model_capabilities,
+    selectedAsrModelId.value,
+  )
+);
+const isInputLanguageLocked = computed(() => selectedAsrCapability.value?.language_mode === 'fixed');
+
+function selectCompatibleModelForCurrentLanguage(): boolean {
+  const capabilities = runtimeCapabilities.value?.asr_model_capabilities;
+  const language = selectedInputLanguage.value;
+  if (isModelLanguageCompatible(capabilities, selectedAsrModelId.value, language)) return true;
+
+  if (selectedTranscriptionEngine.value === 'qwen3-asr') {
+    const model = allowedQwen3AsrModels.value.find((id) =>
+      isModelLanguageCompatible(capabilities, id, language)
+    );
+    if (model) selectedQwen3AsrModel.value = model;
+    return !!model;
+  }
+  if (selectedTranscriptionEngine.value === 'fun-asr-nano') {
+    const model = allowedFunAsrModels.value.find((id) =>
+      isModelLanguageCompatible(capabilities, id, language)
+    );
+    if (model) selectedFunAsrModel.value = model;
+    return !!model;
+  }
+  if (selectedTranscriptionEngine.value === 'parakeet-ctc-ja') {
+    const model = allowedParakeetModels.value.find((id) =>
+      isModelLanguageCompatible(capabilities, id, language)
+    );
+    if (model) selectedParakeetModel.value = model;
+    return !!model;
+  }
+  return false;
+}
 
 const outputLanguageOptions = computed<UiSelectOption[]>(() =>
   outputLanguages.map((lang) => ({ value: lang.value, label: lang.label }))
@@ -290,7 +381,8 @@ const selectedTranscriptionEngine = ref('faster-whisper');  // 🆕 新增: 轉�
 const selectedWhisperModel = ref('base');
 const selectedQwen3AsrModel = ref('Qwen/Qwen3-ASR-1.7B');  // 🆕 新增: Qwen3-ASR 模型
 const selectedSenseVoiceModel = ref('iic/SenseVoiceSmall');
-const selectedParakeetModel = ref('grider-transwithai/parakeet-ctc-1.1b-ja');
+const selectedFunAsrModel = ref('FunAudioLLM/Fun-ASR-Nano-2512');
+const selectedParakeetModel = ref('nvidia/parakeet-tdt_ctc-0.6b-ja');
 const selectedInputLanguage = ref('auto');
 const selectedOutputLanguage = ref('Traditional Chinese');
 const selectedBackend = ref('gpt');
@@ -301,7 +393,7 @@ const runtimeCapabilities = computed(() => store.runtimeStatus?.capabilities || 
 const allowedLocalAsrEngines = computed<string[]>(() =>
   runtimeCapabilities.value?.local_asr_engines?.length
     ? runtimeCapabilities.value.local_asr_engines
-    : ['faster-whisper', 'simul-streaming', 'faster-whisper-simul', 'qwen3-asr', 'sensevoice', 'parakeet-ctc-ja']
+    : ['faster-whisper', 'simul-streaming', 'faster-whisper-simul', 'qwen3-asr', 'sensevoice', 'fun-asr-nano', 'parakeet-ctc-ja']
 );
 const allowedRemoteAsrEngines = computed<string[]>(() =>
   runtimeCapabilities.value?.remote_asr_engines?.length
@@ -332,6 +424,11 @@ const allowedSenseVoiceModels = computed<string[]>(() =>
     ? runtimeCapabilities.value.sensevoice_model_ids
     : ['iic/SenseVoiceSmall']
 );
+const allowedFunAsrModels = computed<string[]>(() =>
+  runtimeCapabilities.value?.fun_asr_model_ids?.length
+    ? runtimeCapabilities.value.fun_asr_model_ids
+    : allFunAsrModelOptions.map((model) => String(model.value))
+);
 const allowedParakeetModels = computed<string[]>(() =>
   runtimeCapabilities.value?.parakeet_model_ids?.length
     ? runtimeCapabilities.value.parakeet_model_ids
@@ -347,14 +444,20 @@ function coerceRuntimeLimitedSelections() {
   if (!allowedFasterWhisperModels.value.includes(selectedWhisperModel.value)) {
     selectedWhisperModel.value = allowedFasterWhisperModels.value[0] || 'small';
   }
+  if (selectedQwen3AsrModel.value === legacyQwen3JaModel) {
+    selectedQwen3AsrModel.value = qwen3AnimeModel;
+  }
   if (!allowedQwen3AsrModels.value.includes(selectedQwen3AsrModel.value)) {
     selectedQwen3AsrModel.value = allowedQwen3AsrModels.value[0] || 'Qwen/Qwen3-ASR-0.6B';
   }
   if (!allowedSenseVoiceModels.value.includes(selectedSenseVoiceModel.value)) {
     selectedSenseVoiceModel.value = allowedSenseVoiceModels.value[0] || 'iic/SenseVoiceSmall';
   }
+  if (!allowedFunAsrModels.value.includes(selectedFunAsrModel.value)) {
+    selectedFunAsrModel.value = allowedFunAsrModels.value[0] || 'FunAudioLLM/Fun-ASR-Nano-2512';
+  }
   if (!allowedParakeetModels.value.includes(selectedParakeetModel.value)) {
-    selectedParakeetModel.value = allowedParakeetModels.value[0] || 'grider-transwithai/parakeet-ctc-1.1b-ja';
+    selectedParakeetModel.value = allowedParakeetModels.value[0] || 'nvidia/parakeet-tdt_ctc-0.6b-ja';
   }
 }
 
@@ -366,6 +469,7 @@ const lastAppliedHomeConfigSnapshot = ref('');
 
 function getTranscriptionEngineFromConfig(cfg: Config): string {
   if (cfg.transcription?.use_qwen3_asr) return 'qwen3-asr';
+  if (cfg.transcription?.use_fun_asr) return 'fun-asr-nano';
   if (cfg.transcription?.use_sensevoice_asr) return 'sensevoice';
   if (cfg.transcription?.use_nemo_asr) return 'parakeet-ctc-ja';
   if (cfg.transcription?.use_openai_transcription_api) return 'openai-api';
@@ -392,7 +496,8 @@ function buildHomeConfigSnapshotFromConfig(cfg: Config): string {
     selectedWhisperModel: cfg.transcription?.model || 'base',
     selectedQwen3AsrModel: cfg.transcription?.qwen3_asr_model || 'Qwen/Qwen3-ASR-1.7B',
     selectedSenseVoiceModel: cfg.transcription?.sensevoice_model || 'iic/SenseVoiceSmall',
-    selectedParakeetModel: cfg.transcription?.nemo_asr_model || 'grider-transwithai/parakeet-ctc-1.1b-ja',
+    selectedFunAsrModel: cfg.transcription?.fun_asr_model || 'FunAudioLLM/Fun-ASR-Nano-2512',
+    selectedParakeetModel: cfg.transcription?.nemo_asr_model || 'nvidia/parakeet-tdt_ctc-0.6b-ja',
     selectedInputLanguage: normalizeInputLanguage(cfg.transcription?.language),
     selectedOutputLanguage: cfg.translation?.target_language || 'Traditional Chinese',
     selectedBackend: cfg.translation?.backend || 'gpt',
@@ -411,6 +516,7 @@ function buildHomeConfigSnapshotFromRefs(): string {
     selectedWhisperModel: selectedWhisperModel.value,
     selectedQwen3AsrModel: selectedQwen3AsrModel.value,
     selectedSenseVoiceModel: selectedSenseVoiceModel.value,
+    selectedFunAsrModel: selectedFunAsrModel.value,
     selectedParakeetModel: selectedParakeetModel.value,
     selectedInputLanguage: selectedInputLanguage.value,
     selectedOutputLanguage: selectedOutputLanguage.value,
@@ -430,12 +536,16 @@ async function saveHomeConfigToBackend() {
       model: selectedWhisperModel.value,
       qwen3_asr_model: selectedQwen3AsrModel.value,
       sensevoice_model: selectedSenseVoiceModel.value,
+      fun_asr_model: selectedFunAsrModel.value,
       nemo_asr_model: selectedParakeetModel.value,
       nemo_asr_dtype: store.config.transcription?.nemo_asr_dtype || 'bfloat16',
-      language: selectedInputLanguage.value,
+      language: engine === 'parakeet-ctc-ja'
+        ? parakeetLanguageForModel(selectedParakeetModel.value)
+        : selectedInputLanguage.value,
       backend: engine,
       use_qwen3_asr: engine === 'qwen3-asr',
       use_sensevoice_asr: engine === 'sensevoice',
+      use_fun_asr: engine === 'fun-asr-nano',
       use_nemo_asr: engine === 'parakeet-ctc-ja',
       use_openai_transcription_api: engine === 'openai-api',
       use_faster_whisper: engine === 'faster-whisper' || engine === 'faster-whisper-simul',
@@ -457,7 +567,11 @@ async function saveHomeConfigToBackend() {
       transcription: transcriptionPatch,
       translation: translationPatch,
     });
-    store.applyConfigSnapshot(updatedConfig);
+    store.applyConfigSections({
+      input: updatedConfig.input,
+      transcription: updatedConfig.transcription,
+      translation: updatedConfig.translation,
+    });
     // 更新本地 store 快照
     lastAppliedHomeConfigSnapshot.value = buildHomeConfigSnapshotFromConfig(store.config);
   } catch (e) {
@@ -603,7 +717,8 @@ async function applyConfigToRefs(cfg: Config) {
     selectedWhisperModel.value = cfg.transcription?.model || 'base';
     selectedQwen3AsrModel.value = cfg.transcription?.qwen3_asr_model || 'Qwen/Qwen3-ASR-1.7B';
     selectedSenseVoiceModel.value = cfg.transcription?.sensevoice_model || 'iic/SenseVoiceSmall';
-    selectedParakeetModel.value = cfg.transcription?.nemo_asr_model || 'grider-transwithai/parakeet-ctc-1.1b-ja';
+    selectedFunAsrModel.value = cfg.transcription?.fun_asr_model || 'FunAudioLLM/Fun-ASR-Nano-2512';
+    selectedParakeetModel.value = cfg.transcription?.nemo_asr_model || 'nvidia/parakeet-tdt_ctc-0.6b-ja';
     selectedTranscriptionEngine.value = getTranscriptionEngineFromConfig(cfg);
     coerceRuntimeLimitedSelections();
     selectedInputLanguage.value = normalizeInputLanguage(cfg.transcription?.language);
@@ -718,6 +833,57 @@ watch(runtimeCapabilities, () => {
   coerceRuntimeLimitedSelections();
 });
 
+watch(
+  [selectedAsrModelId, () => runtimeCapabilities.value?.asr_model_capabilities],
+  () => {
+    if (selectedAsrCapability.value?.language_mode !== 'fixed'
+      && !selectCompatibleModelForCurrentLanguage()) {
+      selectedInputLanguage.value = 'auto';
+    }
+    selectedInputLanguage.value = coerceLanguageForModel(
+      runtimeCapabilities.value?.asr_model_capabilities,
+      selectedAsrModelId.value,
+      selectedInputLanguage.value,
+    );
+  },
+  { immediate: true, flush: 'post' },
+);
+
+function stopHomePolling() {
+  if (_homeConfigSyncTimer !== null) {
+    clearInterval(_homeConfigSyncTimer);
+    _homeConfigSyncTimer = null;
+  }
+  if (_homeRunningSyncTimer !== null) {
+    clearInterval(_homeRunningSyncTimer);
+    _homeRunningSyncTimer = null;
+  }
+}
+
+function startHomePolling() {
+  if (document.hidden) return;
+  if (_homeConfigSyncTimer === null) {
+    _homeConfigSyncTimer = setInterval(() => {
+      void syncHomeStateFromBackend();
+    }, 2000);
+  }
+  if (_homeRunningSyncTimer === null) {
+    _homeRunningSyncTimer = setInterval(() => {
+      void store.syncRunningState();
+    }, 1500);
+  }
+}
+
+function handleHomeVisibilityChange() {
+  if (document.hidden) {
+    stopHomePolling();
+    return;
+  }
+  void syncHomeStateFromBackend();
+  void store.syncRunningState();
+  startHomePolling();
+}
+
 onMounted(async () => {
   // 載入公開端口資訊
   await fetchPublicPort();
@@ -750,6 +916,7 @@ onMounted(async () => {
       selectedWhisperModel,
       selectedQwen3AsrModel,
       selectedSenseVoiceModel,
+      selectedFunAsrModel,
       selectedParakeetModel,
       selectedInputLanguage,
       selectedOutputLanguage,
@@ -759,16 +926,12 @@ onMounted(async () => {
     () => {
       if (isApplyingExternalConfig.value) return;
       debouncedSaveHomeConfig();
-    }
+    },
+    { flush: 'post' }
   );
 
-  _homeConfigSyncTimer = setInterval(() => {
-    void syncHomeStateFromBackend();
-  }, 2000);
-
-  _homeRunningSyncTimer = setInterval(() => {
-    void store.syncRunningState();
-  }, 1500);
+  document.addEventListener('visibilitychange', handleHomeVisibilityChange);
+  startHomePolling();
 });
 
 onBeforeUnmount(() => {
@@ -778,14 +941,8 @@ onBeforeUnmount(() => {
     _homeAutoSaveTimer = null;
     void saveHomeConfigToBackend();
   }
-  if (_homeConfigSyncTimer !== null) {
-    clearInterval(_homeConfigSyncTimer);
-    _homeConfigSyncTimer = null;
-  }
-  if (_homeRunningSyncTimer !== null) {
-    clearInterval(_homeRunningSyncTimer);
-    _homeRunningSyncTimer = null;
-  }
+  document.removeEventListener('visibilitychange', handleHomeVisibilityChange);
+  stopHomePolling();
   // 離開首頁前儲存目前輸入狀態，以便返回時還原
   store.saveHomeInput({
     urlInput: urlInput.value,
@@ -823,7 +980,7 @@ async function handleStart() {
     addLog(`設備: ${selectedDeviceIndex.value === null ? '自動選擇' : selectedDeviceIndex.value}`);
   }
   addLog(`轉錄引擎: ${selectedTranscriptionEngine.value}`);
-  addLog(`模型: ${selectedTranscriptionEngine.value === 'qwen3-asr' ? selectedQwen3AsrModel.value : selectedTranscriptionEngine.value === 'sensevoice' ? selectedSenseVoiceModel.value : selectedWhisperModel.value}`);
+  addLog(`模型: ${selectedTranscriptionEngine.value === 'qwen3-asr' ? selectedQwen3AsrModel.value : selectedTranscriptionEngine.value === 'sensevoice' ? selectedSenseVoiceModel.value : selectedTranscriptionEngine.value === 'fun-asr-nano' ? selectedFunAsrModel.value : selectedWhisperModel.value}`);
   addLog(`輸入語言: ${selectedInputLanguage.value}`);
   addLog(`翻譯後端: ${selectedBackend.value}`);
   addLog(`目標語言: ${selectedOutputLanguage.value}`);
@@ -840,6 +997,8 @@ async function handleStart() {
         ? selectedQwen3AsrModel.value
         : selectedTranscriptionEngine.value === 'sensevoice'
           ? selectedSenseVoiceModel.value
+          : selectedTranscriptionEngine.value === 'fun-asr-nano'
+            ? selectedFunAsrModel.value
           : selectedTranscriptionEngine.value === 'parakeet-ctc-ja'
             ? selectedParakeetModel.value
             : selectedWhisperModel.value,
@@ -848,6 +1007,8 @@ async function handleStart() {
         ? selectedQwen3AsrModel.value : undefined,
       sensevoice_model: selectedTranscriptionEngine.value === 'sensevoice'
         ? selectedSenseVoiceModel.value : undefined,
+      fun_asr_model: selectedTranscriptionEngine.value === 'fun-asr-nano'
+        ? selectedFunAsrModel.value : undefined,
       nemo_asr_model: selectedTranscriptionEngine.value === 'parakeet-ctc-ja'
         ? selectedParakeetModel.value : undefined,
       nemo_asr_dtype: selectedTranscriptionEngine.value === 'parakeet-ctc-ja'
@@ -856,7 +1017,9 @@ async function handleStart() {
         ? store.config.transcription?.qwen3_flash_attention : undefined,
       qwen3_dtype: selectedTranscriptionEngine.value === 'qwen3-asr' 
         ? store.config.transcription?.qwen3_dtype : undefined,
-      input_language: selectedInputLanguage.value,
+      input_language: selectedTranscriptionEngine.value === 'parakeet-ctc-ja'
+        ? parakeetLanguageForModel(selectedParakeetModel.value)
+        : selectedInputLanguage.value,
       target_language: translationEnabled.value ? selectedOutputLanguage.value : undefined,
       gpt_model: translationEnabled.value ? store.config.translation?.gpt_model : undefined,
       translation_backend: translationEnabled.value ? selectedBackend.value : undefined,
@@ -1143,9 +1306,12 @@ function clearLogs() {
                 <UiSelect
                   v-model="selectedInputLanguage"
                   :options="inputLanguageOptions"
-                  :disabled="store.isRunning"
+                  :disabled="store.isRunning || isInputLanguageLocked"
                   button-class="bg-white/5 border border-white/15 hover:bg-white/10 text-xs rounded-xl"
                 />
+                <p v-if="isInputLanguageLocked" class="text-amber-300/80 text-[9px] mt-1">
+                  此模型為專用語言模型，輸入語言已自動鎖定。
+                </p>
               </div>
 
               <!-- 啟用翻譯與目標語言 -->
@@ -1210,6 +1376,13 @@ function clearLogs() {
                       v-else-if="selectedTranscriptionEngine === 'sensevoice'"
                       v-model="selectedSenseVoiceModel"
                       :options="senseVoiceModelOptions"
+                      :disabled="store.isRunning"
+                      button-class="bg-white/5 border border-white/10 text-[10px] rounded-lg"
+                    />
+                    <UiSelect
+                      v-else-if="selectedTranscriptionEngine === 'fun-asr-nano'"
+                      v-model="selectedFunAsrModel"
+                      :options="funAsrModelOptions"
                       :disabled="store.isRunning"
                       button-class="bg-white/5 border border-white/10 text-[10px] rounded-lg"
                     />

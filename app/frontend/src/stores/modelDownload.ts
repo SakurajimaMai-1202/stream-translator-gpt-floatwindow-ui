@@ -32,17 +32,25 @@ export const useModelDownloadStore = defineStore('modelDownload', () => {
 
   async function loadTasks() {
     const result = await modelApi.getTasks();
-    tasks.value = result.tasks || [];
+    const nextTasks = result.tasks || [];
+    if (JSON.stringify(tasks.value) !== JSON.stringify(nextTasks)) {
+      tasks.value = nextTasks;
+    }
   }
 
   async function loadDownloadedModels() {
     const result = await modelApi.getDownloadedModels();
-    downloadedModels.value = result.models || [];
+    const nextModels = result.models || [];
+    if (JSON.stringify(downloadedModels.value) !== JSON.stringify(nextModels)) {
+      downloadedModels.value = nextModels;
+    }
   }
 
   async function loadStorage() {
     const result = await modelApi.getStorage();
-    storageInfo.value = result.storage;
+    if (JSON.stringify(storageInfo.value) !== JSON.stringify(result.storage)) {
+      storageInfo.value = result.storage;
+    }
   }
 
   async function refreshAll() {

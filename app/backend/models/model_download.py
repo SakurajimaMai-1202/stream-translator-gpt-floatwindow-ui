@@ -4,7 +4,7 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, Field
 
 
-ModelEngine = Literal["qwen3-asr", "faster-whisper", "sensevoice", "parakeet-ctc-ja"]
+ModelEngine = Literal["qwen3-asr", "faster-whisper", "sensevoice", "fun-asr-nano", "parakeet-ctc-ja"]
 
 
 class StartModelDownloadRequest(BaseModel):

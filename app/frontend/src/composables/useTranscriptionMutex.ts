@@ -6,6 +6,7 @@ interface TranscriptionConfig {
   use_openai_transcription_api?: boolean;
   use_qwen3_asr?: boolean;
   use_sensevoice_asr?: boolean;
+  use_fun_asr?: boolean;
   use_nemo_asr?: boolean;
 }
 
@@ -22,15 +23,17 @@ export function useTranscriptionMutex(getTranscription: () => TranscriptionConfi
     cfg.use_openai_transcription_api = false;
     cfg.use_qwen3_asr = false;
     cfg.use_sensevoice_asr = false;
+    cfg.use_fun_asr = false;
     cfg.use_nemo_asr = false;
   }
 
-  function selectExclusiveEngine(cfg: TranscriptionConfig, engine: 'openai' | 'qwen3' | 'sensevoice' | 'nemo') {
+  function selectExclusiveEngine(cfg: TranscriptionConfig, engine: 'openai' | 'qwen3' | 'sensevoice' | 'fun-asr' | 'nemo') {
     cfg.use_faster_whisper = false;
     cfg.use_simul_streaming = false;
     cfg.use_openai_transcription_api = engine === 'openai';
     cfg.use_qwen3_asr = engine === 'qwen3';
     cfg.use_sensevoice_asr = engine === 'sensevoice';
+    cfg.use_fun_asr = engine === 'fun-asr';
     cfg.use_nemo_asr = engine === 'nemo';
   }
 
@@ -41,6 +44,11 @@ export function useTranscriptionMutex(getTranscription: () => TranscriptionConfi
 
       isApplying = true;
       try {
+        if (cfg.use_fun_asr) {
+          selectExclusiveEngine(cfg, 'fun-asr');
+          return;
+        }
+
         if (cfg.use_sensevoice_asr) {
           selectExclusiveEngine(cfg, 'sensevoice');
           return;

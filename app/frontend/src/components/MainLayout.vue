@@ -3,7 +3,7 @@ import { useRouter, useRoute } from 'vue-router';
 
 const router = useRouter();
 const route = useRoute();
-const appVersion = import.meta.env.VITE_APP_VERSION || '1.3.7';
+const appVersion = import.meta.env.VITE_APP_VERSION || '1.3.8';
 
 // Define navigation items
 const primaryNavigation = [
@@ -124,11 +124,19 @@ function navigateTo(path: string, tabId?: string) {
     </aside>
 
     <!-- Right Content Panel -->
-    <main class="flex-1 overflow-y-auto bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950/40 relative">
+    <main class="app-scroll-surface flex-1 overflow-y-auto bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950/40 relative">
       <router-view />
     </main>
   </div>
 </template>
+
+<style scoped>
+.app-scroll-surface {
+  background-color: rgb(2 6 23);
+  overscroll-behavior: contain;
+  isolation: isolate;
+}
+</style>
 
 <style scoped>
 .custom-scrollbar::-webkit-scrollbar {

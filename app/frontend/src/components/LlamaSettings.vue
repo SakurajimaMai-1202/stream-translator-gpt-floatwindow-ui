@@ -1156,6 +1156,18 @@ onUnmounted(() => {
 
 <style scoped>
 .llama-settings {
+  contain: layout style;
+  isolation: isolate;
+}
+
+.llama-settings > :not(.workspace-grid),
+.workspace-grid > * {
+  /* Llama 頁面本身很長，按頂層面板切割 paint invalidation。 */
+  contain: layout paint style;
+  isolation: isolate;
+}
+
+.llama-settings {
   padding: 0;
   color: white;
 }

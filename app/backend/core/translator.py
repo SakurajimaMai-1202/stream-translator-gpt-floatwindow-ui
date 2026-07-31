@@ -272,11 +272,39 @@ class TranslationContext:
             'vad_backend', 'firered_vad_model_path', 'preload_asr_model', 'keep_asr_loaded',
             'use_hf_asr', 'use_nemo_asr', 'nemo_asr_model', 'nemo_asr_device', 'nemo_asr_decoding', 'nemo_asr_dtype',
             'use_sensevoice_asr', 'sensevoice_model', 'sensevoice_device',
+            'use_fun_asr', 'fun_asr_model', 'fun_asr_device',
             'qwen3_asr_model', 'qwen3_asr_dtype', 'qwen3_asr_device_map', 'qwen3_asr_max_new_tokens',
             'qwen3_asr_quantization', 'qwen3_asr_bnb_4bit_quant_type', 'qwen3_asr_bnb_4bit_use_double_quant'
         }
 
         runtime_supported_args = _get_supported_cli_args(cmd[0], cwd)
+        required_backend_args = {
+            key for key in (
+                'use_qwen3_asr',
+                'use_sensevoice_asr',
+                'use_fun_asr',
+                'use_nemo_asr',
+                'use_hf_asr',
+                'use_openai_transcription_api',
+            )
+            if self.config.get(key)
+        }
+        if runtime_supported_args and not required_backend_args.issubset(runtime_supported_args):
+            # The selected runtime may have been refreshed while the backend stays open.
+            # Re-probe once so a stale --help cache can never silently switch ASR engines.
+            _get_supported_cli_args.cache_clear()
+            runtime_supported_args = _get_supported_cli_args(cmd[0], cwd)
+        missing_backend_args = (
+            required_backend_args - runtime_supported_args
+            if runtime_supported_args
+            else set()
+        )
+        if missing_backend_args:
+            missing = ', '.join(sorted(missing_backend_args))
+            raise RuntimeError(
+                f"Selected ASR backend is not supported by the active runtime ({missing}). "
+                "Update or rebuild the runtime before starting translation."
+            )
         if runtime_supported_args:
             unsupported_runtime_args = sorted(allowed_args - runtime_supported_args)
             if unsupported_runtime_args:

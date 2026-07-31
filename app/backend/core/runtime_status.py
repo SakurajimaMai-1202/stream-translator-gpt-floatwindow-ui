@@ -10,6 +10,7 @@ from .hardware_detector import (
     select_accelerator,
 )
 from .runtime_profiles import RuntimeCapabilities, get_runtime_capabilities
+from .asr_model_capabilities import list_asr_model_capabilities
 
 
 def build_runtime_status(config: dict[str, Any], devices: list[GpuDevice] | None = None) -> dict[str, Any]:
@@ -51,12 +52,15 @@ def _capabilities_to_dict(capabilities: RuntimeCapabilities) -> dict[str, Any]:
     data["qwen3_asr_model_ids"] = list(capabilities.qwen3_asr_model_ids)
     data["sensevoice_models"] = list(capabilities.sensevoice_models)
     data["sensevoice_model_ids"] = list(capabilities.sensevoice_model_ids)
+    data["fun_asr_models"] = list(capabilities.fun_asr_models)
+    data["fun_asr_model_ids"] = list(capabilities.fun_asr_model_ids)
     data["parakeet_models"] = list(capabilities.parakeet_models)
     data["parakeet_model_ids"] = list(capabilities.parakeet_model_ids)
     data["faster_whisper_models"] = list(capabilities.faster_whisper_models)
     data["faster_whisper_model_ids"] = list(capabilities.faster_whisper_model_ids)
     data["local_asr_engines"] = list(capabilities.local_asr_engines)
     data["remote_asr_engines"] = list(capabilities.remote_asr_engines)
+    data["asr_model_capabilities"] = list_asr_model_capabilities()
     return data
 
 

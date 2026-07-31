@@ -400,19 +400,26 @@ class HFTranscriber(AudioTranscriber):
 
 class NemoASRTranscriber(AudioTranscriber):
 
-    DEFAULT_MODEL = "grider-transwithai/parakeet-ctc-1.1b-ja"
+    DEFAULT_MODEL = "nvidia/parakeet-tdt_ctc-0.6b-ja"
+    LEGACY_MODEL = "grider-transwithai/parakeet-ctc-1.1b-ja"
     DEFAULT_HF_FILENAME = "parakeet-ja.nemo"
+    MODEL_LANGUAGES = {
+        "nvidia/parakeet-tdt_ctc-1.1b": "en",
+        "nvidia/parakeet-tdt_ctc-0.6b-ja": "ja",
+        LEGACY_MODEL: "ja",
+    }
 
     def __init__(self, model: str = DEFAULT_MODEL, language: str = 'ja',
-                 device: str = 'auto', decoding: str = 'ctc', dtype: str = 'bfloat16',
+                 device: str = 'auto', decoding: str = 'tdt', dtype: str = 'bfloat16',
                  runtime_profile: str = 'cuda', proxy: str = None, **kwargs) -> None:
         super().__init__(**kwargs)
         if str(runtime_profile or 'cuda').lower() != 'cuda':
-            raise RuntimeError('Parakeet CTC JA is only enabled for the CUDA runtime profile.')
-        if decoding and str(decoding).lower() != 'ctc':
-            raise ValueError('Parakeet CTC JA supports only CTC decoding in this build.')
-        self.language = self._normalize_language(language)
+            raise RuntimeError('NVIDIA Parakeet is only enabled for the CUDA runtime profile.')
         self.model_id = model or self.DEFAULT_MODEL
+        if self.model_id not in self.MODEL_LANGUAGES:
+            raise ValueError(f'Unsupported NVIDIA Parakeet model: {self.model_id}')
+        self.language = self._normalize_language(language, self.model_id)
+        self.decoding = self._normalize_decoding(decoding, self.model_id)
         if proxy:
             _apply_hf_proxy(proxy)
 
@@ -422,7 +429,7 @@ class NemoASRTranscriber(AudioTranscriber):
             from nemo.collections.asr.models import ASRModel
         except ImportError as exc:
             raise ImportError(
-                'Parakeet CTC JA support requires NVIDIA NeMo. Install the CUDA Parakeet extra before using '
+                'NVIDIA Parakeet support requires NVIDIA NeMo. Install the CUDA Parakeet extra before using '
                 '--use_nemo_asr, for example: pip install -r app/requirements_cuda_parakeet.txt'
             ) from exc
 
@@ -433,6 +440,7 @@ class NemoASRTranscriber(AudioTranscriber):
             self.model = self._quiet_call(ASRModel.restore_from, restore_path=str(model_path), map_location=self.device)
         else:
             self.model = self._quiet_call(ASRModel.from_pretrained, model_name=self.model_id, map_location=self.device)
+        self._configure_decoder()
         if self.torch_dtype is not None:
             self.model = self.model.to(device=self.device, dtype=self.torch_dtype)
         else:
@@ -441,7 +449,8 @@ class NemoASRTranscriber(AudioTranscriber):
         gc.collect()
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
-        print(f'{INFO}Parakeet CTC JA model loaded: {self.model_id} on {self.device} dtype={self.dtype_name}')
+        print(f'{INFO}NVIDIA Parakeet model loaded: {self.model_id} on {self.device} '
+              f'language={self.language} decoder={self.decoding} dtype={self.dtype_name}')
         self._print_memory_diagnostics(torch)
 
     def transcribe(self, audio: np.array, initial_prompt: str = None) -> tuple[str, list | None]:
@@ -474,12 +483,37 @@ class NemoASRTranscriber(AudioTranscriber):
                 return_hypotheses=False,
             )
 
-    @staticmethod
-    def _normalize_language(language: str | None) -> str:
-        normalized = str(language or 'ja').strip().lower()
-        if normalized in {'', 'auto', 'ja', 'japanese'}:
-            return 'ja'
-        raise ValueError('Parakeet CTC JA is a Japanese-only ASR model. Set input language to Japanese or auto.')
+    @classmethod
+    def _normalize_language(cls, language: str | None, model_id: str) -> str:
+        expected = cls.MODEL_LANGUAGES[model_id]
+        normalized = str(language or 'auto').strip().lower()
+        aliases = {
+            'english': 'en',
+            'japanese': 'ja',
+        }
+        normalized = aliases.get(normalized, normalized)
+        if normalized in {'', 'auto', expected}:
+            return expected
+        language_name = 'English' if expected == 'en' else 'Japanese'
+        raise ValueError(f'{model_id} is a {language_name}-only ASR model. Select {language_name} or auto.')
+
+    @classmethod
+    def _normalize_decoding(cls, decoding: str | None, model_id: str | None = None) -> str:
+        normalized = str(decoding or 'tdt').strip().lower()
+        aliases = {'rnnt': 'tdt', 'transducer': 'tdt'}
+        normalized = aliases.get(normalized, normalized)
+        if normalized not in {'tdt', 'ctc'}:
+            raise ValueError('NVIDIA Parakeet decoder must be tdt or ctc.')
+        if model_id == cls.LEGACY_MODEL:
+            return 'ctc'
+        return normalized
+
+    def _configure_decoder(self) -> None:
+        change_decoding_strategy = getattr(self.model, 'change_decoding_strategy', None)
+        if not callable(change_decoding_strategy):
+            raise RuntimeError(f'{self.model_id} does not expose NeMo hybrid decoder selection.')
+        decoder_type = 'rnnt' if self.decoding == 'tdt' else 'ctc'
+        self._quiet_call(change_decoding_strategy, decoder_type=decoder_type, verbose=False)
 
     @staticmethod
     def _resolve_device(torch_module: Any, device: str | None) -> str:
@@ -487,13 +521,13 @@ class NemoASRTranscriber(AudioTranscriber):
         if requested in {'auto', ''}:
             if torch_module.cuda.is_available():
                 return 'cuda:0'
-            raise RuntimeError('Parakeet CTC JA requires an available CUDA GPU.')
+            raise RuntimeError('NVIDIA Parakeet requires an available CUDA GPU.')
         if requested == 'cuda':
             requested = 'cuda:0'
         if not requested.startswith('cuda'):
-            raise RuntimeError('Parakeet CTC JA requires a CUDA device.')
+            raise RuntimeError('NVIDIA Parakeet requires a CUDA device.')
         if not torch_module.cuda.is_available():
-            raise RuntimeError('Parakeet CTC JA requires an available CUDA GPU.')
+            raise RuntimeError('NVIDIA Parakeet requires an available CUDA GPU.')
         return requested
 
     @staticmethod
@@ -515,24 +549,24 @@ class NemoASRTranscriber(AudioTranscriber):
             is_supported = getattr(torch_module.cuda, 'is_bf16_supported', lambda: False)
             if callable(is_supported) and is_supported():
                 return 'bfloat16', torch_module.bfloat16
-            print(f'{WARNING}Parakeet CTC JA requested bfloat16, but this CUDA device does not report BF16 support; falling back to float16.')
+            print(f'{WARNING}NVIDIA Parakeet requested bfloat16, but this CUDA device does not report BF16 support; falling back to float16.')
             return 'float16', torch_module.float16
         if requested in {'float16', '16'}:
             return 'float16', torch_module.float16
-        raise ValueError('Parakeet CTC JA dtype must be auto, bfloat16, float16, or float32.')
+        raise ValueError('NVIDIA Parakeet dtype must be auto, bfloat16, float16, or float32.')
 
     @classmethod
     def _resolve_nemo_model_path(cls, model_id: str) -> Path | None:
         path = Path(str(model_id)).expanduser()
         if path.suffix.lower() == '.nemo':
             if not path.exists():
-                raise FileNotFoundError(f'Parakeet CTC JA .nemo file not found: {path}')
+                raise FileNotFoundError(f'NVIDIA Parakeet .nemo file not found: {path}')
             return path
-        if model_id == cls.DEFAULT_MODEL:
+        if model_id == cls.LEGACY_MODEL:
             try:
                 from huggingface_hub import hf_hub_download
             except ImportError as exc:
-                raise ImportError('Parakeet CTC JA HuggingFace download requires huggingface_hub.') from exc
+                raise ImportError('Legacy Parakeet HuggingFace download requires huggingface_hub.') from exc
             return Path(hf_hub_download(repo_id=model_id, filename=cls.DEFAULT_HF_FILENAME))
         return None
 
@@ -568,12 +602,12 @@ class NemoASRTranscriber(AudioTranscriber):
             reserved = torch_module.cuda.memory_reserved() / (1024 ** 3)
             max_allocated = torch_module.cuda.max_memory_allocated() / (1024 ** 3)
             print(
-                f'{INFO}Parakeet CTC JA memory: params={total_params / 1_000_000_000:.3f}B '
+                f'{INFO}NVIDIA Parakeet memory: params={total_params / 1_000_000_000:.3f}B '
                 f'[{dtype_summary}], buffers={total_buffers / 1_000_000_000:.3f}B [{buffer_summary}], cuda_allocated={allocated:.2f}GiB, '
                 f'cuda_reserved={reserved:.2f}GiB, cuda_max_allocated={max_allocated:.2f}GiB'
             )
         except Exception as exc:
-            print(f'{WARNING}Parakeet CTC JA memory diagnostics failed: {exc}')
+            print(f'{WARNING}NVIDIA Parakeet memory diagnostics failed: {exc}')
 
     @staticmethod
     def _write_temp_wav(audio: np.array) -> Path:
@@ -581,7 +615,7 @@ class NemoASRTranscriber(AudioTranscriber):
         samples = np.nan_to_num(samples, nan=0.0, posinf=0.0, neginf=0.0)
         samples = np.clip(samples, -1.0, 1.0)
         pcm = (samples * 32767.0).astype(np.int16)
-        tmp = tempfile.NamedTemporaryFile(prefix='parakeet-ctc-ja-', suffix='.wav', delete=False)
+        tmp = tempfile.NamedTemporaryFile(prefix='nvidia-parakeet-', suffix='.wav', delete=False)
         tmp_path = Path(tmp.name)
         tmp.close()
         write_audio(str(tmp_path), SAMPLE_RATE, pcm)
@@ -711,6 +745,99 @@ class SenseVoiceTranscriber(AudioTranscriber):
         if normalized in {'ko', 'korean'}:
             return 'ko'
         return normalized
+
+
+class FunASRNanoTranscriber(SenseVoiceTranscriber):
+
+    LANGUAGE_NAMES = {
+        'zh': '中文', 'zh-tw': '中文', 'zh-hant': '中文', 'zh-cn': '中文', 'zh-hans': '中文',
+        'en': '英文', 'ja': '日文', 'ko': '韩文', 'yue': '粤语',
+        'vi': '越南语', 'id': '印尼语', 'th': '泰语', 'ms': '马来语',
+        'tl': '菲律宾语', 'fil': '菲律宾语', 'ar': '阿拉伯语', 'hi': '印地语',
+        'bg': '保加利亚语', 'hr': '克罗地亚语', 'cs': '捷克语', 'da': '丹麦语',
+        'nl': '荷兰语', 'et': '爱沙尼亚语', 'fi': '芬兰语', 'el': '希腊语',
+        'hu': '匈牙利语', 'ga': '爱尔兰语', 'lv': '拉脱维亚语', 'lt': '立陶宛语',
+        'mt': '马耳他语', 'pl': '波兰语', 'pt': '葡萄牙语', 'ro': '罗马尼亚语',
+        'sk': '斯洛伐克语', 'sl': '斯洛文尼亚语', 'sv': '瑞典语',
+    }
+    MODEL_LANGUAGES = {
+        'FunAudioLLM/Fun-ASR-Nano-2512': {'zh', 'en', 'ja'},
+        'FunAudioLLM/Fun-ASR-MLT-Nano-2512': {
+            'zh', 'en', 'yue', 'ja', 'ko', 'vi', 'id', 'th', 'ms', 'fil',
+            'ar', 'hi', 'bg', 'hr', 'cs', 'da', 'nl', 'et', 'fi', 'el',
+            'hu', 'ga', 'lv', 'lt', 'mt', 'pl', 'pt', 'ro', 'sk', 'sl', 'sv',
+        },
+    }
+
+    def __init__(self, model: str = 'FunAudioLLM/Fun-ASR-Nano-2512', language: str = 'auto',
+                 device: str = 'cpu', proxy: str = None, **kwargs) -> None:
+        AudioTranscriber.__init__(self, **kwargs)
+        if proxy:
+            _apply_hf_proxy(proxy)
+        try:
+            from funasr import AutoModel
+        except ImportError as exc:
+            raise ImportError(
+                'Fun-ASR Nano support requires FunASR >= 1.3.26.'
+            ) from exc
+
+        self.device = device or 'cpu'
+        self.model_id = model or 'FunAudioLLM/Fun-ASR-Nano-2512'
+        self.language = self._normalize_fun_asr_language(language, self.model_id)
+        self.model = self._quiet_call(
+            AutoModel,
+            model=self.model_id,
+            hub='hf',
+            trust_remote_code=True,
+            device=self.device,
+            disable_update=True,
+        )
+
+    def transcribe(self, audio: np.array, initial_prompt: str = None) -> tuple[str, list | None]:
+        wav_path = self._write_temp_wav(audio)
+        try:
+            kwargs = {
+                'input': str(wav_path),
+                'cache': {},
+                'language': self.language,
+                'itn': True,
+                'batch_size': 1,
+                'llm_kwargs': {'do_sample': False},
+            }
+            hotwords = (initial_prompt or self.transcription_initial_prompt or '').strip()
+            if hotwords:
+                kwargs['hotwords'] = [item.strip() for item in hotwords.split(',') if item.strip()]
+            result = self._quiet_call(self.model.generate, **kwargs)
+        finally:
+            try:
+                wav_path.unlink()
+            except OSError:
+                pass
+        return self._extract_text(result), None
+
+    @classmethod
+    def _write_temp_wav(cls, audio: np.array) -> Path:
+        samples = np.asarray(audio, dtype=np.float32)
+        samples = np.nan_to_num(samples, nan=0.0, posinf=0.0, neginf=0.0)
+        samples = np.clip(samples, -1.0, 1.0)
+        pcm = (samples * 32767.0).astype(np.int16)
+        tmp = tempfile.NamedTemporaryFile(prefix='fun-asr-nano-', suffix='.wav', delete=False)
+        tmp_path = Path(tmp.name)
+        tmp.close()
+        write_audio(str(tmp_path), SAMPLE_RATE, pcm)
+        return tmp_path
+
+    @classmethod
+    def _normalize_fun_asr_language(cls, language: str | None, model_id: str | None = None) -> str:
+        normalized = str(language or 'auto').strip().lower()
+        if normalized in {'', 'auto'}:
+            return 'auto'
+        normalized = 'zh' if normalized in {'zh-tw', 'zh-hant', 'zh-cn', 'zh-hans'} else normalized
+        normalized = 'fil' if normalized == 'tl' else normalized
+        supported = cls.MODEL_LANGUAGES.get(model_id or '')
+        if supported is not None and normalized not in supported:
+            raise ValueError(f'{model_id} does not support ASR language: {language}')
+        return cls.LANGUAGE_NAMES.get(normalized, language or 'auto')
 
 
 def _load_qwen3_asr_model_class():

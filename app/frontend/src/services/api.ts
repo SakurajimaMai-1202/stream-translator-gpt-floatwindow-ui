@@ -84,6 +84,10 @@ export interface RuntimeCapabilities {
   sensevoice_models: string[];
   sensevoice_model_ids: string[];
   sensevoice_note: string;
+  fun_asr_status: string;
+  fun_asr_models: string[];
+  fun_asr_model_ids: string[];
+  fun_asr_note: string;
   parakeet_status: string;
   parakeet_models: string[];
   parakeet_model_ids: string[];
@@ -95,6 +99,16 @@ export interface RuntimeCapabilities {
   faster_whisper_cpu_fallback: boolean;
   local_asr_engines: string[];
   remote_asr_engines: string[];
+  asr_model_capabilities: AsrModelCapability[];
+}
+
+export interface AsrModelCapability {
+  model_id: string;
+  engine: string;
+  language_mode: 'fixed' | 'limited' | 'multilingual';
+  supported_languages: string[];
+  default_language: string;
+  note: string;
 }
 
 export interface RuntimeSelection {
@@ -240,8 +254,9 @@ export interface StartTranslationRequest {
   transcription_engine?: string;  // 轉錄引擎: faster-whisper/qwen3-asr/openai-api/...
   qwen3_asr_model?: string;       // Qwen3-ASR 模型名稱
   sensevoice_model?: string;       // SenseVoice 模型名稱
-  nemo_asr_model?: string;         // Parakeet CTC JA / NeMo 模型名稱
-  nemo_asr_dtype?: string;         // Parakeet CTC JA dtype: bfloat16, float16, float32
+  fun_asr_model?: string;          // Fun-ASR Nano 模型名稱
+  nemo_asr_model?: string;         // NVIDIA Parakeet / NeMo 模型名稱
+  nemo_asr_dtype?: string;         // NVIDIA Parakeet dtype: bfloat16, float16, float32
   qwen3_flash_attention?: boolean;// Qwen3-ASR Flash Attention
   qwen3_dtype?: string;           // Qwen3-ASR 模型精度: bfloat16, float16, float32
   input_language?: string;  // 🔧 新增: Whisper 輸入語言
@@ -259,7 +274,7 @@ export interface StartResponse {
   message: string;
 }
 
-export type ModelEngine = 'qwen3-asr' | 'faster-whisper' | 'sensevoice' | 'parakeet-ctc-ja';
+export type ModelEngine = 'qwen3-asr' | 'faster-whisper' | 'sensevoice' | 'fun-asr-nano' | 'parakeet-ctc-ja';
 
 export interface StartModelDownloadRequest {
   engine: ModelEngine;

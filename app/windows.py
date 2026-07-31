@@ -40,12 +40,22 @@ class HomeBridge(QObject):
     """主頁橋接：開啟字幕視窗、複製到剪貼簿"""
 
     openSubtitleWindowRequested = pyqtSignal()
+    subtitleUpdated = pyqtSignal(str)
+    subtitleSettingsUpdated = pyqtSignal(str)
 
     @pyqtSlot()
     def openSubtitleWindow(self):
         """從 JavaScript 呼叫以開啟字幕視窗"""
         logger.info("收到開啟字幕視窗請求")
         self.openSubtitleWindowRequested.emit()
+
+    @pyqtSlot(str)
+    def updateNativeSubtitle(self, payload: str):
+        self.subtitleUpdated.emit(payload)
+
+    @pyqtSlot(str)
+    def updateNativeSubtitleSettings(self, payload: str):
+        self.subtitleSettingsUpdated.emit(payload)
 
     @pyqtSlot(str, result=bool)
     def copyToClipboard(self, text: str) -> bool:
@@ -327,7 +337,7 @@ class SubtitleSettingsWindow(QMainWindow):
     initialLoadFinished = pyqtSignal(bool)
     """字幕設定彈窗（獨立視窗）"""
     
-    def __init__(self, base_url: str = "http://localhost:5173"):
+    def __init__(self, base_url: str = "http://localhost:5173", on_settings_updated=None):
         super().__init__()
         self._initial_load_emitted = False
         self.setWindowOpacity(0.0)
@@ -355,6 +365,15 @@ class SubtitleSettingsWindow(QMainWindow):
         self.web_view.loadFinished.connect(self._on_load_finished)
         self.web_view.setStyleSheet("background-color: #0f172a;")
         self.web_view.page().setBackgroundColor(QColor("#0f172a"))
+
+        # 讓獨立字幕設定視窗可直接把變更送到原生字幕 renderer。
+        self.channel = QWebChannel()
+        self.bridge = HomeBridge()
+        self.channel.registerObject("pyqt", self.bridge)
+        self.web_view.page().setWebChannel(self.channel)
+        if callable(on_settings_updated):
+            self.bridge.subtitleSettingsUpdated.connect(on_settings_updated)
+        self._inject_webchannel_scripts()
         
         # 設定
         settings = self.web_view.settings()
@@ -368,6 +387,26 @@ class SubtitleSettingsWindow(QMainWindow):
         self._target_url = f"{base_url}/subtitle-settings"
         QTimer.singleShot(500, self._load_url)
         QTimer.singleShot(4000, self._show_web_view_if_hidden)
+
+    def _inject_webchannel_scripts(self):
+        qwebchannel_script = QWebEngineScript()
+        qwebchannel_script.setSourceUrl(QUrl("qrc:///qtwebchannel/qwebchannel.js"))
+        qwebchannel_script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
+        qwebchannel_script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
+        qwebchannel_script.setRunsOnSubFrames(False)
+        self.web_view.page().scripts().insert(qwebchannel_script)
+
+        init_script = QWebEngineScript()
+        init_script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentReady)
+        init_script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
+        init_script.setRunsOnSubFrames(False)
+        init_script.setSourceCode(
+            "if (window.qt && window.qt.webChannelTransport) {"
+            "new QWebChannel(window.qt.webChannelTransport, function(channel) {"
+            "window.pyqt = channel.objects.pyqt;"
+            "});}"
+        )
+        self.web_view.page().scripts().insert(init_script)
     
     def _load_url(self):
         """載入 URL"""

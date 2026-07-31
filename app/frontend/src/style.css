@@ -31,7 +31,9 @@ body {
 
 #app {
   isolation: isolate;
-  contain: paint;
+  /* 不要在整個長頁面上使用 paint containment。Qt WebEngine 在 GPU
+     合成下快速捲動大型 backdrop-filter 區域時，可能短暫漏畫 tile。 */
+  contain: layout style;
 }
 
 select {

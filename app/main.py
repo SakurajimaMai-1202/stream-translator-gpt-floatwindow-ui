@@ -15,7 +15,8 @@ from PyQt6.QtGui import QIcon
 
 from backend.core.logging_setup import configure_logging
 from services import BackendProcess, FrontendServer
-from windows import HomeWindow, SettingsWindow, FloatingSubtitleWindow
+from windows import HomeWindow, SettingsWindow, FloatingSubtitleWindow, SubtitleSettingsWindow
+from native_subtitle import NativeSubtitleWindow
 
 # 設定日誌
 # 由 UI 啟動器統一在每次開啟時清掉 app/backend/translator stderr 舊檔，避免 log 無限累積。
@@ -50,6 +51,18 @@ def resolve_app_icon() -> QIcon:
     return QIcon()
 
 
+def append_chromium_flags(*flags: str) -> str:
+    """將 Chromium 啟動旗標合併且去重，保留外部傳入旗標的順序。"""
+    existing = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "").split()
+    merged = list(existing)
+    for flag in flags:
+        if flag and flag not in merged:
+            merged.append(flag)
+    value = " ".join(merged)
+    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = value
+    return value
+
+
 class UI2Application:
     """UI2 應用程式管理器"""
     
@@ -61,10 +74,11 @@ class UI2Application:
             QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseSoftwareOpenGL)
             logger.info("WebView 使用 Qt Software OpenGL")
         else:
-            # 設定 OpenGL 上下文共享，解決 WebView 閃爍問題
+            # 保留 WebEngine 所需的共享上下文，但讓 Qt/Chromium 自動選擇
+            # Windows 圖形後端。強制 Desktop OpenGL 可能繞過 Qt 的相容性
+            # 選擇，並在部分混合顯卡或透明視窗環境造成合成破圖。
             QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
-            # 針對某些環境的 GPU 加速優化
-            QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseDesktopOpenGL)
+            logger.info("WebView 使用自動 GPU 相容模式（Qt WebEngine/ANGLE）")
         
         self.app = QApplication(sys.argv)
         self.app.setApplicationName("Stream Translator")
@@ -92,6 +106,7 @@ class UI2Application:
         self.home_window = None
         self.settings_window = None
         self.subtitle_window = None
+        self.subtitle_settings_window = None
         
         # 連接信號
         self.backend.started.connect(self._on_backend_started)
@@ -222,16 +237,61 @@ class UI2Application:
                 pass
             self.subtitle_window = None
         
-        # 建立新視窗
+        # 建立新視窗。預設使用原生 Qt renderer；必要時可透過環境變數
+        # STREAM_TRANSLATOR_USE_WEB_SUBTITLE=1 立即退回舊 WebView。
         logger.info("建立新的字幕視窗")
         # 傳遞 config_manager 給字幕視窗
         from backend.core.config_manager import ConfigManager
         config_manager = ConfigManager()
-        self.subtitle_window = FloatingSubtitleWindow(self.base_url, config_manager)
+        use_web_subtitle = os.environ.get("STREAM_TRANSLATOR_USE_WEB_SUBTITLE", "").strip() == "1"
+        if use_web_subtitle:
+            logger.warning("浮動字幕使用舊 WebView fallback")
+            self.subtitle_window = FloatingSubtitleWindow(self.base_url, config_manager)
+        else:
+            logger.info("浮動字幕使用原生 Qt QPainter renderer")
+            self.subtitle_window = NativeSubtitleWindow(
+                config_manager,
+                on_open_settings=self._open_native_subtitle_settings_window,
+                on_stop_translation=self._stop_translation_from_subtitle,
+            )
+            self.home_window.bridge.subtitleUpdated.connect(self.subtitle_window.update_subtitle_json)
+            self.home_window.bridge.subtitleSettingsUpdated.connect(self.subtitle_window.update_settings_json)
         self.subtitle_window.destroyed.connect(lambda: setattr(self, 'subtitle_window', None))
         self.subtitle_window.show()
         self.subtitle_window.raise_()
         self.subtitle_window.activateWindow()
+
+    def _open_native_subtitle_settings_window(self):
+        """由原生字幕視窗開啟獨立的字幕外觀設定視窗。"""
+        if self.subtitle_window is None:
+            return
+        if self.subtitle_settings_window is None:
+            self.subtitle_settings_window = SubtitleSettingsWindow(
+                self.base_url,
+                on_settings_updated=self._apply_native_subtitle_settings,
+            )
+            self.subtitle_settings_window.destroyed.connect(
+                lambda: setattr(self, 'subtitle_settings_window', None)
+            )
+        self.subtitle_settings_window.show()
+        self.subtitle_settings_window.raise_()
+        self.subtitle_settings_window.activateWindow()
+
+    def _apply_native_subtitle_settings(self, payload: str):
+        """將獨立設定彈窗的更新送到目前仍存在的原生字幕視窗。"""
+        if isinstance(self.subtitle_window, NativeSubtitleWindow):
+            self.subtitle_window.update_settings_json(payload)
+
+    def _stop_translation_from_subtitle(self):
+        """由原生字幕控制列停止目前所有翻譯任務。"""
+        if self.home_window is None:
+            return
+        self.home_window.web_view.page().runJavaScript(
+            "fetch('/api/translation/status').then(r => r.json()).then(data => "
+            "Promise.all((data.tasks || []).map(task => "
+            "fetch('/api/translation/stop/' + task.task_id, { method: 'DELETE' })"
+            "))).catch(error => console.error('停止翻譯失敗', error));"
+        )
 
     def _get_reserved_ports(self) -> set:
         """從設定檔讀取已被其他服務占用的端口，以避免衝突"""
@@ -318,7 +378,12 @@ def main():
     parser.add_argument(
         '--enable-webview-gpu',
         action='store_true',
-        help='在 Windows 明確啟用 WebView GPU 合成（預設使用軟體合成）'
+        help='相容舊版參數；WebView 現在預設使用自動 GPU 相容模式'
+    )
+    parser.add_argument(
+        '--enable-webview-direct-composition',
+        action='store_true',
+        help='實驗性啟用 Windows DirectComposition；透明視窗可能閃爍'
     )
     args = parser.parse_args()
 
@@ -330,17 +395,29 @@ def main():
         is_frozen = getattr(sys, 'frozen', False)
         dev_mode = (not args.prod) and (not is_frozen)
         
-        disable_webview_gpu = args.disable_gpu or (
-            sys.platform == "win32" and not args.enable_webview_gpu
-        )
+        # GPU/ANGLE 是 Qt WebEngine 的標準路徑。只有使用者明確指定
+        # --disable-gpu 時才退回完整軟體合成，避免所有動畫與透明效果
+        # 都落到 CPU 上。--enable-webview-gpu 保留供舊捷徑相容。
+        disable_webview_gpu = args.disable_gpu
         if disable_webview_gpu:
-            existing_flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "").strip()
-            software_flags = "--disable-gpu --disable-gpu-compositing"
-            os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = " ".join(
-                part for part in (existing_flags, software_flags) if part
-            )
+            append_chromium_flags("--disable-gpu", "--disable-gpu-compositing")
             os.environ.setdefault("QT_OPENGL", "software")
             logger.info("已設定 Chromium 旗標以停用 WebView GPU 合成")
+        else:
+            if sys.platform == "win32":
+                # Qt 的置頂／半透明多視窗可能讓 Chromium 誤判 WebView 已被
+                # Windows 遮蔽，暫停繪製後再恢復時便出現整塊灰底閃爍。
+                # 僅停用 native occlusion 判斷，保留 GPU raster/compositing。
+                append_chromium_flags(
+                    "--disable-features=CalculateNativeWinOcclusion",
+                )
+                if not args.enable_webview_direct_composition:
+                    append_chromium_flags(
+                        "--disable-direct-composition-video-overlays",
+                    )
+                logger.info("WebView GPU 相容模式：已停用 Native Win Occlusion，保留 GPU 合成")
+            if args.enable_webview_gpu:
+                logger.info("--enable-webview-gpu 已不再需要；目前預設即為自動 GPU 相容模式")
             
         app = UI2Application(dev_mode=dev_mode, disable_gpu=disable_webview_gpu)
         exit_code = app.run()

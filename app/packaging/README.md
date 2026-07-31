@@ -17,22 +17,22 @@ Use `app/build_release.ps1` for normal release builds:
 Build all three profiles from one shared frontend/PyInstaller GUI artifact:
 
 ```powershell
-.\build_all_profiles.ps1 -Version 1.3.7 -Mode Quick -ReuseRuntimeCache
-.\build_all_profiles.ps1 -Version 1.3.7 -Mode Final -ReuseRuntimeCache -CompressionLevel 7 -SplitSizeMiB 1900
+.\build_all_profiles.ps1 -Version 1.3.8 -Mode Quick -ReuseRuntimeCache
+.\build_all_profiles.ps1 -Version 1.3.8 -Mode Final -ReuseRuntimeCache -CompressionLevel 7 -SplitSizeMiB 1900
 ```
 
 After a packaging-stage failure, keep a previously completed shared GUI and
 resume without rerunning Vite/PyInstaller:
 
 ```powershell
-.\build_all_profiles.ps1 -Version 1.3.7 -Mode Quick -ReuseRuntimeCache -ReuseSharedGui
+.\build_all_profiles.ps1 -Version 1.3.8 -Mode Quick -ReuseRuntimeCache -ReuseSharedGui
 ```
 
 If all three profile folders and App Update archives already passed their
 individual builds, resume only validation and asset collection:
 
 ```powershell
-.\build_all_profiles.ps1 -Version 1.3.7 -Mode Quick -ReuseSharedGui -ReuseProfileArtifacts
+.\build_all_profiles.ps1 -Version 1.3.8 -Mode Quick -ReuseSharedGui -ReuseProfileArtifacts
 ```
 
 `Quick` builds the shared GUI once, validates and assembles all three profile
@@ -96,7 +96,7 @@ automation does not break.
 | `build_sensevoice_model_package.ps1` | Optional SenseVoice model-cache package builder |
 | `legacy/build_legacy.ps1` | Old one-profile build path; use only for historical troubleshooting |
 
-CUDA Parakeet CTC JA is part of the CUDA profile only. Before building a CUDA
+NVIDIA Parakeet is part of the CUDA profile only. Before building a CUDA
 package with Parakeet enabled, the build Python must pass:
 
 ```powershell
@@ -109,9 +109,11 @@ If `nemo.collections.asr.models` is missing, install:
 python -m pip install -r .\requirements_cuda_parakeet.txt
 ```
 
-The model id is `grider-transwithai/parakeet-ctc-1.1b-ja`; the runtime loads
-`parakeet-ja.nemo` from that HuggingFace repo with NVIDIA NeMo
-`ASRModel.restore_from()`.
+Official model ids are `nvidia/parakeet-tdt_ctc-0.6b-ja` and
+`nvidia/parakeet-tdt_ctc-1.1b`; NVIDIA NeMo loads these through
+`ASRModel.from_pretrained()`. The legacy
+`grider-transwithai/parakeet-ctc-1.1b-ja` option still loads `parakeet-ja.nemo`
+with `ASRModel.restore_from()`. The official model cards specify CC-BY-4.0.
 
 Validate built artifacts from `app`:
 

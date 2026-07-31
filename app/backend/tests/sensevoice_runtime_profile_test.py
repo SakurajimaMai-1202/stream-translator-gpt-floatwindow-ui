@@ -1,5 +1,11 @@
 from backend.core.config_manager import ConfigManager
 from backend.core.runtime_profiles import get_runtime_capabilities
+from backend.core.asr_model_capabilities import (
+    coerce_model_language,
+    list_asr_model_capabilities,
+)
+from backend.core import translator as translator_module
+from backend.core.translator import TranslationContext
 
 
 def _config_for(profile: str) -> dict:
@@ -51,7 +57,7 @@ def test_sensevoice_is_profile_aware():
     assert cuda.sensevoice_model_ids == ("iic/SenseVoiceSmall",)
 
 
-def test_parakeet_ctc_ja_is_cuda_only():
+def test_nvidia_parakeet_is_cuda_only():
     cuda = get_runtime_capabilities("cuda")
     cpu = get_runtime_capabilities("cpu")
     rocm = get_runtime_capabilities("rocm")
@@ -62,7 +68,59 @@ def test_parakeet_ctc_ja_is_cuda_only():
     assert cuda.parakeet_status == "experimental"
     assert cpu.parakeet_status == "disabled"
     assert rocm.parakeet_status == "disabled"
-    assert cuda.parakeet_model_ids == ("grider-transwithai/parakeet-ctc-1.1b-ja",)
+    assert cuda.parakeet_model_ids == (
+        "nvidia/parakeet-tdt_ctc-0.6b-ja",
+        "nvidia/parakeet-tdt_ctc-1.1b",
+        "grider-transwithai/parakeet-ctc-1.1b-ja",
+    )
+
+
+def test_asr_model_capabilities_distinguish_fixed_and_multilingual_models():
+    capabilities = {
+        item["model_id"]: item for item in list_asr_model_capabilities()
+    }
+
+    assert capabilities["nvidia/parakeet-tdt_ctc-1.1b"]["language_mode"] == "fixed"
+    assert capabilities["nvidia/parakeet-tdt_ctc-1.1b"]["supported_languages"] == ["en"]
+    assert capabilities["FunAudioLLM/Fun-ASR-Nano-2512"]["supported_languages"] == [
+        "zh", "en", "ja"
+    ]
+    assert len(
+        capabilities["FunAudioLLM/Fun-ASR-MLT-Nano-2512"]["supported_languages"]
+    ) == 31
+
+
+def test_model_language_is_coerced_by_backend():
+    assert coerce_model_language("nvidia/parakeet-tdt_ctc-1.1b", "ja") == "en"
+    assert coerce_model_language(
+        "jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame", "en"
+    ) == "ja"
+    assert coerce_model_language("FunAudioLLM/Fun-ASR-Nano-2512", "de") == "auto"
+    assert coerce_model_language("FunAudioLLM/Fun-ASR-MLT-Nano-2512", "sv") == "sv"
+
+
+def test_qwen3_anime_model_replaces_legacy_ja_model():
+    cuda = get_runtime_capabilities("cuda")
+    rocm = get_runtime_capabilities("rocm")
+
+    expected_model = "jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame"
+    assert expected_model in cuda.qwen3_asr_model_ids
+    assert expected_model in rocm.qwen3_asr_model_ids
+    assert "neosophie/Qwen3-ASR-1.7B-JA" not in cuda.qwen3_asr_model_ids
+
+
+def test_legacy_qwen3_ja_config_migrates_to_anime_model():
+    config = _config_for("cuda")
+    config["transcription"].update({
+        "backend": "qwen3-asr",
+        "use_sensevoice_asr": False,
+        "use_qwen3_asr": True,
+        "qwen3_asr_model": "neosophie/Qwen3-ASR-1.7B-JA",
+    })
+
+    args = _manager().to_main_args(config)
+
+    assert args["model"] == "jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame"
 
 
 def test_sensevoice_config_maps_to_cli_args_for_cuda():
@@ -77,29 +135,46 @@ def test_sensevoice_config_maps_to_cli_args_for_cuda():
     assert args["keep_asr_loaded"] is True
 
 
-def test_parakeet_ctc_ja_config_maps_to_cli_args_for_cuda():
+def test_nvidia_parakeet_ja_config_maps_to_cli_args_for_cuda():
     config = _config_for("cuda")
     config["transcription"].update({
         "backend": "parakeet-ctc-ja",
         "use_sensevoice_asr": False,
         "use_nemo_asr": True,
-        "nemo_asr_model": "grider-transwithai/parakeet-ctc-1.1b-ja",
+        "nemo_asr_model": "nvidia/parakeet-tdt_ctc-0.6b-ja",
         "nemo_asr_dtype": "bfloat16",
         "language": "ja",
     })
 
     args = _manager().to_main_args(config)
 
-    assert args["model"] == "grider-transwithai/parakeet-ctc-1.1b-ja"
+    assert args["model"] == "nvidia/parakeet-tdt_ctc-0.6b-ja"
     assert args["use_nemo_asr"] is True
     assert args["use_qwen3_asr"] is False
     assert args["use_sensevoice_asr"] is False
-    assert args["nemo_asr_model"] == "grider-transwithai/parakeet-ctc-1.1b-ja"
+    assert args["nemo_asr_model"] == "nvidia/parakeet-tdt_ctc-0.6b-ja"
     assert args["nemo_asr_device"] == "auto"
-    assert args["nemo_asr_decoding"] == "ctc"
+    assert args["nemo_asr_decoding"] == "tdt"
+    assert args["language"] == "ja"
     assert args["nemo_asr_dtype"] == "bfloat16"
     assert args["preload_asr_model"] is True
     assert args["keep_asr_loaded"] is True
+
+
+def test_nvidia_parakeet_en_model_forces_english_language():
+    config = _config_for("cuda")
+    config["transcription"].update({
+        "backend": "parakeet-ctc-ja",
+        "use_sensevoice_asr": False,
+        "use_nemo_asr": True,
+        "nemo_asr_model": "nvidia/parakeet-tdt_ctc-1.1b",
+        "language": "ja",
+    })
+
+    args = _manager().to_main_args(config)
+
+    assert args["model"] == "nvidia/parakeet-tdt_ctc-1.1b"
+    assert args["language"] == "en"
 
 
 def test_parakeet_ctc_ja_falls_back_outside_cuda_profile():
@@ -245,3 +320,88 @@ def test_translation_backend_selects_provider_without_api_key_heuristics():
     assert args["disable_subtitle_assembler"] is False
     assert args["subtitle_assembler_wait_ms"] == 400
     assert args["google_api_key"] == "google-key"
+
+
+def test_fun_asr_nano_models_are_profile_aware():
+    expected = (
+        "FunAudioLLM/Fun-ASR-Nano-2512",
+        "FunAudioLLM/Fun-ASR-MLT-Nano-2512",
+    )
+    cuda = get_runtime_capabilities("cuda")
+    cpu = get_runtime_capabilities("cpu")
+    rocm = get_runtime_capabilities("rocm")
+
+    assert cuda.fun_asr_model_ids == expected
+    assert cpu.fun_asr_model_ids == expected
+    assert rocm.fun_asr_model_ids == expected
+    assert cuda.fun_asr_status == "compatibility"
+    assert cpu.fun_asr_status == "experimental"
+    assert rocm.fun_asr_status == "experimental"
+    assert all("fun-asr-nano" in profile.local_asr_engines for profile in (cuda, cpu, rocm))
+
+
+def test_fun_asr_mlt_config_maps_to_main_args():
+    config = _config_for("cuda")
+    config["transcription"].update(
+        {
+            "backend": "fun-asr-nano",
+            "model": "FunAudioLLM/Fun-ASR-MLT-Nano-2512",
+            "use_qwen3_asr": False,
+            "use_sensevoice_asr": False,
+            "use_fun_asr": True,
+            "fun_asr_model": "FunAudioLLM/Fun-ASR-MLT-Nano-2512",
+        }
+    )
+
+    args = _manager().to_main_args(config)
+
+    assert args["use_fun_asr"] is True
+    assert args["use_qwen3_asr"] is False
+    assert args["model"] == "FunAudioLLM/Fun-ASR-MLT-Nano-2512"
+    assert args["fun_asr_model"] == "FunAudioLLM/Fun-ASR-MLT-Nano-2512"
+    assert args["fun_asr_device"] == "auto"
+
+
+def test_fun_asr_command_reprobes_stale_runtime_capabilities(monkeypatch):
+    config = _config_for("cuda")
+    config["transcription"].update(
+        {
+            "backend": "fun-asr-nano",
+            "use_qwen3_asr": False,
+            "use_sensevoice_asr": False,
+            "use_fun_asr": True,
+            "fun_asr_model": "FunAudioLLM/Fun-ASR-Nano-2512",
+        }
+    )
+    args = _manager().to_main_args(config)
+    probes = iter(
+        (
+            frozenset({"model", "language"}),
+            frozenset({
+                "model", "language", "use_fun_asr", "fun_asr_model", "fun_asr_device",
+            }),
+        )
+    )
+
+    monkeypatch.setattr(
+        translator_module,
+        "_get_supported_cli_args",
+        type(
+            "Probe",
+            (),
+            {
+                "__call__": staticmethod(lambda *_: next(probes)),
+                "cache_clear": staticmethod(lambda: None),
+            },
+        )(),
+    )
+    monkeypatch.setattr(
+        translator_module,
+        "_resolve_profile_python",
+        lambda _: "python",
+    )
+
+    command = TranslationContext(args, "fun-asr-test")._build_command()
+
+    assert "--use_fun_asr" in command
+    assert command[command.index("--fun_asr_model") + 1] == "FunAudioLLM/Fun-ASR-Nano-2512"

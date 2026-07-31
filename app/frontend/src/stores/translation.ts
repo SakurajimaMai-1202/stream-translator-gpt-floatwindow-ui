@@ -151,6 +151,12 @@ export const useTranslationStore = defineStore('translation', () => {
     config.value = snapshot;
   }
 
+  function applyConfigSections(sections: Config) {
+    for (const [section, value] of Object.entries(sections)) {
+      config.value[section] = value;
+    }
+  }
+
   async function startTranslation(url: string) {
     try {
       statusMessage.value = '';
@@ -195,6 +201,17 @@ export const useTranslationStore = defineStore('translation', () => {
       currentUrl.value = '';
       currentTaskId.value = '';
       statusMessage.value = '';
+    }
+  }
+
+  async function saveConfigSection(section: string, sectionConfig: any) {
+    try {
+      const updatedSection = await configApi.updateSection(section, sectionConfig);
+      config.value[section] = updatedSection;
+      return updatedSection;
+    } catch (error: any) {
+      errorMessage.value = `儲存 ${section} 設定失敗: ${error.message}`;
+      throw error;
     }
   }
 
@@ -278,6 +295,7 @@ export const useTranslationStore = defineStore('translation', () => {
           if (broadcastChannel) {
             broadcastChannel.postMessage(updated);
           }
+          (window as any).pyqt?.updateNativeSubtitle?.(JSON.stringify(updated));
         } else {
           const newSubtitle: SubtitleLine = {
             id: `${Date.now()}-${Math.random()}`,
@@ -297,6 +315,7 @@ export const useTranslationStore = defineStore('translation', () => {
             console.log('[BroadcastChannel] Posting subtitle:', newSubtitle);
             broadcastChannel.postMessage(newSubtitle);
           }
+          (window as any).pyqt?.updateNativeSubtitle?.(JSON.stringify(newSubtitle));
         }
 
         // 保持最多 100 筆字幕
@@ -378,8 +397,10 @@ export const useTranslationStore = defineStore('translation', () => {
     // Actions
     loadConfig,
     applyConfigSnapshot,
+    applyConfigSections,
     loadRuntimeStatus,
     saveConfig,
+    saveConfigSection,
     resetConfig,
     exportConfig,
     importConfig,

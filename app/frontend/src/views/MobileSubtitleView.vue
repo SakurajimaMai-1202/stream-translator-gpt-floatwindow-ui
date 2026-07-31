@@ -9,6 +9,9 @@ interface SubtitleItem {
   displayOriginal: string;  // 目前已打出的文字（顯示用）
   displayTranslated: string;
   timestamp_id?: string;
+  asr_latency_ms?: number | null;
+  llm_latency_ms?: number | null;
+  total_latency_ms?: number | null;
 }
 
 // ─── 狀態 ───────────────────────────────────────────────
@@ -20,6 +23,7 @@ const statusText = ref('連線中...');
 const fontSize = ref(Number(localStorage.getItem('mfw_fontSize') || 28));
 const showOriginal = ref(localStorage.getItem('mfw_showOriginal') !== 'false');
 const showTranslated = ref(localStorage.getItem('mfw_showTranslated') !== 'false');
+const showLatency = ref(localStorage.getItem('mfw_showLatency') !== 'false');
 const showPanel = ref(false);
 const maxItems = ref(Number(localStorage.getItem('mfw_maxItems') || 100));
 const theme = ref<'auto' | 'dark' | 'light'>((localStorage.getItem('mfw_theme') as any) || 'auto');
@@ -188,7 +192,14 @@ async function connect() {
   };
 }
 
-function addOrUpdateSubtitle(data: { timestamp?: string; original: string; translated: string }) {
+function addOrUpdateSubtitle(data: {
+  timestamp?: string;
+  original: string;
+  translated: string;
+  asr_latency_ms?: number | null;
+  llm_latency_ms?: number | null;
+  total_latency_ms?: number | null;
+}) {
   if (!data.original && !data.translated) return;
 
   const ts = data.timestamp || '';
@@ -198,6 +209,9 @@ function addOrUpdateSubtitle(data: { timestamp?: string; original: string; trans
       const item = subtitles.value[idx];
       item.original = data.original || '';
       item.translated = data.translated || '';
+      item.asr_latency_ms = data.asr_latency_ms ?? null;
+      item.llm_latency_ms = data.llm_latency_ms ?? null;
+      item.total_latency_ms = data.total_latency_ms ?? null;
       // 有新字元時繼續打字動畫
       startTyping(item.id);
       return;
@@ -210,6 +224,9 @@ function addOrUpdateSubtitle(data: { timestamp?: string; original: string; trans
     translated: data.translated || '',
     displayOriginal: '',
     displayTranslated: '',
+    asr_latency_ms: data.asr_latency_ms ?? null,
+    llm_latency_ms: data.llm_latency_ms ?? null,
+    total_latency_ms: data.total_latency_ms ?? null,
     ...(ts ? { timestamp_id: ts } : {})
   };
   subtitles.value.push(newItem);
@@ -258,8 +275,22 @@ function saveSettings() {
   localStorage.setItem('mfw_fontSize', String(fontSize.value));
   localStorage.setItem('mfw_showOriginal', String(showOriginal.value));
   localStorage.setItem('mfw_showTranslated', String(showTranslated.value));
+  localStorage.setItem('mfw_showLatency', String(showLatency.value));
   localStorage.setItem('mfw_maxItems', String(maxItems.value));
   localStorage.setItem('mfw_theme', theme.value);
+}
+
+function formatLatency(value?: number | null): string {
+  if (value == null || !Number.isFinite(value)) return '';
+  return value >= 1000 ? `${(value / 1000).toFixed(2)}s` : `${Math.round(value)}ms`;
+}
+
+function latencyLabel(sub: SubtitleItem): string {
+  const parts: string[] = [];
+  if (sub.asr_latency_ms != null) parts.push(`ASR ${formatLatency(sub.asr_latency_ms)}`);
+  if (sub.llm_latency_ms != null) parts.push(`翻譯 ${formatLatency(sub.llm_latency_ms)}`);
+  if (sub.total_latency_ms != null) parts.push(`總計 ${formatLatency(sub.total_latency_ms)}`);
+  return parts.join(' · ');
 }
 
 // ─── 生命週期 ────────────────────────────────────────────
@@ -310,6 +341,11 @@ onUnmounted(() => {
         <label class="setting-toggle">
           <input type="checkbox" v-model="showTranslated" @change="saveSettings" />
           <span>顯示翻譯</span>
+        </label>
+
+        <label class="setting-toggle">
+          <input type="checkbox" v-model="showLatency" @change="saveSettings" />
+          <span>顯示 ASR／翻譯處理時間</span>
         </label>
 
         <div class="theme-group">
@@ -368,6 +404,10 @@ onUnmounted(() => {
               v-if="typingItemIds.includes(sub.id) && sub.displayTranslated.length < sub.translated.length"
               class="typing-cursor"
             >|</span></div>
+          <div
+            v-if="showLatency && latencyLabel(sub)"
+            class="latency-line"
+          >{{ latencyLabel(sub) }}</div>
         </div>
       </template>
     </div>
@@ -652,6 +692,15 @@ onUnmounted(() => {
   text-shadow: var(--sub-shadow);
   word-break: break-word;
   margin-top: 4px;
+}
+
+.latency-line {
+  margin-top: 4px;
+  color: #7dd3fc;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  opacity: 0.85;
 }
 
 /* ─── 打字游標 ─── */

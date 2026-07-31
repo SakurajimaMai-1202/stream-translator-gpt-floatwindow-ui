@@ -268,10 +268,13 @@ asr_inference_validated: SenseVoiceSmall yes on tested AMD ROCm machine; otherwi
 - `asr_inference_validated` 依實機 smoke test 結果填寫；SenseVoiceSmall 已有 AMD ROCm 實機通過案例。
 
 這樣即使本機沒有 ROCm 卡，也能先發出結構正確、標示保守的 ROCm Experimental 包；不同 AMD GPU 的實機結果仍用診斷 log 回收。
-## CUDA Parakeet CTC JA 補充
+## CUDA NVIDIA Parakeet 補充
 
-- CUDA profile 另支援 `Parakeet CTC JA`，狀態為 experimental。
-- 模型來源為 `grider-transwithai/parakeet-ctc-1.1b-ja`，預設載入 HuggingFace repo 內的 `parakeet-ja.nemo`。
+- CUDA profile 支援 NVIDIA Parakeet，狀態為 experimental，採既有離線切片轉錄流程。
+- 官方日文模型：`nvidia/parakeet-tdt_ctc-0.6b-ja`；官方英文模型：`nvidia/parakeet-tdt_ctc-1.1b`。
+- 官方混合模型預設使用 TDT decoder，也可切換 CTC；模型與輸入語言固定綁定，不能以英文模型辨識日文或反向使用。
+- 舊 `grider-transwithai/parakeet-ctc-1.1b-ja` 仍保留為相容選項，並從 repo 載入 `parakeet-ja.nemo`。
+- NVIDIA 官方兩個模型均採 CC-BY-4.0，散布或展示結果時應保留適當 attribution。
 - 這個後端只開在 CUDA 版；CPU / ROCm profile 會在能力矩陣中關閉。
 - 輸入語言只支援日文或自動偵測；其他語言會直接拒絕，避免誤用。
 - CUDA runtime 必須能 import `nemo.collections.asr.models`。若要重打 CUDA 包，請先在 build Python 安裝 `app/requirements_cuda_parakeet.txt`。

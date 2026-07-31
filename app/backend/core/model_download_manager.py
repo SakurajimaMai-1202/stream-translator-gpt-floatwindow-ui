@@ -26,14 +26,21 @@ logger = logging.getLogger(__name__)
 SUPPORTED_QWEN3_MODELS = {
     "Qwen/Qwen3-ASR-0.6B",
     "Qwen/Qwen3-ASR-1.7B",
-    "neosophie/Qwen3-ASR-1.7B-JA",
+    "jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame",
 }
 
 SUPPORTED_SENSEVOICE_MODELS = {
     "iic/SenseVoiceSmall",
 }
 
-SUPPORTED_PARAKEET_CTC_JA_MODELS = {
+SUPPORTED_FUN_ASR_MODELS = {
+    "FunAudioLLM/Fun-ASR-Nano-2512",
+    "FunAudioLLM/Fun-ASR-MLT-Nano-2512",
+}
+
+SUPPORTED_PARAKEET_MODELS = {
+    "nvidia/parakeet-tdt_ctc-0.6b-ja",
+    "nvidia/parakeet-tdt_ctc-1.1b",
     "grider-transwithai/parakeet-ctc-1.1b-ja",
 }
 
@@ -99,7 +106,7 @@ class ModelDownloadManager:
     def _normalize_repo_id(self, engine: str, model_id: str) -> str:
         if engine == "qwen3-asr":
             return model_id
-        if engine == "sensevoice":
+        if engine in {"sensevoice", "fun-asr-nano"}:
             return model_id
         if engine == "parakeet-ctc-ja":
             return model_id
@@ -118,9 +125,14 @@ class ModelDownloadManager:
                 raise ValueError(f"不支援的 SenseVoice 模型: {model_id}")
             return model_id
 
+        if engine == "fun-asr-nano":
+            if model_id not in SUPPORTED_FUN_ASR_MODELS:
+                raise ValueError(f"Unsupported Fun-ASR Nano model: {model_id}")
+            return model_id
+
         if engine == "parakeet-ctc-ja":
-            if model_id not in SUPPORTED_PARAKEET_CTC_JA_MODELS:
-                raise ValueError(f"不支援的 Parakeet CTC JA 模型: {model_id}")
+            if model_id not in SUPPORTED_PARAKEET_MODELS:
+                raise ValueError(f"不支援的 NVIDIA Parakeet 模型: {model_id}")
             return model_id
 
         if engine == "faster-whisper":
@@ -381,10 +393,20 @@ class ModelDownloadManager:
                             cache_path=cache_path,
                         )
                     )
-                elif repo_id in SUPPORTED_PARAKEET_CTC_JA_MODELS:
+                elif repo_id in SUPPORTED_PARAKEET_MODELS:
                     models.append(
                         DownloadedModelInfo(
                             engine="parakeet-ctc-ja",
+                            model_id=repo_id,
+                            repo_id=repo_id,
+                            size_bytes=size_bytes,
+                            cache_path=cache_path,
+                        )
+                    )
+                elif repo_id in SUPPORTED_FUN_ASR_MODELS:
+                    models.append(
+                        DownloadedModelInfo(
+                            engine="fun-asr-nano",
                             model_id=repo_id,
                             repo_id=repo_id,
                             size_bytes=size_bytes,
@@ -441,10 +463,20 @@ class ModelDownloadManager:
                         cache_path=str(item),
                     )
                 )
-            elif repo_id in SUPPORTED_PARAKEET_CTC_JA_MODELS:
+            elif repo_id in SUPPORTED_PARAKEET_MODELS:
                 models.append(
                     DownloadedModelInfo(
                         engine="parakeet-ctc-ja",
+                        model_id=repo_id,
+                        repo_id=repo_id,
+                        size_bytes=size_bytes,
+                        cache_path=str(item),
+                    )
+                )
+            elif repo_id in SUPPORTED_FUN_ASR_MODELS:
+                models.append(
+                    DownloadedModelInfo(
+                        engine="fun-asr-nano",
                         model_id=repo_id,
                         repo_id=repo_id,
                         size_bytes=size_bytes,

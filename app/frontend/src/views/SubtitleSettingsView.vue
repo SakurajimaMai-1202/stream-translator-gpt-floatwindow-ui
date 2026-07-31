@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, computed } from 'vue';
+import { ref, onMounted, onUnmounted, watch, computed, nextTick } from 'vue';
 import { useRoute } from 'vue-router';
 
 const route = useRoute();
@@ -27,6 +27,7 @@ const backgroundOpacity = ref(50);
 // BroadcastChannel 用於跨視窗通訊
 let settingsChannel: BroadcastChannel | null = null;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
+let isHydratingSettings = true;
 
 function buildSettings() {
   return {
@@ -51,12 +52,6 @@ function buildSettings() {
 async function saveSettings() {
   const settings = buildSettings();
   localStorage.setItem('subtitleSettings', JSON.stringify(settings));
-  
-  // 使用 BroadcastChannel 通知其他視窗
-  if (settingsChannel) {
-    settingsChannel.postMessage(settings);
-    console.log('設定已廣播到字幕視窗');
-  }
 
   try {
     await fetch('/api/config/subtitle_settings', {
@@ -79,6 +74,7 @@ function scheduleSaveSettings() {
     settingsChannel.postMessage(settings);
     console.log('設定已廣播到字幕視窗');
   }
+  (window as any).pyqt?.updateNativeSubtitleSettings?.(JSON.stringify(settings));
 
   if (saveTimer !== null) {
     clearTimeout(saveTimer);
@@ -162,6 +158,8 @@ onMounted(async () => {
       }
     }
   }
+  await nextTick();
+  isHydratingSettings = false;
 });
 
 onUnmounted(() => {
@@ -176,6 +174,7 @@ onUnmounted(() => {
 });
 
 watch([fontSize, fontWeight, showOriginal, showTranslated, showTimestamp, showLatency, position, autoScroll, maxDisplayCount, textColor, translatedColor, timestampColor, latencyColor, backgroundColor, backgroundOpacity], () => {
+  if (isHydratingSettings) return;
   scheduleSaveSettings();
 });
 
@@ -192,7 +191,7 @@ const activeTab = ref<'display' | 'color'>('display');
     </div>
 
     <!-- Content Card -->
-    <div class="bg-slate-950/40 backdrop-blur-xl rounded-2xl border border-white/10 shadow-2xl p-6">
+    <div class="bg-gradient-to-br from-slate-950/95 via-slate-950/85 to-indigo-950/65 rounded-2xl border border-white/10 shadow-2xl p-6">
       <!-- 分頁標籤 -->
       <div class="flex border-b border-white/10 mb-6">
         <button

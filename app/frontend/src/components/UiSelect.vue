@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue';
 
 export interface UiSelectOption {
   value: string | number | null;
@@ -35,6 +35,8 @@ const menuStyle = reactive({
   width: '0px',
   maxHeight: '18rem'
 });
+let positionFrame: number | null = null;
+let listenersAttached = false;
 
 const selectedOption = computed(() => props.options.find(opt => opt.value === props.modelValue));
 const displayText = computed(() => selectedOption.value?.label || props.placeholder);
@@ -61,9 +63,6 @@ const groupedOptions = computed(() => {
 function toggleOpen() {
   if (props.disabled) return;
   isOpen.value = !isOpen.value;
-  if (isOpen.value) {
-    nextTick(updateMenuPosition);
-  }
 }
 
 function close() {
@@ -108,27 +107,51 @@ function updateMenuPosition() {
     : `${Math.min(window.innerHeight - viewportPadding, rect.bottom + gap)}px`;
 }
 
-function handleViewportChange() {
-  if (isOpen.value) updateMenuPosition();
+function scheduleMenuPositionUpdate() {
+  if (!isOpen.value || positionFrame !== null) return;
+  positionFrame = window.requestAnimationFrame(() => {
+    positionFrame = null;
+    updateMenuPosition();
+  });
 }
 
-onMounted(() => {
-  document.addEventListener('click', handleDocumentClick);
+function attachOpenListeners() {
+  if (listenersAttached) return;
+  listenersAttached = true;
+  document.addEventListener('pointerdown', handleDocumentClick);
   document.addEventListener('keydown', handleKeydown);
-  window.addEventListener('resize', handleViewportChange);
-  window.addEventListener('scroll', handleViewportChange, true);
-});
+  window.addEventListener('resize', scheduleMenuPositionUpdate);
+  window.addEventListener('scroll', scheduleMenuPositionUpdate, true);
+}
 
-onBeforeUnmount(() => {
-  document.removeEventListener('click', handleDocumentClick);
+function detachOpenListeners() {
+  if (!listenersAttached) return;
+  listenersAttached = false;
+  document.removeEventListener('pointerdown', handleDocumentClick);
   document.removeEventListener('keydown', handleKeydown);
-  window.removeEventListener('resize', handleViewportChange);
-  window.removeEventListener('scroll', handleViewportChange, true);
-});
+  window.removeEventListener('resize', scheduleMenuPositionUpdate);
+  window.removeEventListener('scroll', scheduleMenuPositionUpdate, true);
+  if (positionFrame !== null) {
+    window.cancelAnimationFrame(positionFrame);
+    positionFrame = null;
+  }
+}
+
+watch(isOpen, async (open) => {
+  if (!open) {
+    detachOpenListeners();
+    return;
+  }
+  attachOpenListeners();
+  await nextTick();
+  updateMenuPosition();
+}, { flush: 'post' });
 
 watch(() => props.options, () => {
-  if (isOpen.value) nextTick(updateMenuPosition);
-});
+  if (isOpen.value) nextTick(scheduleMenuPositionUpdate);
+}, { flush: 'post' });
+
+onBeforeUnmount(detachOpenListeners);
 </script>
 
 <template>
@@ -137,7 +160,7 @@ watch(() => props.options, () => {
       type="button"
       :disabled="disabled"
       :class="[
-        'w-full flex items-center justify-between px-3 py-2 rounded-lg border border-white/20 bg-white/5 text-white focus:outline-none focus:border-blue-400 transition',
+        'w-full flex items-center justify-between px-3 py-2 rounded-lg border border-white/20 bg-white/5 text-white focus:outline-none focus:border-blue-400 transition-colors',
         disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:bg-white/10',
         buttonClass
       ]"
@@ -166,7 +189,7 @@ watch(() => props.options, () => {
             :key="`${group.group || 'default'}-${String(option.value)}`"
             type="button"
             :disabled="option.disabled"
-            class="w-full text-left px-3 py-2 text-sm transition"
+            class="w-full text-left px-3 py-2 text-sm transition-colors"
             :class="[
               option.value === modelValue ? 'bg-blue-600/60 text-white' : 'text-slate-100',
               option.disabled ? 'opacity-40 cursor-not-allowed' : 'hover:bg-white/10'

@@ -81,7 +81,7 @@ function Get-RuntimeProfileDocText {
         [Parameter(Mandatory = $true)]
         [ValidateSet("cuda", "cpu", "rocm")]
         [string]$RuntimeProfile,
-        [string]$Version = "1.3.7",
+        [string]$Version = "1.3.8",
         [Parameter(Mandatory = $true)]
         [ValidateSet("portable_guide", "update_notes", "readme")]
         [string]$Document
@@ -99,14 +99,14 @@ function Get-RuntimeProfileDocText {
             "Faster-Whisper 全系列",
             "Qwen3-ASR offline: 0.6B / 1.7B / 1.7B-JA",
             "SenseVoiceSmall: compatibility，offline sliced transcription",
-            "Parakeet CTC 1.1B JA: experimental，CUDA only，Japanese-only，模型 grider-transwithai/parakeet-ctc-1.1b-ja"
+            "NVIDIA Parakeet: experimental，CUDA only；0.6B 日文 / 1.1B 英文，混合 TDT/CTC"
         )
         $notes = @(
             "本版本是 NVIDIA CUDA 主線版。",
             "Qwen3-ASR 在 CUDA / ROCm profile 預設使用 bf16。",
             "SenseVoiceSmall 使用 FunASR runtime；首次使用前可先在模型管理預下載 iic/SenseVoiceSmall。",
-            "Parakeet CTC JA 使用 NVIDIA NeMo runtime；打包 CUDA runtime 前請確認 build Python 已安裝 app/requirements_cuda_parakeet.txt。",
-            "Parakeet CTC JA 預設使用 bfloat16；實測可正式跑，穩態顯存約 4GB，載入峰值會略高。",
+            "NVIDIA Parakeet 使用 NVIDIA NeMo runtime；打包 CUDA runtime 前請確認 build Python 已安裝 app/requirements_cuda_parakeet.txt。",
+            "官方模型預設使用 TDT decoder 與 bfloat16；英文／日文依模型固定。官方模型授權為 CC-BY-4.0。",
             "預設裝置策略為 auto_discrete，會優先選擇獨立 GPU，避免誤選內顯。"
         )
         $warning = "若沒有可用 NVIDIA CUDA GPU，請改用 CPU 包；AMD ROCm 使用者請改用 ROCm Experimental 包。"
@@ -280,7 +280,7 @@ function Write-RuntimeProfileDocs {
         [Parameter(Mandatory = $true)]
         [ValidateSet("cuda", "cpu", "rocm")]
         [string]$RuntimeProfile,
-        [string]$Version = "1.3.7"
+        [string]$Version = "1.3.8"
     )
 
     if (-not (Test-Path $Destination)) {

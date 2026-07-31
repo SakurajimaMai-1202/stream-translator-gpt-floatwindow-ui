@@ -5,7 +5,11 @@ pytest.importorskip("scipy")
 pytest.importorskip("torch")
 
 from stream_translator_gpt.asr_preload import build_asr_config, resolve_preload_config
-from stream_translator_gpt.audio_transcriber import NemoASRTranscriber, _resolve_modelscope_repo_path
+from stream_translator_gpt.audio_transcriber import (
+    FunASRNanoTranscriber,
+    NemoASRTranscriber,
+    _resolve_modelscope_repo_path,
+)
 
 
 class _FakeProps:
@@ -111,17 +115,68 @@ def test_sensevoice_modelscope_repo_prefers_portable_local_cache(monkeypatch, tm
 
 def test_sensevoice_modelscope_repo_keeps_repo_id_when_cache_missing(monkeypatch, tmp_path):
     monkeypatch.setenv("MODELSCOPE_CACHE", str(tmp_path / "modelscope"))
+    monkeypatch.chdir(tmp_path)
 
     assert _resolve_modelscope_repo_path("iic/SenseVoiceSmall") == "iic/SenseVoiceSmall"
 
 
-def test_parakeet_ctc_ja_uses_hf_nemo_file(tmp_path):
+def test_parakeet_legacy_model_uses_hf_nemo_file(tmp_path):
     local_model = tmp_path / "parakeet-ja.nemo"
     local_model.write_bytes(b"fake nemo")
 
-    assert NemoASRTranscriber.DEFAULT_MODEL == "grider-transwithai/parakeet-ctc-1.1b-ja"
+    assert NemoASRTranscriber.DEFAULT_MODEL == "nvidia/parakeet-tdt_ctc-0.6b-ja"
+    assert NemoASRTranscriber.LEGACY_MODEL == "grider-transwithai/parakeet-ctc-1.1b-ja"
     assert NemoASRTranscriber.DEFAULT_HF_FILENAME == "parakeet-ja.nemo"
     assert NemoASRTranscriber._resolve_nemo_model_path(str(local_model)) == local_model
+
+
+def test_parakeet_official_models_use_nemo_from_pretrained():
+    assert NemoASRTranscriber._resolve_nemo_model_path(
+        "nvidia/parakeet-tdt_ctc-0.6b-ja"
+    ) is None
+    assert NemoASRTranscriber._resolve_nemo_model_path(
+        "nvidia/parakeet-tdt_ctc-1.1b"
+    ) is None
+
+
+def test_parakeet_decoder_selects_tdt_or_ctc_head():
+    calls = []
+
+    class _Model:
+        def change_decoding_strategy(self, **kwargs):
+            calls.append(kwargs)
+
+    transcriber = NemoASRTranscriber.__new__(NemoASRTranscriber)
+    transcriber.model_id = "nvidia/parakeet-tdt_ctc-0.6b-ja"
+    transcriber.model = _Model()
+    transcriber.decoding = "tdt"
+    transcriber._configure_decoder()
+    transcriber.decoding = "ctc"
+    transcriber._configure_decoder()
+
+    assert calls == [
+        {"decoder_type": "rnnt", "verbose": False},
+        {"decoder_type": "ctc", "verbose": False},
+    ]
+
+
+def test_legacy_parakeet_is_forced_to_ctc():
+    assert NemoASRTranscriber._normalize_decoding(
+        "tdt", NemoASRTranscriber.LEGACY_MODEL
+    ) == "ctc"
+
+
+def test_fun_asr_standard_and_mlt_language_scopes():
+    assert FunASRNanoTranscriber._normalize_fun_asr_language(
+        "ja", "FunAudioLLM/Fun-ASR-Nano-2512"
+    ) == "日文"
+    assert FunASRNanoTranscriber._normalize_fun_asr_language(
+        "fil", "FunAudioLLM/Fun-ASR-MLT-Nano-2512"
+    ) == "菲律宾语"
+    with pytest.raises(ValueError, match="does not support"):
+        FunASRNanoTranscriber._normalize_fun_asr_language(
+            "de", "FunAudioLLM/Fun-ASR-Nano-2512"
+        )
 
 
 def test_parakeet_ctc_ja_dtype_prefers_bfloat16_when_supported():

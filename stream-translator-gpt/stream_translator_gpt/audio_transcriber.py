@@ -509,6 +509,11 @@ class NemoASRTranscriber(AudioTranscriber):
         return normalized
 
     def _configure_decoder(self) -> None:
+        # This checkpoint is an EncDecCTCModelBPE model, not a hybrid
+        # RNNT/CTC model. Its decoder is already CTC and its NeMo API does not
+        # accept the hybrid-only decoder_type keyword.
+        if self.model_id == self.LEGACY_MODEL:
+            return
         change_decoding_strategy = getattr(self.model, 'change_decoding_strategy', None)
         if not callable(change_decoding_strategy):
             raise RuntimeError(f'{self.model_id} does not expose NeMo hybrid decoder selection.')

@@ -166,6 +166,19 @@ def test_legacy_parakeet_is_forced_to_ctc():
     ) == "ctc"
 
 
+def test_legacy_parakeet_skips_hybrid_decoder_selection():
+    class _LegacyCTCModel:
+        def change_decoding_strategy(self, decoding_cfg=None, verbose=True):
+            raise AssertionError("legacy CTC decoder is already configured")
+
+    transcriber = NemoASRTranscriber.__new__(NemoASRTranscriber)
+    transcriber.model_id = NemoASRTranscriber.LEGACY_MODEL
+    transcriber.model = _LegacyCTCModel()
+    transcriber.decoding = "ctc"
+
+    transcriber._configure_decoder()
+
+
 def test_fun_asr_standard_and_mlt_language_scopes():
     assert FunASRNanoTranscriber._normalize_fun_asr_language(
         "ja", "FunAudioLLM/Fun-ASR-Nano-2512"

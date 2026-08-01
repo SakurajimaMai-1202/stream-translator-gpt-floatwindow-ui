@@ -161,7 +161,7 @@ App Update 只能覆蓋同 profile 完整包；不要用 CUDA App Update 覆蓋 
 |------|------|
 | 音源輸入 | URL 直播、本地音檔、麥克風、系統音訊 WASAPI Loopback |
 | 語音辨識 | Qwen3-ASR、Qwen3-ASR JA Anime／Galgame、Fun-ASR Nano／MLT Nano、SenseVoiceSmall、NVIDIA Parakeet、faster-whisper、OpenAI Whisper API |
-| 語音切片 | Silero VAD、FireRed VAD， |
+| 語音切片 | Silero VAD、FireRed VAD|
 | 翻譯後端 | OpenAI GPT、Google Gemini、本地 OpenAI-compatible LLM |
 | 浮動字幕 | 原生置頂字幕視窗，可拖曳與縮放、查看歷史字幕，並顯示時間戳及 ASR／排隊／翻譯／總延遲 |
 | 字幕分享 | 內建網頁字幕服務，區網裝置可用瀏覽器觀看 |

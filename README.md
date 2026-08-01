@@ -46,7 +46,7 @@ Stream Translator FloatWindow 是一個給 Windows 使用的即時字幕翻譯�
 
 ### 一般使用者推薦
 
-建議從 GitHub Release 依照硬體下載對應的 v1.3.7 完整包，合併分割檔後解壓執行：
+建議從 GitHub Release 依照硬體下載對應的 v1.3.8 完整包，合併分割檔後解壓執行：
 
 - GitHub Release：<https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest>
 
@@ -58,22 +58,23 @@ Stream Translator FloatWindow 是一個給 Windows 使用的即時字幕翻譯�
 | CPU | `StreamTranslator-win64-CPU-Full.zip.part01` | CPU 相容版，使用 CPU-only PyTorch runtime |
 | ROCm Experimental | `StreamTranslator-win64-ROCm-Experimental-Full.zip.part01` ~ `.part02` | AMD ROCm/HIP 實驗版 |
 | App Update | `StreamTranslator-*-App-Update.zip` | 僅適合同 profile 完整包覆蓋更新 |
-| SHA256 | `SHA256SUMS-v1.3.7.txt` | 驗證下載與合併後檔案完整性 |
+| SHA256 | `SHA256SUMS-v1.3.8.txt` | 驗證下載與合併後檔案完整性 |
 
 GitHub Release 因為單檔容量限制，Full package 以分割包提供。
 
 請不要下載 GitHub 自動產生的 `Source code (zip)` 當作執行版；那只是原始碼，不能直接雙擊啟動。
 
-### v1.3.7 重要注意事項
+### v1.3.8 重要注意事項
 
-v1.3.7 是目前建議使用的版本，延續 v1.3.6 的直播翻譯改善，並新增分平台 Cookie 匯入、停止轉譯狀態清理、Windows WebView 穩定性修正與三版本高速打包流程。v1.3.2 與 v1.3.3 已知存在設定頁與轉錄選項相關問題，請直接升級 v1.3.7。
+v1.3.8 是目前建議使用的版本，新增 Fun-ASR Nano／MLT Nano、NVIDIA Parakeet 日文與英文官方模型、Qwen3-ASR 日文 Anime／Galgame 模型，以及依模型自動限制語言的能力表。本版也重製 Windows 原生浮動字幕，改善模型管理、遠端字幕延遲顯示、ASR 預載與 CUDA／CPU／ROCm profile 能力提示。v1.3.2 與 v1.3.3 已知存在設定頁與轉錄選項相關問題，請直接升級 v1.3.8。
 
-- v1.3.2：不建議繼續使用，請升級 v1.3.7。
-- v1.3.3：包含部分修正，但打包後仍可能在設定頁點選轉錄/ASR 選項時凍結，請升級 v1.3.7。
+- v1.3.2：不建議繼續使用，請升級 v1.3.8。
+- v1.3.3：包含部分修正，但打包後仍可能在設定頁點選轉錄/ASR 選項時凍結，請升級 v1.3.8。
 - v1.3.4：修正設定頁凍結與 ASR 選項互斥問題；CPU 版改用 CPU-only PyTorch runtime，Full package 顯著縮小。
 - v1.3.5：配置讀取改用快取與外部修改偵測，減少重複 YAML 解析、重複 API 請求、重複磁碟寫入與不必要的硬體偵測。
 - v1.3.6：新增 Hy-MT2／一般聊天模型／結構化 API 翻譯策略、ASR 重疊去重、短句組句、直播 VAD 參數與字幕延遲顯示。
 - v1.3.7：新增分平台 Cookie 匯入，改善停止轉譯狀態清理與 Windows WebView 顯示穩定性，並加速 CUDA／CPU／ROCm 三版本打包、分割與驗證。
+- v1.3.8：新增 Fun-ASR Nano／MLT Nano、Parakeet 0.6B JA／1.1B EN、Qwen3-ASR 1.7B JA Anime／Galgame，重製原生浮動字幕，並改善模型／語言選擇、模型下載、延遲顯示及三種 runtime profile 的穩定性。
 
 ### GitHub 分割包
 
@@ -93,8 +94,7 @@ v1.3.7 是目前建議使用的版本，延續 v1.3.6 的直播翻譯改善，�
 
 - 建議一起下載：
   - `merge-full-package.bat`
-  - `SHA256SUMS-v1.3.7.txt`
-  - `RELEASE_NOTES_v1.3.7_zh-TW.md`
+  - `SHA256SUMS-v1.3.8.txt`
 
 合併分割包後會得到對應的 Full zip：
 
@@ -118,7 +118,7 @@ try {
 }
 ```
 
-也可以使用 7-Zip 或其他支援分割檔的工具，從 `.part01` 開始合併/解壓。合併後請依照 `SHA256SUMS-v1.3.7.txt` 驗證檔案完整性。
+也可以使用 7-Zip 或其他支援分割檔的工具，從 `.part01` 開始合併/解壓。合併後請依照 `SHA256SUMS-v1.3.8.txt` 驗證檔案完整性。
 
 如果只是從同 profile 舊版更新，可以下載對應的 App Update：
 
@@ -137,19 +137,19 @@ App Update 只能覆蓋同 profile 完整包；不要用 CUDA App Update 覆蓋 
 1. 從 GitHub Release 依硬體下載 CUDA / CPU / ROCm Experimental 其中一組 Full package 分割包，合併後解壓。
 2. 解壓到一個不要含特殊符號的資料夾，例如 `D:\Apps\StreamTranslator`。
 3. 執行 `Stream Translator.exe`。
-4. 第一次使用前，建議先到「系統設定 > ASR模型管理」預下載需要的 ASR 模型，例如 Qwen3-ASR、Faster-Whisper、SenseVoiceSmall 或 Parakeet CTC JA。
+4. 第一次使用前，建議先到「系統設定 > ASR模型管理」預下載需要的 ASR 模型，例如 Qwen3-ASR、Fun-ASR、Faster-Whisper、SenseVoiceSmall 或 NVIDIA Parakeet。
 5. 回到首頁選擇音源。預設會使用 URL 串流模式。
 6. 選擇輸入語言、目標語言、ASR 模型與翻譯後端。
 7. 按下「啟動即時轉譯」。
 
-第一次使用 Qwen3-ASR、Faster-Whisper、SenseVoiceSmall 或 Parakeet CTC JA 時，模型可能需要下載或載入，等待時間會比較長；先在 ASR模型管理頁下載可避免啟動轉譯時卡在模型下載。
+第一次使用 Qwen3-ASR、Fun-ASR、Faster-Whisper、SenseVoiceSmall 或 NVIDIA Parakeet 時，模型可能需要下載或載入，等待時間會比較長；先在 ASR 模型管理頁下載可避免啟動轉譯時卡在模型下載。
 
 ### 最少要設定什麼
 
 | 設定 | 建議 |
 |------|------|
 | 音源 | 直播網址選 URL；遊戲或影片選系統音訊；真人講話選麥克風 |
-| ASR | CUDA / ROCm 多語混用先用 `Qwen/Qwen3-ASR-1.7B`；CPU 先用 `Qwen/Qwen3-ASR-0.6B` 或 SenseVoiceSmall |
+| ASR | CUDA / ROCm 多語混用先用 `Qwen/Qwen3-ASR-1.7B`；CPU 先用 `Qwen/Qwen3-ASR-0.6B`、Fun-ASR Nano 或 SenseVoiceSmall |
 | 翻譯 | 有 API Key 可用 GPT/Gemini；要本地離線可用 llama.cpp 或 LM Studio |
 | 目標語言 | 例如繁體中文、英文、日文 |
 
@@ -160,14 +160,14 @@ App Update 只能覆蓋同 profile 完整包；不要用 CUDA App Update 覆蓋 
 | 類別 | 說明 |
 |------|------|
 | 音源輸入 | URL 直播、本地音檔、麥克風、系統音訊 WASAPI Loopback |
-| 語音辨識 | Qwen3-ASR、Qwen3-ASR JA fine-tune、SenseVoiceSmall、Parakeet CTC JA、faster-whisper、OpenAI Whisper API |
+| 語音辨識 | Qwen3-ASR、Qwen3-ASR JA Anime／Galgame、Fun-ASR Nano／MLT Nano、SenseVoiceSmall、NVIDIA Parakeet、faster-whisper、OpenAI Whisper API |
 | 語音切片 | Silero VAD、FireRed VAD， |
 | 翻譯後端 | OpenAI GPT、Google Gemini、本地 OpenAI-compatible LLM |
-| 浮動字幕 | 置頂字幕視窗，可調字體、顏色、透明度、顯示行數 |
+| 浮動字幕 | 原生置頂字幕視窗，可拖曳與縮放、查看歷史字幕，並顯示時間戳及 ASR／排隊／翻譯／總延遲 |
 | 字幕分享 | 內建網頁字幕服務，區網裝置可用瀏覽器觀看 |
 | 字幕輸出 | 支援 SRT、TXT、ASS 輸出 |
 | 術語表 | 自訂詞彙對照，改善角色名、專有名詞與固定譯法 |
-| 模型管理 | 在介面內下載、檢查與切換 ASR 模型 |
+| 模型管理 | 在介面內下載、檢查、切換與刪除 Qwen3-ASR、Fun-ASR、SenseVoice、Parakeet、Faster-Whisper 模型 |
 
 ---
 
@@ -177,10 +177,10 @@ App Update 只能覆蓋同 profile 完整包；不要用 CUDA App Update 覆蓋 
 
 | 情境 | 建議 |
 |------|------|
-| NVIDIA CUDA 顯卡 | 優先下載 CUDA 版；ASR 用 `Qwen/Qwen3-ASR-1.7B`，日文可試 `neosophie/Qwen3-ASR-1.7B-JA` 或 Parakeet CTC JA |
-| AMD ROCm 顯卡 | 優先下載 ROCm Experimental；Qwen3-ASR 0.6B / 1.7B / 1.7B-JA 與 SenseVoiceSmall 已實機驗證可用 |
-| 沒有獨立顯卡 | 下載 CPU 版；ASR 先用 `Qwen/Qwen3-ASR-0.6B`、SenseVoiceSmall 或 faster-whisper small / medium |
-| 日文內容為主 | CUDA 可試 Parakeet CTC JA；CUDA / ROCm 可用 Qwen3-ASR 1.7B-JA；CPU 建議先試 SenseVoiceSmall |
+| NVIDIA CUDA 顯卡 | 優先下載 CUDA 版；ASR 用 `Qwen/Qwen3-ASR-1.7B`，日文可試 `jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame` 或 Parakeet 0.6B JA |
+| AMD ROCm 顯卡 | 優先下載 ROCm Experimental；可使用 Qwen3-ASR、Fun-ASR 與 SenseVoiceSmall，實際支援仍取決於 AMD GPU、驅動及 ROCm runtime |
+| 沒有獨立顯卡 | 下載 CPU 版；ASR 先用 `Qwen/Qwen3-ASR-0.6B`、Fun-ASR Nano、SenseVoiceSmall 或 faster-whisper small / medium |
+| 日文內容為主 | CUDA 可試 Parakeet 0.6B JA；CUDA / ROCm 可用 Qwen3-ASR 1.7B JA Anime／Galgame；CPU 建議先試 Fun-ASR Nano 或 SenseVoiceSmall |
 | 12GB 顯卡想跑本地翻譯 | `Qwen3-ASR-1.7B + Hy-MT2-7B Q4_K_M` 或 `Gemma 4 E4B Q4` |
 | 12GB 顯卡想長時間穩定直播 | `Qwen3-ASR-1.7B + Hy-MT2-1.8B Q4_K_M` |
 | 不想佔本地顯存 | ASR 跑較小本地模型，翻譯用 GPT / Gemini API；或 ASR 直接用 OpenAI Whisper API |
@@ -193,14 +193,14 @@ SenseVoiceSmall 建議搭配 [`StreamTranslator-SenseVoiceSmall-Model-v1.3.4.zip
 
 | 硬體 | 推薦組合 | 評價 | 適合情境 |
 |------|----------|------|----------|
-| CPU-only | SenseVoiceSmall / Qwen3-ASR-0.6B / faster-whisper small 或 medium + API 翻譯 | 可用但速度看 CPU | 無獨顯、測試、字幕分享、遠端 API 流程 |
+| CPU-only | Fun-ASR Nano / SenseVoiceSmall / Qwen3-ASR-0.6B / faster-whisper small 或 medium + API 翻譯 | 可用但速度看 CPU | 無獨顯、測試、字幕分享、遠端 API 流程 |
 | NVIDIA 6GB | Qwen3-ASR-0.6B 或 faster-whisper small + API 翻譯 | 穩 | 入門、低延遲、顯存保守 |
-| NVIDIA 8GB | Qwen3-ASR-0.6B + Hy-MT2-1.8B Q4_K_M；日文可試 Parakeet CTC JA + API 翻譯 | 穩 | 本地翻譯入門、日文 CTC 實驗 |
+| NVIDIA 8GB | Qwen3-ASR-0.6B + Hy-MT2-1.8B Q4_K_M；日文可試 Parakeet 0.6B JA + API 翻譯 | 穩 | 本地翻譯入門、日文 Parakeet 實驗 |
 | NVIDIA 12GB 穩定 | Qwen3-ASR-1.7B + Hy-MT2-1.8B Q4_K_M | 很穩 | 長時間直播、多語字幕 |
 | NVIDIA 12GB 品質 | Qwen3-ASR-1.7B + Hy-MT2-7B Q4_K_M 或 Gemma 4 E4B Q4 | 可用但偏緊 | 多語翻譯品質優先 |
-| NVIDIA 12GB 日文 | Qwen3-ASR-1.7B-JA / Parakeet CTC JA + Sakura 7B IQ4_XS | 可用 | 日文、Galgame、輕小說語氣 |
+| NVIDIA 12GB 日文 | Qwen3-ASR-1.7B JA Anime／Galgame 或 Parakeet 0.6B JA + Sakura 7B IQ4_XS | 可用 | 日文、Galgame、輕小說語氣 |
 | NVIDIA 16GB+ | Qwen3-ASR-1.7B + Sakura 14B Q4 / Hy-MT2-7B Q6_K | 推薦 | 日文或多語品質優先 |
-| AMD ROCm 16GB+ | Qwen3-ASR-1.7B / 1.7B-JA / SenseVoiceSmall + 4B～7B Q4 翻譯模型 | 已實機驗證，package 仍為 experimental | AMD ROCm/HIP 使用者；Radeon RX 9070 XT 已有實機確認 |
+| AMD ROCm 16GB+ | Qwen3-ASR-1.7B / JA Anime／Galgame / Fun-ASR / SenseVoiceSmall + 4B～7B Q4 翻譯模型 | package 仍為 experimental | AMD ROCm/HIP 使用者；支援度取決於 GPU、驅動與 ROCm runtime |
 
 12GB NVIDIA 顯卡的甜蜜點是 **Qwen3-ASR-1.7B + 4B～7B Q4 翻譯模型**。Hy-MT2-7B Q4_K_M 和 Gemma 4 E4B Q4 值得優先嘗試；如果重視穩定和長時間運行，Hy-MT2-1.8B Q4_K_M 會更保守。ROCm 版預設會避開 AMD 內顯 / APU，若要測試整合顯卡，請在 Runtime Profile 裡手動允許 integrated GPU。
 
@@ -209,10 +209,14 @@ SenseVoiceSmall 建議搭配 [`StreamTranslator-SenseVoiceSmall-Model-v1.3.4.zip
 | ASR | 支援版本 | 適合情境 |
 |-----|----------|----------|
 | `Qwen/Qwen3-ASR-1.7B` | CUDA / ROCm | 預設高品質，多語混用、顯存足夠時優先 |
-| `neosophie/Qwen3-ASR-1.7B-JA` | CUDA / ROCm | 日文內容為主，可作為 Qwen3-ASR 日文模型 |
+| `jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame` | CUDA / ROCm | 日文 Anime／Galgame 語音專用；舊 `neosophie` 設定會自動遷移 |
 | `Qwen/Qwen3-ASR-0.6B` | CUDA / CPU / ROCm | 顯存較小、CPU 版、低延遲、保守配置 |
+| `FunAudioLLM/Fun-ASR-Nano-2512` | CUDA / CPU / ROCm | 中文、英文、日文與中文方言；離線切片辨識 |
+| `FunAudioLLM/Fun-ASR-MLT-Nano-2512` | CUDA / CPU / ROCm | 31 種語言；適合跨語言內容與多語直播 |
 | SenseVoiceSmall | CUDA / CPU / ROCm | 多語 ASR、CPU 也可用；ROCm 已實機驗證可用；建議下載 SenseVoiceSmall 模型包避免線上下載慢 |
-| `grider-transwithai/parakeet-ctc-1.1b-ja` | CUDA only experimental | 日文 CTC；預設 bfloat16，實測穩態顯存約 4GB，載入峰值略高 |
+| `nvidia/parakeet-tdt_ctc-0.6b-ja` | CUDA only experimental | 日文模型；預設 TDT decoder 與 bfloat16 |
+| `nvidia/parakeet-tdt_ctc-1.1b` | CUDA only experimental | 英文模型；預設 TDT decoder 與 bfloat16 |
+| `grider-transwithai/parakeet-ctc-1.1b-ja` | CUDA only experimental | 舊版日文 CTC 模型，保留相容性 |
 | faster-whisper small / medium | CUDA / CPU | Whisper 系列穩定性佳；CPU 版建議 small / medium，速度視 CPU 而定 |
 | faster-whisper large-v3 / large-v3-turbo | CUDA | Whisper 泛用多語，適合 NVIDIA 顯卡 |
 | OpenAI Whisper API | CUDA / CPU / ROCm | 不想在本機跑 ASR，或想節省顯存；需要 API Key 與網路 |
@@ -328,14 +332,14 @@ Hy-MT2 建議使用純文字輸出、最大輸出 `128` tokens、並行數 `1`�
 <details>
 <summary><strong>有沒有 CPU 模式？</strong></summary>
 
-有。v1.3.4 起提供 CPU Full package，使用 CPU-only PyTorch runtime，不會攜帶 CUDA / ROCm torch。CPU 版保留字幕分享、遠端 API、模型管理與本地 ASR 能力，但即時性取決於 CPU；建議先用 Qwen3-ASR 0.6B、SenseVoiceSmall 或 faster-whisper small / medium。
+有。v1.3.4 起提供 CPU Full package，使用 CPU-only PyTorch runtime，不會攜帶 CUDA / ROCm torch。CPU 版保留字幕分享、遠端 API、模型管理與本地 ASR 能力，但即時性取決於 CPU；建議先用 Fun-ASR Nano、Qwen3-ASR 0.6B、SenseVoiceSmall 或 faster-whisper small / medium。
 
 </details>
 
 <details>
 <summary><strong>為什麼第一次啟動很久？</strong></summary>
 
-第一次使用模型時可能需要下載或載入權重。Qwen3-ASR、faster-whisper、SenseVoiceSmall 與 Parakeet CTC JA 的模型大小從數百 MB 到數 GB 不等，請確認網路和磁碟空間足夠。SenseVoiceSmall 可直接下載 `StreamTranslator-SenseVoiceSmall-Model-v1.3.4.zip` 模型包，解壓到主程式資料夾後可避免首次線上下載。
+第一次使用模型時可能需要下載或載入權重。Qwen3-ASR、Fun-ASR、faster-whisper、SenseVoiceSmall 與 NVIDIA Parakeet 的模型大小從數百 MB 到數 GB 不等，請確認網路和磁碟空間足夠。SenseVoiceSmall 可直接下載 `StreamTranslator-SenseVoiceSmall-Model-v1.3.4.zip` 模型包，解壓到主程式資料夾後可避免首次線上下載。
 
 </details>
 
@@ -417,7 +421,7 @@ pip install -e .\stream-translator-gpt
 pip install -r .\app\requirements_full.txt
 ```
 
-CUDA 版若要開發或打包 Parakeet CTC JA，還要安裝：
+CUDA 版若要開發或打包 NVIDIA Parakeet，還要安裝：
 
 ```powershell
 pip install -r .\app\requirements_cuda_parakeet.txt
@@ -486,7 +490,7 @@ SenseVoiceSmall 若不想等線上下載，可從 Release 下載 [`StreamTransla
 
 1. 安裝 Python 3.10-3.12、Node.js 18+、npm、Git，以及提供 `tar.exe` 的 Windows 10/11 環境。
 2. 為 `cuda`、`cpu`、`rocm` 建立獨立 Build Python；先安裝目標 profile 的 PyTorch，再安裝 `app/requirements_full.txt`。
-3. CUDA Build Python 另須安裝 `app/requirements_cuda_parakeet.txt`，以納入 Parakeet CTC JA 所需的 NVIDIA NeMo runtime。
+3. CUDA Build Python 另須安裝 `app/requirements_cuda_parakeet.txt`，以納入 NVIDIA Parakeet 所需的 NVIDIA NeMo runtime。
 4. ROCm Build Python 必須提供有效的 `torch.version.hip`。沒有 AMD 顯卡的建置機可以重用已驗證的 ROCm runtime cache，但不能以 CUDA 或 CPU 環境重建 ROCm runtime。
 5. 執行打包前，使用 `app/check_runtime_profile_env.ps1` 驗證 Build Python；打包完成後，使用 artifact validator 檢查 profile、PyTorch backend、必要 imports 與輸出結構。
 
@@ -507,7 +511,7 @@ stream-translator-gpt-floatwindow-ui/
 │   ├── config.example.yaml         # 設定範本
 │   ├── requirements.txt            # 執行用依賴
 │   ├── requirements_full.txt       # 打包用依賴
-│   └── requirements_cuda_parakeet.txt # CUDA Parakeet CTC JA 額外依賴
+│   └── requirements_cuda_parakeet.txt # CUDA NVIDIA Parakeet 額外依賴
 ├── stream-translator-gpt/          # 核心轉錄翻譯引擎 fork，本專案會同步修改
 └── README.md
 ```
@@ -527,7 +531,7 @@ stream-translator-gpt-floatwindow-ui/
 
 | 版本 | GPU / Driver | 備註 |
 |------|------|------|
-| CUDA | NVIDIA CUDA 相容獨立顯卡；建議 NVIDIA Driver 528+ | CUDA / PyTorch runtime 已包含在 Full package，不需要另外安裝 CUDA Toolkit 或 cuDNN；Parakeet CTC JA 需 CUDA 版 |
+| CUDA | NVIDIA CUDA 相容獨立顯卡；建議 NVIDIA Driver 528+ | CUDA / PyTorch runtime 已包含在 Full package，不需要另外安裝 CUDA Toolkit 或 cuDNN；NVIDIA Parakeet 需 CUDA 版 |
 | CPU | 不需要獨立顯卡 | 使用 CPU-only PyTorch runtime，不會攜帶 CUDA / ROCm torch；速度較慢，建議先使用 Faster-Whisper small / medium、Qwen3-ASR 0.6B 或 SenseVoiceSmall；保留遠端 API / 遠端字幕能力 |
 | ROCm Experimental | 支援 Windows ROCm/HIP 的 AMD 獨立顯卡與相容驅動 | Radeon RX 9070 XT 已由使用者實機確認可用；仍屬實驗版，預設避開 AMD 內顯 / APU，其他 AMD 顯卡如遇問題請附診斷結果 |
 
@@ -546,9 +550,9 @@ stream-translator-gpt-floatwindow-ui/
 
 | Profile | 輸出 | 用途 |
 |------|------|------|
-| `cuda` | `app/dist-cuda/StreamTranslator-win64-CUDA` | NVIDIA CUDA 正式版；包含 Faster-Whisper 全系列、Qwen3-ASR、SenseVoiceSmall、Parakeet CTC JA |
-| `cpu` | `app/dist-cpu/StreamTranslator-win64-CPU` | CPU-only 版；使用 CPU-only PyTorch，支援遠端 API、字幕分享、Qwen3-ASR 0.6B、SenseVoiceSmall、faster-whisper small / medium |
-| `rocm` | `app/dist-rocm/StreamTranslator-win64-ROCm-Experimental` | AMD ROCm/HIP 實驗版；Qwen3-ASR 與 SenseVoiceSmall 已有 AMD 實機可用案例，package 仍保留 Experimental |
+| `cuda` | `app/dist-cuda/StreamTranslator-win64-CUDA` | NVIDIA CUDA 正式版；包含 Faster-Whisper 全系列、Qwen3-ASR、Fun-ASR、SenseVoiceSmall 與 NVIDIA Parakeet |
+| `cpu` | `app/dist-cpu/StreamTranslator-win64-CPU` | CPU-only 版；使用 CPU-only PyTorch，支援遠端 API、字幕分享、Qwen3-ASR 0.6B、Fun-ASR、SenseVoiceSmall、faster-whisper small / medium |
+| `rocm` | `app/dist-rocm/StreamTranslator-win64-ROCm-Experimental` | AMD ROCm/HIP 實驗版；提供 Qwen3-ASR、Fun-ASR 與 SenseVoiceSmall，實際支援取決於 GPU、驅動及 ROCm runtime，不包含 NVIDIA Parakeet |
 
 打包前先檢查 Build Python。三個 profile 應分別指向不同環境：
 
@@ -566,13 +570,13 @@ cd .\app
 cd .\app
 
 $env:STREAM_TRANSLATOR_BUILD_PYTHON = "D:\Python\cuda-runtime\python.exe"
-.\build_release.ps1 -Profile cuda -Version 1.3.7
+.\build_release.ps1 -Profile cuda -Version 1.3.8
 
 $env:STREAM_TRANSLATOR_BUILD_PYTHON = "D:\Python\cpu-runtime\python.exe"
-.\build_release.ps1 -Profile cpu -Version 1.3.7
+.\build_release.ps1 -Profile cpu -Version 1.3.8
 
 $env:STREAM_TRANSLATOR_BUILD_PYTHON = "D:\Python\rocm-runtime\python.exe"
-.\build_release.ps1 -Profile rocm -Version 1.3.7
+.\build_release.ps1 -Profile rocm -Version 1.3.8
 ```
 
 打包後驗證：
@@ -590,7 +594,7 @@ CUDA / CPU / ROCm 的 App Update 只能覆蓋同 profile 完整包。不要用 C
 Full package 會輸出完整 zip，GitHub Release 使用 `.part01`、`.part02` 這種分割檔。請同步提供：
 
 - `merge-full-package.bat`
-- `SHA256SUMS-v1.3.7.txt`
+- `SHA256SUMS-v1.3.8.txt`
 
 三版本建議使用共享 GUI 打包入口，避免重複執行三次 Vite 與 PyInstaller：
 
@@ -598,11 +602,11 @@ Full package 會輸出完整 zip，GitHub Release 使用 `.part01`、`.part02` �
 cd app
 
 # 日常驗證：共用 GUI 只建一次，不壓縮 Full ZIP
-.\build_all_profiles.ps1 -Version 1.3.7 -Mode Quick -ReuseRuntimeCache
+.\build_all_profiles.ps1 -Version 1.3.8 -Mode Quick -ReuseRuntimeCache
 
 # 正式發佈：標準 Deflate 高壓縮、分割、重新合併與 SHA256 驗證
 .\build_all_profiles.ps1 `
-  -Version 1.3.7 `
+  -Version 1.3.8 `
   -Mode Final `
   -ReuseRuntimeCache `
   -CompressionLevel 7 `
@@ -614,7 +618,7 @@ cd app
 Final 產物會放在 `app/release-v<版本>-assets/`，並包含
 `release-manifest-v<版本>.json`、`SHA256SUMS-v<版本>.txt`、
 `merge-full-package.bat` 與各 profile 的 App Update／Full package 分割檔。
-- `RELEASE_NOTES_v1.3.7_zh-TW.md`
+- GitHub Release 頁面的繁體中文完整更新日誌
 - 三個 `StreamTranslator-*-App-Update.zip`
 - 三組 Full package 分割檔
 - 可選的 `StreamTranslator-SenseVoiceSmall-Model-v1.3.4.zip`
@@ -634,10 +638,10 @@ cd .\app
 
 ### 重要開發注意
 
-- 轉錄引擎以單一 ASR 後端互斥為原則，不要讓 Qwen3-ASR、SenseVoiceSmall、Parakeet、Faster-Whisper 同時啟用。
+- 轉錄引擎以單一 ASR 後端互斥為原則，不要讓 Qwen3-ASR、Fun-ASR、SenseVoiceSmall、Parakeet、Faster-Whisper 同時啟用。
 - CUDA / ROCm 預設避開內顯；ROCm 若要測 AMD APU / iGPU，必須手動允許 integrated GPU。
 - Qwen3-ASR 在 CUDA / ROCm 預設 `bfloat16`；CPU profile 使用 `float32`。
-- Parakeet CTC JA 只開在 CUDA profile，不放進 CPU / ROCm。
+- NVIDIA Parakeet 只開在 CUDA profile，不放進 CPU / ROCm；官方 hybrid 模型預設 TDT，舊版日文模型使用 CTC。
 - SenseVoiceSmall 會優先檢查本機 ModelScope cache / 模型包路徑，找不到才交由 FunASR 走線上來源。
 - 相關設計文件請看 `app/docs/RUNTIME_PROFILES_zh-TW.md`、`app/docs/PACKAGING_zh-TW.md`、`app/docs/SENSEVOICE_MODEL_PACKAGE_zh-TW.md`。
 

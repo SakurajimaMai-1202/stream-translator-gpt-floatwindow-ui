@@ -75,7 +75,7 @@ import importlib
 import sys
 
 profile = '$Profile'
-required = ['sherpa_onnx', 'numpy', 'scipy', 'omnivad'] if profile == 'cpu' else ['qwen_asr', 'funasr', 'torchaudio']
+required = ['sherpa_onnx', 'numpy', 'scipy', 'omnivad', 'stream_translator_gpt.main'] if profile == 'cpu' else ['qwen_asr', 'funasr', 'torchaudio']
 if profile == 'cuda': required.extend(['faster_whisper', 'whisper', 'omnivad', 'nemo.collections.asr.models'])
 
 for name in required:

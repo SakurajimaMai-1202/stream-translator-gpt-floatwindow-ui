@@ -2,21 +2,29 @@ import collections
 import math
 import os
 import queue
-import torch
 import warnings
 
 import numpy as np
 
-from .common import TranslationTask, SAMPLE_RATE, FRAME_DURATION, LoopWorkerBase
+from .common import TranslationTask, SAMPLE_RATE, FRAME_DURATION, LoopWorkerBase, WARNING
 from .torch_setup import disable_nnpack
 
-disable_nnpack(torch)
+try:
+    import torch
+except ImportError:
+    torch = None
+
+if torch is not None:
+    disable_nnpack(torch)
 warnings.filterwarnings('ignore')
 
 FIRERED_FRAME_LENGTH = 160
 
 
-def _init_jit_model(model_path: str, device=torch.device('cpu')):
+def _init_jit_model(model_path: str, device=None):
+    if torch is None:
+        raise RuntimeError('Silero VAD requires PyTorch, which is not included in the CPU sherpa-onnx runtime.')
+    device = device or torch.device('cpu')
     torch.set_grad_enabled(False)
     # Silero VAD 是極小的模型，限制 CPU 執行緒數可大幅降低 CPU 占用
     # 預設 PyTorch 會用所有核心（32 執行緒），造成每次推理時全核短暫爆衝
@@ -95,6 +103,9 @@ class FireRedVADAdapter:
 def create_vad_adapter(vad_backend: str, vad_threshold: float, firered_vad_model_path: str | None = None):
     vad_backend = (vad_backend or 'silero').strip().lower()
     if vad_backend == 'silero':
+        if torch is None:
+            print(f'{WARNING}Silero VAD is unavailable without PyTorch; using CPU FireRed VAD instead.')
+            return FireRedVADAdapter(threshold=vad_threshold, model_path=firered_vad_model_path)
         return SileroVADAdapter()
     if vad_backend == 'firered':
         return FireRedVADAdapter(threshold=vad_threshold, model_path=firered_vad_model_path)

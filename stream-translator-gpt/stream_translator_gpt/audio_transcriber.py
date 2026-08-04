@@ -8,6 +8,7 @@ import logging
 import contextlib
 import tempfile
 import gc
+import zlib
 from abc import abstractmethod
 from pathlib import Path
 from typing import Any
@@ -17,9 +18,13 @@ import numpy as np
 
 from . import filters
 from .common import TranslationTask, SAMPLE_RATE, LoopWorkerBase, sec2str, ApiKeyPool, INFO, WARNING
-from .simul_streaming.simul_whisper.whisper.utils import compression_ratio
 from .torch_setup import disable_nnpack
 from .asr_postprocessor import ASRTermCorrector
+
+
+def compression_ratio(text: str) -> float:
+    encoded = text.encode('utf-8')
+    return len(encoded) / len(zlib.compress(encoded)) if encoded else 0.0
 
 try:
     import torch

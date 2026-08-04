@@ -116,7 +116,7 @@ function Get-RuntimeProfileDocText {
         $runtime = "CPU profile / sherpa-onnx INT8"
         $requirements = "不需要 NVIDIA 或 AMD 獨立顯示卡。五個本地模型都透過 sherpa-onnx 在 CPU 執行。"
         $models = @(
-            "Parakeet TDT 0.6B v3 INT8: English",
+            "Parakeet TDT 0.6B v3 INT8: 25 languages with auto detection",
             "Parakeet TDT-CTC 0.6B INT8: Japanese",
             "Fun-ASR Nano / SenseVoiceSmall / Qwen3-ASR 0.6B: INT8"
         )

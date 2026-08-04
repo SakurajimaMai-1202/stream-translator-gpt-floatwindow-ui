@@ -126,6 +126,8 @@ export interface RuntimeStatus {
   package_suffix: string;
   device_policy: string;
   allow_integrated_gpu: boolean;
+  profile_locked: boolean;
+  packaged_profile: string | null;
   capabilities: RuntimeCapabilities;
   devices: RuntimeGpuDevice[];
   selection: RuntimeSelection;

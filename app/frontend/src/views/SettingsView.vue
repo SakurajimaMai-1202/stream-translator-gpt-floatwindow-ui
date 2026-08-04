@@ -39,6 +39,7 @@ const allFasterWhisperModels = ['tiny', 'base', 'small', 'medium', 'large-v2', '
 const allSenseVoiceModels = ['iic/SenseVoiceSmall'];
 const allFunAsrModels = ['FunAudioLLM/Fun-ASR-Nano-2512', 'FunAudioLLM/Fun-ASR-MLT-Nano-2512'];
 const allParakeetModels = [
+  'nvidia/parakeet-tdt-0.6b-v3',
   'nvidia/parakeet-tdt_ctc-0.6b-ja',
   'nvidia/parakeet-tdt_ctc-1.1b',
   'grider-transwithai/parakeet-ctc-1.1b-ja',
@@ -119,7 +120,9 @@ const parakeetModelOptions = computed<UiSelectOption[]>(() =>
           model,
           localConfig.value.transcription.language,
         ),
-      label: model === 'nvidia/parakeet-tdt_ctc-0.6b-ja'
+      label: model === 'nvidia/parakeet-tdt-0.6b-v3'
+        ? 'NVIDIA Parakeet TDT 0.6B v3（25 種語言）'
+        : model === 'nvidia/parakeet-tdt_ctc-0.6b-ja'
         ? 'NVIDIA Parakeet 0.6B（日文）'
         : model === 'nvidia/parakeet-tdt_ctc-1.1b'
           ? 'NVIDIA Parakeet 1.1B（英文）'
@@ -605,6 +608,7 @@ const filteredAsrCorrections = computed(() => {
 
 // 互斥邏輯: 轉錄引擎互斥規則
 const runtimeStatus = computed(() => store.runtimeStatus);
+const runtimeProfileLocked = computed(() => Boolean(runtimeStatus.value?.profile_locked));
 const runtimeCapabilities = computed(() => runtimeStatus.value?.capabilities || null);
 const selectedSettingsAsrModelId = computed<string>(() => {
   const transcription = localConfig.value.transcription;
@@ -1682,7 +1686,10 @@ async function handleFileChange(event: Event) {
               <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
                   <label class="block text-white/70 font-semibold mb-2">Profile</label>
-                  <UiSelect v-model="localConfig.runtime.profile" :options="runtimeProfileOptions" />
+                  <UiSelect v-model="localConfig.runtime.profile" :options="runtimeProfileOptions" :disabled="runtimeProfileLocked" />
+                  <p v-if="runtimeProfileLocked" class="text-white/40 text-xs mt-1">
+                    Profile 由目前安裝套件固定；如需切換請使用對應的 CUDA、CPU 或 ROCm 套件。
+                  </p>
                 </div>
                 <div>
                   <label class="block text-white/70 font-semibold mb-2">Device policy</label>

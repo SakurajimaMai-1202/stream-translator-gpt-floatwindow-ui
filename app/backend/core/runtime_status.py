@@ -11,11 +11,13 @@ from .hardware_detector import (
 )
 from .runtime_profiles import RuntimeCapabilities, get_runtime_capabilities
 from .asr_model_capabilities import list_asr_model_capabilities
+from .portable_paths import get_packaged_runtime_profile
 
 
 def build_runtime_status(config: dict[str, Any], devices: list[GpuDevice] | None = None) -> dict[str, Any]:
     runtime_config = config.get("runtime", {}) if isinstance(config, dict) else {}
-    capabilities = get_runtime_capabilities(runtime_config.get("profile"))
+    packaged_profile = get_packaged_runtime_profile()
+    capabilities = get_runtime_capabilities(packaged_profile or runtime_config.get("profile"))
     policy = _effective_device_policy(capabilities, runtime_config)
     allow_integrated_gpu = bool(runtime_config.get("allow_integrated_gpu", capabilities.allow_integrated_gpu))
     available_devices = devices if devices is not None else detect_gpus()
@@ -34,6 +36,8 @@ def build_runtime_status(config: dict[str, Any], devices: list[GpuDevice] | None
         "package_suffix": capabilities.package_suffix,
         "device_policy": policy,
         "allow_integrated_gpu": allow_integrated_gpu,
+        "profile_locked": packaged_profile is not None,
+        "packaged_profile": packaged_profile,
         "capabilities": _capabilities_to_dict(capabilities),
         "devices": [_gpu_to_dict(device) for device in available_devices],
         "selection": _selection_to_dict(selection),

@@ -1,5 +1,6 @@
 from backend.core.config_manager import ConfigManager
 from backend.core.runtime_profiles import get_runtime_capabilities
+from backend.core.runtime_status import build_runtime_status
 from backend.core.asr_model_capabilities import (
     coerce_model_language,
     list_asr_model_capabilities,
@@ -41,6 +42,23 @@ def _config_for(profile: str) -> dict:
 
 def _manager() -> ConfigManager:
     return ConfigManager.__new__(ConfigManager)
+
+
+def test_packaged_cpu_profile_is_locked_in_config_and_status(monkeypatch, tmp_path):
+    monkeypatch.setenv("STREAM_TRANSLATOR_PACKAGED_PROFILE", "cpu")
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("runtime:\n  profile: cuda\n  device_policy: auto_discrete\n", encoding="utf-8")
+
+    manager = ConfigManager(config_path)
+    assert manager.get_config()["runtime"]["profile"] == "cpu"
+    updated = manager.update_config({"runtime": {"profile": "rocm", "device_policy": "auto_any"}})
+    assert updated["runtime"]["profile"] == "cpu"
+    assert updated["runtime"]["device_policy"] == "cpu"
+
+    status = build_runtime_status(updated, devices=[])
+    assert status["profile_locked"] is True
+    assert status["packaged_profile"] == "cpu"
+    assert status["profile"] == "cpu"
 
 
 def test_sensevoice_is_profile_aware():
@@ -86,6 +104,9 @@ def test_asr_model_capabilities_distinguish_fixed_and_multilingual_models():
 
     assert capabilities["nvidia/parakeet-tdt_ctc-1.1b"]["language_mode"] == "fixed"
     assert capabilities["nvidia/parakeet-tdt_ctc-1.1b"]["supported_languages"] == ["en"]
+    assert capabilities["nvidia/parakeet-tdt-0.6b-v3"]["language_mode"] == "multilingual"
+    assert capabilities["nvidia/parakeet-tdt-0.6b-v3"]["default_language"] == "auto"
+    assert len(capabilities["nvidia/parakeet-tdt-0.6b-v3"]["supported_languages"]) == 25
     assert capabilities["FunAudioLLM/Fun-ASR-Nano-2512"]["supported_languages"] == [
         "zh", "en", "ja"
     ]

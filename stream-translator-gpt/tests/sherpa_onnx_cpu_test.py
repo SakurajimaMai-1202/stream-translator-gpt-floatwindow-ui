@@ -4,7 +4,6 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from stream_translator_gpt import asr_preload
 from stream_translator_gpt.sherpa_onnx_models import SHERPA_CPU_MODELS, resolve_sherpa_model_dir
 from stream_translator_gpt.sherpa_onnx_transcriber import SherpaOnnxTranscriber
 
@@ -33,6 +32,7 @@ class _FakeRecognizer:
     from_sense_voice = classmethod(lambda cls, **kwargs: cls._factory("sense_voice", **kwargs))
     from_funasr_nano = classmethod(lambda cls, **kwargs: cls._factory("funasr_nano", **kwargs))
     from_qwen3_asr = classmethod(lambda cls, **kwargs: cls._factory("qwen3_asr", **kwargs))
+    from_nemo_ctc = classmethod(lambda cls, **kwargs: cls._factory("nemo_ctc", **kwargs))
 
     def create_stream(self):
         self.stream = _FakeStream()
@@ -85,6 +85,8 @@ def test_missing_bundle_has_actionable_error(tmp_path):
 
 
 def test_cpu_preload_routes_to_sherpa_without_torch(monkeypatch):
+    from stream_translator_gpt import asr_preload
+
     captured = {}
 
     def fake_transcriber(**kwargs):

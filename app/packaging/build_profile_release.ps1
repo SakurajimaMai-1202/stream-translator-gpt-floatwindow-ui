@@ -133,7 +133,7 @@ if ($ReuseRuntimeCache) {
     if ($manifest.profile -ne $Profile) {
         throw "Runtime cache profile is '$($manifest.profile)', expected '$Profile'."
     }
-    $expectedBackend = if ($Profile -eq "rocm") { "rocm" } else { $Profile }
+    $expectedBackend = if ($Profile -eq "rocm") { "rocm" } elseif ($Profile -eq "cpu") { "none" } else { $Profile }
     if ($manifest.torch_backend -ne $expectedBackend) {
         throw "Runtime cache torch backend is '$($manifest.torch_backend)', expected '$expectedBackend'."
     }
@@ -142,10 +142,12 @@ if ($ReuseRuntimeCache) {
     if (Test-Path $cachedPackage) { Remove-Item $cachedPackage -Recurse -Force }
     Copy-Item (Join-Path $projectRoot "stream-translator-gpt\stream_translator_gpt") $cachedPackage -Recurse -Force
 
-    $requiredImports = @("qwen_asr", "funasr", "torchaudio")
-    if ($Profile -in @("cuda", "cpu")) {
-        $requiredImports += @("faster_whisper", "whisper", "omnivad")
+    $requiredImports = if ($Profile -eq "cpu") {
+        @("sherpa_onnx", "numpy", "scipy", "omnivad", "stream_translator_gpt.main")
+    } else {
+        @("qwen_asr", "funasr", "torchaudio")
     }
+    if ($Profile -eq "cuda") { $requiredImports += @("faster_whisper", "whisper", "omnivad") }
     if ($Profile -eq "cuda") {
         $requiredImports += "nemo.collections.asr.models"
     }

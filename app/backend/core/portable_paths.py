@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import json
 from pathlib import Path
 from typing import Mapping
 
@@ -16,6 +17,22 @@ def get_app_root() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return settings.BASE_DIR.resolve()
+
+
+def get_packaged_runtime_profile() -> str | None:
+    """Return the immutable profile embedded in a packaged build, if present."""
+    override = os.environ.get("STREAM_TRANSLATOR_PACKAGED_PROFILE", "").strip().lower()
+    if override in {"cuda", "cpu", "rocm"}:
+        return override
+
+    manifest_path = get_app_root() / "_runtime" / "runtime-version.json"
+    if not manifest_path.is_file():
+        return None
+    try:
+        profile = str(json.loads(manifest_path.read_text(encoding="utf-8")).get("profile", "")).lower()
+    except (OSError, ValueError, TypeError):
+        return None
+    return profile if profile in {"cuda", "cpu", "rocm"} else None
 
 
 def get_model_storage_root() -> Path:

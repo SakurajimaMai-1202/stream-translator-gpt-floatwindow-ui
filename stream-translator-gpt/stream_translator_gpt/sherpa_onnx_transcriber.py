@@ -61,10 +61,8 @@ class SherpaOnnxTranscriber(AudioTranscriber):
                 joiner=self._path("joiner.int8.onnx"), tokens=self._path("tokens.txt"),
                 model_type="nemo_transducer", **common)
         if self.spec.family == "nemo_ctc":
-            model_config = sherpa.OfflineModelConfig(
-                nemo_ctc=sherpa.OfflineNemoEncDecCtcModelConfig(model=self._path("model.int8.onnx")),
-                tokens=self._path("tokens.txt"), **common)
-            return sherpa.OfflineRecognizer(sherpa.OfflineRecognizerConfig(model_config=model_config))
+            return sherpa.OfflineRecognizer.from_nemo_ctc(
+                model=self._path("model.int8.onnx"), tokens=self._path("tokens.txt"), **common)
         if self.spec.family == "sense_voice":
             return sherpa.OfflineRecognizer.from_sense_voice(
                 model=self._path("model.int8.onnx"), tokens=self._path("tokens.txt"),

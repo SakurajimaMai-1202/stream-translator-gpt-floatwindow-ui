@@ -17,7 +17,15 @@ FUN_ASR_MLT_LANGUAGES = (
     "hu", "ga", "lv", "lt", "mt", "pl", "pt", "ro", "sk", "sl", "sv",
 )
 
-SUPPORTED_UI_LANGUAGES = tuple(dict.fromkeys((*QWEN3_LANGUAGES, *FUN_ASR_MLT_LANGUAGES)))
+PARAKEET_V3_LANGUAGES = (
+    "bg", "hr", "cs", "da", "nl", "en", "et", "fi", "fr", "de",
+    "el", "hu", "it", "lv", "lt", "mt", "pl", "pt", "ro", "sk",
+    "sl", "es", "sv", "ru", "uk",
+)
+
+SUPPORTED_UI_LANGUAGES = tuple(
+    dict.fromkeys((*QWEN3_LANGUAGES, *FUN_ASR_MLT_LANGUAGES, *PARAKEET_V3_LANGUAGES))
+)
 
 WHISPER_MODEL_IDS = (
     "tiny", "base", "small", "medium", "large-v2", "large-v3", "large-v3-turbo",
@@ -98,10 +106,9 @@ ASR_MODEL_CAPABILITIES: dict[str, dict[str, Any]] = {
     "nvidia/parakeet-tdt-0.6b-v3": _entry(
         "nvidia/parakeet-tdt-0.6b-v3",
         "parakeet-ctc-ja",
-        "fixed",
-        ("en",),
-        default_language="en",
-        note="English Parakeet TDT model; CPU packages use sherpa-onnx INT8.",
+        "multilingual",
+        PARAKEET_V3_LANGUAGES,
+        note="25-language Parakeet TDT model with automatic language detection; CPU packages use sherpa-onnx INT8.",
     ),
     "nvidia/parakeet-tdt_ctc-1.1b": _entry(
         "nvidia/parakeet-tdt_ctc-1.1b",

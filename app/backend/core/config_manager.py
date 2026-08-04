@@ -16,6 +16,7 @@ from backend.config import settings
 from backend.core.cookie_manager import resolve_cookie_path
 from backend.core.runtime_profiles import get_runtime_capabilities
 from backend.core.asr_model_capabilities import coerce_model_language
+from backend.core.portable_paths import get_packaged_runtime_profile
 
 class ConfigManager:
     """配置管理器 - 處理所有配置相關操作"""
@@ -240,7 +241,7 @@ class ConfigManager:
             config_path: 配置檔案路徑
         """
         self.config_path = config_path if config_path else settings.CONFIG_FILE
-        self.config = self._load_or_create()
+        self.config = self._enforce_packaged_runtime(self._load_or_create())
         self._file_signature = self._get_file_signature()
     
     def _load_or_create(self) -> Dict[str, Any]:
@@ -308,6 +309,17 @@ class ConfigManager:
                 result[key] = self._deep_copy(value)
         return result
 
+    def _enforce_packaged_runtime(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        packaged_profile = get_packaged_runtime_profile()
+        if packaged_profile is None:
+            return config
+        runtime = config.setdefault('runtime', {})
+        runtime['profile'] = packaged_profile
+        if packaged_profile == 'cpu':
+            runtime['device_policy'] = 'cpu'
+            runtime['allow_integrated_gpu'] = False
+        return config
+
     def _migrate_legacy_config(self, config: Dict[str, Any]) -> tuple[Dict[str, Any], bool]:
         """遷移舊版配置到新版欄位/枚舉值。回傳 (config, 是否有變更)"""
         changed = False
@@ -369,7 +381,7 @@ class ConfigManager:
             loaded = yaml.safe_load(f) or {}
         merged = self._merge_with_defaults(loaded)
         migrated, _changed = self._migrate_legacy_config(merged)
-        return migrated
+        return self._enforce_packaged_runtime(migrated)
 
     def _get_file_signature(self):
         """Return a cheap signature used to detect external config changes."""
@@ -975,7 +987,7 @@ class ConfigManager:
         """Merge updates into the latest disk state and persist them once."""
         with self._config_lock():
             current = self._read_current_config()
-            updated = self._deep_merge(current, updates)
+            updated = self._enforce_packaged_runtime(self._deep_merge(current, updates))
             self._save(updated)
             signature = self._get_file_signature()
         self.config = updated
@@ -988,6 +1000,6 @@ class ConfigManager:
 
     def reset_to_defaults(self):
         """重置為預設配置"""
-        self.config = self._deep_copy(self.DEFAULT_CONFIG)
+        self.config = self._enforce_packaged_runtime(self._deep_copy(self.DEFAULT_CONFIG))
         self.save()
         self._file_signature = self._get_file_signature()

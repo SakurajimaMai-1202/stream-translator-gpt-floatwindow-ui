@@ -8,7 +8,7 @@ import { useLlamaStore } from '../stores/llama';
 import UiSelect, { type UiSelectOption } from '../components/UiSelect.vue';
 import { useTranscriptionMutex } from '../composables/useTranscriptionMutex';
 import { useAppSyncEvents } from '../composables/useAppSyncEvents';
-import type { ModelEngine } from '../services/api';
+import { runtimeApi, type CpuAsrSidecarInstallStatus, type ModelEngine } from '../services/api';
 import {
   ASR_LANGUAGE_OPTIONS,
   coerceLanguageForModel,
@@ -618,6 +618,52 @@ const effectiveAsrComputeBackend = computed(() =>
     || (localConfig.value.transcription?.asr_compute_backend === 'cpu' ? 'cpu' : 'gpu')
 );
 const cpuAsrRuntimeAvailable = computed(() => Boolean(runtimeStatus.value?.cpu_asr_runtime?.available));
+const cpuAsrSidecarStatus = ref<CpuAsrSidecarInstallStatus | null>(null);
+const cpuAsrSidecarBusy = computed(() =>
+  ['starting', 'downloading', 'verifying', 'installing'].includes(cpuAsrSidecarStatus.value?.status || '')
+);
+const canInstallCpuAsrSidecar = computed(() =>
+  ['cuda', 'rocm'].includes(runtimeStatus.value?.profile || '')
+  && !cpuAsrSidecarStatus.value?.installed
+  && !cpuAsrSidecarBusy.value
+);
+let cpuAsrSidecarPollTimer: ReturnType<typeof setInterval> | null = null;
+
+function stopCpuAsrSidecarPolling() {
+  if (cpuAsrSidecarPollTimer) clearInterval(cpuAsrSidecarPollTimer);
+  cpuAsrSidecarPollTimer = null;
+}
+
+async function refreshCpuAsrSidecarStatus() {
+  try {
+    cpuAsrSidecarStatus.value = await runtimeApi.getCpuAsrSidecarStatus();
+  } catch (error: any) {
+    cpuAsrSidecarStatus.value = {
+      status: 'error', progress: 0, message: '', installed: false, restart_required: false,
+      bytes_downloaded: 0, bytes_total: 0, version: '', asset_name: '',
+      error: error?.response?.data?.detail || error?.message || '無法取得 sidecar 狀態',
+    };
+  }
+  if (!cpuAsrSidecarBusy.value) {
+    stopCpuAsrSidecarPolling();
+    if (cpuAsrSidecarStatus.value.installed) await store.loadRuntimeStatus();
+  }
+}
+
+async function installCpuAsrSidecar() {
+  try {
+    cpuAsrSidecarStatus.value = await runtimeApi.installCpuAsrSidecar();
+  } catch (error: any) {
+    cpuAsrSidecarStatus.value = {
+      status: 'error', progress: 0, message: '', installed: false, restart_required: false,
+      bytes_downloaded: 0, bytes_total: 0, version: '', asset_name: '',
+      error: error?.response?.data?.detail || error?.message || '無法啟動 sidecar 安裝',
+    };
+    return;
+  }
+  stopCpuAsrSidecarPolling();
+  cpuAsrSidecarPollTimer = setInterval(() => void refreshCpuAsrSidecarStatus(), 1000);
+}
 const selectedSettingsAsrModelId = computed<string>(() => {
   const transcription = localConfig.value.transcription;
   if (transcription.use_qwen3_asr) return transcription.qwen3_asr_model;
@@ -1028,8 +1074,10 @@ watch(() => route.query.tab, (newTab) => {
 watch(activeTab, async (tab) => {
   if (tab !== 'model_management') {
     modelDownloadStore.stopPolling();
+    stopCpuAsrSidecarPolling();
     return;
   }
+  await refreshCpuAsrSidecarStatus();
   await modelDownloadStore.refreshAll();
   if (modelDownloadStore.activeTasks.length > 0) {
     modelDownloadStore.startPolling();
@@ -1047,6 +1095,7 @@ onMounted(async () => {
   syncActiveTabFromRoute();
 
   if (activeTab.value === 'model_management') {
+    await refreshCpuAsrSidecarStatus();
     await modelDownloadStore.refreshAll();
     if (modelDownloadStore.activeTasks.length > 0) {
       modelDownloadStore.startPolling();
@@ -1086,6 +1135,7 @@ onUnmounted(() => {
   for (const timer of sectionSaveTimers.values()) clearTimeout(timer);
   sectionSaveTimers.clear();
   modelDownloadStore.stopPolling();
+  stopCpuAsrSidecarPolling();
 });
 
 async function applyModelStoragePath() {
@@ -1954,6 +2004,39 @@ async function handleFileChange(event: Event) {
 
           <!-- Model Management Settings -->
           <div v-if="activeTab === 'model_management'" class="settings-paint-section space-y-6">
+            <div
+              v-if="['cuda', 'rocm'].includes(runtimeStatus?.profile || '')"
+              class="bg-white/5 rounded-xl p-5 border border-cyan-500/30"
+            >
+              <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div>
+                  <h3 class="text-lg font-semibold text-cyan-300">CPU ASR Sidecar</h3>
+                  <p class="text-white/60 text-sm mt-1">
+                    安裝獨立 sherpa-onnx CPU runtime，讓目前的 {{ runtimeStatus?.profile?.toUpperCase() }} 包可切換 GPU ASR / CPU ASR。
+                  </p>
+                  <p v-if="cpuAsrSidecarStatus?.installed" class="text-green-300 text-sm mt-2">已安裝 CPU ASR runtime。</p>
+                </div>
+                <button
+                  @click="installCpuAsrSidecar"
+                  :disabled="!canInstallCpuAsrSidecar"
+                  class="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold transition"
+                >
+                  {{ cpuAsrSidecarBusy ? '安裝中…' : (cpuAsrSidecarStatus?.installed ? '已安裝' : '下載並安裝') }}
+                </button>
+              </div>
+              <div v-if="cpuAsrSidecarBusy" class="mt-4">
+                <div class="h-2 rounded-full bg-white/10 overflow-hidden">
+                  <div class="h-full bg-cyan-500 transition-all" :style="{ width: `${Math.max(2, (cpuAsrSidecarStatus?.progress || 0) * 100)}%` }"></div>
+                </div>
+                <p class="text-white/60 text-xs mt-2">{{ cpuAsrSidecarStatus?.message }} · {{ Math.round((cpuAsrSidecarStatus?.progress || 0) * 100) }}%</p>
+              </div>
+              <p v-if="cpuAsrSidecarStatus?.status === 'error'" class="text-red-300 text-sm mt-3 break-words">
+                安裝失敗：{{ cpuAsrSidecarStatus.error }}
+              </p>
+              <p v-if="cpuAsrSidecarStatus?.restart_required" class="text-yellow-200 text-sm mt-3">
+                安裝完成，請重新啟動程式後再切換至 CPU / sherpa-onnx。
+              </p>
+            </div>
             <h2 class="text-xl font-bold text-white mb-4">ASR模型管理</h2>
 
             <div class="bg-cyan-500/10 rounded-xl p-4 border border-cyan-500/20">

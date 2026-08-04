@@ -2,7 +2,7 @@
 param(
     [ValidateSet("cuda", "cpu", "rocm")]
     [string]$Profile = "cuda",
-    [string]$Version = "1.3.8",
+    [string]$Version = "1.3.9",
     [switch]$ForceRuntime,
     [switch]$ReuseRuntimeCache,
     [switch]$SkipFullZip,
@@ -217,12 +217,6 @@ $appUpdateBuildInfo = [ordered]@{
 )
 Copy-Item (Join-Path $scriptDir "diagnose_runtime.ps1") $updateRoot
 Copy-Item (Join-Path $scriptDir "smoke_sensevoice_asr.ps1") $updateRoot
-if ($IncludeCpuAsrSidecar -and $Profile -ne "cpu") {
-    if (-not (Test-Path -LiteralPath (Join-Path $cpuAsrRuntimeCache "python.exe"))) {
-        throw "CPU ASR sidecar cache is missing: $cpuAsrRuntimeCache"
-    }
-    Invoke-FastDirectoryCopy -Source $cpuAsrRuntimeCache -Destination (Join-Path $updateRoot "_runtime_cpu_asr") -Threads $CopyThreads
-}
 Write-RuntimeProfileDocs -Destination $updateRoot -RuntimeProfile $Profile -Version $Version
 $appUpdateZipPath = Join-Path $distDir $packageInfo.AppUpdateZip
 Compress-ReleaseDirectory `

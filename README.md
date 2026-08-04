@@ -3,6 +3,8 @@
   <p>Windows 即時語音辨識、翻譯與浮動字幕工具</p>
 </div>
 
+> v1.3.9：新增 torch-free sherpa-onnx CPU ASR、CUDA／ROCm 獨立 CPU sidecar 安裝流程，以及 Parakeet TDT 0.6B v3、Parakeet TDT-CTC 0.6B 日文、Fun-ASR Nano、SenseVoice、Qwen3-ASR 0.6B 的 CPU 模型能力。詳見 `app/docs/RELEASE_NOTES_v1.3.9_zh-TW.md`。
+
 <p align="center">
   <a href="https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest">下載最新版</a>
   ·
@@ -572,13 +574,13 @@ cd .\app
 cd .\app
 
 $env:STREAM_TRANSLATOR_BUILD_PYTHON = "D:\Python\cuda-runtime\python.exe"
-.\build_release.ps1 -Profile cuda -Version 1.3.8
+.\build_release.ps1 -Profile cuda -Version 1.3.9
 
 $env:STREAM_TRANSLATOR_BUILD_PYTHON = "D:\Python\cpu-runtime\python.exe"
-.\build_release.ps1 -Profile cpu -Version 1.3.8
+.\build_release.ps1 -Profile cpu -Version 1.3.9
 
 $env:STREAM_TRANSLATOR_BUILD_PYTHON = "D:\Python\rocm-runtime\python.exe"
-.\build_release.ps1 -Profile rocm -Version 1.3.8
+.\build_release.ps1 -Profile rocm -Version 1.3.9
 ```
 
 打包後驗證：
@@ -604,11 +606,11 @@ Full package 會輸出完整 zip，GitHub Release 使用 `.part01`、`.part02` �
 cd app
 
 # 日常驗證：共用 GUI 只建一次，不壓縮 Full ZIP
-.\build_all_profiles.ps1 -Version 1.3.8 -Mode Quick -ReuseRuntimeCache
+.\build_all_profiles.ps1 -Version 1.3.9 -Mode Quick -ReuseRuntimeCache -IncludeCpuAsrSidecar
 
 # 正式發佈：標準 Deflate 高壓縮、分割、重新合併與 SHA256 驗證
 .\build_all_profiles.ps1 `
-  -Version 1.3.8 `
+  -Version 1.3.9 `
   -Mode Final `
   -ReuseRuntimeCache `
   -CompressionLevel 7 `

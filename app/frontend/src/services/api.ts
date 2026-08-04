@@ -236,8 +236,29 @@ export const runtimeApi = {
   async getStatus(): Promise<RuntimeStatus> {
     const response = await axios.get(`${API_BASE}/runtime/status`);
     return response.data.data || response.data;
+  },
+  async getCpuAsrSidecarStatus(): Promise<CpuAsrSidecarInstallStatus> {
+    const response = await axios.get(`${API_BASE}/runtime/cpu-asr-sidecar`);
+    return response.data.data || response.data;
+  },
+  async installCpuAsrSidecar(): Promise<CpuAsrSidecarInstallStatus> {
+    const response = await axios.post(`${API_BASE}/runtime/cpu-asr-sidecar/install`, {});
+    return response.data.data || response.data;
   }
 };
+
+export interface CpuAsrSidecarInstallStatus {
+  status: 'idle' | 'starting' | 'downloading' | 'verifying' | 'installing' | 'completed' | 'error';
+  progress: number;
+  message: string;
+  error: string;
+  bytes_downloaded: number;
+  bytes_total: number;
+  installed: boolean;
+  restart_required: boolean;
+  version: string;
+  asset_name: string;
+}
 
 export type AudioSource = 'url' | 'file' | 'microphone' | 'system_audio';
 

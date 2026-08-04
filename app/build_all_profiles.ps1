@@ -1,6 +1,6 @@
 #!/usr/bin/env pwsh
 param(
-    [string]$Version = "1.3.7",
+    [string]$Version = "1.3.9",
     [ValidateSet("Quick", "Final")][string]$Mode = "Quick",
     [switch]$ReuseRuntimeCache,
     [switch]$ReuseSharedGui,
@@ -31,6 +31,15 @@ if (-not $ReuseRuntimeCache) {
 }
 $overallTimer = [Diagnostics.Stopwatch]::StartNew()
 $stepTimings = [ordered]@{}
+
+& (Join-Path $packagingDir "build_cpu_asr_sidecar.ps1") `
+    -Version $Version `
+    -SevenZipPath $sevenZipExe `
+    -CompressionLevel $effectiveCompressionLevel `
+    -CopyThreads $CopyThreads
+if (-not $?) { throw "CPU ASR sidecar build failed" }
+$sidecarAsset = Get-Item -LiteralPath (Join-Path $appDir "dist-cpu-asr-sidecar\StreamTranslator-CPU-ASR-Sidecar-v$Version.zip")
+$sidecarChecksum = Get-Item -LiteralPath "$($sidecarAsset.FullName).sha256"
 
 Write-Host "Stream Translator three-profile build" -ForegroundColor Cyan
 Write-Host "Version=$Version Mode=$Mode Compression=$effectiveCompressionLevel Split=${SplitSizeMiB}MiB Threads=$CopyThreads"
@@ -129,7 +138,18 @@ if (Test-Path -LiteralPath $assetDir) {
 }
 New-Item -ItemType Directory -Path $assetDir -Force | Out-Null
 
+Copy-Item -LiteralPath $sidecarAsset.FullName -Destination $assetDir -Force
+Copy-Item -LiteralPath $sidecarChecksum.FullName -Destination $assetDir -Force
+
 $checksumEntries = @()
+$checksumEntries += [pscustomobject]@{
+    hash = (Get-FileHash -LiteralPath $sidecarAsset.FullName -Algorithm SHA256).Hash
+    name = $sidecarAsset.Name
+}
+$checksumEntries += [pscustomobject]@{
+    hash = (Get-FileHash -LiteralPath $sidecarChecksum.FullName -Algorithm SHA256).Hash
+    name = $sidecarChecksum.Name
+}
 foreach ($result in $profileResults) {
     $packageInfo = Get-RuntimeProfilePackageInfo -RuntimeProfile $result.profile
     $distDir = Join-Path $appDir $packageInfo.DistDirName
@@ -195,6 +215,11 @@ $manifest = [ordered]@{
     }
     split_size_mib = if ($Mode -eq "Final") { $SplitSizeMiB } else { $null }
     shared_gui_sha256 = $sharedGuiHash
+    cpu_asr_sidecar = [ordered]@{
+        name = $sidecarAsset.Name
+        size_bytes = $sidecarAsset.Length
+        sha256 = (Get-FileHash -LiteralPath $sidecarAsset.FullName -Algorithm SHA256).Hash
+    }
     profiles = $profileResults
     timings = $stepTimings
     total_seconds = [Math]::Round($overallTimer.Elapsed.TotalSeconds, 2)

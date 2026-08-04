@@ -146,6 +146,7 @@ def test_model_language_is_coerced_by_backend():
     ) == "ja"
     assert coerce_model_language("FunAudioLLM/Fun-ASR-Nano-2512", "de") == "auto"
     assert coerce_model_language("FunAudioLLM/Fun-ASR-MLT-Nano-2512", "sv") == "sv"
+    assert coerce_model_language("nvidia/parakeet-tdt-0.6b-v3", "ja") == "auto"
 
 
 def test_qwen3_anime_model_replaces_legacy_ja_model():

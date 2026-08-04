@@ -243,12 +243,6 @@ const qwen3AsrModelOptions = computed<UiSelectOption[]>(() =>
     .map((model) => ({
       value: model.value,
       label: model.label,
-      disabled: selectedAsrCapability.value?.language_mode !== 'fixed'
-        && !isModelLanguageCompatible(
-          runtimeCapabilities.value?.asr_model_capabilities,
-          model.value,
-          selectedInputLanguage.value,
-        ),
     }))
 );
 const senseVoiceModelOptions = computed<UiSelectOption[]>(() => [
@@ -312,35 +306,6 @@ const inputLanguageOptions = computed<UiSelectOption[]>(() =>
   )
 );
 const isInputLanguageLocked = computed(() => selectedAsrCapability.value?.language_mode === 'fixed');
-
-function selectCompatibleModelForCurrentLanguage(): boolean {
-  const capabilities = runtimeCapabilities.value?.asr_model_capabilities;
-  const language = selectedInputLanguage.value;
-  if (isModelLanguageCompatible(capabilities, selectedAsrModelId.value, language)) return true;
-
-  if (selectedTranscriptionEngine.value === 'qwen3-asr') {
-    const model = allowedQwen3AsrModels.value.find((id) =>
-      isModelLanguageCompatible(capabilities, id, language)
-    );
-    if (model) selectedQwen3AsrModel.value = model;
-    return !!model;
-  }
-  if (selectedTranscriptionEngine.value === 'fun-asr-nano') {
-    const model = allowedFunAsrModels.value.find((id) =>
-      isModelLanguageCompatible(capabilities, id, language)
-    );
-    if (model) selectedFunAsrModel.value = model;
-    return !!model;
-  }
-  if (selectedTranscriptionEngine.value === 'parakeet-ctc-ja') {
-    const model = allowedParakeetModels.value.find((id) =>
-      isModelLanguageCompatible(capabilities, id, language)
-    );
-    if (model) selectedParakeetModel.value = model;
-    return !!model;
-  }
-  return false;
-}
 
 const outputLanguageOptions = computed<UiSelectOption[]>(() =>
   outputLanguages.map((lang) => ({ value: lang.value, label: lang.label }))
@@ -854,10 +819,6 @@ watch(runtimeCapabilities, () => {
 watch(
   [selectedAsrModelId, () => runtimeCapabilities.value?.asr_model_capabilities],
   () => {
-    if (selectedAsrCapability.value?.language_mode !== 'fixed'
-      && !selectCompatibleModelForCurrentLanguage()) {
-      selectedInputLanguage.value = 'auto';
-    }
     selectedInputLanguage.value = coerceLanguageForModel(
       runtimeCapabilities.value?.asr_model_capabilities,
       selectedAsrModelId.value,

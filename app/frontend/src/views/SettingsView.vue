@@ -114,12 +114,6 @@ const parakeetModelOptions = computed<UiSelectOption[]>(() =>
     .filter(model => allowedParakeetModels.value.includes(model))
     .map(model => ({
       value: model,
-      disabled: selectedSettingsAsrCapability.value?.language_mode !== 'fixed'
-        && !isModelLanguageCompatible(
-          runtimeCapabilities.value?.asr_model_capabilities,
-          model,
-          localConfig.value.transcription.language,
-        ),
       label: model === 'nvidia/parakeet-tdt-0.6b-v3'
         ? 'NVIDIA Parakeet TDT 0.6B v3（25 種語言）'
         : model === 'nvidia/parakeet-tdt_ctc-0.6b-ja'
@@ -700,30 +694,6 @@ const allowedParakeetModels = computed<string[]>(() =>
     : allParakeetModels
 );
 
-function selectCompatibleSettingsModel(): boolean {
-  const transcription = localConfig.value.transcription;
-  const capabilities = runtimeCapabilities.value?.asr_model_capabilities;
-  const language = transcription.language;
-  if (isModelLanguageCompatible(capabilities, selectedSettingsAsrModelId.value, language)) return true;
-
-  let candidates: string[] = [];
-  let assign: ((model: string) => void) | null = null;
-  if (transcription.use_qwen3_asr) {
-    candidates = allowedQwen3AsrModels.value;
-    assign = (model) => { transcription.qwen3_asr_model = model; };
-  } else if (transcription.use_fun_asr) {
-    candidates = allowedFunAsrModels.value;
-    assign = (model) => { transcription.fun_asr_model = model; };
-  } else if (transcription.use_nemo_asr) {
-    candidates = allowedParakeetModels.value;
-    assign = (model) => { transcription.nemo_asr_model = model; };
-  }
-  const compatible = candidates.find((model) =>
-    isModelLanguageCompatible(capabilities, model, language)
-  );
-  if (compatible && assign) assign(compatible);
-  return !!compatible;
-}
 const qwenModelList = computed(() =>
   allQwenModels.filter(modelId => allowedQwen3AsrModels.value.includes(modelId))
 );
@@ -1102,10 +1072,6 @@ onMounted(async () => {
     [selectedSettingsAsrModelId, () => runtimeCapabilities.value?.asr_model_capabilities],
     () => {
       if (isApplyingRemoteConfig.value) return;
-      if (selectedSettingsAsrCapability.value?.language_mode !== 'fixed'
-        && !selectCompatibleSettingsModel()) {
-        localConfig.value.transcription.language = 'auto';
-      }
       localConfig.value.transcription.language = coerceLanguageForModel(
         runtimeCapabilities.value?.asr_model_capabilities,
         selectedSettingsAsrModelId.value,

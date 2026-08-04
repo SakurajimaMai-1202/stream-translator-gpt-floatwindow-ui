@@ -184,12 +184,20 @@ const qwen3AsrModels = [
 const legacyQwen3JaModel = 'neosophie/Qwen3-ASR-1.7B-JA';
 const qwen3AnimeModel = 'jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame';
 const parakeetModels = [
+  { value: 'nvidia/parakeet-tdt-0.6b-v3', label: 'Parakeet TDT 0.6B v3（CPU INT8・25 語言）' },
   { value: 'nvidia/parakeet-tdt_ctc-0.6b-ja', label: 'NVIDIA Parakeet 0.6B（日文）' },
   { value: 'nvidia/parakeet-tdt_ctc-1.1b', label: 'NVIDIA Parakeet 1.1B（英文）' },
   { value: 'grider-transwithai/parakeet-ctc-1.1b-ja', label: 'parakeet-ctc-1.1b-ja（日文）' }
 ];
 const parakeetLanguageForModel = (modelId: string) =>
-  modelId === 'nvidia/parakeet-tdt_ctc-1.1b' ? 'en' : 'ja';
+  modelId === 'nvidia/parakeet-tdt-0.6b-v3'
+    ? 'auto'
+    : modelId === 'nvidia/parakeet-tdt_ctc-1.1b' ? 'en' : 'ja';
+const asrComputeBackendOptions: UiSelectOption[] = [
+  { value: 'auto', label: '自動（GPU 優先）' },
+  { value: 'gpu', label: 'GPU 原生 ASR' },
+  { value: 'cpu', label: 'CPU / sherpa-onnx' },
+];
 const outputLanguages = [
   { value: 'Traditional Chinese', label: '繁體中文' },
   { value: 'Simplified Chinese', label: '簡體中文' },
@@ -378,6 +386,7 @@ const llamaPresetOptions = computed<UiSelectOption[]>(() => {
 
 // 選擇的值
 const selectedTranscriptionEngine = ref('faster-whisper');  // 🆕 新增: 轉錄引擎選擇
+const selectedAsrComputeBackend = ref('auto');
 const selectedWhisperModel = ref('base');
 const selectedQwen3AsrModel = ref('Qwen/Qwen3-ASR-1.7B');  // 🆕 新增: Qwen3-ASR 模型
 const selectedSenseVoiceModel = ref('iic/SenseVoiceSmall');
@@ -389,7 +398,7 @@ const selectedBackend = ref('gpt');
 const translationEnabled = ref(true);  // 🔧 新增: 翻譯開關
 
 // 自動保存 debounce timer
-const runtimeCapabilities = computed(() => store.runtimeStatus?.capabilities || null);
+const runtimeCapabilities = computed(() => store.runtimeStatus?.asr_capabilities || store.runtimeStatus?.capabilities || null);
 const allowedLocalAsrEngines = computed<string[]>(() =>
   runtimeCapabilities.value?.local_asr_engines?.length
     ? runtimeCapabilities.value.local_asr_engines
@@ -493,6 +502,7 @@ function buildHomeConfigSnapshotFromConfig(cfg: Config): string {
     audioSource: cfg.input?.audio_source || 'url',
     selectedDeviceIndex: cfg.input?.device_index ?? null,
     selectedTranscriptionEngine: getTranscriptionEngineFromConfig(cfg),
+    selectedAsrComputeBackend: cfg.transcription?.asr_compute_backend || 'auto',
     selectedWhisperModel: cfg.transcription?.model || 'base',
     selectedQwen3AsrModel: cfg.transcription?.qwen3_asr_model || 'Qwen/Qwen3-ASR-1.7B',
     selectedSenseVoiceModel: cfg.transcription?.sensevoice_model || 'iic/SenseVoiceSmall',
@@ -513,6 +523,7 @@ function buildHomeConfigSnapshotFromRefs(): string {
     audioSource: audioSource.value,
     selectedDeviceIndex: selectedDeviceIndex.value,
     selectedTranscriptionEngine: selectedTranscriptionEngine.value,
+    selectedAsrComputeBackend: selectedAsrComputeBackend.value,
     selectedWhisperModel: selectedWhisperModel.value,
     selectedQwen3AsrModel: selectedQwen3AsrModel.value,
     selectedSenseVoiceModel: selectedSenseVoiceModel.value,
@@ -531,8 +542,10 @@ function buildHomeConfigSnapshotFromRefs(): string {
 async function saveHomeConfigToBackend() {
   try {
     const engine = selectedTranscriptionEngine.value;
+    const computeBackendChanged = store.config.transcription?.asr_compute_backend !== selectedAsrComputeBackend.value;
     const transcriptionPatch = {
       ...store.config.transcription,
+      asr_compute_backend: selectedAsrComputeBackend.value,
       model: selectedWhisperModel.value,
       qwen3_asr_model: selectedQwen3AsrModel.value,
       sensevoice_model: selectedSenseVoiceModel.value,
@@ -572,6 +585,10 @@ async function saveHomeConfigToBackend() {
       transcription: updatedConfig.transcription,
       translation: updatedConfig.translation,
     });
+    if (computeBackendChanged) {
+      await store.loadRuntimeStatus();
+      coerceRuntimeLimitedSelections();
+    }
     // 更新本地 store 快照
     lastAppliedHomeConfigSnapshot.value = buildHomeConfigSnapshotFromConfig(store.config);
   } catch (e) {
@@ -714,6 +731,7 @@ async function applyConfigToRefs(cfg: Config) {
     urlInput.value = cfg.input?.url || '';
     audioSource.value = cfg.input?.audio_source || 'url';
     selectedDeviceIndex.value = cfg.input?.device_index ?? null;
+    selectedAsrComputeBackend.value = cfg.transcription?.asr_compute_backend || 'auto';
     selectedWhisperModel.value = cfg.transcription?.model || 'base';
     selectedQwen3AsrModel.value = cfg.transcription?.qwen3_asr_model || 'Qwen/Qwen3-ASR-1.7B';
     selectedSenseVoiceModel.value = cfg.transcription?.sensevoice_model || 'iic/SenseVoiceSmall';
@@ -912,6 +930,7 @@ onMounted(async () => {
       urlInput,
       audioSource,
       selectedDeviceIndex,
+      selectedAsrComputeBackend,
       selectedTranscriptionEngine,
       selectedWhisperModel,
       selectedQwen3AsrModel,
@@ -1343,7 +1362,16 @@ function clearLogs() {
               </button>
 
               <Transition name="fade-slide">
-                <div v-show="showAdvancedConfig" class="grid grid-cols-2 gap-4 mt-3 p-3 bg-white/5 rounded-xl border border-white/5">
+                <div v-show="showAdvancedConfig" class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-3 p-3 bg-white/5 rounded-xl border border-white/5">
+                  <div class="flex flex-col">
+                    <label class="text-white/50 text-[9px] font-bold tracking-wider mb-1">ASR 運算模式</label>
+                    <UiSelect
+                      v-model="selectedAsrComputeBackend"
+                      :options="asrComputeBackendOptions"
+                      :disabled="store.isRunning || store.runtimeStatus?.profile === 'cpu'"
+                      button-class="bg-white/5 border border-white/10 text-[10px] rounded-lg"
+                    />
+                  </div>
                   <!-- 轉錄引擎 -->
                   <div class="flex flex-col">
                     <label class="text-white/50 text-[9px] font-bold tracking-wider mb-1">轉錄引擎</label>
@@ -1400,7 +1428,7 @@ function clearLogs() {
                   </div>
 
                   <!-- 翻譯後端 -->
-                  <div class="flex flex-col col-span-2">
+                  <div class="flex flex-col md:col-span-3">
                     <label class="text-white/50 text-[9px] font-bold tracking-wider mb-1">翻譯後端</label>
                     <UiSelect
                       v-model="selectedBackend"

@@ -142,6 +142,11 @@ const runtimeProfileOptions: UiSelectOption[] = [
   { value: 'cpu', label: 'CPU' },
   { value: 'rocm', label: 'ROCm Experimental' },
 ];
+const asrComputeBackendOptions: UiSelectOption[] = [
+  { value: 'auto', label: '自動（優先使用套件 GPU）' },
+  { value: 'gpu', label: 'GPU 原生 ASR' },
+  { value: 'cpu', label: 'CPU / sherpa-onnx INT8' },
+];
 const runtimeDevicePolicyOptions: UiSelectOption[] = [
   { value: 'auto_discrete', label: 'Auto discrete GPU' },
   { value: 'auto_any', label: 'Auto any GPU' },
@@ -223,6 +228,7 @@ const localConfig = ref<any>({
     firered_vad_model_path: ''
   },
   transcription: {
+    asr_compute_backend: 'auto',
     model: 'base',
     language: 'auto',
     transcription_initial_prompt: '',
@@ -457,10 +463,12 @@ async function saveSectionNow(section: string): Promise<void> {
   const sectionSnapshot = structuredClone(toRaw(localConfig.value[section] ?? {}));
   const runtimeChanged = section === 'runtime'
     && !configsEqual(store.config.runtime, sectionSnapshot);
+  const asrComputeChanged = section === 'transcription'
+    && store.config.transcription?.asr_compute_backend !== sectionSnapshot.asr_compute_backend;
   const request = (async () => {
     try {
       await store.saveConfigSection(section, sectionSnapshot);
-      if (runtimeChanged) await store.loadRuntimeStatus();
+      if (runtimeChanged || asrComputeChanged) await store.loadRuntimeStatus();
       markAutoSaveCompleted();
     } catch (e) {
       console.warn(`[SettingsView] ${section} 自動保存失敗:`, e);
@@ -609,7 +617,13 @@ const filteredAsrCorrections = computed(() => {
 // 互斥邏輯: 轉錄引擎互斥規則
 const runtimeStatus = computed(() => store.runtimeStatus);
 const runtimeProfileLocked = computed(() => Boolean(runtimeStatus.value?.profile_locked));
-const runtimeCapabilities = computed(() => runtimeStatus.value?.capabilities || null);
+const asrComputeBackendLocked = computed(() => runtimeStatus.value?.profile === 'cpu');
+const runtimeCapabilities = computed(() => runtimeStatus.value?.asr_capabilities || runtimeStatus.value?.capabilities || null);
+const effectiveAsrComputeBackend = computed(() =>
+  runtimeStatus.value?.effective_asr_compute_backend
+    || (localConfig.value.transcription?.asr_compute_backend === 'cpu' ? 'cpu' : 'gpu')
+);
+const cpuAsrRuntimeAvailable = computed(() => Boolean(runtimeStatus.value?.cpu_asr_runtime?.available));
 const selectedSettingsAsrModelId = computed<string>(() => {
   const transcription = localConfig.value.transcription;
   if (transcription.use_qwen3_asr) return transcription.qwen3_asr_model;
@@ -1683,7 +1697,7 @@ async function handleFileChange(event: Event) {
                 </button>
               </div>
 
-              <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
                 <div>
                   <label class="block text-white/70 font-semibold mb-2">Profile</label>
                   <UiSelect v-model="localConfig.runtime.profile" :options="runtimeProfileOptions" :disabled="runtimeProfileLocked" />
@@ -1692,8 +1706,19 @@ async function handleFileChange(event: Event) {
                   </p>
                 </div>
                 <div>
+                  <label class="block text-white/70 font-semibold mb-2">ASR 運算模式</label>
+                  <UiSelect
+                    v-model="localConfig.transcription.asr_compute_backend"
+                    :options="asrComputeBackendOptions"
+                    :disabled="asrComputeBackendLocked"
+                  />
+                  <p class="text-white/40 text-xs mt-1">
+                    目前實際使用：{{ effectiveAsrComputeBackend === 'cpu' ? 'CPU / sherpa-onnx' : '套件 GPU runtime' }}
+                  </p>
+                </div>
+                <div>
                   <label class="block text-white/70 font-semibold mb-2">Device policy</label>
-                  <UiSelect v-model="localConfig.runtime.device_policy" :options="runtimeDevicePolicyOptions" />
+                  <UiSelect v-model="localConfig.runtime.device_policy" :options="runtimeDevicePolicyOptions" :disabled="effectiveAsrComputeBackend === 'cpu'" />
                 </div>
                 <div class="flex items-end">
                   <label class="flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer w-full">
@@ -1704,6 +1729,17 @@ async function handleFileChange(event: Event) {
                     </div>
                   </label>
                 </div>
+              </div>
+
+              <div
+                v-if="localConfig.transcription.asr_compute_backend === 'cpu' && !cpuAsrRuntimeAvailable"
+                class="mt-4 bg-yellow-500/10 border border-yellow-500/25 rounded-lg p-3"
+              >
+                <div class="text-yellow-200 text-sm font-semibold">CPU ASR sidecar 尚未安裝</div>
+                <p class="text-white/65 text-xs mt-1">
+                  CUDA／ROCm 包需要獨立的 <code>_runtime_cpu_asr</code>。請使用包含 CPU ASR sidecar 的套件，
+                  或以 <code>-IncludeCpuAsrSidecar</code> 建置；GPU runtime 不會被修改。
+                </p>
               </div>
 
               <div class="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">

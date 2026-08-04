@@ -128,7 +128,16 @@ export interface RuntimeStatus {
   allow_integrated_gpu: boolean;
   profile_locked: boolean;
   packaged_profile: string | null;
+  asr_compute_backend: 'auto' | 'gpu' | 'cpu';
+  effective_asr_compute_backend: 'gpu' | 'cpu';
   capabilities: RuntimeCapabilities;
+  asr_capabilities: RuntimeCapabilities;
+  cpu_asr_runtime: {
+    available: boolean;
+    path: string;
+    python: string;
+    is_sidecar: boolean;
+  };
   devices: RuntimeGpuDevice[];
   selection: RuntimeSelection;
 }

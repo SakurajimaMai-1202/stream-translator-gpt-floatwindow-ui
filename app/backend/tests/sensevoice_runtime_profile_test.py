@@ -1,12 +1,10 @@
 from backend.core.config_manager import ConfigManager
-from backend.core.runtime_profiles import get_runtime_capabilities
+from backend.core.runtime_profiles import get_asr_capabilities, get_runtime_capabilities
 from backend.core.runtime_status import build_runtime_status
 from backend.core.asr_model_capabilities import (
     coerce_model_language,
     list_asr_model_capabilities,
 )
-from backend.core import translator as translator_module
-from backend.core.translator import TranslationContext
 
 
 def _config_for(profile: str) -> dict:
@@ -54,11 +52,37 @@ def test_packaged_cpu_profile_is_locked_in_config_and_status(monkeypatch, tmp_pa
     updated = manager.update_config({"runtime": {"profile": "rocm", "device_policy": "auto_any"}})
     assert updated["runtime"]["profile"] == "cpu"
     assert updated["runtime"]["device_policy"] == "cpu"
+    assert updated["transcription"]["asr_compute_backend"] == "cpu"
 
     status = build_runtime_status(updated, devices=[])
     assert status["profile_locked"] is True
     assert status["packaged_profile"] == "cpu"
     assert status["profile"] == "cpu"
+    assert status["effective_asr_compute_backend"] == "cpu"
+
+
+def test_cuda_package_can_select_cpu_sherpa_capabilities(monkeypatch):
+    monkeypatch.setenv("STREAM_TRANSLATOR_PACKAGED_PROFILE", "cuda")
+    config = _config_for("cuda")
+    config["transcription"].update({
+        "asr_compute_backend": "cpu",
+        "backend": "parakeet-ctc-ja",
+        "use_sensevoice_asr": False,
+        "use_nemo_asr": True,
+        "nemo_asr_model": "nvidia/parakeet-tdt-0.6b-v3",
+    })
+
+    args = _manager().to_main_args(config)
+    status = build_runtime_status(config, devices=[])
+
+    assert args["runtime_profile"] == "cuda"
+    assert args["asr_compute_backend"] == "cpu"
+    assert args["model"] == "nvidia/parakeet-tdt-0.6b-v3"
+    assert status["profile"] == "cuda"
+    assert status["effective_asr_compute_backend"] == "cpu"
+    assert status["asr_capabilities"]["profile"] == "cpu"
+    assert "nvidia/parakeet-tdt-0.6b-v3" in status["asr_capabilities"]["parakeet_model_ids"]
+    assert get_asr_capabilities("rocm", "cpu").profile == "cpu"
 
 
 def test_sensevoice_is_profile_aware():
@@ -389,6 +413,9 @@ def test_fun_asr_mlt_config_maps_to_main_args():
 
 
 def test_fun_asr_command_reprobes_stale_runtime_capabilities(monkeypatch):
+    from backend.core import translator as translator_module
+    from backend.core.translator import TranslationContext
+
     config = _config_for("cuda")
     config["transcription"].update(
         {
@@ -424,7 +451,7 @@ def test_fun_asr_command_reprobes_stale_runtime_capabilities(monkeypatch):
     monkeypatch.setattr(
         translator_module,
         "_resolve_profile_python",
-        lambda _: "python",
+        lambda *_: "python",
     )
 
     command = TranslationContext(args, "fun-asr-test")._build_command()

@@ -14,7 +14,12 @@ import time
 from contextlib import contextmanager
 from backend.config import settings
 from backend.core.cookie_manager import resolve_cookie_path
-from backend.core.runtime_profiles import get_runtime_capabilities
+from backend.core.runtime_profiles import (
+    effective_asr_compute_backend,
+    get_asr_capabilities,
+    get_runtime_capabilities,
+    normalize_asr_compute_backend,
+)
 from backend.core.asr_model_capabilities import coerce_model_language
 from backend.core.portable_paths import get_packaged_runtime_profile
 
@@ -76,6 +81,7 @@ class ConfigManager:
         },
         'transcription': {
             'backend': 'qwen3-asr',
+            'asr_compute_backend': 'auto',
             'model': 'Qwen/Qwen3-ASR-1.7B',
             'language': 'auto',
             'filters': [],
@@ -318,6 +324,7 @@ class ConfigManager:
         if packaged_profile == 'cpu':
             runtime['device_policy'] = 'cpu'
             runtime['allow_integrated_gpu'] = False
+            config.setdefault('transcription', {})['asr_compute_backend'] = 'cpu'
         return config
 
     def _migrate_legacy_config(self, config: Dict[str, Any]) -> tuple[Dict[str, Any], bool]:
@@ -593,12 +600,24 @@ class ConfigManager:
         
         runtime_config = config.get('runtime', {})
         runtime_capabilities = get_runtime_capabilities(runtime_config.get('profile'))
+        configured_asr_compute_backend = normalize_asr_compute_backend(
+            config['transcription'].get('asr_compute_backend'),
+            runtime_capabilities.profile,
+        )
+        effective_asr_backend = effective_asr_compute_backend(
+            configured_asr_compute_backend,
+            runtime_capabilities.profile,
+        )
+        asr_capabilities = get_asr_capabilities(
+            runtime_capabilities.profile,
+            configured_asr_compute_backend,
+        )
         requested_transcription_backend = config['transcription'].get('backend', 'faster-whisper')
-        if config['transcription'].get('model') in runtime_capabilities.sensevoice_model_ids:
+        if config['transcription'].get('model') in asr_capabilities.sensevoice_model_ids:
             requested_transcription_backend = 'sensevoice'
-        if config['transcription'].get('model') in runtime_capabilities.fun_asr_model_ids:
+        if config['transcription'].get('model') in asr_capabilities.fun_asr_model_ids:
             requested_transcription_backend = 'fun-asr-nano'
-        if config['transcription'].get('model') in runtime_capabilities.parakeet_model_ids:
+        if config['transcription'].get('model') in asr_capabilities.parakeet_model_ids:
             requested_transcription_backend = 'parakeet-ctc-ja'
         if config['transcription'].get('use_fun_asr'):
             requested_transcription_backend = 'fun-asr-nano'
@@ -619,7 +638,7 @@ class ConfigManager:
 
         transcription_backend = self._coerce_transcription_backend(
             requested_transcription_backend,
-            runtime_capabilities,
+            asr_capabilities,
         )
         runtime_device_policy = runtime_config.get('device_policy') or runtime_capabilities.default_device_policy
         if runtime_capabilities.profile == 'cpu':
@@ -630,10 +649,10 @@ class ConfigManager:
         ))
         qwen3_dtype = config['transcription'].get('qwen3_dtype')
         if not qwen3_dtype or (
-            runtime_capabilities.profile == 'cpu' and qwen3_dtype == 'bfloat16'
+            effective_asr_backend == 'cpu' and qwen3_dtype == 'bfloat16'
         ):
-            qwen3_dtype = runtime_capabilities.qwen3_default_dtype
-        qwen3_device_map = 'cpu' if runtime_capabilities.profile == 'cpu' else 'auto'
+            qwen3_dtype = asr_capabilities.qwen3_default_dtype
+        qwen3_device_map = 'cpu' if effective_asr_backend == 'cpu' else 'auto'
         # Qwen3-ASR 使用獨立模型欄位，其他後端沿用一般 model 欄位
         if transcription_backend == 'qwen3-asr':
             requested_qwen3_model = config['transcription'].get('qwen3_asr_model')
@@ -641,31 +660,31 @@ class ConfigManager:
                 requested_qwen3_model = 'jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame'
             transcription_model = self._coerce_model_id(
                 requested_qwen3_model,
-                runtime_capabilities.qwen3_asr_model_ids,
+                asr_capabilities.qwen3_asr_model_ids,
                 'Qwen/Qwen3-ASR-0.6B',
             )
         elif transcription_backend == 'sensevoice':
             transcription_model = self._coerce_model_id(
                 config['transcription'].get('sensevoice_model'),
-                runtime_capabilities.sensevoice_model_ids,
+                asr_capabilities.sensevoice_model_ids,
                 'iic/SenseVoiceSmall',
             )
         elif transcription_backend == 'fun-asr-nano':
             transcription_model = self._coerce_model_id(
                 config['transcription'].get('fun_asr_model'),
-                runtime_capabilities.fun_asr_model_ids,
+                asr_capabilities.fun_asr_model_ids,
                 'FunAudioLLM/Fun-ASR-Nano-2512',
             )
         elif transcription_backend == 'parakeet-ctc-ja':
             transcription_model = self._coerce_model_id(
                 config['transcription'].get('nemo_asr_model'),
-                runtime_capabilities.parakeet_model_ids,
+                asr_capabilities.parakeet_model_ids,
                 'nvidia/parakeet-tdt_ctc-0.6b-ja',
             )
         else:
             transcription_model = self._coerce_model_id(
                 config['transcription'].get('model', 'base'),
-                runtime_capabilities.faster_whisper_model_ids,
+                asr_capabilities.faster_whisper_model_ids,
                 'small',
             )
 
@@ -687,6 +706,7 @@ class ConfigManager:
             'device_index': input_config.get('device_index'),
             'device_recording_interval': input_config.get('device_recording_interval', 0.1),
             'runtime_profile': runtime_capabilities.profile,
+            'asr_compute_backend': configured_asr_compute_backend,
             'runtime_device_policy': runtime_device_policy,
             'runtime_allow_integrated_gpu': runtime_allow_integrated_gpu,
             
@@ -726,9 +746,9 @@ class ConfigManager:
             'qwen3_load_in_4bit': config['transcription'].get('qwen3_load_in_4bit', False),
             'qwen3_rms_threshold': config['transcription'].get('qwen3_rms_threshold', 0.005),
             'sensevoice_model': transcription_model if transcription_backend == 'sensevoice' else config['transcription'].get('sensevoice_model', 'iic/SenseVoiceSmall'),
-            'sensevoice_device': 'cpu' if runtime_capabilities.profile == 'cpu' else 'auto',
+            'sensevoice_device': 'cpu' if effective_asr_backend == 'cpu' else 'auto',
             'fun_asr_model': transcription_model if transcription_backend == 'fun-asr-nano' else config['transcription'].get('fun_asr_model', 'FunAudioLLM/Fun-ASR-Nano-2512'),
-            'fun_asr_device': 'cpu' if runtime_capabilities.profile == 'cpu' else 'auto',
+            'fun_asr_device': 'cpu' if effective_asr_backend == 'cpu' else 'auto',
             'nemo_asr_model': transcription_model if transcription_backend == 'parakeet-ctc-ja' else config['transcription'].get('nemo_asr_model', 'nvidia/parakeet-tdt_ctc-0.6b-ja'),
             'nemo_asr_device': 'auto',
             'nemo_asr_decoding': (

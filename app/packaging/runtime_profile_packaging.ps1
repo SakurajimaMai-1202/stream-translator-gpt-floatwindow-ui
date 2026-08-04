@@ -106,6 +106,7 @@ function Get-RuntimeProfileDocText {
             "Qwen3-ASR 在 CUDA / ROCm profile 預設使用 bf16。",
             "SenseVoiceSmall 使用 FunASR runtime；首次使用前可先在模型管理預下載 iic/SenseVoiceSmall。",
             "NVIDIA Parakeet 使用 NVIDIA NeMo runtime；打包 CUDA runtime 前請確認 build Python 已安裝 app/requirements_cuda_parakeet.txt。",
+            "使用 -IncludeCpuAsrSidecar 可另外加入 sherpa-onnx INT8 CPU ASR；sidecar 與 CUDA 主 runtime 完全隔離。",
             "官方模型預設使用 TDT decoder 與 bfloat16；英文／日文依模型固定。官方模型授權為 CC-BY-4.0。",
             "預設裝置策略為 auto_discrete，會優先選擇獨立 GPU，避免誤選內顯。"
         )
@@ -143,6 +144,7 @@ function Get-RuntimeProfileDocText {
             "Qwen3-ASR 在 CUDA / ROCm profile 預設使用 bf16。",
             "SenseVoiceSmall 已通過 AMD ROCm 實機測試；仍建議使用 smoke_sensevoice_asr.ps1 在目標機器確認音訊與模型 cache。",
             "預設裝置策略為 auto_discrete，會避免選到 AMD 內顯 / APU；沒有 ROCm 獨顯時會在診斷中標示未驗證。",
+            "使用 -IncludeCpuAsrSidecar 可另外加入 sherpa-onnx INT8 CPU ASR；sidecar 與 ROCm 主 runtime 完全隔離。",
             "Radeon RX 9070 XT 已由使用者實機測試確認可用。"
         )
         $warning = "目前建置機沒有 ROCm 獨立顯卡；package 結構與 HIP runtime manifest 可驗證，Radeon RX 9070 XT 已由使用者實機確認可用，其他 AMD 顯卡仍請附診斷結果回報。"

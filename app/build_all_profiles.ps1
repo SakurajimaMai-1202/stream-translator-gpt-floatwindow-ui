@@ -8,7 +8,8 @@ param(
     [string]$SevenZipPath = "",
     [ValidateRange(0, 9)][int]$CompressionLevel = 7,
     [ValidateRange(64, 2047)][int]$SplitSizeMiB = 1900,
-    [ValidateRange(1, 128)][int]$CopyThreads = 16
+    [ValidateRange(1, 128)][int]$CopyThreads = 16,
+    [switch]$IncludeCpuAsrSidecar
 )
 
 $ErrorActionPreference = "Stop"
@@ -69,6 +70,7 @@ foreach ($profile in $profiles) {
     if ($reuseValidatedRuntimeCaches) { $releaseArgs.ReuseRuntimeCache = $true }
     if ($Mode -eq "Quick") { $releaseArgs.SkipFullZip = $true }
     if ($Mode -eq "Quick") { $releaseArgs.SkipRuntimeDependenciesInAppUpdate = $true }
+    if ($IncludeCpuAsrSidecar -and $profile -ne "cpu") { $releaseArgs.IncludeCpuAsrSidecar = $true }
 
     if ($ReuseProfileArtifacts) {
         Write-Host "Reusing assembled $profile artifact" -ForegroundColor Green

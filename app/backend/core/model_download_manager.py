@@ -133,7 +133,9 @@ class ModelDownloadManager:
             from backend.config import settings
             with open(settings.CONFIG_FILE, "r", encoding="utf-8") as config_file:
                 config = yaml.safe_load(config_file) or {}
-            return str(config.get("runtime", {}).get("profile", "cuda")).lower() == "cpu"
+            profile = str(config.get("runtime", {}).get("profile", "cuda")).lower()
+            compute = str(config.get("transcription", {}).get("asr_compute_backend", "auto")).lower()
+            return profile == "cpu" or compute == "cpu"
         except (OSError, ValueError):
             return False
 

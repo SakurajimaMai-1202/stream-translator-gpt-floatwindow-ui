@@ -10,7 +10,8 @@ param(
     [string]$SevenZipPath = "",
     [ValidateRange(0, 9)][int]$CompressionLevel = 7,
     [ValidateRange(1, 128)][int]$CopyThreads = 16,
-    [switch]$SkipRuntimeDependenciesInAppUpdate
+    [switch]$SkipRuntimeDependenciesInAppUpdate,
+    [switch]$IncludeCpuAsrSidecar
 )
 
 $releaseArgs = @{
@@ -25,5 +26,6 @@ if ($SkipFullZip) { $releaseArgs.SkipFullZip = $true }
 if ($SharedGuiDir) { $releaseArgs.SharedGuiDir = $SharedGuiDir }
 if ($SevenZipPath) { $releaseArgs.SevenZipPath = $SevenZipPath }
 if ($SkipRuntimeDependenciesInAppUpdate) { $releaseArgs.SkipRuntimeDependenciesInAppUpdate = $true }
+if ($IncludeCpuAsrSidecar) { $releaseArgs.IncludeCpuAsrSidecar = $true }
 & (Join-Path $PSScriptRoot "packaging\build_profile_release.ps1") @releaseArgs
 exit $LASTEXITCODE

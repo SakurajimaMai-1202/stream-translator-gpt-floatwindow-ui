@@ -45,6 +45,7 @@ audio_slicing_vad:
   firered_vad_model_path: ''
 transcription:
   backend: qwen3-asr
+  asr_compute_backend: auto
   model: Qwen/Qwen3-ASR-1.7B
   language: ja
   filters: []

@@ -9,15 +9,27 @@ from .hardware_detector import (
     detect_gpus,
     select_accelerator,
 )
-from .runtime_profiles import RuntimeCapabilities, get_runtime_capabilities
+from .runtime_profiles import (
+    RuntimeCapabilities,
+    effective_asr_compute_backend,
+    get_asr_capabilities,
+    get_runtime_capabilities,
+    normalize_asr_compute_backend,
+)
 from .asr_model_capabilities import list_asr_model_capabilities
-from .portable_paths import get_packaged_runtime_profile
+from .portable_paths import get_cpu_asr_runtime_status, get_packaged_runtime_profile
 
 
 def build_runtime_status(config: dict[str, Any], devices: list[GpuDevice] | None = None) -> dict[str, Any]:
     runtime_config = config.get("runtime", {}) if isinstance(config, dict) else {}
     packaged_profile = get_packaged_runtime_profile()
     capabilities = get_runtime_capabilities(packaged_profile or runtime_config.get("profile"))
+    transcription_config = config.get("transcription", {}) if isinstance(config, dict) else {}
+    asr_compute_backend = normalize_asr_compute_backend(
+        transcription_config.get("asr_compute_backend"), capabilities.profile
+    )
+    effective_compute_backend = effective_asr_compute_backend(asr_compute_backend, capabilities.profile)
+    asr_capabilities = get_asr_capabilities(capabilities.profile, asr_compute_backend)
     policy = _effective_device_policy(capabilities, runtime_config)
     allow_integrated_gpu = bool(runtime_config.get("allow_integrated_gpu", capabilities.allow_integrated_gpu))
     available_devices = devices if devices is not None else detect_gpus()
@@ -38,7 +50,11 @@ def build_runtime_status(config: dict[str, Any], devices: list[GpuDevice] | None
         "allow_integrated_gpu": allow_integrated_gpu,
         "profile_locked": packaged_profile is not None,
         "packaged_profile": packaged_profile,
+        "asr_compute_backend": asr_compute_backend,
+        "effective_asr_compute_backend": effective_compute_backend,
         "capabilities": _capabilities_to_dict(capabilities),
+        "asr_capabilities": _capabilities_to_dict(asr_capabilities),
+        "cpu_asr_runtime": get_cpu_asr_runtime_status(),
         "devices": [_gpu_to_dict(device) for device in available_devices],
         "selection": _selection_to_dict(selection),
     }

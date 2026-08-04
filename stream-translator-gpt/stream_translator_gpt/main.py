@@ -72,6 +72,9 @@ def main(url, **kwargs):
     asr_correction_rules = kwargs.get('asr_correction_rules')
     asr_corrections_case_sensitive = kwargs.get('asr_corrections_case_sensitive', False)
     runtime_profile = kwargs.get('runtime_profile', 'cuda')
+    asr_compute_backend = kwargs.get('asr_compute_backend', 'auto')
+    if str(runtime_profile).lower() == 'cpu':
+        asr_compute_backend = 'cpu'
     runtime_device_policy = kwargs.get('runtime_device_policy', 'auto_discrete')
     runtime_allow_integrated_gpu = kwargs.get('runtime_allow_integrated_gpu', False)
 
@@ -239,7 +242,7 @@ def main(url, **kwargs):
                 'asr_correction_rules': asr_correction_rules,
                 'asr_corrections_case_sensitive': asr_corrections_case_sensitive,
             }
-            if str(runtime_profile).lower() == 'cpu':
+            if str(asr_compute_backend).lower() == 'cpu':
                 sherpa_model = None
                 if use_qwen3_asr:
                     sherpa_model = qwen3_asr_model or model
@@ -764,6 +767,7 @@ def cli():
     parser.add_argument('--qwen3_asr_bnb_4bit_quant_type', type=str, choices=['nf4', 'fp4'], default=None, help='4-bit quant type.')
     parser.add_argument('--qwen3_asr_bnb_4bit_use_double_quant', action='store_true', help='Double quant for Qwen3-ASR.')
     parser.add_argument('--runtime_profile', type=str, choices=['cuda', 'cpu', 'rocm'], default='cuda', help='Runtime profile used to select local ASR accelerator policy.')
+    parser.add_argument('--asr_compute_backend', type=str, choices=['auto', 'gpu', 'cpu'], default='auto', help='Select GPU-native ASR or the sherpa-onnx CPU sidecar independently from the package profile.')
     parser.add_argument('--runtime_device_policy', type=str, choices=['auto_discrete', 'auto_any', 'manual', 'cpu'], default='auto_discrete', help='Device selection policy for local ASR backends.')
     parser.add_argument('--runtime_allow_integrated_gpu', action='store_true', help='Allow integrated GPUs for experimental local ASR acceleration.')
 

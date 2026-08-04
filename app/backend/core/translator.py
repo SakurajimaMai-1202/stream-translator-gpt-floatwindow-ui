@@ -94,12 +94,19 @@ def _extract_supported_cli_args(help_text: str) -> FrozenSet[str]:
     return frozenset(re.findall(r'--([a-zA-Z0-9_]+)', help_text))
 
 
-def _resolve_profile_python(runtime_profile: str | None) -> Optional[str]:
+def _resolve_profile_python(runtime_profile: str | None, asr_compute_backend: str | None = None) -> Optional[str]:
     profile = (runtime_profile or "").strip().lower()
+    compute = (asr_compute_backend or "auto").strip().lower()
     candidates: List[Path] = []
     if getattr(sys, 'frozen', False):
-        candidates.append(Path(sys.executable).parent / '_runtime' / 'python.exe')
-    if profile:
+        if compute == 'cpu':
+            runtime_name = '_runtime' if profile == 'cpu' else '_runtime_cpu_asr'
+            candidates.append(Path(sys.executable).parent / runtime_name / 'python.exe')
+        else:
+            candidates.append(Path(sys.executable).parent / '_runtime' / 'python.exe')
+    if compute == 'cpu':
+        candidates.append(settings.BASE_DIR / 'build-runtime-cache' / 'cpu-runtime' / 'python.exe')
+    elif profile:
         candidates.append(settings.BASE_DIR / 'build-runtime-cache' / f'{profile}-runtime' / 'python.exe')
     env_python = os.environ.get('STREAM_TRANSLATOR_BUILD_PYTHON')
     if env_python:
@@ -201,12 +208,20 @@ class TranslationContext:
         # 檢查是否在打包環境中
         is_frozen = getattr(sys, 'frozen', False)
         cwd = str(settings.BASE_DIR.parent)
-        profile_python = _resolve_profile_python(str(self.config.get('runtime_profile') or ''))
+        profile_python = _resolve_profile_python(
+            str(self.config.get('runtime_profile') or ''),
+            str(self.config.get('asr_compute_backend') or 'auto'),
+        )
         
         if profile_python:
             logger.info(f"Using runtime profile Python: {profile_python}")
             cmd = [profile_python, '-m', 'stream_translator_gpt']
         elif is_frozen:
+            if str(self.config.get('asr_compute_backend') or 'auto').lower() == 'cpu':
+                raise RuntimeError(
+                    "CPU ASR sidecar is not installed. Install the optional sherpa-onnx CPU ASR runtime "
+                    "or select GPU ASR in transcription settings."
+                )
             # 打包環境：直接使用 Python，因為 stream_translator_gpt 已包含在 exe 中
             # 我們需要找到原始的 stream-translator-gpt 安裝
             base_dir = Path(sys.executable).parent
@@ -247,7 +262,7 @@ class TranslationContext:
         allowed_args = {
             'proxy', 'openai_api_key', 'google_api_key', 'format', 'list_format', 'cookies',
             'input_proxy', 'device_index', 'list_devices', 'device_recording_interval',
-            'runtime_profile', 'runtime_device_policy', 'runtime_allow_integrated_gpu',
+            'runtime_profile', 'asr_compute_backend', 'runtime_device_policy', 'runtime_allow_integrated_gpu',
             'min_audio_length', 'max_audio_length', 'target_audio_length',
             'continuous_no_speech_threshold', 'disable_dynamic_no_speech_threshold',
             'prefix_retention_length', 'vad_threshold', 'disable_dynamic_vad_threshold',

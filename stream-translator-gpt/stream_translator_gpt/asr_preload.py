@@ -36,6 +36,7 @@ class ASRConfig:
     qwen3_asr_bnb_4bit_quant_type: str | None = None
     qwen3_asr_bnb_4bit_use_double_quant: bool = False
     runtime_profile: str | None = "cuda"
+    asr_compute_backend: str | None = "auto"
     runtime_device_policy: str | None = "auto_discrete"
     runtime_allow_integrated_gpu: bool = False
     nemo_asr_model: str | None = None
@@ -142,6 +143,7 @@ def build_asr_config(options: dict[str, Any]) -> ASRConfig:
         qwen3_asr_bnb_4bit_quant_type=qwen3_asr_bnb_4bit_quant_type,
         qwen3_asr_bnb_4bit_use_double_quant=qwen3_asr_bnb_4bit_use_double_quant,
         runtime_profile=options.get("runtime_profile", "cuda"),
+        asr_compute_backend=options.get("asr_compute_backend", "auto"),
         runtime_device_policy=options.get("runtime_device_policy", "auto_discrete"),
         runtime_allow_integrated_gpu=bool(options.get("runtime_allow_integrated_gpu", False)),
         nemo_asr_model=nemo_asr_model,
@@ -167,7 +169,7 @@ def create_transcriber(config: ASRConfig):
         "asr_corrections_case_sensitive": config.asr_corrections_case_sensitive,
     }
 
-    if (config.runtime_profile or "cuda").lower() == "cpu" and config.backend in {
+    if (config.asr_compute_backend or "auto").lower() == "cpu" and config.backend in {
         "qwen3", "nemo", "sensevoice", "fun_asr"
     }:
         model = (
@@ -253,7 +255,7 @@ def create_transcriber(config: ASRConfig):
 
 
 def resolve_preload_config(config: ASRConfig) -> ASRConfig:
-    if (config.runtime_profile or "cuda").lower() == "cpu" and config.backend in {
+    if (config.asr_compute_backend or "auto").lower() == "cpu" and config.backend in {
         "qwen3", "nemo", "sensevoice", "fun_asr"
     }:
         return config

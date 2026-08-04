@@ -98,6 +98,7 @@ def test_cpu_preload_routes_to_sherpa_without_torch(monkeypatch):
         "use_qwen3_asr": True,
         "qwen3_asr_model": "Qwen/Qwen3-ASR-0.6B",
         "runtime_profile": "cpu",
+        "asr_compute_backend": "cpu",
     })
     assert asr_preload.resolve_preload_config(config) is config
     asr_preload.create_transcriber(config)

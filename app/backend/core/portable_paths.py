@@ -35,6 +35,28 @@ def get_packaged_runtime_profile() -> str | None:
     return profile if profile in {"cuda", "cpu", "rocm"} else None
 
 
+def get_cpu_asr_runtime_path() -> Path:
+    """Return the isolated sherpa-onnx runtime used for CPU ASR."""
+    app_root = get_app_root()
+    profile = get_packaged_runtime_profile()
+    if profile == "cpu":
+        return app_root / "_runtime"
+    if profile in {"cuda", "rocm"}:
+        return app_root / "_runtime_cpu_asr"
+    return app_root / "build-runtime-cache" / "cpu-runtime"
+
+
+def get_cpu_asr_runtime_status() -> dict[str, object]:
+    runtime_path = get_cpu_asr_runtime_path()
+    python_path = runtime_path / "python.exe"
+    return {
+        "available": python_path.is_file(),
+        "path": str(runtime_path),
+        "python": str(python_path),
+        "is_sidecar": get_packaged_runtime_profile() in {"cuda", "rocm"},
+    }
+
+
 def get_model_storage_root() -> Path:
     configured = ""
     try:

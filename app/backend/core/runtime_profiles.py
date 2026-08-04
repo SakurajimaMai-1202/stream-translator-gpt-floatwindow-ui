@@ -7,6 +7,7 @@ from .hardware_detector import DevicePolicy, RuntimeProfile
 
 
 SupportStatus = Literal["official", "compatibility", "experimental", "disabled"]
+AsrComputeBackend = Literal["auto", "gpu", "cpu"]
 
 
 @dataclass(frozen=True)
@@ -134,6 +135,30 @@ _CAPABILITIES: dict[RuntimeProfile, RuntimeCapabilities] = {
 def get_runtime_capabilities(profile: str | None) -> RuntimeCapabilities:
     normalized = normalize_runtime_profile(profile)
     return _CAPABILITIES[normalized]
+
+
+def normalize_asr_compute_backend(value: str | None, package_profile: str | None) -> AsrComputeBackend:
+    """Normalize the independently selectable ASR compute backend.
+
+    CPU packages cannot provide a GPU ASR runtime. CUDA and ROCm packages keep
+    ``auto`` as a user-facing choice, which currently prefers their packaged
+    GPU runtime and can be extended with runtime failure fallback later.
+    """
+    profile = normalize_runtime_profile(package_profile)
+    if profile == "cpu":
+        return "cpu"
+    normalized = str(value or "auto").strip().lower()
+    return normalized if normalized in {"auto", "gpu", "cpu"} else "auto"  # type: ignore[return-value]
+
+
+def effective_asr_compute_backend(value: str | None, package_profile: str | None) -> Literal["gpu", "cpu"]:
+    normalized = normalize_asr_compute_backend(value, package_profile)
+    return "cpu" if normalized == "cpu" else "gpu"
+
+
+def get_asr_capabilities(package_profile: str | None, compute_backend: str | None) -> RuntimeCapabilities:
+    effective = effective_asr_compute_backend(compute_backend, package_profile)
+    return _CAPABILITIES["cpu" if effective == "cpu" else normalize_runtime_profile(package_profile)]
 
 
 def normalize_runtime_profile(profile: str | None) -> RuntimeProfile:

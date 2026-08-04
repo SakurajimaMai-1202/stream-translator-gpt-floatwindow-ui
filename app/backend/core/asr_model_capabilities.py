@@ -95,6 +95,14 @@ ASR_MODEL_CAPABILITIES: dict[str, dict[str, Any]] = {
         ("ja",),
         default_language="ja",
     ),
+    "nvidia/parakeet-tdt-0.6b-v3": _entry(
+        "nvidia/parakeet-tdt-0.6b-v3",
+        "parakeet-ctc-ja",
+        "fixed",
+        ("en",),
+        default_language="en",
+        note="English Parakeet TDT model; CPU packages use sherpa-onnx INT8.",
+    ),
     "nvidia/parakeet-tdt_ctc-1.1b": _entry(
         "nvidia/parakeet-tdt_ctc-1.1b",
         "parakeet-ctc-ja",

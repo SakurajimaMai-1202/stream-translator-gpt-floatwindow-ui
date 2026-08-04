@@ -119,11 +119,12 @@ Validate built artifacts from `app`:
 
 ```powershell
 .\validate_runtime_artifact.ps1 -Profile cuda
-.\validate_runtime_artifact.ps1 -Profile cpu -ExpectedTorchBackend cpu
+.\validate_runtime_artifact.ps1 -Profile cpu -ExpectedTorchBackend none
 .\validate_runtime_artifact.ps1 -Profile rocm
 ```
 
-CPU release builds require a CPU-only PyTorch build environment. CUDA or ROCm
-torch must not be used to create the CPU runtime.
+CPU release builds require a Python environment containing
+`requirements_cpu_sherpa.txt`. The CPU ASR runtime uses sherpa-onnx INT8 and
+removes PyTorch, NeMo, FunASR, Transformers, Whisper, CUDA, and ROCm packages.
 
 See `app/docs/PACKAGING_zh-TW.md` for the profile matrix, package names, and build Python requirements.

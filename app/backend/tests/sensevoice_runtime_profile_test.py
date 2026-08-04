@@ -52,26 +52,30 @@ def test_sensevoice_is_profile_aware():
     assert "sensevoice" in cpu.local_asr_engines
     assert "sensevoice" in rocm.local_asr_engines
     assert cuda.sensevoice_status == "compatibility"
-    assert cpu.sensevoice_status == "compatibility"
+    assert cpu.sensevoice_status == "official"
     assert rocm.sensevoice_status == "experimental"
     assert cuda.sensevoice_model_ids == ("iic/SenseVoiceSmall",)
 
 
-def test_nvidia_parakeet_is_cuda_only():
+def test_nvidia_parakeet_uses_sherpa_only_in_cpu_profile():
     cuda = get_runtime_capabilities("cuda")
     cpu = get_runtime_capabilities("cpu")
     rocm = get_runtime_capabilities("rocm")
 
     assert "parakeet-ctc-ja" in cuda.local_asr_engines
-    assert "parakeet-ctc-ja" not in cpu.local_asr_engines
+    assert "parakeet-ctc-ja" in cpu.local_asr_engines
     assert "parakeet-ctc-ja" not in rocm.local_asr_engines
     assert cuda.parakeet_status == "experimental"
-    assert cpu.parakeet_status == "disabled"
+    assert cpu.parakeet_status == "official"
     assert rocm.parakeet_status == "disabled"
     assert cuda.parakeet_model_ids == (
         "nvidia/parakeet-tdt_ctc-0.6b-ja",
         "nvidia/parakeet-tdt_ctc-1.1b",
         "grider-transwithai/parakeet-ctc-1.1b-ja",
+    )
+    assert cpu.parakeet_model_ids == (
+        "nvidia/parakeet-tdt-0.6b-v3",
+        "nvidia/parakeet-tdt_ctc-0.6b-ja",
     )
 
 
@@ -177,7 +181,7 @@ def test_nvidia_parakeet_en_model_forces_english_language():
     assert args["language"] == "en"
 
 
-def test_parakeet_ctc_ja_falls_back_outside_cuda_profile():
+def test_cpu_parakeet_coerces_legacy_model_to_sherpa_model():
     config = _config_for("cpu")
     config["transcription"].update({
         "backend": "parakeet-ctc-ja",
@@ -188,8 +192,9 @@ def test_parakeet_ctc_ja_falls_back_outside_cuda_profile():
 
     args = _manager().to_main_args(config)
 
-    assert args["use_nemo_asr"] is False
-    assert args["use_qwen3_asr"] is True
+    assert args["use_nemo_asr"] is True
+    assert args["use_qwen3_asr"] is False
+    assert args["model"] == "nvidia/parakeet-tdt-0.6b-v3"
 
 
 def test_sensevoice_model_id_overrides_stale_backend():
@@ -332,10 +337,10 @@ def test_fun_asr_nano_models_are_profile_aware():
     rocm = get_runtime_capabilities("rocm")
 
     assert cuda.fun_asr_model_ids == expected
-    assert cpu.fun_asr_model_ids == expected
+    assert cpu.fun_asr_model_ids == ("FunAudioLLM/Fun-ASR-Nano-2512",)
     assert rocm.fun_asr_model_ids == expected
     assert cuda.fun_asr_status == "compatibility"
-    assert cpu.fun_asr_status == "experimental"
+    assert cpu.fun_asr_status == "official"
     assert rocm.fun_asr_status == "experimental"
     assert all("fun-asr-nano" in profile.local_asr_engines for profile in (cuda, cpu, rocm))
 

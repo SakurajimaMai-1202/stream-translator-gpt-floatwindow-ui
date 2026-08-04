@@ -5,6 +5,8 @@ import os
 import shutil
 import subprocess
 import sys
+import tarfile
+import urllib.request
 import time
 import uuid
 from datetime import datetime
@@ -23,6 +25,15 @@ from backend.core.portable_paths import (
 
 logger = logging.getLogger(__name__)
 
+SHERPA_CPU_BUNDLES = {
+    "nvidia/parakeet-tdt-0.6b-v3": ("sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8", ("encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt")),
+    "nvidia/parakeet-tdt_ctc-0.6b-ja": ("sherpa-onnx-nemo-parakeet-tdt_ctc-0.6b-ja-35000-int8", ("model.int8.onnx", "tokens.txt")),
+    "FunAudioLLM/Fun-ASR-Nano-2512": ("sherpa-onnx-funasr-nano-int8-2025-12-30", ("encoder_adaptor.int8.onnx", "llm.int8.onnx", "embedding.int8.onnx", "Qwen3-0.6B")),
+    "iic/SenseVoiceSmall": ("sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17", ("model.int8.onnx", "tokens.txt")),
+    "Qwen/Qwen3-ASR-0.6B": ("sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25", ("conv_frontend.onnx", "encoder.int8.onnx", "decoder.int8.onnx", "tokenizer")),
+}
+SHERPA_RELEASE_ROOT = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models"
+
 SUPPORTED_QWEN3_MODELS = {
     "Qwen/Qwen3-ASR-0.6B",
     "Qwen/Qwen3-ASR-1.7B",
@@ -39,6 +50,7 @@ SUPPORTED_FUN_ASR_MODELS = {
 }
 
 SUPPORTED_PARAKEET_MODELS = {
+    "nvidia/parakeet-tdt-0.6b-v3",
     "nvidia/parakeet-tdt_ctc-0.6b-ja",
     "nvidia/parakeet-tdt_ctc-1.1b",
     "grider-transwithai/parakeet-ctc-1.1b-ja",
@@ -114,6 +126,17 @@ class ModelDownloadManager:
             return model_id
         return FASTER_WHISPER_MODEL_TO_REPO_ID.get(model_id, f"Systran/faster-whisper-{model_id}")
 
+    @staticmethod
+    def _is_cpu_runtime() -> bool:
+        try:
+            import yaml
+            from backend.config import settings
+            with open(settings.CONFIG_FILE, "r", encoding="utf-8") as config_file:
+                config = yaml.safe_load(config_file) or {}
+            return str(config.get("runtime", {}).get("profile", "cuda")).lower() == "cpu"
+        except (OSError, ValueError):
+            return False
+
     def _validate_model_id(self, engine: str, model_id: str) -> str:
         if engine == "qwen3-asr":
             if model_id not in SUPPORTED_QWEN3_MODELS:
@@ -172,7 +195,9 @@ class ModelDownloadManager:
         """執行單一下載任務"""
         try:
             self._update_task(task_id, status="downloading", progress=0.05, message="準備下載")
-            if engine == "sensevoice":
+            if self._is_cpu_runtime() and model_id in SHERPA_CPU_BUNDLES:
+                await self._download_sherpa_archive(task_id, model_id)
+            elif engine == "sensevoice":
                 await self._download_sensevoice_from_modelscope(task_id, model_id)
             else:
                 repo_id = self._normalize_repo_id(engine, model_id)
@@ -181,6 +206,35 @@ class ModelDownloadManager:
         except Exception as e:
             logger.exception("模型下載失敗 task_id=%s", task_id)
             self._update_task(task_id, status="failed", message="下載失敗", error=str(e))
+
+    async def _download_sherpa_archive(self, task_id: str, model_id: str) -> None:
+        bundle, required_paths = SHERPA_CPU_BUNDLES[model_id]
+        model_root = ensure_model_storage() / "sherpa-onnx"
+        target = (model_root / bundle).resolve()
+        archive = (model_root / f"{bundle}.tar.bz2").resolve()
+
+        def blocking_download() -> None:
+            if target.exists() and all((target / name).exists() for name in required_paths):
+                return
+            urllib.request.urlretrieve(f"{SHERPA_RELEASE_ROOT}/{archive.name}", archive)
+            with tarfile.open(archive, "r:bz2") as model_archive:
+                for member in model_archive.getmembers():
+                    extracted = (model_root / member.name).resolve()
+                    try:
+                        extracted.relative_to(model_root.resolve())
+                    except ValueError as exc:
+                        raise RuntimeError(f"Unsafe path in sherpa model archive: {member.name}") from exc
+                    if member.issym() or member.islnk():
+                        raise RuntimeError(f"Links are not allowed in sherpa model archive: {member.name}")
+                model_archive.extractall(model_root)
+            archive.unlink(missing_ok=True)
+            missing = [name for name in required_paths if not (target / name).exists()]
+            if missing:
+                raise RuntimeError(f"Incomplete sherpa model archive; missing: {', '.join(missing)}")
+
+        self._update_task(task_id, progress=0.15, message="Downloading sherpa-onnx INT8 model")
+        await asyncio.to_thread(blocking_download)
+        self._update_task(task_id, progress=0.95, message=f"sherpa-onnx model ready: {target}")
 
     async def _download_from_hf(self, task_id: str, repo_id: str) -> None:
         """透過 HuggingFace Hub 下載模型（第一版為階段式進度）"""
@@ -330,7 +384,11 @@ class ModelDownloadManager:
 
     def delete_model(self, engine: str, model_id: str) -> Path:
         normalized_model_id = self._validate_model_id(engine, model_id)
-        if engine == "sensevoice":
+        if self._is_cpu_runtime() and normalized_model_id in SHERPA_CPU_BUNDLES:
+            bundle, _ = SHERPA_CPU_BUNDLES[normalized_model_id]
+            cache_root = (get_model_storage_root() / "sherpa-onnx").resolve()
+            repo_dir = (cache_root / bundle).resolve()
+        elif engine == "sensevoice":
             cache_root = self._get_modelscope_cache_dir().resolve()
             repo_dir = next(
                 (candidate for candidate in self._get_modelscope_model_dirs(normalized_model_id) if candidate.exists()),
@@ -357,6 +415,19 @@ class ModelDownloadManager:
     def list_downloaded_models(self) -> List[DownloadedModelInfo]:
         """列出 HuggingFace 快取中的指定模型"""
         models: List[DownloadedModelInfo] = []
+
+        sherpa_root = get_model_storage_root() / "sherpa-onnx"
+        for model_id, (bundle, required_paths) in SHERPA_CPU_BUNDLES.items():
+            model_dir = sherpa_root / bundle
+            if model_dir.is_dir() and all((model_dir / name).exists() for name in required_paths):
+                engine = "qwen3-asr" if model_id.startswith("Qwen/") else (
+                    "sensevoice" if model_id.startswith("iic/") else
+                    "fun-asr-nano" if model_id.startswith("FunAudioLLM/") else "parakeet-ctc-ja"
+                )
+                models.append(DownloadedModelInfo(
+                    engine=engine, model_id=model_id, repo_id=bundle,
+                    size_bytes=self._directory_size(model_dir), cache_path=str(model_dir),
+                ))
 
         for model_id in sorted(SUPPORTED_SENSEVOICE_MODELS):
             for model_dir in self._get_modelscope_model_dirs(model_id):

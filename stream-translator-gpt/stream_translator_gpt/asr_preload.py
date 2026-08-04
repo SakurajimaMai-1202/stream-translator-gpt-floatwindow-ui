@@ -9,6 +9,7 @@ from .audio_transcriber import (OpenaiWhisper, FasterWhisper, SimulStreaming, Re
                                 Qwen3ASRTranscriber, NemoASRTranscriber, SenseVoiceTranscriber,
                                 FunASRNanoTranscriber)
 from .runtime_accelerator import resolve_qwen3_device_map
+from .sherpa_onnx_transcriber import SherpaOnnxTranscriber
 
 
 @dataclass(frozen=True)
@@ -166,6 +167,17 @@ def create_transcriber(config: ASRConfig):
         "asr_corrections_case_sensitive": config.asr_corrections_case_sensitive,
     }
 
+    if (config.runtime_profile or "cuda").lower() == "cpu" and config.backend in {
+        "qwen3", "nemo", "sensevoice", "fun_asr"
+    }:
+        model = (
+            config.qwen3_asr_model if config.backend == "qwen3" else
+            config.nemo_asr_model if config.backend == "nemo" else
+            config.sensevoice_model if config.backend == "sensevoice" else
+            config.fun_asr_model
+        )
+        return SherpaOnnxTranscriber(model=model or "", language=config.language, **common_args)
+
     if config.backend == "faster_simul":
         return SimulStreaming(model=config.model,
                               language=config.language,
@@ -241,6 +253,10 @@ def create_transcriber(config: ASRConfig):
 
 
 def resolve_preload_config(config: ASRConfig) -> ASRConfig:
+    if (config.runtime_profile or "cuda").lower() == "cpu" and config.backend in {
+        "qwen3", "nemo", "sensevoice", "fun_asr"
+    }:
+        return config
     if config.backend == "sensevoice":
         import torch
         return replace(config, sensevoice_device=resolve_sensevoice_preload_device(torch, config))

@@ -36,7 +36,11 @@ if (-not $pythonExe) {
     throw "No usable build Python found. Set STREAM_TRANSLATOR_BUILD_PYTHON."
 }
 
-$sourceRuntimeJson = & $pythonExe -c "import json, sys, torch; cuda = torch.version.cuda; hip = getattr(torch.version, 'hip', None); backend = 'rocm' if hip else ('cuda' if cuda else 'cpu'); print(json.dumps({'python': sys.version.split()[0], 'torch': torch.__version__, 'torch_backend': backend, 'cuda': cuda, 'hip': hip, 'cuda_available': torch.cuda.is_available(), 'device_count': torch.cuda.device_count()}))"
+$sourceRuntimeJson = if ($Profile -eq "cpu") {
+    & $pythonExe -c "import json, sys, sherpa_onnx; print(json.dumps({'python': sys.version.split()[0], 'sherpa_onnx': getattr(sherpa_onnx, '__version__', 'unknown'), 'torch': None, 'torch_backend': 'none', 'cuda': None, 'hip': None, 'cuda_available': False, 'device_count': 0}))"
+} else {
+    & $pythonExe -c "import json, sys, torch; cuda = torch.version.cuda; hip = getattr(torch.version, 'hip', None); backend = 'rocm' if hip else ('cuda' if cuda else 'cpu'); print(json.dumps({'python': sys.version.split()[0], 'torch': torch.__version__, 'torch_backend': backend, 'cuda': cuda, 'hip': hip, 'cuda_available': torch.cuda.is_available(), 'device_count': torch.cuda.device_count()}))"
+}
 if ($LASTEXITCODE -ne 0) {
     throw "Unable to inspect torch in build Python: $pythonExe"
 }
@@ -48,9 +52,6 @@ if ($Profile -eq "cuda" -and -not $sourceRuntime.cuda) {
 if ($Profile -eq "rocm" -and -not $sourceRuntime.hip) {
     throw "ROCm profile requires a build Python with torch.version.hip. Pass -Python to check_runtime_profile_env.ps1 or set STREAM_TRANSLATOR_BUILD_PYTHON to a ROCm/HIP torch runtime."
 }
-if ($Profile -eq "cpu" -and ($sourceRuntime.cuda -or $sourceRuntime.hip)) {
-    throw "CPU profile requires a CPU-only PyTorch runtime. Current torch backend: $($sourceRuntime.torch_backend). Set STREAM_TRANSLATOR_BUILD_PYTHON to a Python environment with CPU-only torch."
-}
 
 $requirementsHash = (Get-FileHash -Path (Join-Path $scriptDir "requirements.txt") -Algorithm SHA256).Hash
 $fullRequirementsHash = (Get-FileHash -Path (Join-Path $scriptDir "requirements_full.txt") -Algorithm SHA256).Hash
@@ -60,7 +61,10 @@ $parakeetRequirementsHash = if (Test-Path $parakeetRequirementsPath) {
 } else {
     ""
 }
-$fingerprintSource = "runtime-schema=2`n" + $Profile + "`n" + $requirementsHash + "`n" + $fullRequirementsHash + "`n" + $parakeetRequirementsHash + "`n" + ($sourceRuntimeJson | Out-String)
+$cpuRequirementsHash = (Get-FileHash -Path (Join-Path $scriptDir "requirements_cpu_sherpa.txt") -Algorithm SHA256).Hash
+$runtimeSchema = if ($Profile -eq "cpu") { 3 } else { 2 }
+$cpuFingerprintPart = if ($Profile -eq "cpu") { "`n" + $cpuRequirementsHash } else { "" }
+$fingerprintSource = "runtime-schema=$runtimeSchema`n" + $Profile + "`n" + $requirementsHash + "`n" + $fullRequirementsHash + "`n" + $parakeetRequirementsHash + $cpuFingerprintPart + "`n" + ($sourceRuntimeJson | Out-String)
 $fingerprintBytes = [Text.Encoding]::UTF8.GetBytes($fingerprintSource)
 $fingerprintStream = [IO.MemoryStream]::new($fingerprintBytes)
 $fingerprint = (Get-FileHash -InputStream $fingerprintStream -Algorithm SHA256).Hash
@@ -69,31 +73,25 @@ $fingerprintStream.Dispose()
 $validationScript = @"
 import importlib
 import sys
-import torch
 
 profile = '$Profile'
-required = ['qwen_asr', 'funasr', 'torchaudio']
-if profile in ('cuda', 'cpu'):
-    required.extend(['faster_whisper', 'whisper', 'omnivad'])
-if profile == 'cuda':
-    required.append('nemo.collections.asr.models')
+required = ['sherpa_onnx', 'numpy', 'scipy', 'omnivad'] if profile == 'cpu' else ['qwen_asr', 'funasr', 'torchaudio']
+if profile == 'cuda': required.extend(['faster_whisper', 'whisper', 'omnivad', 'nemo.collections.asr.models'])
 
 for name in required:
     importlib.import_module(name)
 
-if profile == 'cuda' and not torch.version.cuda:
-    raise SystemExit('CUDA profile requires a CUDA PyTorch runtime')
-if profile == 'rocm' and not getattr(torch.version, 'hip', None):
-    raise SystemExit('ROCm profile requires a ROCm/HIP PyTorch runtime')
-if profile == 'cpu' and (torch.version.cuda or getattr(torch.version, 'hip', None)):
-    raise SystemExit('CPU profile requires a CPU-only PyTorch runtime')
+if profile != 'cpu':
+    import torch
+    if profile == 'cuda' and not torch.version.cuda: raise SystemExit('CUDA profile requires a CUDA PyTorch runtime')
+    if profile == 'rocm' and not getattr(torch.version, 'hip', None): raise SystemExit('ROCm profile requires a ROCm/HIP PyTorch runtime')
 
-print(f'{profile.upper()} Runtime import check OK {torch.__version__}')
+print(f'{profile.upper()} Runtime import check OK')
 "@
 
 if (-not $Force -and (Test-Path $manifestPath)) {
     $existing = Get-Content $manifestPath -Raw -Encoding utf8 | ConvertFrom-Json
-    if ($existing.schema -eq 2 -and $existing.profile -eq $Profile -and $existing.fingerprint -eq $fingerprint) {
+    if ($existing.schema -eq $runtimeSchema -and $existing.profile -eq $Profile -and $existing.fingerprint -eq $fingerprint) {
         $cachedPackage = Join-Path $runtimeCache "Lib\site-packages\stream_translator_gpt"
         if (Test-Path $cachedPackage) { Remove-Item $cachedPackage -Recurse -Force }
         Copy-Item $patchedPackage $cachedPackage -Recurse -Force
@@ -148,6 +146,15 @@ $removePatterns = @(
     "PyInstaller", "pyinstaller-*.dist-info", "_pytest", "pytest", "pytest-*.dist-info",
     "~orch", "~orch-*.dist-info", "__editable__*", "*.egg-link"
 )
+if ($Profile -eq "cpu") {
+    $removePatterns += @(
+        "torch", "torch-*.dist-info", "torchaudio", "torchaudio-*.dist-info",
+        "torchvision", "torchvision-*.dist-info", "funasr", "funasr-*.dist-info",
+        "qwen_asr", "qwen_asr-*.dist-info", "transformers", "transformers-*.dist-info",
+        "nemo", "nemo_toolkit-*.dist-info", "faster_whisper", "faster_whisper-*.dist-info",
+        "whisper", "openai_whisper-*.dist-info"
+    )
+}
 foreach ($pattern in $removePatterns) {
     Get-ChildItem $runtimeSitePackages -Filter $pattern -Force -ErrorAction SilentlyContinue |
         Remove-Item -Recurse -Force
@@ -166,18 +173,19 @@ $pthName = (& $pythonExe -c "import sys; print(f'python{sys.version_info.major}{
 $pthContent = ".`r`nLib`r`nDLLs`r`nLib\site-packages`r`nimport site`r`n"
 [IO.File]::WriteAllText((Join-Path $runtimeCache $pthName), $pthContent, [Text.Encoding]::ASCII)
 
-$versionInfo = & $pythonExe -c "import json, sys, torch; cuda = torch.version.cuda; hip = getattr(torch.version, 'hip', None); backend = 'rocm' if hip else ('cuda' if cuda else 'cpu'); print(json.dumps({'python': sys.version.split()[0], 'torch': torch.__version__, 'torch_backend': backend, 'cuda': cuda, 'hip': hip, 'cuda_available': torch.cuda.is_available(), 'device_count': torch.cuda.device_count()}))"
+$versionInfo = $sourceRuntimeJson
 $versions = $versionInfo | ConvertFrom-Json
 
 & (Join-Path $runtimeCache "python.exe") -c $validationScript
 if ($LASTEXITCODE -ne 0) { throw "$profileLabel Runtime validation failed" }
 
 [ordered]@{
-    schema = 2
+    schema = $runtimeSchema
     profile = $Profile
     fingerprint = $fingerprint
     python = $versions.python
     torch = $versions.torch
+    sherpa_onnx = $versions.sherpa_onnx
     torch_backend = $versions.torch_backend
     cuda = $versions.cuda
     hip = $versions.hip

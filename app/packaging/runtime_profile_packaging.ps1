@@ -113,19 +113,19 @@ function Get-RuntimeProfileDocText {
     } elseif ($RuntimeProfile -eq "cpu") {
         $name = "Stream Translator CPU"
         $status = "相容版"
-        $runtime = "CPU profile / PyTorch CPU-only"
-        $requirements = "不需要 NVIDIA 或 AMD 獨立顯示卡。CPU 速度會比 GPU 慢，建議先使用 Faster-Whisper small / medium 或 Qwen3-ASR 0.6B。"
+        $runtime = "CPU profile / sherpa-onnx INT8"
+        $requirements = "不需要 NVIDIA 或 AMD 獨立顯示卡。五個本地模型都透過 sherpa-onnx 在 CPU 執行。"
         $models = @(
-            "Faster-Whisper: small / medium 慢速",
-            "Qwen3-ASR offline: 0.6B",
-            "SenseVoiceSmall: compatibility，CPU 可用，速度待測"
+            "Parakeet TDT 0.6B v3 INT8: English",
+            "Parakeet TDT-CTC 0.6B INT8: Japanese",
+            "Fun-ASR Nano / SenseVoiceSmall / Qwen3-ASR 0.6B: INT8"
         )
         $notes = @(
             "本版本是 CPU 相容版，不會承諾 GPU 加速。",
             "CPU profile 會把 ASR device policy 寫成 cpu，避免誤用顯卡。",
             "CPU 版保留遠端 API / 遠端字幕能力，可用於沒有獨顯的相容環境。",
             "SenseVoiceSmall 不預先標慢速；請依實際 CPU 與音訊長度測試速度。",
-            "CPU package 使用 CPU-only PyTorch runtime，不會攜帶 CUDA / ROCm GPU torch runtime。"
+            "CPU package 使用 sherpa-onnx runtime，不攜帶 PyTorch、NeMo、CUDA 或 ROCm runtime。"
         )
         $warning = "CPU 版適合沒有可用獨顯或想先測功能的使用者；大型模型會很慢。"
     } else {

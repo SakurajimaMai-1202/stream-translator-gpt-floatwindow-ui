@@ -32,6 +32,7 @@ from .subtitle_sharing import DEFAULT_PUBLIC_HOST, DEFAULT_PUBLIC_PORT, Subtitle
 from .asr_preload import PreloadedTranscriberManager, build_asr_config
 from .pipeline_runner import PipelineController, run_inprocess_pipeline
 from .runtime_accelerator import resolve_qwen3_device_map
+from .sherpa_onnx_transcriber import SherpaOnnxTranscriber
 from . import __version__
 
 
@@ -238,6 +239,18 @@ def main(url, **kwargs):
                 'asr_correction_rules': asr_correction_rules,
                 'asr_corrections_case_sensitive': asr_corrections_case_sensitive,
             }
+            if str(runtime_profile).lower() == 'cpu':
+                sherpa_model = None
+                if use_qwen3_asr:
+                    sherpa_model = qwen3_asr_model or model
+                elif use_sensevoice_asr:
+                    sherpa_model = sensevoice_model
+                elif use_fun_asr:
+                    sherpa_model = fun_asr_model
+                elif use_nemo_asr:
+                    sherpa_model = nemo_asr_model or model
+                if sherpa_model:
+                    return SherpaOnnxTranscriber(model=sherpa_model, language=language, **common_args)
             if use_qwen3_asr:
                 import torch
                 qwen_model = qwen3_asr_model or model

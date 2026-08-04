@@ -2,7 +2,7 @@
 param(
     [ValidateSet("cuda", "cpu", "rocm")]
     [string]$Profile = "cuda",
-    [ValidateSet("auto", "cuda", "cpu", "rocm")]
+    [ValidateSet("auto", "cuda", "cpu", "rocm", "none")]
     [string]$ExpectedTorchBackend = "auto"
 )
 
@@ -23,6 +23,8 @@ if ($ExpectedTorchBackend -eq "auto") {
         $ExpectedTorchBackend = "rocm"
     } elseif ($Profile -eq "cuda") {
         $ExpectedTorchBackend = "cuda"
+    } elseif ($Profile -eq "cpu") {
+        $ExpectedTorchBackend = "none"
     }
 }
 
@@ -45,8 +47,9 @@ if ($configText -notmatch "(?m)^  device_policy:\s*$expectedPolicy\s*$") {
 }
 
 $manifest = Get-Content $runtimeManifestPath -Raw -Encoding utf8 | ConvertFrom-Json
-if ($manifest.schema -ne 2) {
-    throw "runtime manifest schema is not 2: $runtimeManifestPath"
+$expectedSchema = if ($Profile -eq "cpu") { 3 } else { 2 }
+if ($manifest.schema -ne $expectedSchema) {
+    throw "runtime manifest schema is not $expectedSchema`: $runtimeManifestPath"
 }
 if ($manifest.profile -ne $Profile) {
     throw "runtime manifest profile is '$($manifest.profile)', expected '$Profile': $runtimeManifestPath"
@@ -64,6 +67,9 @@ if ($Profile -eq "cuda" -and -not $manifest.cuda) {
 if ($Profile -eq "rocm" -and -not $manifest.hip) {
     throw "ROCm artifact manifest missing hip version: $runtimeManifestPath"
 }
+if ($Profile -eq "cpu" -and -not $manifest.sherpa_onnx) {
+    throw "CPU artifact manifest missing sherpa-onnx version: $runtimeManifestPath"
+}
 
 [pscustomobject]@{
     Profile = $Profile
@@ -72,6 +78,7 @@ if ($Profile -eq "rocm" -and -not $manifest.hip) {
     AppUpdateZip = $packageInfo.AppUpdateZip
     TorchBackend = $manifest.torch_backend
     Torch = $manifest.torch
+    SherpaOnnx = $manifest.sherpa_onnx
     Cuda = $manifest.cuda
     Hip = $manifest.hip
     PolicyForcesCpu = [bool]$manifest.policy_forces_cpu

@@ -1,0 +1,5 @@
+# CPU profile ASR runtime. CUDA and ROCm profiles do not install this file.
+sherpa-onnx==1.12.36
+numpy>=1.26,<3
+scipy>=1.11,<2
+omnivad>=0.2.12,<1.0

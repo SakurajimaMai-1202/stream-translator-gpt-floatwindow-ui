@@ -12,6 +12,10 @@ Windows 即時語音辨識、翻譯與浮動字幕工具。可擷取線上影音
 
 <img width="2381" height="1058" alt="Stream Translator FloatWindow" src="https://github.com/user-attachments/assets/0a663535-dd94-40a6-8444-3c00844bc563" />
 
+## 演示影片
+
+[觀看 Stream Translator FloatWindow 操作演示](https://youtu.be/p1O2Ecu4js0)
+
 ## 主要功能
 
 - 即時轉錄 YouTube、Twitch、Bilibili、一般串流網址、音訊檔與系統聲音。
@@ -133,6 +137,66 @@ OpenAI ASR Key 不會自動當作翻譯 Key 使用；OpenAI 翻譯與 Gemini 也
 - 從 llama.cpp 官方 Release 選擇適合目前硬體的 Windows Runtime 並安裝。
 
 預設 llama.cpp OpenAI-compatible 端點為 `http://127.0.0.1:8080/v1`。若使用 LM Studio，常見端點為 `http://127.0.0.1:1234/v1`。
+
+### 教學：使用 hy-mt2-7b-IQ4 翻譯
+
+以下以 `hy-mt2-7b-IQ4` GGUF 量化模型為例。這是翻譯 LLM，不是 ASR 模型；語音仍需先由 CUDA 原生 ASR、sherpa-onnx CPU ASR 或雲端 ASR 轉成文字。
+
+#### 1. 準備 GGUF 模型
+
+1. 取得 `hy-mt2-7b-IQ4` 的 GGUF 檔案。請依模型發布頁的檔名與授權條款下載，建議使用 IQ4 量化版本以降低 VRAM／RAM 需求。
+2. 啟動程式，開啟「LLM 模型管理」或「Llama 執行設定」的模型目錄。
+3. 將 GGUF 檔案放入模型目錄，例如：
+
+   ```text
+   models/
+   └─ llama/
+      └─ hy-mt2-7b-IQ4.gguf
+   ```
+
+4. 回到 Llama 頁面按「重新整理」，確認模型名稱、檔案大小與路徑都已顯示。模型檔只需要下載一次，CUDA、CPU 與 ROCm 的 llama.cpp Runtime 可以共用同一份 GGUF。
+
+#### 2. 安裝 llama.cpp Runtime
+
+1. 在「Llama 執行設定」的 Runtime 區按「檢查更新」或「下載 Runtime」。
+2. 依目前硬體選擇 Windows Runtime：NVIDIA 選 CUDA，沒有 NVIDIA CUDA 時選 CPU；ROCm 使用者選頁面標示的 Experimental Runtime。
+3. 安裝完成後確認 `llama-server.exe` 與相依 DLL 位於程式的 `llama` Runtime 目錄。
+
+Runtime 與 GGUF 模型是兩個不同項目：Runtime 決定推論後端，GGUF 決定實際翻譯模型。只下載模型而沒有 llama.cpp Runtime，伺服器不會啟動。
+
+#### 3. 設定並啟動伺服器
+
+在「Llama 執行設定」填入或確認以下值：
+
+| 設定 | 建議值 | 說明 |
+|---|---|---|
+| Model | `hy-mt2-7b-IQ4.gguf` | 從模型選擇器挑選，不要手動輸入錯誤路徑 |
+| Host | `127.0.0.1` | 只讓本機 Stream Translator 存取 |
+| Port | `8080` | 必須與翻譯端點一致 |
+| GPU layers | `auto` 或依 VRAM 調整 | VRAM 不足時降低；CPU Runtime 設為 0 |
+| Context | `4096` 起 | 記憶體足夠時再提高 |
+| Threads | `auto` | CPU Runtime 可依實際核心數調整 |
+
+按「套用並重啟伺服器」，等待狀態變成 Running，再按「測試翻譯」。測試成功應能看到 `/v1/models` 回應與一段翻譯結果。
+
+#### 4. 指定 Stream Translator 翻譯後端
+
+1. 開啟「翻譯選項」。
+2. 翻譯後端選擇「本機 LLM／OpenAI-compatible」。
+3. Base URL 填入 `http://127.0.0.1:8080/v1`。
+4. Model 填入 `hy-mt2-7b-IQ4` 或伺服器 `/v1/models` 回報的 model id。
+5. API Key 若 llama.cpp 未啟用驗證可填任意非空值；不要把 OpenAI ASR Key 當成本機伺服器密碼。
+6. 儲存後按翻譯連線測試，再回到「即時轉譯」開始工作。
+
+翻譯流程會是：音訊輸入 → ASR 轉錄 → llama.cpp／hy-mt2-7b-IQ4 翻譯 → 字幕輸出。若只測試 Llama 翻譯，可在 Llama 頁直接使用「測試翻譯」，不必啟動音訊擷取。
+
+#### 5. 常見問題
+
+- **伺服器啟動後立即停止**：確認 GGUF 路徑存在、Runtime 與硬體相符，並降低 GPU layers 或 context。
+- **VRAM 不足**：先將 GPU layers 降低，或改用更低量化模型；CPU ASR 與 Llama 翻譯可同時使用，但仍需要足夠 RAM。
+- **連線測試失敗**：確認 llama-server 狀態為 Running、埠號未被其他程式占用，且 Base URL 包含 `/v1`。
+- **翻譯語言不正確**：確認翻譯提示詞、來源／目標語言及模型的翻譯格式；hy-mt2-7b-IQ4 是翻譯模型，不負責語音辨識。
+- **CPU ASR 能用但 Llama 不能用**：兩者是獨立 Runtime。CPU ASR sidecar 只負責 sherpa-onnx 語音辨識，仍需另外安裝 llama.cpp CPU Runtime 才能使用本機 LLM 翻譯。
 
 ## 字幕分享
 

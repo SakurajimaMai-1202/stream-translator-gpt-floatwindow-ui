@@ -127,7 +127,7 @@ CPU 與 ROCm 包會分別寫成 `cpu` / `rocm`。CPU 包會同步寫入 `device_
 重點：
 
 - CUDA：正式支援 Faster-Whisper 全系列、Qwen3-ASR offline 0.6B / 1.7B / 1.7B-JA；SenseVoiceSmall 列 compatibility。
-- CPU：正式列 Faster-Whisper small / medium 慢速、Qwen3-ASR offline 0.6B；SenseVoiceSmall 列 compatibility，CPU 可用但速度待測。
+- CPU：v1.3.9 起使用 sherpa-onnx／ONNX Runtime，不支援 Faster-Whisper；CPU 模型必須使用 Sherpa-ONNX 模型管理頁提供的相容格式。
 - ROCm：正式列 Qwen3-ASR offline 0.6B / 1.7B / 1.7B-JA；SenseVoiceSmall 已由 AMD ROCm 實機驗證可用。
 
 ## 三版本統一快速打包

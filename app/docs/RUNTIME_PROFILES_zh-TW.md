@@ -38,7 +38,7 @@ app/dist-rocm
 
 | 功能 | 支援 |
 | --- | --- |
-| Faster-Whisper | small / medium，慢速 |
+| Faster-Whisper | 不支援；CPU Profile 自 v1.3.9 起為純 sherpa-onnx／ONNX Runtime |
 | Qwen3-ASR offline | 0.6B |
 | SenseVoiceSmall | compatibility，CPU 可用，速度待測 |
 | Qwen3-ASR default dtype | `float32` |
@@ -50,7 +50,7 @@ CPU profile 會把預設的 Qwen3 `bfloat16` 改成 `float32`，避免 CPU runti
 
 | 功能 | 支援 |
 | --- | --- |
-| Faster-Whisper | GPU 不正式承諾；必要時走 CPU fallback |
+| Faster-Whisper | 不支援；ROCm 不可再回退至 CPU Faster-Whisper |
 | Qwen3-ASR offline | 0.6B / 1.7B / 1.7B-JA |
 | SenseVoiceSmall | 已由 AMD ROCm 實機驗證可用；package 仍標示 Experimental |
 | Qwen3-ASR default dtype | `bfloat16` |
@@ -214,9 +214,9 @@ CUDA：
 
 CPU：
 
-- Faster-Whisper small / medium
-- Qwen3-ASR 0.6B，`float32`
-- SenseVoiceSmall 短音檔轉錄，速度待測
+- 不提供 Faster-Whisper
+- 使用 Sherpa-ONNX 模型管理頁提供的 Qwen3-ASR、Fun-ASR、SenseVoice 或 Parakeet 相容模型
+- 驗證 sherpa-onnx／ONNX Runtime import、模型載入與短音檔轉錄
 
 ROCm：
 

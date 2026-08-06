@@ -1,6 +1,4 @@
 general:
-  openai_api_key: YOUR_OPENAI_API_KEY_HERE
-  google_api_key: ''
   log_level: INFO
 server:
   public_port: 8765
@@ -41,10 +39,12 @@ audio_slicing_vad:
   prefix_retention_length: 0.25
   vad_enabled: true
   vad_every_n_frames: 1
-  vad_backend: silero
+  vad_backend: firered
   firered_vad_model_path: ''
 transcription:
+  openai_api_key: ''
   backend: qwen3-asr
+  asr_compute_backend: auto
   model: Qwen/Qwen3-ASR-1.7B
   language: ja
   filters: []
@@ -67,6 +67,8 @@ transcription:
   nemo_asr_decoding: tdt
   nemo_asr_dtype: bfloat16
   asr_corrections_enabled: false
+  asr_correction_log_enabled: false
+  asr_correction_learning_enabled: false
   asr_corrections_case_sensitive: false
   asr_correction_rules: []
   whisper_filters:
@@ -77,6 +79,8 @@ transcription:
   transcription_initial_prompt: ''
   openai_transcription_model: whisper-1
 translation:
+  openai_api_key: ''
+  google_api_key: ''
   backend: custom:localllm
   model: localllm
   translation_prompt: Translate the following text to English
@@ -87,8 +91,8 @@ translation:
   gemini_model: ''
   translation_history_size: 0
   translation_timeout: 10
-  gpt_base_url: http://127.0.0.1:8080
-  gemini_base_url: null
+  gpt_base_url: https://api.openai.com/v1
+  gemini_base_url: https://generativelanguage.googleapis.com
   processing_proxy: null
   use_json_result: false
   retry_if_translation_fails: true
@@ -112,6 +116,7 @@ translation:
   smart_prompt_enabled: true
 terminology:
   use_terminology_glossary: false
+  translation_glossary_audit_enabled: false
   terminology_glossary: {}
   glossary: ''
   glossary_list: []
@@ -137,13 +142,14 @@ output_notification:
   output_timestamps: true
   hide_transcribe_result: false
 subtitle_settings:
+  _visibility_defaults_v2: true
   fontSize: 24
   fontWeight: 700
   opacity: 100
   showOriginal: true
   showTranslated: true
   showTimestamp: true
-  showLatency: false
+  showLatency: true
   position: bottom
   autoScroll: true
   maxDisplayCount: 30
@@ -189,6 +195,8 @@ ui:
 llama:
   model_dir: ./models
   model_path: ''
+  recent_model_paths: []
+  favorite_model_paths: []
   selected_preset: ''
   default_preset: ''
   host: 127.0.0.1

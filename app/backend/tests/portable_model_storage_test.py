@@ -4,6 +4,7 @@ import yaml
 
 from backend.config import settings
 from backend.core.model_download_manager import ModelDownloadManager
+from backend.core import model_download_manager as model_manager_module
 from backend.core.portable_paths import (
     apply_model_cache_environment,
     get_huggingface_hub_cache,
@@ -91,3 +92,29 @@ def test_sensevoice_legacy_modelscope_path_is_listed_and_deleted(monkeypatch, tm
 
     assert deleted == repo_dir.resolve()
     assert not repo_dir.exists()
+
+
+def test_sherpa_model_is_listed_and_deleted_independently_from_gpu_cache(monkeypatch, tmp_path):
+    manager = ModelDownloadManager()
+    storage_root = tmp_path / "models"
+    bundle = "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17"
+    cpu_dir = storage_root / "sherpa-onnx" / bundle
+    cpu_dir.mkdir(parents=True)
+    (cpu_dir / "model.int8.onnx").write_bytes(b"cpu")
+    (cpu_dir / "tokens.txt").write_text("tokens", encoding="utf-8")
+    gpu_dir = storage_root / "modelscope" / "models" / "iic" / "SenseVoiceSmall"
+    gpu_dir.mkdir(parents=True)
+    (gpu_dir / "model.bin").write_bytes(b"gpu")
+
+    monkeypatch.setattr(model_manager_module, "get_model_storage_root", lambda: storage_root)
+    monkeypatch.setattr(manager, "_get_modelscope_cache_dir", lambda: storage_root / "modelscope")
+    monkeypatch.setattr(manager, "_get_hf_cache_dir", lambda: storage_root / "empty-hf")
+
+    models = manager.list_downloaded_models()
+    matches = [item for item in models if item.model_id == "iic/SenseVoiceSmall"]
+    assert {item.compute_backend for item in matches} == {"cpu", "gpu"}
+
+    deleted = manager.delete_model("sensevoice", "iic/SenseVoiceSmall", "cpu")
+    assert deleted == cpu_dir.resolve()
+    assert not cpu_dir.exists()
+    assert gpu_dir.exists()

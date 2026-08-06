@@ -1,4 +1,4 @@
-# Packaging
+﻿# Packaging
 
 Run release commands from the `app` directory. The root-level scripts are the
 developer-facing entry points; scripts in this `packaging` directory are
@@ -17,22 +17,22 @@ Use `app/build_release.ps1` for normal release builds:
 Build all three profiles from one shared frontend/PyInstaller GUI artifact:
 
 ```powershell
-.\build_all_profiles.ps1 -Version 1.3.8 -Mode Quick -ReuseRuntimeCache
-.\build_all_profiles.ps1 -Version 1.3.8 -Mode Final -ReuseRuntimeCache -CompressionLevel 7 -SplitSizeMiB 1900
+.\build_all_profiles.ps1 -Version 1.3.9 -Mode Quick -ReuseRuntimeCache
+.\build_all_profiles.ps1 -Version 1.3.9 -Mode Final -ReuseRuntimeCache -CompressionLevel 7 -SplitSizeMiB 1900
 ```
 
 After a packaging-stage failure, keep a previously completed shared GUI and
 resume without rerunning Vite/PyInstaller:
 
 ```powershell
-.\build_all_profiles.ps1 -Version 1.3.8 -Mode Quick -ReuseRuntimeCache -ReuseSharedGui
+.\build_all_profiles.ps1 -Version 1.3.9 -Mode Quick -ReuseRuntimeCache -ReuseSharedGui
 ```
 
 If all three profile folders and App Update archives already passed their
 individual builds, resume only validation and asset collection:
 
 ```powershell
-.\build_all_profiles.ps1 -Version 1.3.8 -Mode Quick -ReuseSharedGui -ReuseProfileArtifacts
+.\build_all_profiles.ps1 -Version 1.3.9 -Mode Quick -ReuseSharedGui -ReuseProfileArtifacts
 ```
 
 `Quick` builds the shared GUI once, validates and assembles all three profile
@@ -119,11 +119,25 @@ Validate built artifacts from `app`:
 
 ```powershell
 .\validate_runtime_artifact.ps1 -Profile cuda
-.\validate_runtime_artifact.ps1 -Profile cpu -ExpectedTorchBackend cpu
+.\validate_runtime_artifact.ps1 -Profile cpu -ExpectedTorchBackend none
 .\validate_runtime_artifact.ps1 -Profile rocm
 ```
 
-CPU release builds require a CPU-only PyTorch build environment. CUDA or ROCm
-torch must not be used to create the CPU runtime.
+CPU release builds require a Python environment containing
+`requirements_cpu_sherpa.txt`. The CPU ASR runtime uses sherpa-onnx INT8 and
+removes PyTorch, NeMo, FunASR, Transformers, Whisper, CUDA, and ROCm packages.
+
+CUDA and ROCm full packages include the isolated `_runtime_cpu_asr` sidecar by
+default, so users can switch between the packaged GPU runtime and sherpa-onnx
+CPU ASR without another install. Build all profiles with:
+
+```powershell
+.\build_all_profiles.ps1 -Version 1.3.9 -Mode Final
+```
+
+For a deliberately smaller GPU-only artifact, opt out explicitly with
+`-IncludeCpuAsrSidecar:$false`. Artifact validation should use
+`validate_runtime_artifact.ps1 -Profile <cuda|rocm> -RequireCpuAsrSidecar` for
+the standard full packages.
 
 See `app/docs/PACKAGING_zh-TW.md` for the profile matrix, package names, and build Python requirements.

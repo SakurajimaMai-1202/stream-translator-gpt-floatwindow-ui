@@ -41,6 +41,9 @@ export interface ServerStatus {
   server_url: string | null;
   current_model: string | null;
   pid: number | null;
+  resources: Record<string, any>;
+  performance: Record<string, any>;
+  runtime: { installed: boolean; path: string; version: string; download_url: string };
 }
 
 export interface InferenceRequest {
@@ -64,7 +67,45 @@ export interface TranslateResponse {
   model: string;
 }
 
+export interface RuntimeVariant {
+  id: string;
+  label: string;
+  recommended: boolean;
+  size: number;
+  assets: Array<{ name: string; url: string }>;
+}
+
+export interface RuntimeReleaseInfo {
+  tag: string;
+  published_at: string | null;
+  variants: RuntimeVariant[];
+}
+
+export interface RuntimeInstallStatus {
+  state: 'idle' | 'resolving' | 'downloading' | 'installing' | 'completed' | 'error';
+  message: string;
+  progress: number;
+  variant: string;
+  tag: string;
+  installed_path: string;
+  error: string;
+}
+
 export const llamaApi = {
+  async getRuntimeReleases(): Promise<RuntimeReleaseInfo> {
+    const response = await axios.get(`${API_BASE}/runtime/releases`);
+    return response.data;
+  },
+
+  async installRuntime(variant: string): Promise<any> {
+    const response = await axios.post(`${API_BASE}/runtime/install`, { variant });
+    return response.data;
+  },
+
+  async getRuntimeInstallStatus(): Promise<RuntimeInstallStatus> {
+    const response = await axios.get(`${API_BASE}/runtime/install/status`);
+    return response.data;
+  },
   /**
    * 列出可用的 GGUF 模型
    */

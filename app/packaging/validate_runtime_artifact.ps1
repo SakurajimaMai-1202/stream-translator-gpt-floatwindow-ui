@@ -1,9 +1,10 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 param(
     [ValidateSet("cuda", "cpu", "rocm")]
     [string]$Profile = "cuda",
-    [ValidateSet("auto", "cuda", "cpu", "rocm")]
-    [string]$ExpectedTorchBackend = "auto"
+    [ValidateSet("auto", "cuda", "cpu", "rocm", "none")]
+    [string]$ExpectedTorchBackend = "auto",
+    [switch]$RequireCpuAsrSidecar
 )
 
 $ErrorActionPreference = "Stop"
@@ -17,16 +18,19 @@ $packageDir = Join-Path $distDir $packageInfo.PackageName
 $configPath = Join-Path $packageDir "config.yaml"
 $runtimeManifestPath = Join-Path $packageDir "_runtime\runtime-version.json"
 $appUpdateZip = Join-Path $distDir $packageInfo.AppUpdateZip
+$nodeRuntimePath = Join-Path $packageDir "_js_runtime\node.exe"
 
 if ($ExpectedTorchBackend -eq "auto") {
     if ($Profile -eq "rocm") {
         $ExpectedTorchBackend = "rocm"
     } elseif ($Profile -eq "cuda") {
         $ExpectedTorchBackend = "cuda"
+    } elseif ($Profile -eq "cpu") {
+        $ExpectedTorchBackend = "none"
     }
 }
 
-foreach ($requiredPath in @($distDir, $packageDir, $configPath, $runtimeManifestPath, $appUpdateZip)) {
+foreach ($requiredPath in @($distDir, $packageDir, $configPath, $runtimeManifestPath, $appUpdateZip, $nodeRuntimePath)) {
     if (-not (Test-Path $requiredPath)) {
         throw "Missing runtime artifact path: $requiredPath"
     }
@@ -45,8 +49,9 @@ if ($configText -notmatch "(?m)^  device_policy:\s*$expectedPolicy\s*$") {
 }
 
 $manifest = Get-Content $runtimeManifestPath -Raw -Encoding utf8 | ConvertFrom-Json
-if ($manifest.schema -ne 2) {
-    throw "runtime manifest schema is not 2: $runtimeManifestPath"
+$expectedSchema = if ($Profile -eq "cpu") { 3 } else { 2 }
+if ($manifest.schema -ne $expectedSchema) {
+    throw "runtime manifest schema is not $expectedSchema`: $runtimeManifestPath"
 }
 if ($manifest.profile -ne $Profile) {
     throw "runtime manifest profile is '$($manifest.profile)', expected '$Profile': $runtimeManifestPath"
@@ -64,6 +69,36 @@ if ($Profile -eq "cuda" -and -not $manifest.cuda) {
 if ($Profile -eq "rocm" -and -not $manifest.hip) {
     throw "ROCm artifact manifest missing hip version: $runtimeManifestPath"
 }
+if ($Profile -eq "cpu" -and -not $manifest.sherpa_onnx) {
+    throw "CPU artifact manifest missing sherpa-onnx version: $runtimeManifestPath"
+}
+if ((& $nodeRuntimePath --version) -notmatch '^v(2[2-9]|[3-9][0-9])\.') {
+    throw "Packaged Node.js runtime must be version 22 or newer: $nodeRuntimePath"
+}
+
+$cpuAsrSidecar = $null
+if ($Profile -ne "cpu") {
+    $cpuAsrRuntimePath = Join-Path $packageDir "_runtime_cpu_asr"
+    if ($RequireCpuAsrSidecar -and -not (Test-Path -LiteralPath $cpuAsrRuntimePath -PathType Container)) {
+        throw "CPU ASR sidecar is required but missing: $cpuAsrRuntimePath"
+    }
+    if (Test-Path -LiteralPath $cpuAsrRuntimePath -PathType Container) {
+        $cpuAsrPython = Join-Path $cpuAsrRuntimePath "python.exe"
+        $cpuAsrManifestPath = Join-Path $cpuAsrRuntimePath "runtime-version.json"
+        foreach ($requiredSidecarPath in @($cpuAsrPython, $cpuAsrManifestPath)) {
+            if (-not (Test-Path -LiteralPath $requiredSidecarPath -PathType Leaf)) {
+                throw "CPU ASR sidecar path is missing: $requiredSidecarPath"
+            }
+        }
+        $cpuAsrManifest = Get-Content $cpuAsrManifestPath -Raw -Encoding utf8 | ConvertFrom-Json
+        if ($cpuAsrManifest.profile -ne "cpu" -or $cpuAsrManifest.torch_backend -ne "none" -or -not $cpuAsrManifest.sherpa_onnx) {
+            throw "CPU ASR sidecar manifest is invalid: $cpuAsrManifestPath"
+        }
+        & $cpuAsrPython -c "import importlib.util, sherpa_onnx, stream_translator_gpt.main; assert importlib.util.find_spec('torch') is None, 'CPU ASR sidecar must not include torch'; print(sherpa_onnx.__version__)"
+        if ($LASTEXITCODE -ne 0) { throw "CPU ASR sidecar runtime validation failed: $cpuAsrRuntimePath" }
+        $cpuAsrSidecar = $cpuAsrManifest.sherpa_onnx
+    }
+}
 
 [pscustomobject]@{
     Profile = $Profile
@@ -72,6 +107,8 @@ if ($Profile -eq "rocm" -and -not $manifest.hip) {
     AppUpdateZip = $packageInfo.AppUpdateZip
     TorchBackend = $manifest.torch_backend
     Torch = $manifest.torch
+    SherpaOnnx = $manifest.sherpa_onnx
+    CpuAsrSidecar = $cpuAsrSidecar
     Cuda = $manifest.cuda
     Hip = $manifest.hip
     PolicyForcesCpu = [bool]$manifest.policy_forces_cpu

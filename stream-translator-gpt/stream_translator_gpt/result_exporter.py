@@ -8,6 +8,7 @@ import requests
 
 from .common import TranslationTask, LoopWorkerBase, sec2str, start_daemon_thread, BOLD, ENDC, WARNING
 from .subtitle_sharing import format_srt_timestamp
+from .latency_stats import LatencyWindow
 
 SUBTITLE_EVENT_PREFIX = "__ST_SUBTITLE_EVENT__"
 DISCORD_MAX_RATE_LIMIT_RETRIES = 5
@@ -33,14 +34,23 @@ def _format_latency_ms(value: float | None) -> float | None:
 
 def _format_latency_log(task: TranslationTask) -> str:
     parts = []
+    trace_metrics = task.latency_trace.metrics()
+    if trace_metrics.get("speech_to_slice_ms") is not None:
+        parts.append(f"Slice {trace_metrics['speech_to_slice_ms']:.0f}ms")
     if task.asr_latency_ms is not None:
         parts.append(f"ASR {task.asr_latency_ms:.0f}ms")
+    if trace_metrics.get("asr_queue_ms") is not None:
+        parts.append(f"ASR Queue {trace_metrics['asr_queue_ms']:.0f}ms")
+    if trace_metrics.get("assembler_wait_ms") is not None:
+        parts.append(f"Assembler {trace_metrics['assembler_wait_ms']:.0f}ms")
     if task.llm_latency_ms is not None:
         parts.append(f"LLM {task.llm_latency_ms:.0f}ms")
     if task.translation_queue_latency_ms is not None:
         parts.append(f"Queue {task.translation_queue_latency_ms:.0f}ms")
     if task.total_latency_ms is not None:
         parts.append(f"Total {task.total_latency_ms:.0f}ms")
+    if trace_metrics.get("end_to_end_ms") is not None:
+        parts.append(f"E2E {trace_metrics['end_to_end_ms']:.0f}ms")
     if not parts:
         return ""
     return f" [Latency: {' | '.join(parts)}]"
@@ -98,6 +108,7 @@ class ResultExporter(LoopWorkerBase):
         self.gui_callback = gui_callback  # GUI 回呼函式
         self.require_translation = require_translation
         self.emit_json_events = emit_json_events
+        self.latency_window = LatencyWindow(maxlen=50)
 
         if subtitle_share_push_url and self.subtitle_share_push_url != subtitle_share_push_url:
             print(f"{WARNING}Replaced subtitle share push host with 127.0.0.1: {self.subtitle_share_push_url}")
@@ -242,6 +253,12 @@ class ResultExporter(LoopWorkerBase):
             subtitle_timestamp = (
                 f'{format_srt_timestamp(task.time_range[0])} -> {format_srt_timestamp(task.time_range[1])}'
             )
+            delivered_at = time.perf_counter()
+            task.latency_trace.subtitle_delivered_at = delivered_at
+            if task.total_latency_ms is None:
+                task.total_latency_ms = (delivered_at - task.created_at_monotonic) * 1000
+            latency_trace = task.latency_trace.metrics()
+            self.latency_window.add(latency_trace)
             subtitle_event_data = {
                 "timestamp": subtitle_timestamp,
                 "original": task.transcript or "",
@@ -253,6 +270,9 @@ class ResultExporter(LoopWorkerBase):
                 "segment_id": task.segment_id,
                 "translation_provider": task.translation_provider,
                 "translation_model": task.translation_model,
+                **latency_trace,
+                "latency_trace": latency_trace,
+                "latency_window": self.latency_window.snapshot(),
             }
             if self.emit_json_events:
                 print(

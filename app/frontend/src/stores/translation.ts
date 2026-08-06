@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
-import { translationApi, configApi, runtimeApi, type Config, type AudioSource, type RuntimeStatus } from '../services/api';
+import { translationApi, configApi, runtimeApi, type Config, type AudioSource, type RuntimeStatus, type SubtitleLatencyTrace, type LatencyWindowSnapshot } from '../services/api';
 
 export interface HomeInputState {
   urlInput: string;
@@ -25,6 +25,8 @@ export interface SubtitleLine {
   llm_latency_ms?: number | null;
   translation_queue_latency_ms?: number | null;
   total_latency_ms?: number | null;
+  latency_trace?: SubtitleLatencyTrace;
+  latency_window?: LatencyWindowSnapshot;
 }
 
 export const useTranslationStore = defineStore('translation', () => {
@@ -74,6 +76,17 @@ export const useTranslationStore = defineStore('translation', () => {
     broadcastChannel = new BroadcastChannel('subtitle-updates');
   } catch (error) {
     console.error('BroadcastChannel 初始化失敗:', error);
+  }
+
+  function broadcastSubtitle(subtitle: SubtitleLine) {
+    if (!broadcastChannel) return;
+    try {
+      // BroadcastChannel cannot clone nested Vue reactive proxies.
+      const payload = JSON.parse(JSON.stringify(subtitle)) as SubtitleLine;
+      broadcastChannel.postMessage(payload);
+    } catch (error) {
+      console.warn('[BroadcastChannel] 字幕廣播失敗:', error);
+    }
   }
 
   // Computed
@@ -287,14 +300,14 @@ export const useTranslationStore = defineStore('translation', () => {
           (subtitles.value[existingIdx] as any).llm_latency_ms = data.llm_latency_ms ?? null;
           (subtitles.value[existingIdx] as any).translation_queue_latency_ms = data.translation_queue_latency_ms ?? null;
           (subtitles.value[existingIdx] as any).total_latency_ms = data.total_latency_ms ?? null;
+          (subtitles.value[existingIdx] as any).latency_trace = data.latency_trace;
+          (subtitles.value[existingIdx] as any).latency_window = data.latency_window;
           // 觸發 Vue reactive 更新：重新賍予同一個
           const updated = { ...subtitles.value[existingIdx] };
           subtitles.value.splice(existingIdx, 1, updated);
           console.log('[Store] Updated existing subtitle:', backendTs);
           // 也廣播給其他視窗
-          if (broadcastChannel) {
-            broadcastChannel.postMessage(updated);
-          }
+          broadcastSubtitle(updated);
           (window as any).pyqt?.updateNativeSubtitle?.(JSON.stringify(updated));
         } else {
           const newSubtitle: SubtitleLine = {
@@ -306,15 +319,15 @@ export const useTranslationStore = defineStore('translation', () => {
             asr_latency_ms: data.asr_latency_ms ?? null,
             llm_latency_ms: data.llm_latency_ms ?? null,
             translation_queue_latency_ms: data.translation_queue_latency_ms ?? null,
-            total_latency_ms: data.total_latency_ms ?? null
+            total_latency_ms: data.total_latency_ms ?? null,
+            latency_trace: data.latency_trace,
+            latency_window: data.latency_window,
           };
           subtitles.value.push(newSubtitle);
           console.log('[Store] Added new subtitle to store, total:', subtitles.value.length);
           // 廣播給其他視窗
-          if (broadcastChannel) {
-            console.log('[BroadcastChannel] Posting subtitle:', newSubtitle);
-            broadcastChannel.postMessage(newSubtitle);
-          }
+          console.log('[BroadcastChannel] Posting subtitle:', newSubtitle);
+          broadcastSubtitle(newSubtitle);
           (window as any).pyqt?.updateNativeSubtitle?.(JSON.stringify(newSubtitle));
         }
 

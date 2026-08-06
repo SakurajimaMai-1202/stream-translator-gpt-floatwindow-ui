@@ -81,7 +81,7 @@ function Get-RuntimeProfileDocText {
         [Parameter(Mandatory = $true)]
         [ValidateSet("cuda", "cpu", "rocm")]
         [string]$RuntimeProfile,
-        [string]$Version = "1.3.8",
+        [string]$Version = "1.3.9",
         [Parameter(Mandatory = $true)]
         [ValidateSet("portable_guide", "update_notes", "readme")]
         [string]$Document
@@ -106,6 +106,7 @@ function Get-RuntimeProfileDocText {
             "Qwen3-ASR 在 CUDA / ROCm profile 預設使用 bf16。",
             "SenseVoiceSmall 使用 FunASR runtime；首次使用前可先在模型管理預下載 iic/SenseVoiceSmall。",
             "NVIDIA Parakeet 使用 NVIDIA NeMo runtime；打包 CUDA runtime 前請確認 build Python 已安裝 app/requirements_cuda_parakeet.txt。",
+            "使用 -IncludeCpuAsrSidecar 可另外加入 sherpa-onnx INT8 CPU ASR；sidecar 與 CUDA 主 runtime 完全隔離。",
             "官方模型預設使用 TDT decoder 與 bfloat16；英文／日文依模型固定。官方模型授權為 CC-BY-4.0。",
             "預設裝置策略為 auto_discrete，會優先選擇獨立 GPU，避免誤選內顯。"
         )
@@ -113,19 +114,19 @@ function Get-RuntimeProfileDocText {
     } elseif ($RuntimeProfile -eq "cpu") {
         $name = "Stream Translator CPU"
         $status = "相容版"
-        $runtime = "CPU profile / PyTorch CPU-only"
-        $requirements = "不需要 NVIDIA 或 AMD 獨立顯示卡。CPU 速度會比 GPU 慢，建議先使用 Faster-Whisper small / medium 或 Qwen3-ASR 0.6B。"
+        $runtime = "CPU profile / sherpa-onnx INT8"
+        $requirements = "不需要 NVIDIA 或 AMD 獨立顯示卡。五個本地模型都透過 sherpa-onnx 在 CPU 執行。"
         $models = @(
-            "Faster-Whisper: small / medium 慢速",
-            "Qwen3-ASR offline: 0.6B",
-            "SenseVoiceSmall: compatibility，CPU 可用，速度待測"
+            "Parakeet TDT 0.6B v3 INT8: 25 languages with auto detection",
+            "Parakeet TDT-CTC 0.6B INT8: Japanese",
+            "Fun-ASR Nano / SenseVoiceSmall / Qwen3-ASR 0.6B: INT8"
         )
         $notes = @(
             "本版本是 CPU 相容版，不會承諾 GPU 加速。",
             "CPU profile 會把 ASR device policy 寫成 cpu，避免誤用顯卡。",
             "CPU 版保留遠端 API / 遠端字幕能力，可用於沒有獨顯的相容環境。",
             "SenseVoiceSmall 不預先標慢速；請依實際 CPU 與音訊長度測試速度。",
-            "CPU package 使用 CPU-only PyTorch runtime，不會攜帶 CUDA / ROCm GPU torch runtime。"
+            "CPU package 使用 sherpa-onnx runtime，不攜帶 PyTorch、NeMo、CUDA 或 ROCm runtime。"
         )
         $warning = "CPU 版適合沒有可用獨顯或想先測功能的使用者；大型模型會很慢。"
     } else {
@@ -143,6 +144,7 @@ function Get-RuntimeProfileDocText {
             "Qwen3-ASR 在 CUDA / ROCm profile 預設使用 bf16。",
             "SenseVoiceSmall 已通過 AMD ROCm 實機測試；仍建議使用 smoke_sensevoice_asr.ps1 在目標機器確認音訊與模型 cache。",
             "預設裝置策略為 auto_discrete，會避免選到 AMD 內顯 / APU；沒有 ROCm 獨顯時會在診斷中標示未驗證。",
+            "使用 -IncludeCpuAsrSidecar 可另外加入 sherpa-onnx INT8 CPU ASR；sidecar 與 ROCm 主 runtime 完全隔離。",
             "Radeon RX 9070 XT 已由使用者實機測試確認可用。"
         )
         $warning = "目前建置機沒有 ROCm 獨立顯卡；package 結構與 HIP runtime manifest 可驗證，Radeon RX 9070 XT 已由使用者實機確認可用，其他 AMD 顯卡仍請附診斷結果回報。"
@@ -280,7 +282,7 @@ function Write-RuntimeProfileDocs {
         [Parameter(Mandatory = $true)]
         [ValidateSet("cuda", "cpu", "rocm")]
         [string]$RuntimeProfile,
-        [string]$Version = "1.3.8"
+        [string]$Version = "1.3.9"
     )
 
     if (-not (Test-Path $Destination)) {

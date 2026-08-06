@@ -8,7 +8,7 @@ import { useLlamaStore } from '../stores/llama';
 import UiSelect, { type UiSelectOption } from '../components/UiSelect.vue';
 import { useTranscriptionMutex } from '../composables/useTranscriptionMutex';
 import { useAppSyncEvents } from '../composables/useAppSyncEvents';
-import type { ModelEngine } from '../services/api';
+import { runtimeApi, serverApi, type CpuAsrSidecarInstallStatus, type ModelComputeBackend, type ModelEngine } from '../services/api';
 import {
   ASR_LANGUAGE_OPTIONS,
   coerceLanguageForModel,
@@ -23,6 +23,9 @@ const AsrModelGroup = defineAsyncComponent(() => import('../components/AsrModelG
 const WhisperFilterSettings = defineAsyncComponent(() => import('../components/WhisperFilterSettings.vue'));
 
 const autoSaveStatus = ref<'idle' | 'saving' | 'saved' | 'error'>('idle');
+const settingsReady = ref(false);
+const sharingLanAddresses = ref<string[]>([]);
+const copiedSharingUrl = ref('');
 let autoSaveStatusTimeout: ReturnType<typeof setTimeout> | null = null;
 
 
@@ -32,6 +35,34 @@ const store = useTranslationStore();
 const modelDownloadStore = useModelDownloadStore();
 const llamaStore = useLlamaStore();
 
+const sharingHost = computed(() => {
+  const browserHost = window.location.hostname;
+  if (browserHost && !['localhost', '127.0.0.1', '::1'].includes(browserHost)) return browserHost;
+  return sharingLanAddresses.value[0] || '127.0.0.1';
+});
+const sharingBaseUrl = computed(() => `http://${sharingHost.value}:${localConfig.value.server.public_port || 8765}`);
+const desktopSharingUrl = computed(() => `${sharingBaseUrl.value}/desktop`);
+const mobileSharingUrl = computed(() => `${sharingBaseUrl.value}/mobile`);
+
+async function copySharingUrl(url: string) {
+  try {
+    await navigator.clipboard.writeText(url);
+  } catch {
+    const input = document.createElement('textarea');
+    input.value = url;
+    input.style.position = 'fixed';
+    input.style.left = '-9999px';
+    document.body.appendChild(input);
+    input.select();
+    document.execCommand('copy');
+    input.remove();
+  }
+  copiedSharingUrl.value = url;
+  window.setTimeout(() => {
+    if (copiedSharingUrl.value === url) copiedSharingUrl.value = '';
+  }, 1800);
+}
+
 const allQwenModels = ['Qwen/Qwen3-ASR-0.6B', 'Qwen/Qwen3-ASR-1.7B', 'jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame'];
 const legacyQwen3JaModel = 'neosophie/Qwen3-ASR-1.7B-JA';
 const qwen3AnimeModel = 'jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame';
@@ -39,6 +70,7 @@ const allFasterWhisperModels = ['tiny', 'base', 'small', 'medium', 'large-v2', '
 const allSenseVoiceModels = ['iic/SenseVoiceSmall'];
 const allFunAsrModels = ['FunAudioLLM/Fun-ASR-Nano-2512', 'FunAudioLLM/Fun-ASR-MLT-Nano-2512'];
 const allParakeetModels = [
+  'nvidia/parakeet-tdt-0.6b-v3',
   'nvidia/parakeet-tdt_ctc-0.6b-ja',
   'nvidia/parakeet-tdt_ctc-1.1b',
   'grider-transwithai/parakeet-ctc-1.1b-ja',
@@ -113,13 +145,9 @@ const parakeetModelOptions = computed<UiSelectOption[]>(() =>
     .filter(model => allowedParakeetModels.value.includes(model))
     .map(model => ({
       value: model,
-      disabled: selectedSettingsAsrCapability.value?.language_mode !== 'fixed'
-        && !isModelLanguageCompatible(
-          runtimeCapabilities.value?.asr_model_capabilities,
-          model,
-          localConfig.value.transcription.language,
-        ),
-      label: model === 'nvidia/parakeet-tdt_ctc-0.6b-ja'
+      label: model === 'nvidia/parakeet-tdt-0.6b-v3'
+        ? 'NVIDIA Parakeet TDT 0.6B v3（25 種語言）'
+        : model === 'nvidia/parakeet-tdt_ctc-0.6b-ja'
         ? 'NVIDIA Parakeet 0.6B（日文）'
         : model === 'nvidia/parakeet-tdt_ctc-1.1b'
           ? 'NVIDIA Parakeet 1.1B（英文）'
@@ -134,11 +162,15 @@ const qwen3DtypeOptions: UiSelectOption[] = [
   { value: 'bfloat16', label: 'BF16（建議，速度快、顯存較低）' },
   { value: 'float32', label: 'FP32（相容性高、顯存約兩倍）' },
 ];
-const runtimeProfileOptions: UiSelectOption[] = [
-  { value: 'cuda', label: 'CUDA' },
-  { value: 'cpu', label: 'CPU' },
-  { value: 'rocm', label: 'ROCm Experimental' },
-];
+const asrComputeBackendOptions = computed<UiSelectOption[]>(() => {
+  const profile = String(runtimeStatus.value?.profile || localConfig.value.runtime?.profile || 'cuda').toLowerCase();
+  const gpuLabel = profile === 'rocm' ? 'ROCm GPU 原生 ASR' : 'CUDA GPU 原生 ASR';
+  return [
+    { value: 'auto', label: `自動（${profile === 'cpu' ? 'CPU' : profile.toUpperCase()}）` },
+    { value: 'gpu', label: gpuLabel, disabled: profile === 'cpu' },
+    { value: 'cpu', label: 'CPU · Sherpa-ONNX INT8' },
+  ];
+});
 const runtimeDevicePolicyOptions: UiSelectOption[] = [
   { value: 'auto_discrete', label: 'Auto discrete GPU' },
   { value: 'auto_any', label: 'Auto any GPU' },
@@ -171,8 +203,6 @@ const targetLanguageOptions: UiSelectOption[] = [
 
 const localConfig = ref<any>({
   general: {
-    openai_api_key: '',
-    google_api_key: '',
     log_level: 'INFO'
   },
   server: {
@@ -216,10 +246,12 @@ const localConfig = ref<any>({
     vad_threshold: 0.35,
     disable_dynamic_vad_threshold: false,
     vad_every_n_frames: 1,
-    vad_backend: 'silero',
+    vad_backend: 'firered',
     firered_vad_model_path: ''
   },
   transcription: {
+    openai_api_key: '',
+    asr_compute_backend: 'auto',
     model: 'base',
     language: 'auto',
     transcription_initial_prompt: '',
@@ -239,19 +271,22 @@ const localConfig = ref<any>({
     nemo_asr_decoding: 'tdt',
     nemo_asr_dtype: 'bfloat16',
     asr_corrections_enabled: false,
+    asr_correction_log_enabled: false,
+    asr_correction_learning_enabled: false,
     asr_corrections_case_sensitive: false,
     asr_correction_rules: [],
     openai_transcription_model: 'whisper-1',
     whisper_filters: ['emoji_filter', 'repetition_filter']
   },
   translation: {
+    openai_api_key: '',
+    google_api_key: '',
     backend: 'gpt',
     target_language: 'Traditional Chinese',
     gpt_model: 'gpt-4o-mini',
     gemini_model: 'gemini-2.0-flash-exp',
-    gpt_base_url: '',
-    gemini_base_url: '',
-    api_key: '',
+    gpt_base_url: 'https://api.openai.com/v1',
+    gemini_base_url: 'https://generativelanguage.googleapis.com',
     translation_history_size: 0,
     translation_timeout: 10,
     processing_proxy: '',
@@ -273,6 +308,7 @@ const localConfig = ref<any>({
   },
   terminology: {
     use_terminology_glossary: false,  // 🔧 新增: 術語表啟用開關
+    translation_glossary_audit_enabled: false,
     glossary: '',
     glossary_list: []
   },
@@ -454,10 +490,12 @@ async function saveSectionNow(section: string): Promise<void> {
   const sectionSnapshot = structuredClone(toRaw(localConfig.value[section] ?? {}));
   const runtimeChanged = section === 'runtime'
     && !configsEqual(store.config.runtime, sectionSnapshot);
+  const asrComputeChanged = section === 'transcription'
+    && store.config.transcription?.asr_compute_backend !== sectionSnapshot.asr_compute_backend;
   const request = (async () => {
     try {
       await store.saveConfigSection(section, sectionSnapshot);
-      if (runtimeChanged) await store.loadRuntimeStatus();
+      if (runtimeChanged || asrComputeChanged) await store.loadRuntimeStatus();
       markAutoSaveCompleted();
     } catch (e) {
       console.warn(`[SettingsView] ${section} 自動保存失敗:`, e);
@@ -498,9 +536,9 @@ async function testConnection(backend: 'gpt' | 'gemini') {
   }
   
   try {
-    const apiKey = isGpt 
-      ? (localConfig.value.translation.api_key || localConfig.value.general.openai_api_key)
-      : (localConfig.value.translation.api_key || localConfig.value.general.google_api_key);
+    const apiKey = isGpt
+      ? localConfig.value.translation.openai_api_key
+      : localConfig.value.translation.google_api_key;
       
     const baseUrl = isGpt ? localConfig.value.translation.gpt_base_url : localConfig.value.translation.gemini_base_url;
     const proxy = localConfig.value.translation.processing_proxy || localConfig.value.input.proxy;
@@ -605,7 +643,102 @@ const filteredAsrCorrections = computed(() => {
 
 // 互斥邏輯: 轉錄引擎互斥規則
 const runtimeStatus = computed(() => store.runtimeStatus);
-const runtimeCapabilities = computed(() => runtimeStatus.value?.capabilities || null);
+const asrComputeBackendLocked = computed(() => runtimeStatus.value?.profile === 'cpu');
+const runtimeCapabilities = computed(() => runtimeStatus.value?.asr_capabilities || runtimeStatus.value?.capabilities || null);
+const effectiveAsrComputeBackend = computed(() =>
+  runtimeStatus.value?.effective_asr_compute_backend
+    || (localConfig.value.transcription?.asr_compute_backend === 'cpu' ? 'cpu' : 'gpu')
+);
+const isSherpaOnnxMode = computed(() => effectiveAsrComputeBackend.value === 'cpu');
+const effectiveRuntimeKind = computed(() => {
+  if (isSherpaOnnxMode.value) return 'CPU';
+  return String(runtimeStatus.value?.profile || localConfig.value.runtime?.profile || 'cuda').toUpperCase() === 'ROCM'
+    ? 'ROCm'
+    : 'CUDA';
+});
+const effectiveAsrRuntimeLabel = computed(() =>
+  isSherpaOnnxMode.value ? 'CPU · Sherpa-ONNX INT8' : `${effectiveRuntimeKind.value} · GPU 原生 ASR`
+);
+const packageProfileLabel = computed(() => {
+  const profile = String(runtimeStatus.value?.profile || localConfig.value.runtime?.profile || 'unknown').toLowerCase();
+  if (profile === 'cuda') return 'CUDA 套件';
+  if (profile === 'rocm') return 'ROCm 套件（Experimental）';
+  if (profile === 'cpu') return 'CPU 套件';
+  return profile.toUpperCase();
+});
+const modelManagementBackend = ref<ModelComputeBackend>(effectiveAsrComputeBackend.value);
+const cpuQwenModels = ['Qwen/Qwen3-ASR-0.6B'];
+const cpuSenseVoiceModels = ['iic/SenseVoiceSmall'];
+const cpuFunAsrModels = ['FunAudioLLM/Fun-ASR-Nano-2512'];
+const cpuParakeetModels = ['nvidia/parakeet-tdt-0.6b-v3', 'nvidia/parakeet-tdt_ctc-0.6b-ja'];
+const cpuQwenDescriptions = {
+  'Qwen/Qwen3-ASR-0.6B': 'Sherpa-ONNX 專用 INT8 ONNX bundle；CPU 離線推論，不使用 PyTorch、CUDA dtype 或 4-bit 設定。',
+};
+const cpuSenseVoiceDescriptions = {
+  'iic/SenseVoiceSmall': 'Sherpa-ONNX INT8 多語言模型，支援中文、英文、日文、韓文與粵語；CPU 離線推論。',
+};
+const cpuFunAsrDescriptions = {
+  'FunAudioLLM/Fun-ASR-Nano-2512': 'Sherpa-ONNX INT8 CPU bundle，支援中文、英文、日文及中文方言；目前不提供時間戳。',
+};
+const cpuParakeetDescriptions = {
+  'nvidia/parakeet-tdt-0.6b-v3': 'Sherpa-ONNX INT8 TDT bundle；支援 25 種語言及自動語言辨識，不需要 NVIDIA GPU 或 NeMo。',
+  'nvidia/parakeet-tdt_ctc-0.6b-ja': 'Sherpa-ONNX INT8 CTC 日文專用 bundle；語言固定為日文，不需要 NVIDIA GPU 或 NeMo。',
+};
+const gpuQwenModels = computed(() => runtimeStatus.value?.capabilities?.qwen3_asr_model_ids || allQwenModels);
+const gpuSenseVoiceModels = computed(() => runtimeStatus.value?.capabilities?.sensevoice_model_ids || allSenseVoiceModels);
+const gpuFunAsrModels = computed(() => runtimeStatus.value?.capabilities?.fun_asr_model_ids || allFunAsrModels);
+const gpuParakeetModels = computed(() => runtimeStatus.value?.capabilities?.parakeet_model_ids || allParakeetModels);
+const gpuFasterWhisperModels = computed(() => runtimeStatus.value?.capabilities?.faster_whisper_model_ids || allFasterWhisperModels);
+const managedDownloadedModels = computed(() =>
+  modelDownloadStore.downloadedModels.filter((item) => item.compute_backend === modelManagementBackend.value)
+);
+const cpuAsrRuntimeAvailable = computed(() => Boolean(runtimeStatus.value?.cpu_asr_runtime?.available));
+const cpuAsrSidecarStatus = ref<CpuAsrSidecarInstallStatus | null>(null);
+const cpuAsrSidecarBusy = computed(() =>
+  ['starting', 'downloading', 'verifying', 'installing'].includes(cpuAsrSidecarStatus.value?.status || '')
+);
+const canInstallCpuAsrSidecar = computed(() =>
+  ['cuda', 'rocm'].includes(runtimeStatus.value?.profile || '')
+  && !cpuAsrSidecarStatus.value?.installed
+  && !cpuAsrSidecarBusy.value
+);
+let cpuAsrSidecarPollTimer: ReturnType<typeof setInterval> | null = null;
+
+function stopCpuAsrSidecarPolling() {
+  if (cpuAsrSidecarPollTimer) clearInterval(cpuAsrSidecarPollTimer);
+  cpuAsrSidecarPollTimer = null;
+}
+
+async function refreshCpuAsrSidecarStatus() {
+  try {
+    cpuAsrSidecarStatus.value = await runtimeApi.getCpuAsrSidecarStatus();
+  } catch (error: any) {
+    cpuAsrSidecarStatus.value = {
+      status: 'error', progress: 0, message: '', installed: false, restart_required: false,
+      bytes_downloaded: 0, bytes_total: 0, version: '', asset_name: '',
+      error: error?.response?.data?.detail || error?.message || '無法取得 sidecar 狀態',
+    };
+  }
+  if (!cpuAsrSidecarBusy.value) {
+    stopCpuAsrSidecarPolling();
+    if (cpuAsrSidecarStatus.value.installed) await store.loadRuntimeStatus();
+  }
+}
+
+async function installCpuAsrSidecar() {
+  try {
+    cpuAsrSidecarStatus.value = await runtimeApi.installCpuAsrSidecar();
+  } catch (error: any) {
+    cpuAsrSidecarStatus.value = {
+      status: 'error', progress: 0, message: '', installed: false, restart_required: false,
+      bytes_downloaded: 0, bytes_total: 0, version: '', asset_name: '',
+      error: error?.response?.data?.detail || error?.message || '無法啟動 sidecar 安裝',
+    };
+    return;
+  }
+  stopCpuAsrSidecarPolling();
+  cpuAsrSidecarPollTimer = setInterval(() => void refreshCpuAsrSidecarStatus(), 1000);
+}
 const selectedSettingsAsrModelId = computed<string>(() => {
   const transcription = localConfig.value.transcription;
   if (transcription.use_qwen3_asr) return transcription.qwen3_asr_model;
@@ -682,30 +815,6 @@ const allowedParakeetModels = computed<string[]>(() =>
     : allParakeetModels
 );
 
-function selectCompatibleSettingsModel(): boolean {
-  const transcription = localConfig.value.transcription;
-  const capabilities = runtimeCapabilities.value?.asr_model_capabilities;
-  const language = transcription.language;
-  if (isModelLanguageCompatible(capabilities, selectedSettingsAsrModelId.value, language)) return true;
-
-  let candidates: string[] = [];
-  let assign: ((model: string) => void) | null = null;
-  if (transcription.use_qwen3_asr) {
-    candidates = allowedQwen3AsrModels.value;
-    assign = (model) => { transcription.qwen3_asr_model = model; };
-  } else if (transcription.use_fun_asr) {
-    candidates = allowedFunAsrModels.value;
-    assign = (model) => { transcription.fun_asr_model = model; };
-  } else if (transcription.use_nemo_asr) {
-    candidates = allowedParakeetModels.value;
-    assign = (model) => { transcription.nemo_asr_model = model; };
-  }
-  const compatible = candidates.find((model) =>
-    isModelLanguageCompatible(capabilities, model, language)
-  );
-  if (compatible && assign) assign(compatible);
-  return !!compatible;
-}
 const qwenModelList = computed(() =>
   allQwenModels.filter(modelId => allowedQwen3AsrModels.value.includes(modelId))
 );
@@ -1040,8 +1149,10 @@ watch(() => route.query.tab, (newTab) => {
 watch(activeTab, async (tab) => {
   if (tab !== 'model_management') {
     modelDownloadStore.stopPolling();
+    stopCpuAsrSidecarPolling();
     return;
   }
+  await refreshCpuAsrSidecarStatus();
   await modelDownloadStore.refreshAll();
   if (modelDownloadStore.activeTasks.length > 0) {
     modelDownloadStore.startPolling();
@@ -1049,16 +1160,25 @@ watch(activeTab, async (tab) => {
 }, { flush: 'post' });
 
 onMounted(async () => {
-  await Promise.all([
-    store.loadConfig(),
-    store.loadRuntimeStatus()
-  ]);
-  await applyStoreConfigToLocalConfig(store.config, true);
+  settingsReady.value = false;
+  try {
+    const [, , serverInfo] = await Promise.all([
+      store.loadConfig(),
+      store.loadRuntimeStatus(),
+      serverApi.getInfo().catch(() => null),
+    ]);
+    if (serverInfo?.lan_addresses) sharingLanAddresses.value = serverInfo.lan_addresses;
+    await applyStoreConfigToLocalConfig(store.config, true);
+  } finally {
+    await nextTick();
+    settingsReady.value = true;
+  }
   
   // 從 URL 參數設定 tab
   syncActiveTabFromRoute();
 
   if (activeTab.value === 'model_management') {
+    await refreshCpuAsrSidecarStatus();
     await modelDownloadStore.refreshAll();
     if (modelDownloadStore.activeTasks.length > 0) {
       modelDownloadStore.startPolling();
@@ -1084,10 +1204,6 @@ onMounted(async () => {
     [selectedSettingsAsrModelId, () => runtimeCapabilities.value?.asr_model_capabilities],
     () => {
       if (isApplyingRemoteConfig.value) return;
-      if (selectedSettingsAsrCapability.value?.language_mode !== 'fixed'
-        && !selectCompatibleSettingsModel()) {
-        localConfig.value.transcription.language = 'auto';
-      }
       localConfig.value.transcription.language = coerceLanguageForModel(
         runtimeCapabilities.value?.asr_model_capabilities,
         selectedSettingsAsrModelId.value,
@@ -1102,6 +1218,7 @@ onUnmounted(() => {
   for (const timer of sectionSaveTimers.values()) clearTimeout(timer);
   sectionSaveTimers.clear();
   modelDownloadStore.stopPolling();
+  stopCpuAsrSidecarPolling();
 });
 
 async function applyModelStoragePath() {
@@ -1109,9 +1226,9 @@ async function applyModelStoragePath() {
   await modelDownloadStore.refreshAll();
 }
 
-async function deleteDownloadedModel(engine: ModelEngine, modelId: string) {
+async function deleteDownloadedModel(engine: ModelEngine, modelId: string, computeBackend: ModelComputeBackend) {
   if (!confirm(`確定要刪除模型「${modelId}」嗎？之後使用時需要重新下載。`)) return;
-  await modelDownloadStore.deleteModel(engine, modelId);
+  await modelDownloadStore.deleteModel(engine, modelId, computeBackend);
 }
 
 async function handleSave() {
@@ -1303,6 +1420,28 @@ function handleExportClick() {
   store.exportConfig();
 }
 
+async function testOpenAiAsrConnection() {
+  testingGpt.value = true;
+  try {
+    const apiKey = localConfig.value.transcription.openai_api_key;
+    if (!apiKey) {
+      alert('請先輸入 OpenAI ASR API Key');
+      return;
+    }
+    const res = await axios.post('/api/config/test-connection', {
+      backend: 'gpt',
+      api_key: apiKey,
+      base_url: 'https://api.openai.com/v1',
+      proxy: localConfig.value.input.proxy || null
+    });
+    alert(res.data?.success ? '✓ OpenAI ASR 金鑰連線成功' : `OpenAI ASR 連線失敗：${res.data?.message || '未知錯誤'}`);
+  } catch (err: any) {
+    alert(`OpenAI ASR 連線失敗：${err.response?.data?.detail || err.message}`);
+  } finally {
+    testingGpt.value = false;
+  }
+}
+
 async function handleFileChange(event: Event) {
   const input = event.target as HTMLInputElement;
   if (!input.files || input.files.length === 0) return;
@@ -1379,16 +1518,25 @@ async function handleFileChange(event: Event) {
     <!-- Content Container (Card Layout) -->
     <!-- 長捲動內容不使用 backdrop-filter：Qt WebEngine/Chromium 在 Windows
          重新合成大型毛玻璃 layer 時可能短暫露出底層視窗。 -->
-    <div class="bg-gradient-to-br from-slate-950/95 via-slate-950/85 to-indigo-950/65 rounded-2xl border border-white/10 shadow-2xl p-6 sm:p-8 min-h-[550px]">
+    <div v-if="!settingsReady" class="bg-gradient-to-br from-slate-950/95 via-slate-950/85 to-indigo-950/65 rounded-2xl border border-white/10 shadow-2xl p-6 sm:p-8 min-h-[550px]" aria-busy="true">
+      <div class="animate-pulse space-y-6">
+        <div class="h-7 w-40 rounded bg-white/10"></div>
+        <div class="h-4 w-72 max-w-full rounded bg-white/5"></div>
+        <div class="h-12 rounded-xl bg-white/5"></div>
+        <div class="h-36 rounded-xl bg-white/5"></div>
+      </div>
+      <p class="mt-6 text-sm text-white/45">正在讀取設定…</p>
+    </div>
+    <div v-else class="bg-gradient-to-br from-slate-950/95 via-slate-950/85 to-indigo-950/65 rounded-2xl border border-white/10 shadow-2xl p-6 sm:p-8 min-h-[550px]">
           <!-- General Settings -->
           <div v-if="activeTab === 'general'" class="settings-paint-section space-y-6">
             <h2 class="text-xl font-bold text-white mb-4">一般設定</h2>
             
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
+              <div v-if="false">
                 <label class="block text-white/70 font-semibold mb-2">OpenAI API Key</label>
                 <div class="flex gap-2">
-                  <input v-model="localConfig.general.openai_api_key" type="password" placeholder="sk-..."
+                  <input disabled value="" type="password" placeholder="sk-..."
                     class="flex-1 px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
                   <button @click="testConnection('gpt')" :disabled="testingGpt" 
                     class="bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/30 font-semibold px-4 rounded-lg transition text-xs whitespace-nowrap flex items-center justify-center gap-1.5 min-w-[95px]">
@@ -1399,10 +1547,10 @@ async function handleFileChange(event: Event) {
                 <p class="text-white/40 text-sm mt-1">用於 GPT 翻譯</p>
               </div>
 
-              <div>
+              <div v-if="false">
                 <label class="block text-white/70 font-semibold mb-2">Google API Key (Gemini)</label>
                 <div class="flex gap-2">
-                  <input v-model="localConfig.general.google_api_key" type="password" placeholder="AIza..."
+                  <input disabled value="" type="password" placeholder="AIza..."
                     class="flex-1 px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
                   <button @click="testConnection('gemini')" :disabled="testingGemini" 
                     class="bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/30 font-semibold px-4 rounded-lg transition text-xs whitespace-nowrap flex items-center justify-center gap-1.5 min-w-[95px]">
@@ -1418,14 +1566,51 @@ async function handleFileChange(event: Event) {
                 <UiSelect v-model="localConfig.general.log_level" :options="logLevelOptions" />
               </div>
 
-              <div class="md:col-span-2 bg-white/5 rounded-lg p-4 border border-white/10">
-                <label class="flex items-center justify-between cursor-pointer">
+              <div class="md:col-span-2 rounded-xl p-5 border border-white/10 bg-gradient-to-br from-emerald-500/10 via-white/5 to-blue-500/10 space-y-5">
+                <label class="flex items-start justify-between gap-5 cursor-pointer">
                   <div>
-                    <div class="text-white font-semibold">字幕分享功能</div>
-                    <p class="text-white/50 text-sm mt-1">控制是否允許外部透過 /desktop、/mobile 與公開 API 存取字幕</p>
+                    <div class="flex items-center gap-2">
+                      <span class="text-white font-semibold">即時字幕分享</span>
+                      <span :class="['px-2 py-0.5 rounded-full text-xs border', localConfig.server.enable_subtitle_sharing ? 'text-emerald-300 bg-emerald-500/10 border-emerald-500/25' : 'text-white/45 bg-white/5 border-white/10']">
+                        {{ localConfig.server.enable_subtitle_sharing ? '已啟用' : '已關閉' }}
+                      </span>
+                    </div>
+                    <p class="text-white/55 text-sm mt-2 leading-6">讓同一個區域網路中的手機、平板或另一台電腦，透過瀏覽器觀看目前的即時原文與翻譯字幕。</p>
                   </div>
-                  <input v-model="localConfig.server.enable_subtitle_sharing" type="checkbox" class="w-5 h-5 accent-emerald-500" />
+                  <input v-model="localConfig.server.enable_subtitle_sharing" type="checkbox" class="w-5 h-5 accent-emerald-500 mt-1 shrink-0" />
                 </label>
+
+                <div v-if="localConfig.server.enable_subtitle_sharing" class="space-y-3">
+                  <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                    <div class="rounded-lg border border-white/10 bg-black/15 p-4">
+                      <div class="text-white/80 font-semibold text-sm">桌面版字幕</div>
+                      <p class="text-white/40 text-xs mt-1">適合電腦、投影幕與直播監看畫面。</p>
+                      <div class="flex items-center gap-2 mt-3">
+                        <code class="min-w-0 flex-1 truncate text-xs text-cyan-300 bg-black/20 rounded px-3 py-2">{{ desktopSharingUrl }}</code>
+                        <button type="button" @click="copySharingUrl(desktopSharingUrl)" class="px-3 py-2 rounded-lg bg-blue-600/25 hover:bg-blue-600/40 text-blue-200 text-xs border border-blue-500/25">
+                          {{ copiedSharingUrl === desktopSharingUrl ? '已複製' : '複製' }}
+                        </button>
+                      </div>
+                    </div>
+                    <div class="rounded-lg border border-white/10 bg-black/15 p-4">
+                      <div class="text-white/80 font-semibold text-sm">行動版字幕</div>
+                      <p class="text-white/40 text-xs mt-1">適合手機與平板，版面會依螢幕自動調整。</p>
+                      <div class="flex items-center gap-2 mt-3">
+                        <code class="min-w-0 flex-1 truncate text-xs text-cyan-300 bg-black/20 rounded px-3 py-2">{{ mobileSharingUrl }}</code>
+                        <button type="button" @click="copySharingUrl(mobileSharingUrl)" class="px-3 py-2 rounded-lg bg-blue-600/25 hover:bg-blue-600/40 text-blue-200 text-xs border border-blue-500/25">
+                          {{ copiedSharingUrl === mobileSharingUrl ? '已複製' : '複製' }}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs text-white/55 leading-5">
+                    <span class="text-amber-300 font-semibold">使用方式：</span>
+                    分享裝置需與本機位於同一個 Wi-Fi／區域網路。若無法開啟，請允許 Windows 防火牆存取連接埠 {{ localConfig.server.public_port || 8765 }}。此功能沒有登入驗證，請勿直接暴露至公網；關閉後，分享頁與公開字幕 API 都會停止存取。
+                  </div>
+                </div>
+
+                <p v-else class="text-white/40 text-sm">分享頁面與公開字幕 API 已停用，區域網路中的其他裝置無法讀取字幕。</p>
               </div>
             </div>
           </div>
@@ -1667,9 +1852,9 @@ async function handleFileChange(event: Event) {
             <div class="bg-white/5 rounded-xl p-4 border border-white/10">
               <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-4">
                 <div>
-                  <h3 class="text-lg font-semibold text-cyan-300 mb-1">Runtime Profile</h3>
+                  <h3 class="text-lg font-semibold text-cyan-300 mb-1">ASR 執行環境</h3>
                   <p class="text-white/50 text-sm">
-                    選擇 CUDA / CPU / ROCm runtime，系統會優先避開內顯並選擇合適的 ASR 加速裝置。
+                    套件 Profile 決定可用的 GPU runtime；ASR 後端可另外切換為獨立的 Sherpa-ONNX CPU runtime。
                   </p>
                 </div>
                 <button type="button"
@@ -1679,18 +1864,35 @@ async function handleFileChange(event: Event) {
                 </button>
               </div>
 
-              <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
                 <div>
-                  <label class="block text-white/70 font-semibold mb-2">Profile</label>
-                  <UiSelect v-model="localConfig.runtime.profile" :options="runtimeProfileOptions" />
+                  <label class="block text-white/70 font-semibold mb-2">目前套件（唯讀）</label>
+                  <div class="w-full px-4 py-2.5 bg-white/5 border border-white/15 rounded-lg text-white font-medium">
+                    {{ packageProfileLabel }}
+                  </div>
+                  <p class="text-white/40 text-xs mt-1">
+                    CUDA 與 ROCm 使用不同 runtime，需啟動對應套件，無法在此動態切換。
+                  </p>
                 </div>
                 <div>
-                  <label class="block text-white/70 font-semibold mb-2">Device policy</label>
-                  <UiSelect v-model="localConfig.runtime.device_policy" :options="runtimeDevicePolicyOptions" />
+                  <label class="block text-white/70 font-semibold mb-2">ASR 執行後端</label>
+                  <UiSelect
+                    v-model="localConfig.transcription.asr_compute_backend"
+                    :options="asrComputeBackendOptions"
+                    :disabled="asrComputeBackendLocked"
+                  />
+                  <p class="text-white/40 text-xs mt-1">
+                    目前實際使用：{{ effectiveAsrRuntimeLabel }}
+                  </p>
+                </div>
+                <div>
+                  <label class="block text-white/70 font-semibold mb-2">GPU 裝置策略</label>
+                  <UiSelect v-model="localConfig.runtime.device_policy" :options="runtimeDevicePolicyOptions" :disabled="effectiveAsrComputeBackend === 'cpu'" />
+                  <p v-if="isSherpaOnnxMode" class="text-white/40 text-xs mt-1">Sherpa-ONNX 固定使用 CPU，此設定不適用。</p>
                 </div>
                 <div class="flex items-end">
-                  <label class="flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer w-full">
-                    <input v-model="localConfig.runtime.allow_integrated_gpu" type="checkbox" class="w-5 h-5 accent-yellow-400 mt-0.5" />
+                  <label :class="['flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 w-full', isSherpaOnnxMode ? 'opacity-45 cursor-not-allowed' : 'cursor-pointer']">
+                    <input v-model="localConfig.runtime.allow_integrated_gpu" :disabled="isSherpaOnnxMode" type="checkbox" class="w-5 h-5 accent-yellow-400 mt-0.5" />
                     <div>
                       <span class="text-white font-medium">Allow integrated GPU</span>
                       <p class="text-white/45 text-xs mt-1">只建議 ROCm APU/iGPU 實驗測試時開啟。</p>
@@ -1699,22 +1901,45 @@ async function handleFileChange(event: Event) {
                 </div>
               </div>
 
+              <div
+                v-if="localConfig.transcription.asr_compute_backend === 'cpu' && !cpuAsrRuntimeAvailable"
+                class="mt-4 bg-yellow-500/10 border border-yellow-500/25 rounded-lg p-3"
+              >
+                <div class="text-yellow-200 text-sm font-semibold">CPU ASR sidecar 尚未安裝</div>
+                <p class="text-white/65 text-xs mt-1">
+                  CUDA／ROCm 包需要獨立的 <code>_runtime_cpu_asr</code>。請使用包含 CPU ASR sidecar 的套件，
+                  或以 <code>-IncludeCpuAsrSidecar</code> 建置；GPU runtime 不會被修改。
+                </p>
+              </div>
+
               <div class="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <div class="bg-black/20 rounded-lg p-3 border border-white/10">
                   <div class="flex items-center justify-between gap-3 mb-2">
                     <span class="text-white/60 text-sm">Status</span>
                     <span class="px-2 py-0.5 rounded bg-cyan-500/15 text-cyan-200 text-xs">{{ runtimeStatusLabel }}</span>
                   </div>
-                  <div class="text-white font-medium">{{ selectedRuntimeDevice ? runtimeDeviceLine(selectedRuntimeDevice) : (runtimeSelection?.kind === 'cpu' ? 'CPU' : 'No GPU selected') }}</div>
+                  <div class="text-white font-medium">
+                    {{ isSherpaOnnxMode
+                      ? `${runtimeStatus?.cpu?.name || 'CPU'}${runtimeStatus?.cpu?.logical_cores ? ` (${runtimeStatus.cpu.logical_cores} logical processors)` : ''}`
+                      : (selectedRuntimeDevice ? runtimeDeviceLine(selectedRuntimeDevice) : 'No GPU selected') }}
+                  </div>
                   <p class="text-white/45 text-xs mt-2">{{ runtimeSelection?.reason || store.runtimeStatusError || 'Runtime status not loaded yet.' }}</p>
                 </div>
                 <div class="bg-black/20 rounded-lg p-3 border border-white/10">
-                  <div class="text-white/60 text-sm mb-2">ASR capability</div>
+                  <div class="text-white/60 text-sm mb-2">目前後端能力</div>
                   <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
-                    <div class="text-white/80">Qwen3 dtype: <span class="text-cyan-200">{{ runtimeCapabilities?.qwen3_default_dtype || '-' }}</span></div>
-                    <div class="text-white/80">Faster-Whisper: <span class="text-cyan-200">{{ runtimeCapabilities?.faster_whisper_status || '-' }}</span></div>
-                    <div class="text-white/80">SenseVoice: <span class="text-cyan-200">{{ runtimeCapabilities?.sensevoice_status || '-' }}</span></div>
-                    <div class="text-white/80">NVIDIA Parakeet: <span class="text-cyan-200">{{ runtimeCapabilities?.parakeet_status || '-' }}</span></div>
+                    <template v-if="isSherpaOnnxMode">
+                      <div class="text-white/80">引擎：<span class="text-cyan-200">Sherpa-ONNX</span></div>
+                      <div class="text-white/80">裝置：<span class="text-cyan-200">CPU</span></div>
+                      <div class="text-white/80">模型格式：<span class="text-cyan-200">ONNX INT8 bundle</span></div>
+                      <div class="text-white/80">PyTorch / CUDA：<span class="text-cyan-200">不需要</span></div>
+                    </template>
+                    <template v-else>
+                      <div class="text-white/80">Qwen3 dtype: <span class="text-cyan-200">{{ runtimeCapabilities?.qwen3_default_dtype || '-' }}</span></div>
+                      <div class="text-white/80">Faster-Whisper: <span class="text-cyan-200">{{ runtimeCapabilities?.faster_whisper_status || '-' }}</span></div>
+                      <div class="text-white/80">SenseVoice: <span class="text-cyan-200">{{ runtimeCapabilities?.sensevoice_status || '-' }}</span></div>
+                      <div class="text-white/80">NVIDIA Parakeet: <span class="text-cyan-200">{{ runtimeCapabilities?.parakeet_status || '-' }}</span></div>
+                    </template>
                     <div class="text-white/80">Package: <span class="text-white/70">{{ runtimeStatus?.package_suffix || '-' }}</span></div>
                   </div>
                 </div>
@@ -1737,7 +1962,8 @@ async function handleFileChange(event: Event) {
             <div class="bg-white/5 rounded-xl p-4 border border-white/10">
               <h3 class="text-lg font-semibold text-blue-300 mb-4">🎯 轉錄引擎</h3>
               <p class="text-white/60 text-sm mb-4">
-                💡 提示:可同時選擇 Faster-Whisper + SimulStreaming,將使用 Faster-Whisper 作為編碼器的 SimulStreaming
+                <template v-if="isSherpaOnnxMode">目前為 Sherpa-ONNX CPU 模式；下列引擎會載入各自的 INT8 ONNX bundle，GPU 專屬選項會停用。</template>
+                <template v-else>GPU 原生模式會依套件能力提供引擎；Faster-Whisper 可搭配 SimulStreaming 使用。</template>
               </p>
               <div class="space-y-3">
                 <label
@@ -1790,9 +2016,8 @@ async function handleFileChange(event: Event) {
                   <div class="flex-1">
                     <span class="text-white font-medium">使用 Qwen3-ASR</span>
                     <p class="text-white/50 text-sm mt-1">
-                      使用阿里巴巴 Qwen3-ASR 模型進行語音轉錄,支援多語言,準確度高。
-                      <br />⚠️ 需要 GPU 支援,此選項與上述選項互斥
-                      <br />📦 CUDA 可攜版已內建所需執行環境
+                      <template v-if="isSherpaOnnxMode">使用 Qwen3-ASR 0.6B 的 Sherpa-ONNX INT8 CPU bundle；不套用 dtype、4-bit 或 GPU 裝置設定。</template>
+                      <template v-else>使用 Qwen3-ASR GPU 原生模型進行多語言轉錄；CUDA 可攜版已內建所需執行環境。</template>
                     </p>
                   </div>
                 </label>
@@ -1805,7 +2030,8 @@ async function handleFileChange(event: Event) {
                   <div class="flex-1">
                     <span class="text-white font-medium">使用 SenseVoiceSmall</span>
                     <p class="text-white/50 text-sm mt-1">
-                      多語 ASR，CPU 可用；CUDA 可加速，ROCm 先列 experimental，需 AMD 實機驗證。
+                      <template v-if="isSherpaOnnxMode">Sherpa-ONNX INT8 CPU 推論，支援中文、英文、日文、韓文與粵語。</template>
+                      <template v-else>GPU 原生多語 ASR；CUDA 可加速，ROCm 在 AMD 實機驗證前維持 experimental。</template>
                     </p>
                   </div>
                 </label>
@@ -1818,7 +2044,8 @@ async function handleFileChange(event: Event) {
                   <div class="flex-1">
                     <span class="text-white font-medium">使用 Fun-ASR Nano</span>
                     <p class="text-white/50 text-sm mt-1">
-                      可選中英日／中文方言版或 31 語言 MLT 版；目前採分段轉錄且不提供時間戳。
+                      <template v-if="isSherpaOnnxMode">Sherpa-ONNX INT8 CPU bundle，支援中英日與中文方言；目前不提供時間戳。</template>
+                      <template v-else>可選中英日／中文方言版或 31 語言 MLT 版；目前採分段轉錄且不提供時間戳。</template>
                     </p>
                   </div>
                 </label>
@@ -1831,7 +2058,8 @@ async function handleFileChange(event: Event) {
                   <div class="flex-1">
                     <span class="text-white font-medium">Parakeet</span>
                     <p class="text-white/50 text-sm mt-1">
-                      CUDA 實驗性離線 ASR；官方模型支援英文或日文，透過 NVIDIA NeMo 執行。
+                      <template v-if="isSherpaOnnxMode">Sherpa-ONNX INT8 CPU 推論；可選 25 語言 TDT 或日文專用 CTC bundle，不需要 NVIDIA GPU／NeMo。</template>
+                      <template v-else>CUDA 實驗性離線 ASR；官方模型透過 NVIDIA NeMo 執行。</template>
                     </p>
                   </div>
                 </label>
@@ -1846,6 +2074,18 @@ async function handleFileChange(event: Event) {
                 <UiSelect v-if="!localConfig.transcription.use_qwen3_asr && !localConfig.transcription.use_openai_transcription_api && !localConfig.transcription.use_sensevoice_asr && !localConfig.transcription.use_fun_asr && !localConfig.transcription.use_nemo_asr"
                   v-model="localConfig.transcription.model"
                   :options="whisperModelSelectOptions" />
+                <div v-if="localConfig.transcription.use_openai_transcription_api" class="md:col-span-2 bg-gradient-to-br from-emerald-500/10 to-blue-500/10 rounded-xl p-5 border border-emerald-500/20">
+                  <h3 class="text-lg font-semibold text-emerald-300 mb-2">OpenAI 雲端語音轉錄</h3>
+                  <p class="text-white/60 text-sm mb-4">音訊會上傳至 OpenAI Transcription API 進行語音辨識。這組金鑰只供 ASR 使用，不會提供給 GPT 或 Gemini 翻譯；雲端轉錄可能產生 API 費用。</p>
+                  <label class="block text-white/70 font-semibold mb-2">OpenAI ASR API Key</label>
+                  <div class="flex gap-2">
+                    <input v-model="localConfig.transcription.openai_api_key" type="password" placeholder="sk-..."
+                      class="flex-1 px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-emerald-400" />
+                    <button @click="testOpenAiAsrConnection" :disabled="testingGpt"
+                      class="bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/30 font-semibold px-4 rounded-lg transition text-xs whitespace-nowrap">測試 ASR 金鑰</button>
+                  </div>
+                  <p class="text-white/45 text-xs mt-2">若同時使用 OpenAI GPT 翻譯，請到「翻譯選項」另外輸入翻譯金鑰。</p>
+                </div>
                 <!-- OpenAI 模型選擇 -->
                 <input v-else-if="localConfig.transcription.use_openai_transcription_api" 
                   v-model="localConfig.transcription.openai_transcription_model" 
@@ -1861,7 +2101,7 @@ async function handleFileChange(event: Event) {
                 <UiSelect v-else-if="localConfig.transcription.use_nemo_asr"
                   v-model="localConfig.transcription.nemo_asr_model"
                   :options="parakeetModelOptions" />
-                <div v-if="localConfig.transcription.use_nemo_asr" class="mt-4">
+                <div v-if="localConfig.transcription.use_nemo_asr && !isSherpaOnnxMode" class="mt-4">
                   <label class="block text-white/70 font-semibold mb-2">解碼器</label>
                   <UiSelect v-model="localConfig.transcription.nemo_asr_decoding" :options="parakeetDecodingOptions" />
                   <p class="text-white/45 text-xs mt-2">TDT 為官方預設；CTC 保留作相容或比較用途。模型語言會依英文／日文模型自動綁定。</p>
@@ -1870,7 +2110,7 @@ async function handleFileChange(event: Event) {
                 <UiSelect v-else-if="localConfig.transcription.use_qwen3_asr"
                   v-model="localConfig.transcription.qwen3_asr_model"
                   :options="qwen3AsrModelOptions" />
-                <div v-if="localConfig.transcription.use_qwen3_asr" class="mt-4 grid grid-cols-1 gap-4">
+                <div v-if="localConfig.transcription.use_qwen3_asr && !isSherpaOnnxMode" class="mt-4 grid grid-cols-1 gap-4">
                   <div>
                     <label class="block text-white/70 font-semibold mb-2">模型精度</label>
                     <UiSelect v-model="localConfig.transcription.qwen3_dtype" :options="qwen3DtypeOptions" />
@@ -1919,14 +2159,14 @@ async function handleFileChange(event: Event) {
                 </p>
               </div>
 
-              <div class="md:col-span-2" v-if="!localConfig.transcription.use_qwen3_asr && !localConfig.transcription.use_nemo_asr">
+              <div class="md:col-span-2" v-if="!isSherpaOnnxMode && !localConfig.transcription.use_qwen3_asr && !localConfig.transcription.use_nemo_asr">
                 <label class="block text-white/70 font-semibold mb-2">轉錄提示詞</label>
                 <textarea v-model="localConfig.transcription.transcription_initial_prompt" placeholder="提示詞1, 提示詞2, ..." rows="3"
                   class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400"></textarea>
                 <p class="text-white/40 text-sm mt-1">通用的轉錄固定提示詞/術語表。格式:"提示詞1, 提示詞2, ..."。此文本將始終包含在傳遞給模型的提示詞中。</p>
               </div>
               <div class="md:col-span-2" v-else>
-                <p class="text-yellow-400 text-sm">⚠️ Qwen3-ASR 不支援自訂提示詞</p>
+                <p class="text-yellow-400 text-sm">{{ isSherpaOnnxMode ? 'Sherpa-ONNX bundle 不使用提示詞、GPU dtype、4-bit 或 NeMo 解碼器設定。' : '此引擎不支援自訂提示詞。' }}</p>
               </div>
             </div>
 
@@ -1945,14 +2185,53 @@ async function handleFileChange(event: Event) {
 
           <!-- Model Management Settings -->
           <div v-if="activeTab === 'model_management'" class="settings-paint-section space-y-6">
-            <h2 class="text-xl font-bold text-white mb-4">ASR模型管理</h2>
+            <div
+              v-if="['cuda', 'rocm'].includes(runtimeStatus?.profile || '')"
+              class="bg-white/5 rounded-xl p-5 border border-cyan-500/30"
+            >
+              <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div>
+                  <h3 class="text-lg font-semibold text-cyan-300">CPU ASR Sidecar</h3>
+                  <p class="text-white/60 text-sm mt-1">
+                    安裝獨立 sherpa-onnx CPU runtime，讓目前的 {{ runtimeStatus?.profile?.toUpperCase() }} 包可切換 GPU ASR / CPU ASR。
+                  </p>
+                  <p v-if="cpuAsrSidecarStatus?.installed" class="text-green-300 text-sm mt-2">已安裝 CPU ASR runtime。</p>
+                </div>
+                <button
+                  @click="installCpuAsrSidecar"
+                  :disabled="!canInstallCpuAsrSidecar"
+                  class="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold transition"
+                >
+                  {{ cpuAsrSidecarBusy ? '安裝中…' : (cpuAsrSidecarStatus?.installed ? '已安裝' : '下載並安裝') }}
+                </button>
+              </div>
+              <div v-if="cpuAsrSidecarBusy" class="mt-4">
+                <div class="h-2 rounded-full bg-white/10 overflow-hidden">
+                  <div class="h-full bg-cyan-500 transition-all" :style="{ width: `${Math.max(2, (cpuAsrSidecarStatus?.progress || 0) * 100)}%` }"></div>
+                </div>
+                <p class="text-white/60 text-xs mt-2">{{ cpuAsrSidecarStatus?.message }} · {{ Math.round((cpuAsrSidecarStatus?.progress || 0) * 100) }}%</p>
+              </div>
+              <p v-if="cpuAsrSidecarStatus?.status === 'error'" class="text-red-300 text-sm mt-3 break-words">
+                安裝失敗：{{ cpuAsrSidecarStatus.error }}
+              </p>
+              <p v-if="cpuAsrSidecarStatus?.restart_required" class="text-yellow-200 text-sm mt-3">
+                安裝完成，請重新啟動程式後再切換至 CPU / sherpa-onnx。
+              </p>
+            </div>
+            <h2 class="text-xl font-bold text-white mb-4">ASR 模型管理</h2>
+            <div class="grid grid-cols-2 gap-2 p-1 rounded-xl bg-black/20 border border-white/10">
+              <button @click="modelManagementBackend = 'gpu'" :class="['px-4 py-2 rounded-lg font-semibold transition', modelManagementBackend === 'gpu' ? 'bg-blue-600 text-white' : 'text-white/60 hover:bg-white/10']">GPU 原生模型</button>
+              <button @click="modelManagementBackend = 'cpu'" :class="['px-4 py-2 rounded-lg font-semibold transition', modelManagementBackend === 'cpu' ? 'bg-cyan-600 text-white' : 'text-white/60 hover:bg-white/10']">Sherpa-ONNX CPU 模型</button>
+            </div>
 
             <div class="bg-cyan-500/10 rounded-xl p-4 border border-cyan-500/20">
               <p class="text-cyan-200 text-sm">
-                📦 在這裡可預先下載 ASR 模型，避免首次啟動轉錄時等待。
+                <template v-if="modelManagementBackend === 'cpu'">📦 此分頁下載 Sherpa-ONNX 專用 INT8 ONNX bundle，不能與同名的 PyTorch／NeMo GPU 模型互換。</template>
+                <template v-else>📦 此分頁管理 GPU 原生模型；模型格式與 Sherpa-ONNX CPU bundle 分開。</template>
               </p>
               <p class="text-white/50 text-xs mt-2">
-                預設儲存在程式旁的 models\\huggingface，更新程式時不會覆蓋模型。
+                <template v-if="modelManagementBackend === 'cpu'">模型儲存在 models\\sherpa-onnx，使用 CPU 離線推論，不需要 CUDA、ROCm 或 PyTorch；只列出目前已支援的 bundle。</template>
+                <template v-else>GPU 使用 Hugging Face／ModelScope cache；GPU 與 CPU 兩種格式可同時存在。</template>
               </p>
             </div>
 
@@ -1977,7 +2256,7 @@ async function handleFileChange(event: Event) {
                 目前位置：{{ modelDownloadStore.storageInfo?.storage_path || '讀取中...' }}
               </p>
               <p class="text-yellow-200/70 text-xs mt-1">
-                變更位置不會自動搬移既有模型；需要保留時請先手動搬移整個 huggingface 資料夾。
+                變更位置不會自動搬移既有模型；需要保留時請搬移 huggingface、modelscope 與 sherpa-onnx 子資料夾。
               </p>
             </div>
 
@@ -1988,18 +2267,21 @@ async function handleFileChange(event: Event) {
               {{ modelDownloadStore.successMessage }}
             </div>
 
-            <AsrModelGroup title="Qwen3-ASR 模型" engine="qwen3-asr" :models="qwenModelList" />
+            <AsrModelGroup title="Qwen3-ASR" engine="qwen3-asr" :compute-backend="modelManagementBackend" :models="modelManagementBackend === 'cpu' ? cpuQwenModels : gpuQwenModels" :descriptions="modelManagementBackend === 'cpu' ? cpuQwenDescriptions : {}" />
             <AsrModelGroup
               title="SenseVoice 模型"
               engine="sensevoice"
-              :models="senseVoiceModelList"
-              default-description="CPU capable；ROCm 在 AMD 實機驗證前維持 experimental。"
+              :compute-backend="modelManagementBackend"
+              :models="modelManagementBackend === 'cpu' ? cpuSenseVoiceModels : gpuSenseVoiceModels"
+              :descriptions="modelManagementBackend === 'cpu' ? cpuSenseVoiceDescriptions : {}"
+              :default-description="modelManagementBackend === 'cpu' ? '' : 'GPU 原生模型；ROCm 在 AMD 實機驗證前維持 experimental。'"
             />
             <AsrModelGroup
               title="Fun-ASR Nano 模型"
               engine="fun-asr-nano"
-              :models="funAsrModelList"
-              :descriptions="{
+              :compute-backend="modelManagementBackend"
+              :models="modelManagementBackend === 'cpu' ? cpuFunAsrModels : gpuFunAsrModels"
+              :descriptions="modelManagementBackend === 'cpu' ? cpuFunAsrDescriptions : {
                 'FunAudioLLM/Fun-ASR-Nano-2512': '中文／英文／日文與中文方言模型',
                 'FunAudioLLM/Fun-ASR-MLT-Nano-2512': '31 種語言模型',
               }"
@@ -2007,10 +2289,12 @@ async function handleFileChange(event: Event) {
             <AsrModelGroup
               title="NVIDIA Parakeet 模型"
               engine="parakeet-ctc-ja"
-              :models="parakeetModelList"
-              default-description="CUDA experimental；英文／日文依模型固定；官方模型採 CC-BY-4.0，需 NVIDIA NeMo。"
+              :compute-backend="modelManagementBackend"
+              :models="modelManagementBackend === 'cpu' ? cpuParakeetModels : gpuParakeetModels"
+              :descriptions="modelManagementBackend === 'cpu' ? cpuParakeetDescriptions : {}"
+              :default-description="modelManagementBackend === 'cpu' ? '' : 'CUDA experimental；官方模型採 CC-BY-4.0，透過 NVIDIA NeMo 執行。'"
             />
-            <AsrModelGroup title="Faster-Whisper 模型" engine="faster-whisper" :models="fasterWhisperModelList" />
+            <AsrModelGroup v-if="modelManagementBackend === 'gpu'" title="Faster-Whisper" engine="faster-whisper" compute-backend="gpu" :models="gpuFasterWhisperModels" />
 
             <div v-if="false" class="bg-white/5 rounded-xl p-5 border border-white/10">
               <h3 class="text-lg font-semibold text-blue-300 mb-4">Qwen3-ASR 模型</h3>
@@ -2188,20 +2472,20 @@ async function handleFileChange(event: Event) {
                 </button>
               </div>
 
-              <div v-if="modelDownloadStore.downloadedModels.length === 0" class="text-white/50 text-sm">
+              <div v-if="managedDownloadedModels.length === 0" class="text-white/50 text-sm">
                 尚無已下載模型
               </div>
               <div v-else class="space-y-2">
-                <div v-for="item in modelDownloadStore.downloadedModels" :key="`${item.engine}-${item.repo_id}`" class="p-3 rounded-lg bg-black/20 border border-white/10">
+                <div v-for="item in managedDownloadedModels" :key="`${item.compute_backend}-${item.engine}-${item.repo_id}`" class="p-3 rounded-lg bg-black/20 border border-white/10">
                   <div class="flex items-center justify-between gap-4">
                     <div>
                       <div class="text-white font-medium">{{ item.model_id }}</div>
-                      <div class="text-xs text-white/50 mt-1">{{ item.engine }} · {{ item.repo_id }}</div>
+                      <div class="text-xs text-white/50 mt-1">{{ item.compute_backend.toUpperCase() }} · {{ item.engine }} · {{ item.repo_id }}</div>
                     </div>
                     <div class="flex items-center gap-3">
                       <div class="text-sm text-white/70">{{ modelDownloadStore.formatSize(item.size_bytes) }}</div>
                       <button
-                        @click="deleteDownloadedModel(item.engine, item.model_id)"
+                        @click="deleteDownloadedModel(item.engine, item.model_id, item.compute_backend)"
                         class="px-3 py-1.5 rounded-lg text-sm bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 text-red-200 transition"
                       >
                         刪除
@@ -2250,7 +2534,7 @@ async function handleFileChange(event: Event) {
                   <div>
                     <label class="block text-white/70 font-semibold mb-2">API Key <span class="text-white/40 text-xs">(選填)</span></label>
                     <div class="flex gap-2">
-                      <input v-model="localConfig.translation.api_key" type="password" placeholder="覆蓋一般設定的 API Key"
+                      <input v-model="localConfig.translation.openai_api_key" type="password" placeholder="sk-..."
                         class="flex-1 px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-green-400" />
                       <button @click="testConnection('gpt')" :disabled="testingGpt" 
                         class="bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/30 font-semibold px-4 rounded-lg transition text-xs whitespace-nowrap flex items-center justify-center gap-1.5 min-w-[95px]">
@@ -2258,14 +2542,14 @@ async function handleFileChange(event: Event) {
                         <span>⚡ 測試連線</span>
                       </button>
                     </div>
-                    <p class="text-white/40 text-xs mt-1">留空則使用一般設定</p>
+                    <p class="text-white/50 text-xs mt-1">僅供 OpenAI GPT 雲端翻譯使用，不會提供給 OpenAI 語音轉錄或 Gemini。</p>
                   </div>
 
                   <div class="md:col-span-2">
-                    <label class="block text-white/70 font-semibold mb-2">API Base URL <span class="text-white/40 text-xs">(選填)</span></label>
+                    <label class="block text-white/70 font-semibold mb-2">API Base URL</label>
                     <input v-model="localConfig.translation.gpt_base_url" type="text" placeholder="https://api.openai.com/v1"
                       class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-green-400" />
-                    <p class="text-white/40 text-xs mt-1">自訂 GPT API 端點，留空使用預設</p>
+                    <p class="text-white/40 text-xs mt-1">OpenAI 預設端點；使用相容服務時可自行修改。</p>
                   </div>
                 </div>
               </div>
@@ -2286,7 +2570,7 @@ async function handleFileChange(event: Event) {
                   <div>
                     <label class="block text-white/70 font-semibold mb-2">API Key <span class="text-white/40 text-xs">(選填)</span></label>
                     <div class="flex gap-2">
-                      <input v-model="localConfig.translation.api_key" type="password" placeholder="覆蓋一般設定的 API Key"
+                      <input v-model="localConfig.translation.google_api_key" type="password" placeholder="AIza..."
                         class="flex-1 px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
                       <button @click="testConnection('gemini')" :disabled="testingGemini" 
                         class="bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/30 font-semibold px-4 rounded-lg transition text-xs whitespace-nowrap flex items-center justify-center gap-1.5 min-w-[95px]">
@@ -2294,14 +2578,14 @@ async function handleFileChange(event: Event) {
                         <span>⚡ 測試連線</span>
                       </button>
                     </div>
-                    <p class="text-white/40 text-xs mt-1">留空則使用一般設定</p>
+                    <p class="text-white/50 text-xs mt-1">僅供 Google Gemini 雲端翻譯使用，不會用於 ASR 或 OpenAI GPT。</p>
                   </div>
 
                   <div class="md:col-span-2">
-                    <label class="block text-white/70 font-semibold mb-2">API Base URL <span class="text-white/40 text-xs">(選填)</span></label>
-                    <input v-model="localConfig.translation.gemini_base_url" type="text" placeholder="留空使用預設 Gemini 端點"
+                    <label class="block text-white/70 font-semibold mb-2">API Base URL</label>
+                    <input v-model="localConfig.translation.gemini_base_url" type="text" placeholder="https://generativelanguage.googleapis.com"
                       class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
-                    <p class="text-white/40 text-xs mt-1">自訂 Gemini API 端點</p>
+                    <p class="text-white/40 text-xs mt-1">Google Gemini 預設端點；使用代理端點時可自行修改。</p>
                   </div>
                 </div>
               </div>
@@ -2592,6 +2876,16 @@ async function handleFileChange(event: Event) {
                 <input v-model="localConfig.transcription.asr_corrections_case_sensitive" type="checkbox" class="w-4 h-4 accent-cyan-500" />
                 英文別名區分大小寫
               </label>
+
+              <label class="flex items-center gap-2 cursor-pointer mt-3 text-sm text-white/70">
+                <input v-model="localConfig.transcription.asr_correction_log_enabled" type="checkbox" class="w-4 h-4 accent-cyan-500" />
+                記錄已套用的 ASR 修正（app/logs/asr_corrections.log）
+              </label>
+
+              <label class="flex items-center gap-2 cursor-pointer mt-3 text-sm text-white/70">
+                <input v-model="localConfig.transcription.asr_correction_learning_enabled" type="checkbox" class="w-4 h-4 accent-cyan-500" />
+                收集未命中詞與 alias 建議（app/logs/asr_correction_suggestions.json）
+              </label>
             </div>
 
             <div class="rounded-xl p-5 border border-white/10 bg-white/[0.03] space-y-4">
@@ -2657,6 +2951,10 @@ async function handleFileChange(event: Event) {
                   <span class="text-white font-semibold">{{ localConfig.terminology.use_terminology_glossary ? '已啟用' : '已停用' }}</span>
                 </label>
               </div>
+              <label class="flex items-center gap-2 cursor-pointer mt-4 text-sm text-white/70">
+                <input v-model="localConfig.terminology.translation_glossary_audit_enabled" type="checkbox" class="w-4 h-4 accent-purple-500" />
+                記錄術語遵循狀況與重複未命中（app/logs/translation_glossary_audit.log、translation_glossary_issues.json）
+              </label>
             </div>
             
             <!-- 新增術語 -->
@@ -2866,13 +3164,11 @@ async function handleFileChange(event: Event) {
 <style scoped>
 .settings-paint-section {
   contain: layout style;
-  isolation: isolate;
 }
 
 .settings-paint-section > :not(.llama-settings) {
-  /* 長設定頁以直屬區塊為重繪單位，避免快速捲動時整頁重新合成。 */
-  contain: layout paint style;
-  isolation: isolate;
+  /* Qt WebEngine 在長頁面使用 paint containment 時可能短暫漏畫 tile。 */
+  contain: layout style;
 }
 
 .tooltip-container {

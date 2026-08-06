@@ -2,21 +2,30 @@ import collections
 import math
 import os
 import queue
-import torch
 import warnings
+import time
 
 import numpy as np
 
-from .common import TranslationTask, SAMPLE_RATE, FRAME_DURATION, LoopWorkerBase
+from .common import LatencyTrace, TranslationTask, SAMPLE_RATE, FRAME_DURATION, LoopWorkerBase, WARNING
 from .torch_setup import disable_nnpack
 
-disable_nnpack(torch)
+try:
+    import torch
+except ImportError:
+    torch = None
+
+if torch is not None:
+    disable_nnpack(torch)
 warnings.filterwarnings('ignore')
 
 FIRERED_FRAME_LENGTH = 160
 
 
-def _init_jit_model(model_path: str, device=torch.device('cpu')):
+def _init_jit_model(model_path: str, device=None):
+    if torch is None:
+        raise RuntimeError('Silero VAD requires PyTorch, which is not included in the CPU sherpa-onnx runtime.')
+    device = device or torch.device('cpu')
     torch.set_grad_enabled(False)
     # Silero VAD 是極小的模型，限制 CPU 執行緒數可大幅降低 CPU 占用
     # 預設 PyTorch 會用所有核心（32 執行緒），造成每次推理時全核短暫爆衝
@@ -93,8 +102,11 @@ class FireRedVADAdapter:
 
 
 def create_vad_adapter(vad_backend: str, vad_threshold: float, firered_vad_model_path: str | None = None):
-    vad_backend = (vad_backend or 'silero').strip().lower()
+    vad_backend = (vad_backend or 'firered').strip().lower()
     if vad_backend == 'silero':
+        if torch is None:
+            print(f'{WARNING}Silero VAD is unavailable without PyTorch; using CPU FireRed VAD instead.')
+            return FireRedVADAdapter(threshold=vad_threshold, model_path=firered_vad_model_path)
         return SileroVADAdapter()
     if vad_backend == 'firered':
         return FireRedVADAdapter(threshold=vad_threshold, model_path=firered_vad_model_path)
@@ -124,7 +136,7 @@ class AudioSlicer(LoopWorkerBase):
                  continuous_no_speech_threshold: float, dynamic_no_speech_threshold: bool,
                  prefix_retention_length: float, vad_threshold: float, dynamic_vad_threshold: bool,
                  disable_vad: bool = False, vad_every_n_frames: int = 1,
-                 vad_backend: str = 'silero', firered_vad_model_path: str | None = None):
+                 vad_backend: str = 'firered', firered_vad_model_path: str | None = None):
         self.min_audio_length = min_audio_length
         self.max_audio_length = max_audio_length
         self.prefix_retention_count = max(0, round(prefix_retention_length / FRAME_DURATION))
@@ -141,6 +153,10 @@ class AudioSlicer(LoopWorkerBase):
         self.continuous_no_speech_count = 0
         self.counter = 0
         self.last_slice_second = 0.0
+        self.capture_started_at = None
+        self.first_speech_at = None
+        self.last_speech_at = None
+        self.last_latency_trace = None
 
         self.disable_vad = disable_vad
         if not self.disable_vad:
@@ -159,11 +175,17 @@ class AudioSlicer(LoopWorkerBase):
                 self.max_vad_threshold = 0.6
 
     def put(self, audio: np.array):
+        frame_received_at = time.perf_counter()
+        if self.capture_started_at is None:
+            self.capture_started_at = frame_received_at
         self.counter += 1
         if self.disable_vad:
             # VAD 已停用（Qwen3 ASR 模式）：所有音訊幀視為有語音，直接累積
             self.audio_buffer.append(audio)
             self.speech_count += 1
+            if self.first_speech_at is None:
+                self.first_speech_at = frame_received_at
+            self.last_speech_at = frame_received_at
             return
 
         # VAD 跳幀優化：第一幀仍執行推論，後續連續語音 / 連續靜音都可沿用上一幀結果，
@@ -181,6 +203,9 @@ class AudioSlicer(LoopWorkerBase):
             self.audio_buffer.append(audio)
             self.speech_count += 1
             self.continuous_no_speech_count = 0
+            if self.first_speech_at is None:
+                self.first_speech_at = frame_received_at
+            self.last_speech_at = frame_received_at
         else:
             if self.speech_count == 0 and self.no_speech_count == 1:
                 self.slice()
@@ -216,6 +241,7 @@ class AudioSlicer(LoopWorkerBase):
         return False
 
     def slice(self):
+        slice_emitted_at = time.perf_counter()
         concatenate_buffer = self.prefix_audio_buffer + self.audio_buffer
         concatenate_audio = np.concatenate(concatenate_buffer)
         self.audio_buffer = []
@@ -226,6 +252,18 @@ class AudioSlicer(LoopWorkerBase):
         self.speech_count = 0
         self.no_speech_count = 0
         self.continuous_no_speech_count = 0
+        trace = LatencyTrace(
+            audio_duration_ms=len(concatenate_audio) / SAMPLE_RATE * 1000,
+            capture_started_at=self.capture_started_at,
+            first_speech_at=self.first_speech_at,
+            last_speech_at=self.last_speech_at,
+            slice_emitted_at=slice_emitted_at,
+            asr_queued_at=slice_emitted_at,
+        )
+        self.capture_started_at = slice_emitted_at if self.prefix_audio_buffer else None
+        self.first_speech_at = None
+        self.last_speech_at = None
+        self.last_latency_trace = trace
         slice_second = self.counter * FRAME_DURATION
         last_slice_second = self.last_slice_second
         self.last_slice_second = slice_second
@@ -241,7 +279,7 @@ class AudioSlicer(LoopWorkerBase):
             self.put(audio)
             if self.should_slice():
                 sliced_audio, time_range = self.slice()
-                task = TranslationTask(sliced_audio, time_range)
+                task = TranslationTask(sliced_audio, time_range, latency_trace=self.last_latency_trace)
                 output_queue.put(task)
             if not self.disable_vad and self.counter % vad_reset_interval == 0:
                 self.vad.reset_states()

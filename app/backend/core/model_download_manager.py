@@ -1,10 +1,12 @@
-import asyncio
+﻿import asyncio
 import copy
 import logging
 import os
 import shutil
 import subprocess
 import sys
+import tarfile
+import urllib.request
 import time
 import uuid
 from datetime import datetime
@@ -12,7 +14,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Dict, List, Literal, Optional
 
-from backend.models.model_download import ModelDownloadTask, DownloadedModelInfo
+from backend.models.model_download import ModelDownloadTask, DownloadedModelInfo, ModelComputeBackend
 from backend.core.portable_paths import (
     ensure_model_storage,
     get_app_root,
@@ -22,6 +24,22 @@ from backend.core.portable_paths import (
 )
 
 logger = logging.getLogger(__name__)
+
+SHERPA_CPU_BUNDLES = {
+    "nvidia/parakeet-tdt-0.6b-v3": ("sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8", ("encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt")),
+    "nvidia/parakeet-tdt_ctc-0.6b-ja": ("sherpa-onnx-nemo-parakeet-tdt_ctc-0.6b-ja-35000-int8", ("model.int8.onnx", "tokens.txt")),
+    "FunAudioLLM/Fun-ASR-Nano-2512": ("sherpa-onnx-funasr-nano-int8-2025-12-30", ("encoder_adaptor.int8.onnx", "llm.int8.onnx", "embedding.int8.onnx", "Qwen3-0.6B")),
+    "iic/SenseVoiceSmall": ("sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17", ("model.int8.onnx", "tokens.txt")),
+    "Qwen/Qwen3-ASR-0.6B": ("sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25", ("conv_frontend.onnx", "encoder.int8.onnx", "decoder.int8.onnx", "tokenizer")),
+}
+SHERPA_RELEASE_ROOT = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models"
+SHERPA_CPU_ENGINES = {
+    "Qwen/Qwen3-ASR-0.6B": "qwen3-asr",
+    "iic/SenseVoiceSmall": "sensevoice",
+    "FunAudioLLM/Fun-ASR-Nano-2512": "fun-asr-nano",
+    "nvidia/parakeet-tdt-0.6b-v3": "parakeet-ctc-ja",
+    "nvidia/parakeet-tdt_ctc-0.6b-ja": "parakeet-ctc-ja",
+}
 
 SUPPORTED_QWEN3_MODELS = {
     "Qwen/Qwen3-ASR-0.6B",
@@ -39,6 +57,7 @@ SUPPORTED_FUN_ASR_MODELS = {
 }
 
 SUPPORTED_PARAKEET_MODELS = {
+    "nvidia/parakeet-tdt-0.6b-v3",
     "nvidia/parakeet-tdt_ctc-0.6b-ja",
     "nvidia/parakeet-tdt_ctc-1.1b",
     "grider-transwithai/parakeet-ctc-1.1b-ja",
@@ -114,7 +133,15 @@ class ModelDownloadManager:
             return model_id
         return FASTER_WHISPER_MODEL_TO_REPO_ID.get(model_id, f"Systran/faster-whisper-{model_id}")
 
-    def _validate_model_id(self, engine: str, model_id: str) -> str:
+    def _validate_model_id(self, engine: str, model_id: str, compute_backend: ModelComputeBackend = "gpu") -> str:
+        if compute_backend == "cpu":
+            if model_id not in SHERPA_CPU_BUNDLES:
+                raise ValueError(f"CPU / sherpa-onnx 不支援此模型: {model_id}")
+            if engine == "faster-whisper":
+                raise ValueError("CPU / sherpa-onnx 模式不使用 Faster-Whisper 模型")
+            expected_engine = SHERPA_CPU_ENGINES[model_id]
+            if engine != expected_engine:
+                raise ValueError(f"CPU 模型 {model_id} 必須使用引擎 {expected_engine}，不是 {engine}")
         if engine == "qwen3-asr":
             if model_id not in SUPPORTED_QWEN3_MODELS:
                 raise ValueError(f"不支援的 Qwen3-ASR 模型: {model_id}")
@@ -145,9 +172,9 @@ class ModelDownloadManager:
 
         raise ValueError(f"不支援的引擎: {engine}")
 
-    async def start_download(self, engine: str, model_id: str) -> str:
+    async def start_download(self, engine: str, model_id: str, compute_backend: ModelComputeBackend = "gpu") -> str:
         """建立下載任務並背景執行"""
-        normalized_model_id = self._validate_model_id(engine, model_id)
+        normalized_model_id = self._validate_model_id(engine, model_id, compute_backend)
         task_id = str(uuid.uuid4())
         now = self._now()
 
@@ -155,6 +182,7 @@ class ModelDownloadManager:
             task_id=task_id,
             engine=engine,  # type: ignore[arg-type]
             model_id=normalized_model_id,
+            compute_backend=compute_backend,
             status="pending",
             progress=0.0,
             message="任務已建立",
@@ -165,14 +193,16 @@ class ModelDownloadManager:
         with self._lock:
             self._tasks[task_id] = task
 
-        asyncio.create_task(self._run_download_task(task_id, engine, normalized_model_id))
+        asyncio.create_task(self._run_download_task(task_id, engine, normalized_model_id, compute_backend))
         return task_id
 
-    async def _run_download_task(self, task_id: str, engine: str, model_id: str) -> None:
+    async def _run_download_task(self, task_id: str, engine: str, model_id: str, compute_backend: ModelComputeBackend) -> None:
         """執行單一下載任務"""
         try:
             self._update_task(task_id, status="downloading", progress=0.05, message="準備下載")
-            if engine == "sensevoice":
+            if compute_backend == "cpu":
+                await self._download_sherpa_archive(task_id, model_id)
+            elif engine == "sensevoice":
                 await self._download_sensevoice_from_modelscope(task_id, model_id)
             else:
                 repo_id = self._normalize_repo_id(engine, model_id)
@@ -181,6 +211,35 @@ class ModelDownloadManager:
         except Exception as e:
             logger.exception("模型下載失敗 task_id=%s", task_id)
             self._update_task(task_id, status="failed", message="下載失敗", error=str(e))
+
+    async def _download_sherpa_archive(self, task_id: str, model_id: str) -> None:
+        bundle, required_paths = SHERPA_CPU_BUNDLES[model_id]
+        model_root = ensure_model_storage() / "sherpa-onnx"
+        target = (model_root / bundle).resolve()
+        archive = (model_root / f"{bundle}.tar.bz2").resolve()
+
+        def blocking_download() -> None:
+            if target.exists() and all((target / name).exists() for name in required_paths):
+                return
+            urllib.request.urlretrieve(f"{SHERPA_RELEASE_ROOT}/{archive.name}", archive)
+            with tarfile.open(archive, "r:bz2") as model_archive:
+                for member in model_archive.getmembers():
+                    extracted = (model_root / member.name).resolve()
+                    try:
+                        extracted.relative_to(model_root.resolve())
+                    except ValueError as exc:
+                        raise RuntimeError(f"Unsafe path in sherpa model archive: {member.name}") from exc
+                    if member.issym() or member.islnk():
+                        raise RuntimeError(f"Links are not allowed in sherpa model archive: {member.name}")
+                model_archive.extractall(model_root)
+            archive.unlink(missing_ok=True)
+            missing = [name for name in required_paths if not (target / name).exists()]
+            if missing:
+                raise RuntimeError(f"Incomplete sherpa model archive; missing: {', '.join(missing)}")
+
+        self._update_task(task_id, progress=0.15, message="Downloading sherpa-onnx INT8 model")
+        await asyncio.to_thread(blocking_download)
+        self._update_task(task_id, progress=0.95, message=f"sherpa-onnx model ready: {target}")
 
     async def _download_from_hf(self, task_id: str, repo_id: str) -> None:
         """透過 HuggingFace Hub 下載模型（第一版為階段式進度）"""
@@ -318,6 +377,7 @@ class ModelDownloadManager:
             "storage_path": str(root),
             "hub_cache_path": str(root / "hub"),
             "modelscope_cache_path": str(root / "modelscope"),
+            "sherpa_onnx_path": str(root / "sherpa-onnx"),
             "is_default": root == default_root,
         }
 
@@ -328,9 +388,13 @@ class ModelDownloadManager:
         os.startfile(str(root))
         return root
 
-    def delete_model(self, engine: str, model_id: str) -> Path:
-        normalized_model_id = self._validate_model_id(engine, model_id)
-        if engine == "sensevoice":
+    def delete_model(self, engine: str, model_id: str, compute_backend: ModelComputeBackend = "gpu") -> Path:
+        normalized_model_id = self._validate_model_id(engine, model_id, compute_backend)
+        if compute_backend == "cpu":
+            bundle, _ = SHERPA_CPU_BUNDLES[normalized_model_id]
+            cache_root = (get_model_storage_root() / "sherpa-onnx").resolve()
+            repo_dir = (cache_root / bundle).resolve()
+        elif engine == "sensevoice":
             cache_root = self._get_modelscope_cache_dir().resolve()
             repo_dir = next(
                 (candidate for candidate in self._get_modelscope_model_dirs(normalized_model_id) if candidate.exists()),
@@ -358,6 +422,20 @@ class ModelDownloadManager:
         """列出 HuggingFace 快取中的指定模型"""
         models: List[DownloadedModelInfo] = []
 
+        sherpa_root = get_model_storage_root() / "sherpa-onnx"
+        for model_id, (bundle, required_paths) in SHERPA_CPU_BUNDLES.items():
+            model_dir = sherpa_root / bundle
+            if model_dir.is_dir() and all((model_dir / name).exists() for name in required_paths):
+                engine = "qwen3-asr" if model_id.startswith("Qwen/") else (
+                    "sensevoice" if model_id.startswith("iic/") else
+                    "fun-asr-nano" if model_id.startswith("FunAudioLLM/") else "parakeet-ctc-ja"
+                )
+                models.append(DownloadedModelInfo(
+                    engine=engine, model_id=model_id, repo_id=bundle,
+                    compute_backend="cpu",
+                    size_bytes=self._directory_size(model_dir), cache_path=str(model_dir),
+                ))
+
         for model_id in sorted(SUPPORTED_SENSEVOICE_MODELS):
             for model_dir in self._get_modelscope_model_dirs(model_id):
                 if not model_dir.exists() or not model_dir.is_dir():
@@ -367,6 +445,7 @@ class ModelDownloadManager:
                         engine="sensevoice",
                         model_id=model_id,
                         repo_id=model_id,
+                        compute_backend="gpu",
                         size_bytes=self._directory_size(model_dir),
                         cache_path=str(model_dir),
                     )
@@ -389,6 +468,7 @@ class ModelDownloadManager:
                             engine="qwen3-asr",
                             model_id=repo_id,
                             repo_id=repo_id,
+                            compute_backend="gpu",
                             size_bytes=size_bytes,
                             cache_path=cache_path,
                         )
@@ -399,6 +479,7 @@ class ModelDownloadManager:
                             engine="parakeet-ctc-ja",
                             model_id=repo_id,
                             repo_id=repo_id,
+                            compute_backend="gpu",
                             size_bytes=size_bytes,
                             cache_path=cache_path,
                         )
@@ -409,6 +490,7 @@ class ModelDownloadManager:
                             engine="fun-asr-nano",
                             model_id=repo_id,
                             repo_id=repo_id,
+                            compute_backend="gpu",
                             size_bytes=size_bytes,
                             cache_path=cache_path,
                         )
@@ -420,6 +502,7 @@ class ModelDownloadManager:
                             engine="faster-whisper",
                             model_id=model_id,
                             repo_id=repo_id,
+                            compute_backend="gpu",
                             size_bytes=size_bytes,
                             cache_path=cache_path,
                         )
@@ -459,6 +542,7 @@ class ModelDownloadManager:
                         engine="qwen3-asr",
                         model_id=repo_id,
                         repo_id=repo_id,
+                        compute_backend="gpu",
                         size_bytes=size_bytes,
                         cache_path=str(item),
                     )
@@ -469,6 +553,7 @@ class ModelDownloadManager:
                         engine="parakeet-ctc-ja",
                         model_id=repo_id,
                         repo_id=repo_id,
+                        compute_backend="gpu",
                         size_bytes=size_bytes,
                         cache_path=str(item),
                     )
@@ -479,6 +564,7 @@ class ModelDownloadManager:
                         engine="fun-asr-nano",
                         model_id=repo_id,
                         repo_id=repo_id,
+                        compute_backend="gpu",
                         size_bytes=size_bytes,
                         cache_path=str(item),
                     )
@@ -490,6 +576,7 @@ class ModelDownloadManager:
                         engine="faster-whisper",
                         model_id=model_id,
                         repo_id=repo_id,
+                        compute_backend="gpu",
                         size_bytes=size_bytes,
                         cache_path=str(item),
                     )

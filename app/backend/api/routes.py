@@ -1,3 +1,6 @@
+import ipaddress
+import socket
+
 from fastapi import FastAPI
 from . import config
 from . import translation
@@ -30,9 +33,19 @@ def register_routes(app: FastAPI):
         except Exception:
             public_port = 8765
             sharing_enabled = False
+        lan_addresses = set()
+        try:
+            for item in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+                address = item[4][0]
+                parsed = ipaddress.ip_address(address)
+                if not (parsed.is_loopback or parsed.is_link_local or parsed.is_unspecified):
+                    lan_addresses.add(address)
+        except OSError:
+            pass
         return {
             "public_port": public_port,
             "enable_subtitle_sharing": sharing_enabled,
+            "lan_addresses": sorted(lan_addresses),
         }
 
     @app.get("/api/system/check")

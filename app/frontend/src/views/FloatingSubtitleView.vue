@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useTranslationStore } from '../stores/translation';
+import type { LatencyWindowSnapshot, SubtitleLatencyTrace } from '../services/api';
 
 const store = useTranslationStore();
 
@@ -10,8 +11,8 @@ const fontWeight = ref(700);
 const opacity = ref(100);
 const showOriginal = ref(true);
 const showTranslated = ref(true);
-const showTimestamp = ref(false);
-const showLatency = ref(false);
+const showTimestamp = ref(true);
+const showLatency = ref(true);
 const position = ref<'top' | 'bottom'>('bottom');
 const autoScroll = ref(true);
 const maxDisplayCount = ref(5);
@@ -40,6 +41,8 @@ const subtitleHistory = ref<Array<{
   llm_latency_ms?: number | null;
   translation_queue_latency_ms?: number | null;
   total_latency_ms?: number | null;
+  latency_trace?: SubtitleLatencyTrace;
+  latency_window?: LatencyWindowSnapshot;
 }>>([]); 
 
 // 滾動容器引用
@@ -90,6 +93,8 @@ function addOrUpdateSubtitle(newSub: any, source: string = 'Store') {
     subtitleHistory.value[existingIndex].llm_latency_ms = newSub.llm_latency_ms ?? null;
     subtitleHistory.value[existingIndex].translation_queue_latency_ms = newSub.translation_queue_latency_ms ?? null;
     subtitleHistory.value[existingIndex].total_latency_ms = newSub.total_latency_ms ?? null;
+    subtitleHistory.value[existingIndex].latency_trace = newSub.latency_trace;
+    subtitleHistory.value[existingIndex].latency_window = newSub.latency_window;
   } else {
     // 沒找到，新增一筆
     subtitleHistory.value.push({
@@ -101,7 +106,9 @@ function addOrUpdateSubtitle(newSub: any, source: string = 'Store') {
       asr_latency_ms: newSub.asr_latency_ms ?? null,
       llm_latency_ms: newSub.llm_latency_ms ?? null,
       translation_queue_latency_ms: newSub.translation_queue_latency_ms ?? null,
-      total_latency_ms: newSub.total_latency_ms ?? null
+      total_latency_ms: newSub.total_latency_ms ?? null,
+      latency_trace: newSub.latency_trace,
+      latency_window: newSub.latency_window,
     });
   }
   

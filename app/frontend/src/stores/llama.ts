@@ -23,10 +23,15 @@ export const useLlamaStore = defineStore('llama', () => {
     is_ready: false,
     server_url: null,
     current_model: null,
-    pid: null
+    pid: null,
+    resources: {},
+    performance: {},
+    runtime: { installed: false, path: '', version: '讀取中…', download_url: 'https://github.com/ggml-org/llama.cpp/releases/latest' }
   });
   const selectedModelPath = ref<string>('');
   const modelDirectory = ref<string>('');
+  const recentModelPaths = ref<string[]>([]);
+  const favoriteModelPaths = ref<string[]>([]);
   const isLoading = ref(false);
   const errorMessage = ref('');
   const successMessage = ref('');
@@ -168,6 +173,12 @@ export const useLlamaStore = defineStore('llama', () => {
     }
   }
 
+  async function applyAndRestart() {
+    await saveConfig();
+    if (serverStatus.value.is_running) await stopServer();
+    return startServer();
+  }
+
   async function translate(
     text: string,
     sourceLang: string = 'English',
@@ -195,7 +206,15 @@ export const useLlamaStore = defineStore('llama', () => {
   function selectModel(modelPath: string) {
     selectedModelPath.value = modelPath;
     serverConfig.value.model_path = modelPath;
+    recentModelPaths.value = [modelPath, ...recentModelPaths.value.filter(path => path !== modelPath)].slice(0, 5);
     saveConfig(); // 保存設定
+  }
+
+  function toggleFavoriteModel(modelPath: string) {
+    favoriteModelPaths.value = favoriteModelPaths.value.includes(modelPath)
+      ? favoriteModelPaths.value.filter(path => path !== modelPath)
+      : [modelPath, ...favoriteModelPaths.value];
+    void saveConfig();
   }
 
   function updateServerConfig(config: Partial<ServerConfig>) {
@@ -245,6 +264,8 @@ export const useLlamaStore = defineStore('llama', () => {
         if (llamaConfig.model_dir) {
           modelDirectory.value = llamaConfig.model_dir;
         }
+        recentModelPaths.value = Array.isArray(llamaConfig.recent_model_paths) ? llamaConfig.recent_model_paths : [];
+        favoriteModelPaths.value = Array.isArray(llamaConfig.favorite_model_paths) ? llamaConfig.favorite_model_paths : [];
 
         // 載入自訂配置 (Critical: Load here to prevent data loss on auto-save)
         if (llamaConfig.custom_presets) {
@@ -281,6 +302,8 @@ export const useLlamaStore = defineStore('llama', () => {
       const llamaConfig = {
         model_dir: modelDirectory.value,
         model_path: selectedModelPath.value,
+        recent_model_paths: recentModelPaths.value,
+        favorite_model_paths: favoriteModelPaths.value,
         selected_preset: selectedPreset.value, // Save selected preset
         default_preset: defaultPreset.value,   // Save default preset
         host: serverConfig.value.host,
@@ -567,6 +590,8 @@ export const useLlamaStore = defineStore('llama', () => {
     serverStatus,
     selectedModelPath,
     modelDirectory,
+    recentModelPaths,
+    favoriteModelPaths,
     isLoading,
     errorMessage,
     successMessage,
@@ -588,8 +613,10 @@ export const useLlamaStore = defineStore('llama', () => {
     refreshServerStatus,
     startServer,
     stopServer,
+    applyAndRestart,
     translate,
     selectModel,
+    toggleFavoriteModel,
     updateServerConfig,
     clearMessages,
     loadConfig,

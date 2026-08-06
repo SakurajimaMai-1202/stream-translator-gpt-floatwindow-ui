@@ -8,7 +8,9 @@ import logging
 import contextlib
 import tempfile
 import gc
+import zlib
 from abc import abstractmethod
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from scipy.io.wavfile import write as write_audio
@@ -17,9 +19,17 @@ import numpy as np
 
 from . import filters
 from .common import TranslationTask, SAMPLE_RATE, LoopWorkerBase, sec2str, ApiKeyPool, INFO, WARNING
-from .simul_streaming.simul_whisper.whisper.utils import compression_ratio
 from .torch_setup import disable_nnpack
-from .asr_postprocessor import ASRTermCorrector
+from .asr_postprocessor import (
+    ASRTermCorrector,
+    configure_asr_correction_learning,
+    configure_asr_correction_logging,
+)
+
+
+def compression_ratio(text: str) -> float:
+    encoded = text.encode('utf-8')
+    return len(encoded) / len(zlib.compress(encoded)) if encoded else 0.0
 
 try:
     import torch
@@ -101,15 +111,25 @@ class AudioTranscriber(LoopWorkerBase):
     def __init__(self, whisper_filters: str = None, print_result: bool = False, output_timestamps: bool = False,
                  disable_transcription_context: bool = False, transcription_initial_prompt: str = None,
                  transcription_filters: str = None, asr_corrections_enabled: bool = False,
-                 asr_correction_rules: str = None, asr_corrections_case_sensitive: bool = False):
+                 asr_correction_rules: str = None, asr_corrections_case_sensitive: bool = False,
+                 asr_correction_log_enabled: bool = False, asr_engine: str | None = None,
+                 asr_model: str | None = None, asr_correction_learning_enabled: bool = False):
         self.whisper_filters = whisper_filters or transcription_filters or ""
         self.print_result = print_result
         self.output_timestamps = output_timestamps
         self.disable_transcription_context = disable_transcription_context
         self.transcription_initial_prompt = transcription_initial_prompt
+        self.asr_correction_log_enabled = bool(asr_correction_log_enabled)
+        self.asr_engine = asr_engine or self.__class__.__name__
+        self.asr_model = asr_model
+        self.asr_correction_learning_enabled = bool(asr_correction_learning_enabled)
+        configure_asr_correction_logging(self.asr_correction_log_enabled)
         self.term_corrector = ASRTermCorrector(
             asr_correction_rules if asr_corrections_enabled else None,
             case_sensitive=asr_corrections_case_sensitive,
+        )
+        configure_asr_correction_learning(
+            self.asr_correction_learning_enabled,
         )
 
         self.constant_prompt = re.sub(r',\s*', ', ',
@@ -155,8 +175,15 @@ class AudioTranscriber(LoopWorkerBase):
                 initial_prompt = None
 
             asr_started_at = time.perf_counter()
+            task.latency_trace.asr_started_at = asr_started_at
+            if task.latency_trace.asr_queued_at is not None:
+                task.latency_trace.asr_queue_accumulated_ms = (
+                    asr_started_at - task.latency_trace.asr_queued_at
+                ) * 1000
             text, tokens = self.transcribe(task.audio, initial_prompt=initial_prompt)
-            task.asr_latency_ms = (time.perf_counter() - asr_started_at) * 1000
+            task.latency_trace.asr_finished_at = time.perf_counter()
+            task.asr_latency_ms = (task.latency_trace.asr_finished_at - asr_started_at) * 1000
+            task.latency_trace.asr_inference_accumulated_ms = task.asr_latency_ms
 
             if self.constant_prompt and text.strip().rstrip(',') == self.constant_prompt.strip().rstrip(','):
                 text = ""
@@ -183,7 +210,33 @@ class AudioTranscriber(LoopWorkerBase):
                 self.reset_context()
                 previous_text = ""
                 continue
-            task.transcript = self.term_corrector.apply(task.raw_transcript).strip()
+            task.transcript, correction_matches = self.term_corrector.apply_with_details(
+                task.raw_transcript
+            )
+            task.transcript = task.transcript.strip()
+            if correction_matches and self.asr_correction_log_enabled:
+                log_asr_correction({
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "event": "correction_applied",
+                    "segment_id": task.segment_id,
+                    "time_range": list(task.time_range),
+                    "asr_engine": self.asr_engine,
+                    "asr_model": self.asr_model,
+                    "language": getattr(self, "language", None),
+                    "raw_transcript": task.raw_transcript,
+                    "corrected_transcript": task.transcript,
+                    "matches": correction_matches,
+                })
+            if self.asr_correction_learning_enabled:
+                observe_asr_correction_candidate(
+                    self.term_corrector,
+                    task.raw_transcript,
+                    segment_id=task.segment_id,
+                    time_range=task.time_range,
+                    asr_engine=self.asr_engine,
+                    asr_model=self.asr_model,
+                    language=getattr(self, "language", None),
+                )
             if not task.transcript:
                 continue
             previous_transcript = task.raw_transcript
@@ -221,7 +274,7 @@ class OpenaiWhisper(AudioTranscriber):
 
 class FasterWhisper(AudioTranscriber):
 
-    def __init__(self, model: str, language: str, proxy: str = None, **kwargs) -> None:
+    def __init__(self, model: str, language: str, proxy: str = None, api_key: str = None, **kwargs) -> None:
         super().__init__(**kwargs)
         from faster_whisper import WhisperModel
 
@@ -333,6 +386,7 @@ class RemoteOpenaiTranscriber(AudioTranscriber):
         self.model = model
         self.language = language
         self.proxy = proxy
+        self.api_key = api_key
 
     def transcribe(self, audio: np.array, initial_prompt: str = None) -> tuple[str, list | None]:
         from openai import OpenAI
@@ -352,8 +406,9 @@ class RemoteOpenaiTranscriber(AudioTranscriber):
         if initial_prompt:
             call_args['prompt'] = initial_prompt
 
-        ApiKeyPool.use_openai_api()
-        client = OpenAI(http_client=httpx.Client(proxy=self.proxy))
+        if not self.api_key:
+            ApiKeyPool.use_openai_api()
+        client = OpenAI(api_key=self.api_key, http_client=httpx.Client(proxy=self.proxy))
         result = client.audio.transcriptions.create(**call_args).text
         return result, None
 
@@ -509,6 +564,11 @@ class NemoASRTranscriber(AudioTranscriber):
         return normalized
 
     def _configure_decoder(self) -> None:
+        # This checkpoint is an EncDecCTCModelBPE model, not a hybrid
+        # RNNT/CTC model. Its decoder is already CTC and its NeMo API does not
+        # accept the hybrid-only decoder_type keyword.
+        if self.model_id == self.LEGACY_MODEL:
+            return
         change_decoding_strategy = getattr(self.model, 'change_decoding_strategy', None)
         if not callable(change_decoding_strategy):
             raise RuntimeError(f'{self.model_id} does not expose NeMo hybrid decoder selection.')

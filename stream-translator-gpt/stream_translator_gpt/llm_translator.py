@@ -16,6 +16,7 @@ from .translation_policy import (
     resolve_model_family,
     resolve_output_format,
 )
+from .translation_glossary_auditor import TranslationGlossaryAuditor
 
 def _is_task_timeout(task: TranslationTask, timeout: float) -> bool:
     if timeout == 0.0:
@@ -73,7 +74,8 @@ class LLMClient():
                  model_family: str = "auto",
                  output_format: str = "auto",
                  max_output_tokens: int = 128,
-                 provider: str | None = None) -> None:
+                 provider: str | None = None,
+                 glossary_audit_enabled: bool = False) -> None:
         if llm_type not in (self.LLM_TYPE.GPT, self.LLM_TYPE.GEMINI):
             raise ValueError(f'Unknow LLM type: {llm_type}')
         print(f'{INFO}Using {model} API as translation engine.')
@@ -84,6 +86,10 @@ class LLMClient():
         self.proxy = proxy
         self.gemini_base_url = gemini_base_url
         self.glossary = glossary or {}
+        self.glossary_auditor = TranslationGlossaryAuditor(
+            self.glossary,
+            enabled=glossary_audit_enabled,
+        )
         provider = provider or (
             "gemini" if llm_type == self.LLM_TYPE.GEMINI else (
                 "openai_compatible" if os.environ.get("OPENAI_BASE_URL") else "openai"
@@ -241,6 +247,7 @@ class LLMClient():
 
     def translate(self, translation_task: TranslationTask):
         llm_started_at = time.perf_counter()
+        translation_task.latency_trace.translation_started_at = llm_started_at
         translation_task._llm_latency_started_at = llm_started_at
         translation_task.translation_provider = self.provider
         translation_task.translation_model = self.model
@@ -251,7 +258,8 @@ class LLMClient():
         try:
             self.provider_adapter.translate(self, translation_task)
         finally:
-            translation_task.llm_latency_ms = (time.perf_counter() - llm_started_at) * 1000
+            translation_task.latency_trace.translation_finished_at = time.perf_counter()
+            translation_task.llm_latency_ms = (translation_task.latency_trace.translation_finished_at - llm_started_at) * 1000
             translation_task.total_latency_ms = (
                 time.perf_counter() - translation_task.created_at_monotonic
             ) * 1000
@@ -266,6 +274,11 @@ class LLMClient():
                 completion_tokens=translation_task.translation_completion_tokens,
                 error=translation_task.translation_error,
             )
+            if translation_task.translation:
+                try:
+                    self.glossary_auditor.audit(translation_task)
+                except Exception as audit_error:
+                    print(f'[WARNING] Translation glossary audit failed: {audit_error}', flush=True)
             translation_task._translation_inflight = False
 
 
@@ -290,6 +303,8 @@ class ParallelTranslator(LoopWorkerBase):
             translation_task.start_time = datetime.now(timezone.utc)
         if translation_task.translation_queued_at is None:
             translation_task.translation_queued_at = time.perf_counter()
+        if translation_task.latency_trace.translation_queued_at is None:
+            translation_task.latency_trace.translation_queued_at = translation_task.translation_queued_at
         translation_task.translation_failed = False
         translation_task.llm_latency_ms = None
         translation_task._translation_attempts += 1
@@ -373,6 +388,10 @@ class SerialTranslator(LoopWorkerBase):
     def _trigger(self, translation_task: TranslationTask):
         if not translation_task.start_time:
             translation_task.start_time = datetime.now(timezone.utc)
+        if translation_task.translation_queued_at is None:
+            translation_task.translation_queued_at = time.perf_counter()
+        if translation_task.latency_trace.translation_queued_at is None:
+            translation_task.latency_trace.translation_queued_at = translation_task.translation_queued_at
         translation_task.translation_failed = False
         translation_task.llm_latency_ms = None
         thread = threading.Thread(target=self.llm_client.translate, args=(translation_task,))

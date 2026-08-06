@@ -1,3 +1,5 @@
+import json
+import os
 import re
 from pathlib import Path
 
@@ -138,6 +140,7 @@ def test_translation_pipeline_controls_are_supported_by_runtime_cli_contract():
         "translation_output_format",
         "translation_max_concurrency",
         "translation_max_output_tokens",
+        "translation_glossary_audit_enabled",
         "disable_paired_subtitle_mode",
         "disable_asr_overlap_deduplication",
         "disable_subtitle_assembler",
@@ -151,6 +154,27 @@ def test_translation_pipeline_controls_are_supported_by_runtime_cli_contract():
     for flag in flags:
         assert f"'{flag}'" in translator_source
         assert f"'--{flag}'" in runtime_source
+
+
+def test_custom_prompt_keeps_enabled_glossary_and_audit_setting(tmp_path):
+    manager = ConfigManager(tmp_path / "config.yaml")
+    config = manager.get_config()
+    config["translation"].update({
+        "enabled": True,
+        "use_smart_prompt": False,
+        "translation_prompt": "Translate exactly.",
+    })
+    config["terminology"].update({
+        "use_terminology_glossary": True,
+        "translation_glossary_audit_enabled": True,
+        "glossary_list": [{"original": "スイちゃん", "translated": "Suisei醬"}],
+    })
+
+    args = manager.to_main_args(config)
+
+    assert args["translation_prompt"] == "Translate exactly."
+    assert json.loads(args["translation_glossary"]) == {"スイちゃん": "Suisei醬"}
+    assert args["translation_glossary_audit_enabled"] is True
 
 
 def test_write_failure_is_not_reported_as_success(tmp_path, monkeypatch):
@@ -167,6 +191,40 @@ def test_write_failure_is_not_reported_as_success(tmp_path, monkeypatch):
         assert "read-only destination" in str(error)
     else:
         raise AssertionError("write failure must propagate to the API")
+
+
+def test_migration_write_failure_keeps_successfully_loaded_user_config(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("general:\n  log_level: WARNING\n", encoding="utf-8")
+
+    def fail_save(_self, _config):
+        raise PermissionError("temporarily locked")
+
+    monkeypatch.setattr(ConfigManager, "_save", fail_save)
+    manager = ConfigManager(config_path)
+
+    assert manager.get_config()["general"]["log_level"] == "WARNING"
+    assert manager.get_config()["subtitle_settings"]["showLatency"] is True
+
+
+def test_atomic_replace_retries_transient_windows_permission_error(tmp_path, monkeypatch):
+    manager = ConfigManager(tmp_path / "config.yaml")
+    real_replace = os.replace
+    calls = 0
+
+    def flaky_replace(source, destination):
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            raise PermissionError("temporarily locked")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr("backend.core.config_manager.os.name", "nt")
+    monkeypatch.setattr("backend.core.config_manager.os.replace", flaky_replace)
+    manager.update_section("general", {"log_level": "ERROR"})
+
+    assert calls == 3
+    assert manager.get_config()["general"]["log_level"] == "ERROR"
 
 
 def test_repeated_config_reads_use_memory_cache(tmp_path, monkeypatch):
@@ -205,8 +263,32 @@ def test_get_config_returns_isolated_snapshot(tmp_path):
 def test_subtitle_latency_style_has_independent_color():
     defaults = ConfigManager.DEFAULT_CONFIG["subtitle_settings"]
 
-    assert defaults["showLatency"] is False
+    assert defaults["showLatency"] is True
     assert defaults["latencyColor"] == "#7DD3FC"
+
+
+def test_subtitle_visibility_defaults_are_enabled_once_then_respect_user_choice(tmp_path):
+    manager = ConfigManager(tmp_path / "config.yaml")
+    legacy = manager.get_config()
+    legacy["subtitle_settings"].update({
+        "_visibility_defaults_v2": False,
+        "showOriginal": False,
+        "showTranslated": False,
+        "showTimestamp": False,
+        "showLatency": False,
+        "autoScroll": False,
+    })
+
+    migrated, changed = manager._migrate_legacy_config(legacy)
+    assert changed is True
+    assert all(migrated["subtitle_settings"][key] for key in (
+        "showOriginal", "showTranslated", "showTimestamp", "showLatency", "autoScroll"
+    ))
+
+    migrated["subtitle_settings"]["showLatency"] = False
+    migrated_again, changed_again = manager._migrate_legacy_config(migrated)
+    assert changed_again is False
+    assert migrated_again["subtitle_settings"]["showLatency"] is False
 
 
 def test_desktop_backend_parses_structured_subtitle_latency_event():

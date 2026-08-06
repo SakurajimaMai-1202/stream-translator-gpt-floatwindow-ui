@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useModelDownloadStore } from '../stores/modelDownload';
-import type { ModelEngine } from '../services/api';
+import type { ModelComputeBackend, ModelEngine } from '../services/api';
 
 const props = withDefaults(defineProps<{
   title: string;
   engine: ModelEngine;
+  computeBackend: ModelComputeBackend;
   models: string[];
   descriptions?: Record<string, string>;
   defaultDescription?: string;
@@ -18,11 +19,11 @@ const modelDownloadStore = useModelDownloadStore();
 const visibleModels = computed(() => props.models || []);
 
 function getTask(modelId: string) {
-  return modelDownloadStore.getTask(props.engine, modelId);
+  return modelDownloadStore.getTask(props.engine, modelId, props.computeBackend);
 }
 
 function statusText(modelId: string) {
-  if (modelDownloadStore.isDownloaded(props.engine, modelId)) return '已下載';
+  if (modelDownloadStore.isDownloaded(props.engine, modelId, props.computeBackend)) return '已下載';
   const task = getTask(modelId);
   if (!task) return '未下載';
   if (task.status === 'failed') return '下載失敗';
@@ -32,7 +33,7 @@ function statusText(modelId: string) {
 }
 
 function statusClass(modelId: string) {
-  if (modelDownloadStore.isDownloaded(props.engine, modelId)) return 'text-green-300';
+  if (modelDownloadStore.isDownloaded(props.engine, modelId, props.computeBackend)) return 'text-green-300';
   const task = getTask(modelId);
   if (!task) return 'text-white/50';
   if (task.status === 'failed') return 'text-red-300';
@@ -41,7 +42,7 @@ function statusClass(modelId: string) {
 }
 
 function canStart(modelId: string) {
-  if (modelDownloadStore.isDownloaded(props.engine, modelId)) return false;
+  if (modelDownloadStore.isDownloaded(props.engine, modelId, props.computeBackend)) return false;
   const task = getTask(modelId);
   return !task || !['pending', 'downloading'].includes(task.status);
 }
@@ -63,11 +64,11 @@ function description(modelId: string) {
             <div :class="['text-sm mt-1', statusClass(modelId)]">{{ statusText(modelId) }}</div>
           </div>
           <button
-            @click="modelDownloadStore.startDownload(engine, modelId)"
+            @click="modelDownloadStore.startDownload(engine, modelId, computeBackend)"
             :disabled="!canStart(modelId)"
             class="px-4 py-2 rounded-lg font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed bg-blue-600 hover:bg-blue-700 text-white"
           >
-            {{ modelDownloadStore.isDownloaded(engine, modelId) ? '已下載' : '預下載' }}
+            {{ modelDownloadStore.isDownloaded(engine, modelId, computeBackend) ? '已下載' : '下載' }}
           </button>
         </div>
         <div v-if="getTask(modelId) && ['pending', 'downloading'].includes(getTask(modelId)!.status)" class="mt-3">

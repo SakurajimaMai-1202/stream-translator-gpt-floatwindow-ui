@@ -14,6 +14,41 @@ function Resolve-SevenZipPath {
     return (Resolve-Path $candidates[0]).Path
 }
 
+function Resolve-NodeRuntimePath {
+    $commandNode = Get-Command node.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1
+    $candidates = @(
+        $env:STREAM_TRANSLATOR_NODE_EXE,
+        $commandNode,
+        (Join-Path $env:ProgramFiles "nodejs\node.exe"),
+        (Join-Path $PSScriptRoot "cache\node.exe")
+    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) }
+    if (-not $candidates) {
+        throw "Node.js 22+ is required to package YouTube EJS support. Install Node.js or set STREAM_TRANSLATOR_NODE_EXE."
+    }
+    $nodeExe = (Resolve-Path -LiteralPath $candidates[0]).Path
+    $versionText = (& $nodeExe --version).Trim()
+    if ($LASTEXITCODE -ne 0 -or $versionText -notmatch '^v(\d+)\.') {
+        throw "Unable to validate Node.js runtime: $nodeExe"
+    }
+    if ([int]$Matches[1] -lt 22) {
+        throw "Node.js 22+ is required by yt-dlp EJS; found $versionText at $nodeExe"
+    }
+    return $nodeExe
+}
+
+function Copy-PortableJsRuntime {
+    param([Parameter(Mandatory = $true)][string]$DestinationRoot)
+    $nodeExe = Resolve-NodeRuntimePath
+    $targetDir = Join-Path $DestinationRoot "_js_runtime"
+    New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+    Copy-Item -LiteralPath $nodeExe -Destination (Join-Path $targetDir "node.exe") -Force
+    [IO.File]::WriteAllText(
+        (Join-Path $targetDir "README.txt"),
+        "Portable Node.js runtime bundled for yt-dlp YouTube EJS challenge solving.`r`n",
+        [Text.UTF8Encoding]::new($false)
+    )
+}
+
 function Remove-BuildDirectoryFast {
     param(
         [Parameter(Mandatory = $true)][string]$Path,

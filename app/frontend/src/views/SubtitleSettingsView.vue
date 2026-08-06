@@ -4,14 +4,15 @@ import { useRoute } from 'vue-router';
 
 const route = useRoute();
 const isStandalone = computed(() => route.path === '/subtitle-settings');
+const settingsReady = ref(false);
 
 // 基本顯示設定
 const fontSize = ref(24);
 const fontWeight = ref(700);
 const showOriginal = ref(true);
 const showTranslated = ref(true);
-const showTimestamp = ref(false);
-const showLatency = ref(false);
+const showTimestamp = ref(true);
+const showLatency = ref(true);
 const position = ref<'top' | 'bottom'>('bottom');
 const autoScroll = ref(true);
 const maxDisplayCount = ref(5);
@@ -160,6 +161,7 @@ onMounted(async () => {
   }
   await nextTick();
   isHydratingSettings = false;
+  settingsReady.value = true;
 });
 
 onUnmounted(() => {
@@ -191,7 +193,11 @@ const activeTab = ref<'display' | 'color'>('display');
     </div>
 
     <!-- Content Card -->
-    <div class="bg-gradient-to-br from-slate-950/95 via-slate-950/85 to-indigo-950/65 rounded-2xl border border-white/10 shadow-2xl p-6">
+    <div v-if="!settingsReady" class="bg-gradient-to-br from-slate-950/95 via-slate-950/85 to-indigo-950/65 rounded-2xl border border-white/10 shadow-2xl p-6 min-h-[460px]" aria-busy="true">
+      <div class="animate-pulse space-y-6"><div class="h-9 rounded-lg bg-white/10"></div><div class="h-4 w-40 rounded bg-white/10"></div><div class="h-12 rounded-lg bg-white/5"></div><div class="h-40 rounded-xl bg-white/5"></div></div>
+      <p class="text-white/40 text-sm mt-6">正在讀取字幕外觀…</p>
+    </div>
+    <div v-else class="bg-gradient-to-br from-slate-950/95 via-slate-950/85 to-indigo-950/65 rounded-2xl border border-white/10 shadow-2xl p-6">
       <!-- 分頁標籤 -->
       <div class="flex border-b border-white/10 mb-6">
         <button

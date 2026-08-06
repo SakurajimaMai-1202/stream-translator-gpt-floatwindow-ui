@@ -10,6 +10,7 @@ import socket
 import time
 import logging
 import re
+import codecs
 from pathlib import Path
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QProcess, QTimer, pyqtSignal, QObject
@@ -27,6 +28,8 @@ def _classify_process_log_level(line: str, default_level: int) -> int:
         return logging.ERROR
     if any(keyword in normalized for keyword in ("warning", "warn")):
         return logging.WARNING
+    if re.search(r"\binfo\b", normalized):
+        return logging.INFO
     if any(keyword in normalized for keyword in ("watchfiles", "statreload", "detected file change", "reloader")):
         return logging.DEBUG
     if re.search(r"\bdebug\b", normalized):
@@ -38,6 +41,23 @@ def _classify_process_log_level(line: str, default_level: int) -> int:
 def _log_subprocess_output(prefix: str, line: str, default_level: int):
     level = _classify_process_log_level(line, default_level)
     logger.log(level, f"[{prefix}] {line}")
+
+
+class _Utf8LineDecoder:
+    """Incrementally decode process output without splitting UTF-8 characters."""
+
+    def __init__(self):
+        self._decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        self._pending = ""
+
+    def feed(self, data: bytes, *, final: bool = False) -> list[str]:
+        self._pending += self._decoder.decode(data, final=final)
+        lines = self._pending.split("\n")
+        if final:
+            self._pending = ""
+        else:
+            self._pending = lines.pop()
+        return [line.rstrip("\r") for line in lines if line.rstrip("\r")]
 
 class BackendProcess(QObject):
     """FastAPI 後端程序管理器"""
@@ -53,6 +73,8 @@ class BackendProcess(QObject):
         self.process = None
         self._start_attempts = 0
         self._max_attempts = 3
+        self._stdout_decoder = _Utf8LineDecoder()
+        self._stderr_decoder = _Utf8LineDecoder()
         
     def start(self):
         """啟動後端程序"""
@@ -72,6 +94,8 @@ class BackendProcess(QObject):
         
         # 啟動新的後端程序
         self.process = QProcess()
+        self._stdout_decoder = _Utf8LineDecoder()
+        self._stderr_decoder = _Utf8LineDecoder()
         
         # 檢查是否為 PyInstaller 打包環境 (frozen)
         if getattr(sys, 'frozen', False):
@@ -158,21 +182,26 @@ class BackendProcess(QObject):
     def _on_stdout(self):
         """處理標準輸出"""
         if self.process:
-            data = self.process.readAllStandardOutput().data().decode('utf-8', errors='ignore')
-            for line in data.strip().split('\n'):
-                if line:
-                    _log_subprocess_output("Backend", line, logging.INFO)
+            data = bytes(self.process.readAllStandardOutput().data())
+            for line in self._stdout_decoder.feed(data):
+                _log_subprocess_output("Backend", line, logging.INFO)
     
     def _on_stderr(self):
         """處理錯誤輸出"""
         if self.process:
-            data = self.process.readAllStandardError().data().decode('utf-8', errors='ignore')
-            for line in data.strip().split('\n'):
-                if line:
-                    _log_subprocess_output("Backend", line, logging.WARNING)
+            data = bytes(self.process.readAllStandardError().data())
+            for line in self._stderr_decoder.feed(data):
+                _log_subprocess_output("Backend", line, logging.WARNING)
     
     def _on_finished(self, exit_code, exit_status):
         """程序結束處理"""
+        if self.process:
+            self._on_stdout()
+            self._on_stderr()
+        for line in self._stdout_decoder.feed(b"", final=True):
+            _log_subprocess_output("Backend", line, logging.INFO)
+        for line in self._stderr_decoder.feed(b"", final=True):
+            _log_subprocess_output("Backend", line, logging.WARNING)
         logger.info(f"後端程序結束 (Exit Code: {exit_code}, Status: {exit_status})")
         self.stopped.emit()
 

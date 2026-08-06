@@ -9,6 +9,7 @@ from .audio_transcriber import (OpenaiWhisper, FasterWhisper, SimulStreaming, Re
                                 Qwen3ASRTranscriber, NemoASRTranscriber, SenseVoiceTranscriber,
                                 FunASRNanoTranscriber)
 from .runtime_accelerator import resolve_qwen3_device_map
+from .sherpa_onnx_transcriber import SherpaOnnxTranscriber
 
 
 @dataclass(frozen=True)
@@ -23,6 +24,8 @@ class ASRConfig:
     disable_transcription_context: bool
     transcription_initial_prompt: str | None
     asr_corrections_enabled: bool = False
+    asr_correction_log_enabled: bool = False
+    asr_correction_learning_enabled: bool = False
     asr_correction_rules: str | None = None
     asr_corrections_case_sensitive: bool = False
     use_faster_whisper: bool = False
@@ -35,6 +38,7 @@ class ASRConfig:
     qwen3_asr_bnb_4bit_quant_type: str | None = None
     qwen3_asr_bnb_4bit_use_double_quant: bool = False
     runtime_profile: str | None = "cuda"
+    asr_compute_backend: str | None = "auto"
     runtime_device_policy: str | None = "auto_discrete"
     runtime_allow_integrated_gpu: bool = False
     nemo_asr_model: str | None = None
@@ -51,6 +55,14 @@ class ASRConfig:
 
     def label(self) -> str:
         model = self.qwen3_asr_model or self.nemo_asr_model or self.openai_transcription_model or self.model or ""
+        if (self.asr_compute_backend or "auto").lower() == "cpu" and self.backend in {
+            "qwen3", "nemo", "sensevoice", "fun_asr"
+        }:
+            model = (
+                self.qwen3_asr_model or self.nemo_asr_model or self.sensevoice_model
+                or self.fun_asr_model or self.model or ""
+            )
+            return f"sherpa-onnx: {model} (cpu, int8)"
         extra = []
         if self.backend == "qwen3":
             extra.append(str(self.qwen3_asr_device_map or "auto"))
@@ -129,6 +141,8 @@ def build_asr_config(options: dict[str, Any]) -> ASRConfig:
         disable_transcription_context=bool(options.get("disable_transcription_context")),
         transcription_initial_prompt=options.get("transcription_initial_prompt"),
         asr_corrections_enabled=bool(options.get("asr_corrections_enabled")),
+        asr_correction_log_enabled=bool(options.get("asr_correction_log_enabled")),
+        asr_correction_learning_enabled=bool(options.get("asr_correction_learning_enabled")),
         asr_correction_rules=options.get("asr_correction_rules"),
         asr_corrections_case_sensitive=bool(options.get("asr_corrections_case_sensitive")),
         use_faster_whisper=backend in {"faster", "faster_simul"},
@@ -141,6 +155,7 @@ def build_asr_config(options: dict[str, Any]) -> ASRConfig:
         qwen3_asr_bnb_4bit_quant_type=qwen3_asr_bnb_4bit_quant_type,
         qwen3_asr_bnb_4bit_use_double_quant=qwen3_asr_bnb_4bit_use_double_quant,
         runtime_profile=options.get("runtime_profile", "cuda"),
+        asr_compute_backend=options.get("asr_compute_backend", "auto"),
         runtime_device_policy=options.get("runtime_device_policy", "auto_discrete"),
         runtime_allow_integrated_gpu=bool(options.get("runtime_allow_integrated_gpu", False)),
         nemo_asr_model=nemo_asr_model,
@@ -155,6 +170,14 @@ def build_asr_config(options: dict[str, Any]) -> ASRConfig:
 
 
 def create_transcriber(config: ASRConfig):
+    asr_model = (
+        config.qwen3_asr_model
+        or config.nemo_asr_model
+        or config.sensevoice_model
+        or config.fun_asr_model
+        or config.openai_transcription_model
+        or config.model
+    )
     common_args = {
         "transcription_filters": config.transcription_filters,
         "print_result": config.print_result,
@@ -162,9 +185,24 @@ def create_transcriber(config: ASRConfig):
         "disable_transcription_context": config.disable_transcription_context,
         "transcription_initial_prompt": config.transcription_initial_prompt,
         "asr_corrections_enabled": config.asr_corrections_enabled,
+        "asr_correction_log_enabled": config.asr_correction_log_enabled,
+        "asr_correction_learning_enabled": config.asr_correction_learning_enabled,
         "asr_correction_rules": config.asr_correction_rules,
         "asr_corrections_case_sensitive": config.asr_corrections_case_sensitive,
+        "asr_engine": config.backend,
+        "asr_model": asr_model,
     }
+
+    if (config.asr_compute_backend or "auto").lower() == "cpu" and config.backend in {
+        "qwen3", "nemo", "sensevoice", "fun_asr"
+    }:
+        model = (
+            config.qwen3_asr_model if config.backend == "qwen3" else
+            config.nemo_asr_model if config.backend == "nemo" else
+            config.sensevoice_model if config.backend == "sensevoice" else
+            config.fun_asr_model
+        )
+        return SherpaOnnxTranscriber(model=model or "", language=config.language, **common_args)
 
     if config.backend == "faster_simul":
         return SimulStreaming(model=config.model,
@@ -241,6 +279,10 @@ def create_transcriber(config: ASRConfig):
 
 
 def resolve_preload_config(config: ASRConfig) -> ASRConfig:
+    if (config.asr_compute_backend or "auto").lower() == "cpu" and config.backend in {
+        "qwen3", "nemo", "sensevoice", "fun_asr"
+    }:
+        return config
     if config.backend == "sensevoice":
         import torch
         return replace(config, sensevoice_device=resolve_sensevoice_preload_device(torch, config))

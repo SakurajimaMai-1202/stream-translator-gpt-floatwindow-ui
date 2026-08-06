@@ -1,8 +1,8 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 param(
     [ValidateSet("cuda", "cpu", "rocm")]
     [string]$Profile = "cuda",
-    [string]$Version = "1.3.8",
+    [string]$Version = "1.3.9",
     [switch]$ForceRuntime,
     [switch]$ReuseRuntimeCache,
     [switch]$SkipFullZip,
@@ -10,7 +10,8 @@ param(
     [string]$SevenZipPath = "",
     [ValidateRange(0, 9)][int]$CompressionLevel = 7,
     [ValidateRange(1, 128)][int]$CopyThreads = 16,
-    [switch]$SkipRuntimeDependenciesInAppUpdate
+    [switch]$SkipRuntimeDependenciesInAppUpdate,
+    [switch]$IncludeCpuAsrSidecar = $true
 )
 
 $ErrorActionPreference = "Stop"
@@ -31,6 +32,7 @@ $appName = "Stream Translator"
 $packageName = $packageInfo.PackageName
 $releaseRoot = Join-Path $distDir $packageName
 $runtimeCache = Join-Path $scriptDir "build-runtime-cache\$($packageInfo.RuntimeCacheName)"
+$cpuAsrRuntimeCache = Join-Path $scriptDir "build-runtime-cache\cpu-runtime"
 $sevenZipExe = Resolve-SevenZipPath -RequestedPath $SevenZipPath
 $sharedGuiPath = if ($SharedGuiDir) {
     $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($SharedGuiDir)
@@ -133,7 +135,7 @@ if ($ReuseRuntimeCache) {
     if ($manifest.profile -ne $Profile) {
         throw "Runtime cache profile is '$($manifest.profile)', expected '$Profile'."
     }
-    $expectedBackend = if ($Profile -eq "rocm") { "rocm" } else { $Profile }
+    $expectedBackend = if ($Profile -eq "rocm") { "rocm" } elseif ($Profile -eq "cpu") { "none" } else { $Profile }
     if ($manifest.torch_backend -ne $expectedBackend) {
         throw "Runtime cache torch backend is '$($manifest.torch_backend)', expected '$expectedBackend'."
     }
@@ -142,10 +144,12 @@ if ($ReuseRuntimeCache) {
     if (Test-Path $cachedPackage) { Remove-Item $cachedPackage -Recurse -Force }
     Copy-Item (Join-Path $projectRoot "stream-translator-gpt\stream_translator_gpt") $cachedPackage -Recurse -Force
 
-    $requiredImports = @("qwen_asr", "funasr", "torchaudio")
-    if ($Profile -in @("cuda", "cpu")) {
-        $requiredImports += @("faster_whisper", "whisper", "omnivad")
+    $requiredImports = if ($Profile -eq "cpu") {
+        @("sherpa_onnx", "numpy", "scipy", "omnivad", "stream_translator_gpt.main")
+    } else {
+        @("qwen_asr", "funasr", "torchaudio")
     }
+    if ($Profile -eq "cuda") { $requiredImports += @("faster_whisper", "whisper", "omnivad") }
     if ($Profile -eq "cuda") {
         $requiredImports += "nemo.collections.asr.models"
     }
@@ -160,11 +164,24 @@ if ($ReuseRuntimeCache) {
     if ($LASTEXITCODE -ne 0) { throw "Runtime build failed" }
 }
 
+if ($IncludeCpuAsrSidecar -and $Profile -ne "cpu") {
+    $cpuSidecarPython = Join-Path $cpuAsrRuntimeCache "python.exe"
+    if (-not (Test-Path -LiteralPath $cpuSidecarPython)) {
+        throw "CPU ASR sidecar cache is missing: $cpuAsrRuntimeCache"
+    }
+    $cpuSidecarPackage = Join-Path $cpuAsrRuntimeCache "Lib\site-packages\stream_translator_gpt"
+    if (Test-Path -LiteralPath $cpuSidecarPackage) { Remove-Item -LiteralPath $cpuSidecarPackage -Recurse -Force }
+    Copy-Item (Join-Path $projectRoot "stream-translator-gpt\stream_translator_gpt") $cpuSidecarPackage -Recurse -Force
+    & $cpuSidecarPython -c "import sherpa_onnx, stream_translator_gpt.main; print('CPU ASR sidecar validation OK')"
+    if ($LASTEXITCODE -ne 0) { throw "CPU ASR sidecar validation failed" }
+}
+
 Write-Host "[4/6] Create App Update package" -ForegroundColor Yellow
 Remove-BuildDirectoryFast -Path $distDir -AllowedRoot $scriptDir
 New-Item $distDir -ItemType Directory -Force | Out-Null
 $updateRoot = Join-Path $distDir "App-Update"
 Invoke-FastDirectoryCopy -Source $builtApp -Destination $updateRoot -Threads $CopyThreads
+Copy-PortableJsRuntime -DestinationRoot $updateRoot
 $updatePackageDir = Join-Path $updateRoot "_runtime\Lib\site-packages"
 New-Item $updatePackageDir -ItemType Directory -Force | Out-Null
 Copy-Item (Join-Path $projectRoot "stream-translator-gpt\stream_translator_gpt") $updatePackageDir -Recurse -Force
@@ -214,7 +231,15 @@ Test-ReleaseZip -SevenZipPath $sevenZipExe -Path $appUpdateZipPath
 
 Write-Host "[5/6] Assemble first-use full package" -ForegroundColor Yellow
 Invoke-FastDirectoryCopy -Source $builtApp -Destination $releaseRoot -Threads $CopyThreads
+Copy-PortableJsRuntime -DestinationRoot $releaseRoot
 Invoke-FastDirectoryCopy -Source $runtimeCache -Destination (Join-Path $releaseRoot "_runtime") -Threads $CopyThreads
+if ($IncludeCpuAsrSidecar -and $Profile -ne "cpu") {
+    if (-not (Test-Path -LiteralPath (Join-Path $cpuAsrRuntimeCache "python.exe"))) {
+        throw "CPU ASR sidecar cache is missing: $cpuAsrRuntimeCache"
+    }
+    Invoke-FastDirectoryCopy -Source $cpuAsrRuntimeCache -Destination (Join-Path $releaseRoot "_runtime_cpu_asr") -Threads $CopyThreads
+    Set-RuntimeManifestAppVersion -RuntimeDir (Join-Path $releaseRoot "_runtime_cpu_asr")
+}
 Set-RuntimeManifestAppVersion -RuntimeDir (Join-Path $releaseRoot "_runtime")
 New-Item (Join-Path $releaseRoot "models\huggingface\hub") -ItemType Directory -Force | Out-Null
 Copy-ProfileConfig (Join-Path $releaseRoot "config.yaml")

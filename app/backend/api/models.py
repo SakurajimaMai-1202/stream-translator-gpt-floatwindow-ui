@@ -1,6 +1,8 @@
 from fastapi import APIRouter, HTTPException
 
 from backend.core.model_download_manager import get_model_download_manager
+from backend.core.runtime_profiles import get_asr_capabilities
+from backend.api.config import get_config_manager
 from backend.models.model_download import (
     DownloadedModelListResponse,
     ModelActionResponse,
@@ -20,7 +22,17 @@ async def start_model_download(request: StartModelDownloadRequest):
     """啟動模型下載任務"""
     try:
         manager = get_model_download_manager()
-        task_id = await manager.start_download(request.engine, request.model_id)
+        config = get_config_manager().get_config()
+        runtime_profile = config.get('runtime', {}).get('profile')
+        capabilities = get_asr_capabilities(runtime_profile, request.compute_backend)
+        if request.engine not in capabilities.local_asr_engines:
+            raise HTTPException(
+                status_code=400,
+                detail=f'{request.engine} is not supported by {request.compute_backend.upper()} ASR '
+                       f'in the {capabilities.profile} runtime.',
+            )
+
+        task_id = await manager.start_download(request.engine, request.model_id, request.compute_backend)
         return StartModelDownloadResponse(
             success=True,
             task_id=task_id,
@@ -73,9 +85,11 @@ async def open_model_storage():
 
 
 @router.delete("/{engine}/{model_id:path}", response_model=ModelActionResponse)
-async def delete_model(engine: str, model_id: str):
+async def delete_model(engine: str, model_id: str, compute_backend: str = "gpu"):
     try:
-        get_model_download_manager().delete_model(engine, model_id)
+        if compute_backend not in {"gpu", "cpu"}:
+            raise ValueError(f"不支援的 compute backend: {compute_backend}")
+        get_model_download_manager().delete_model(engine, model_id, compute_backend)  # type: ignore[arg-type]
         return ModelActionResponse(message=f"已刪除模型: {model_id}")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

@@ -3,6 +3,9 @@ import re
 import threading
 import itertools
 import time
+import uuid
+import io
+from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from urllib.parse import urlparse
@@ -24,14 +27,120 @@ WARNING = f'{YELLOW}[WARNING]{ENDC} '
 ERROR = f'{RED}[ERROR]{ENDC} '
 
 
+def configure_utf8_stdio() -> None:
+    """Keep Windows worker-thread output from crashing on non-CP950 text."""
+    if os.name != "nt":
+        return
+    os.environ["PYTHONIOENCODING"] = "utf-8"
+    os.environ["PYTHONUTF8"] = "1"
+    os.environ["PYTHONUNBUFFERED"] = "1"
+    import sys
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name)
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+            continue
+        except (AttributeError, OSError, ValueError):
+            pass
+        buffer = getattr(stream, "buffer", None)
+        if buffer is not None:
+            try:
+                setattr(
+                    sys,
+                    stream_name,
+                    io.TextIOWrapper(buffer, encoding="utf-8", errors="replace", line_buffering=True),
+                )
+            except (OSError, ValueError):
+                pass
+
+
+def _elapsed_ms(start: float | None, end: float | None) -> float | None:
+    if start is None or end is None or end < start:
+        return None
+    return (end - start) * 1000
+
+
+@dataclass
+class LatencyTrace:
+    """Monotonic timestamps carried with one subtitle through the pipeline."""
+
+    trace_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    merged_trace_ids: list[str] = field(default_factory=list)
+    audio_duration_ms: float | None = None
+    capture_started_at: float | None = None
+    first_speech_at: float | None = None
+    last_speech_at: float | None = None
+    slice_emitted_at: float | None = None
+    asr_queued_at: float | None = None
+    asr_started_at: float | None = None
+    asr_finished_at: float | None = None
+    asr_queue_accumulated_ms: float | None = None
+    asr_inference_accumulated_ms: float | None = None
+    assembler_received_at: float | None = None
+    assembler_emitted_at: float | None = None
+    translation_queued_at: float | None = None
+    translation_started_at: float | None = None
+    translation_finished_at: float | None = None
+    subtitle_delivered_at: float | None = None
+
+    def merge(self, other: "LatencyTrace") -> None:
+        self.merged_trace_ids.extend([other.trace_id, *other.merged_trace_ids])
+        if other.audio_duration_ms is not None:
+            self.audio_duration_ms = (self.audio_duration_ms or 0.0) + other.audio_duration_ms
+        for accumulator in ("asr_queue_accumulated_ms", "asr_inference_accumulated_ms"):
+            incoming = getattr(other, accumulator)
+            if incoming is not None:
+                setattr(self, accumulator, (getattr(self, accumulator) or 0.0) + incoming)
+        for name in ("first_speech_at", "capture_started_at", "asr_queued_at", "asr_started_at"):
+            current = getattr(self, name)
+            incoming = getattr(other, name)
+            if incoming is not None and (current is None or incoming < current):
+                setattr(self, name, incoming)
+        for name in ("last_speech_at", "slice_emitted_at", "asr_finished_at", "assembler_received_at"):
+            current = getattr(self, name)
+            incoming = getattr(other, name)
+            if incoming is not None and (current is None or incoming > current):
+                setattr(self, name, incoming)
+
+    def metrics(self) -> dict[str, float | str | list[str] | None]:
+        audio_duration_ms = self.audio_duration_ms
+        asr_inference_ms = self.asr_inference_accumulated_ms
+        if asr_inference_ms is None:
+            asr_inference_ms = _elapsed_ms(self.asr_started_at, self.asr_finished_at)
+        asr_queue_ms = self.asr_queue_accumulated_ms
+        if asr_queue_ms is None:
+            asr_queue_ms = _elapsed_ms(self.asr_queued_at, self.asr_started_at)
+        metrics = {
+            "trace_id": self.trace_id,
+            "merged_trace_ids": list(self.merged_trace_ids),
+            "capture_wait_ms": _elapsed_ms(self.capture_started_at, self.slice_emitted_at),
+            "speech_to_slice_ms": _elapsed_ms(self.last_speech_at, self.slice_emitted_at),
+            "audio_duration_ms": audio_duration_ms,
+            "asr_queue_ms": asr_queue_ms,
+            "asr_inference_ms": asr_inference_ms,
+            "asr_realtime_factor": (
+                asr_inference_ms / audio_duration_ms
+                if asr_inference_ms is not None and audio_duration_ms and audio_duration_ms > 0
+                else None
+            ),
+            "assembler_wait_ms": _elapsed_ms(self.assembler_received_at, self.assembler_emitted_at),
+            "translation_queue_ms": _elapsed_ms(self.translation_queued_at, self.translation_started_at),
+            "translation_inference_ms": _elapsed_ms(self.translation_started_at, self.translation_finished_at),
+            "delivery_ms": _elapsed_ms(self.translation_finished_at, self.subtitle_delivered_at),
+            "end_to_end_ms": _elapsed_ms(self.last_speech_at, self.subtitle_delivered_at),
+        }
+        return metrics
+
+
 class TranslationTask:
     _segment_counter = itertools.count(1)
     _segment_counter_lock = threading.Lock()
 
-    def __init__(self, audio: np.array, time_range: tuple[float, float]):
+    def __init__(self, audio: np.array, time_range: tuple[float, float], latency_trace: LatencyTrace | None = None):
         with self._segment_counter_lock:
             self.segment_id = next(self._segment_counter)
         self.audio = audio
+        self.latency_trace = latency_trace or LatencyTrace()
         self.raw_transcript = None
         self.transcript = None
         self.translation = None

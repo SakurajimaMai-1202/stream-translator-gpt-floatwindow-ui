@@ -17,10 +17,29 @@
       document.documentElement.classList.add('transparent-page');
     }
   </script>
+  <style>
+    html, body, #app { margin: 0; min-height: 100%; background: #071021; }
+    .boot-shell { min-height: 100vh; display: grid; grid-template-columns: 240px 1fr; color: #cbd5e1; font-family: system-ui, sans-serif; }
+    .boot-sidebar { background: #020617; border-right: 1px solid rgba(255,255,255,.08); padding: 22px 18px; }
+    .boot-brand { height: 18px; width: 150px; border-radius: 6px; background: rgba(255,255,255,.12); }
+    .boot-nav { margin-top: 48px; display: grid; gap: 18px; }
+    .boot-nav span { display: block; height: 12px; width: 130px; border-radius: 5px; background: rgba(255,255,255,.06); }
+    .boot-main { padding: 28px 32px; background: linear-gradient(135deg,#020617,#0f172a 70%,#11183a); }
+    .boot-status { width: 190px; height: 20px; border-radius: 999px; background: rgba(255,255,255,.07); }
+    .boot-card { margin-top: 28px; max-width: 1050px; height: 420px; border-radius: 18px; border: 1px solid rgba(255,255,255,.08); background: rgba(2,6,23,.55); }
+    .boot-pulse { animation: boot-pulse 1.25s ease-in-out infinite alternate; }
+    @keyframes boot-pulse { from { opacity: .48; } to { opacity: .82; } }
+    .transparent-page .boot-shell { display: none; }
+  </style>
 </head>
 
 <body>
-  <div id="app"></div>
+  <div id="app">
+    <div class="boot-shell boot-pulse" aria-label="正在載入 Stream Translator">
+      <aside class="boot-sidebar"><div class="boot-brand"></div><div class="boot-nav"><span></span><span></span><span></span><span></span><span></span><span></span></div></aside>
+      <main class="boot-main"><div class="boot-status"></div><div class="boot-card"></div></main>
+    </div>
+  </div>
   <script type="module" src="/src/main.ts"></script>
 </body>
 

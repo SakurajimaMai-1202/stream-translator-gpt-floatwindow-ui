@@ -38,6 +38,29 @@ export interface Config {
   [key: string]: any;
 }
 
+export interface SubtitleLatencyTrace {
+  trace_id?: string | null;
+  merged_trace_ids?: string[];
+  capture_wait_ms?: number | null;
+  speech_to_slice_ms?: number | null;
+  audio_duration_ms?: number | null;
+  asr_queue_ms?: number | null;
+  asr_inference_ms?: number | null;
+  asr_realtime_factor?: number | null;
+  assembler_wait_ms?: number | null;
+  translation_queue_ms?: number | null;
+  translation_inference_ms?: number | null;
+  delivery_ms?: number | null;
+  end_to_end_ms?: number | null;
+}
+
+export interface LatencyWindowSnapshot {
+  sample_count: number;
+  window_size: number;
+  max_window_size: number;
+  metrics: Record<string, { latest: number; p50: number; p95: number }>;
+}
+
 export interface TranslationStatus {
   is_running: boolean;
   url?: string;
@@ -46,6 +69,7 @@ export interface TranslationStatus {
 export interface ServerInfo {
   public_port: number;
   enable_subtitle_sharing: boolean;
+  lan_addresses: string[];
 }
 
 export interface FfmpegCheckResult {
@@ -126,7 +150,22 @@ export interface RuntimeStatus {
   package_suffix: string;
   device_policy: string;
   allow_integrated_gpu: boolean;
+  profile_locked: boolean;
+  packaged_profile: string | null;
+  asr_compute_backend: 'auto' | 'gpu' | 'cpu';
+  effective_asr_compute_backend: 'gpu' | 'cpu';
   capabilities: RuntimeCapabilities;
+  asr_capabilities: RuntimeCapabilities;
+  cpu_asr_runtime: {
+    available: boolean;
+    path: string;
+    python: string;
+    is_sidecar: boolean;
+  };
+  cpu: {
+    name: string;
+    logical_cores: number | null;
+  };
   devices: RuntimeGpuDevice[];
   selection: RuntimeSelection;
 }
@@ -225,8 +264,29 @@ export const runtimeApi = {
   async getStatus(): Promise<RuntimeStatus> {
     const response = await axios.get(`${API_BASE}/runtime/status`);
     return response.data.data || response.data;
+  },
+  async getCpuAsrSidecarStatus(): Promise<CpuAsrSidecarInstallStatus> {
+    const response = await axios.get(`${API_BASE}/runtime/cpu-asr-sidecar`);
+    return response.data.data || response.data;
+  },
+  async installCpuAsrSidecar(): Promise<CpuAsrSidecarInstallStatus> {
+    const response = await axios.post(`${API_BASE}/runtime/cpu-asr-sidecar/install`, {});
+    return response.data.data || response.data;
   }
 };
+
+export interface CpuAsrSidecarInstallStatus {
+  status: 'idle' | 'starting' | 'downloading' | 'verifying' | 'installing' | 'completed' | 'error';
+  progress: number;
+  message: string;
+  error: string;
+  bytes_downloaded: number;
+  bytes_total: number;
+  installed: boolean;
+  restart_required: boolean;
+  version: string;
+  asset_name: string;
+}
 
 export type AudioSource = 'url' | 'file' | 'microphone' | 'system_audio';
 
@@ -275,16 +335,19 @@ export interface StartResponse {
 }
 
 export type ModelEngine = 'qwen3-asr' | 'faster-whisper' | 'sensevoice' | 'fun-asr-nano' | 'parakeet-ctc-ja';
+export type ModelComputeBackend = 'gpu' | 'cpu';
 
 export interface StartModelDownloadRequest {
   engine: ModelEngine;
   model_id: string;
+  compute_backend: ModelComputeBackend;
 }
 
 export interface ModelDownloadTask {
   task_id: string;
   engine: ModelEngine;
   model_id: string;
+  compute_backend: ModelComputeBackend;
   status: 'pending' | 'downloading' | 'completed' | 'failed';
   progress: number;
   message: string;
@@ -297,6 +360,7 @@ export interface DownloadedModelInfo {
   engine: ModelEngine;
   model_id: string;
   repo_id: string;
+  compute_backend: ModelComputeBackend;
   size_bytes: number;
   cache_path: string;
 }
@@ -304,6 +368,8 @@ export interface DownloadedModelInfo {
 export interface ModelStorageInfo {
   storage_path: string;
   hub_cache_path: string;
+  modelscope_cache_path?: string;
+  sherpa_onnx_path: string;
   is_default: boolean;
 }
 
@@ -373,8 +439,10 @@ export const modelApi = {
     return response.data;
   },
 
-  async deleteModel(engine: ModelEngine, modelId: string): Promise<{ success: boolean; message: string }> {
-    const response = await axios.delete(`${API_BASE}/models/${engine}/${encodeURIComponent(modelId)}`);
+  async deleteModel(engine: ModelEngine, modelId: string, computeBackend: ModelComputeBackend): Promise<{ success: boolean; message: string }> {
+    const response = await axios.delete(`${API_BASE}/models/${engine}/${encodeURIComponent(modelId)}`, {
+      params: { compute_backend: computeBackend },
+    });
     return response.data;
   }
 };

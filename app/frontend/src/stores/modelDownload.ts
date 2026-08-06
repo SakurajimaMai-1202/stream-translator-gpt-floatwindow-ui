@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
-import { modelApi, type DownloadedModelInfo, type ModelDownloadTask, type ModelEngine, type ModelStorageInfo } from '../services/api';
+import { modelApi, type DownloadedModelInfo, type ModelDownloadTask, type ModelEngine, type ModelComputeBackend, type ModelStorageInfo } from '../services/api';
 
 const POLL_INTERVAL_MS = 1500;
 
@@ -18,7 +18,7 @@ export const useModelDownloadStore = defineStore('modelDownload', () => {
 
   const taskMap = computed(() => {
     return tasks.value.reduce<Record<string, ModelDownloadTask>>((acc, task) => {
-      acc[`${task.engine}:${task.model_id}`] = task;
+      acc[`${task.compute_backend}:${task.engine}:${task.model_id}`] = task;
       return acc;
     }, {});
   });
@@ -65,10 +65,10 @@ export const useModelDownloadStore = defineStore('modelDownload', () => {
     }
   }
 
-  async function startDownload(engine: ModelEngine, modelId: string) {
+  async function startDownload(engine: ModelEngine, modelId: string, computeBackend: ModelComputeBackend = 'gpu') {
     clearMessages();
     try {
-      const existing = taskMap.value[`${engine}:${modelId}`];
+      const existing = taskMap.value[`${computeBackend}:${engine}:${modelId}`];
       if (existing && (existing.status === 'pending' || existing.status === 'downloading')) {
         successMessage.value = '此模型已在下載中';
         return;
@@ -76,7 +76,8 @@ export const useModelDownloadStore = defineStore('modelDownload', () => {
 
       const response = await modelApi.startDownload({
         engine,
-        model_id: modelId
+        model_id: modelId,
+        compute_backend: computeBackend,
       });
 
       successMessage.value = response.message || '下載任務已啟動';
@@ -97,10 +98,10 @@ export const useModelDownloadStore = defineStore('modelDownload', () => {
     }
   }
 
-  async function deleteModel(engine: ModelEngine, modelId: string) {
+  async function deleteModel(engine: ModelEngine, modelId: string, computeBackend: ModelComputeBackend = 'gpu') {
     clearMessages();
     try {
-      const response = await modelApi.deleteModel(engine, modelId);
+      const response = await modelApi.deleteModel(engine, modelId, computeBackend);
       successMessage.value = response.message;
       await loadDownloadedModels();
     } catch (error: any) {
@@ -138,12 +139,14 @@ export const useModelDownloadStore = defineStore('modelDownload', () => {
     }
   }
 
-  function getTask(engine: ModelEngine, modelId: string): ModelDownloadTask | undefined {
-    return taskMap.value[`${engine}:${modelId}`];
+  function getTask(engine: ModelEngine, modelId: string, computeBackend: ModelComputeBackend = 'gpu'): ModelDownloadTask | undefined {
+    return taskMap.value[`${computeBackend}:${engine}:${modelId}`];
   }
 
-  function isDownloaded(engine: ModelEngine, modelId: string): boolean {
-    return downloadedModels.value.some((item) => item.engine === engine && item.model_id === modelId);
+  function isDownloaded(engine: ModelEngine, modelId: string, computeBackend: ModelComputeBackend = 'gpu'): boolean {
+    return downloadedModels.value.some((item) =>
+      item.compute_backend === computeBackend && item.engine === engine && item.model_id === modelId
+    );
   }
 
   function formatSize(sizeBytes: number): string {

@@ -14,7 +14,7 @@ if __name__ == '__main__':
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     __package__ = "stream_translator_gpt"
 
-from .common import ApiKeyPool, start_daemon_thread, is_url, WARNING, ERROR, INFO
+from .common import ApiKeyPool, configure_utf8_stdio, start_daemon_thread, is_url, WARNING, ERROR, INFO
 from .audio_getter import (
     StreamAudioGetter,
     LocalFileAudioGetter,
@@ -32,10 +32,12 @@ from .subtitle_sharing import DEFAULT_PUBLIC_HOST, DEFAULT_PUBLIC_PORT, Subtitle
 from .asr_preload import PreloadedTranscriberManager, build_asr_config
 from .pipeline_runner import PipelineController, run_inprocess_pipeline
 from .runtime_accelerator import resolve_qwen3_device_map
+from .sherpa_onnx_transcriber import SherpaOnnxTranscriber
 from . import __version__
 
 
 def main(url, **kwargs):
+    configure_utf8_stdio()
     # Extract args
     loopback = kwargs.get('loopback', False)
     device_index = kwargs.get('device_index')
@@ -54,7 +56,7 @@ def main(url, **kwargs):
     disable_dynamic_vad_threshold = kwargs.get('disable_dynamic_vad_threshold', False)
     vad_every_n_frames = kwargs.get('vad_every_n_frames', 1)
     disable_vad = kwargs.get('disable_vad', False)
-    vad_backend = kwargs.get('vad_backend', 'silero')
+    vad_backend = kwargs.get('vad_backend', 'firered')
     firered_vad_model_path = kwargs.get('firered_vad_model_path')
 
     whisper_filters = kwargs.get('whisper_filters', 'emoji_filter,repetition_filter')
@@ -71,6 +73,9 @@ def main(url, **kwargs):
     asr_correction_rules = kwargs.get('asr_correction_rules')
     asr_corrections_case_sensitive = kwargs.get('asr_corrections_case_sensitive', False)
     runtime_profile = kwargs.get('runtime_profile', 'cuda')
+    asr_compute_backend = kwargs.get('asr_compute_backend', 'auto')
+    if str(runtime_profile).lower() == 'cpu':
+        asr_compute_backend = 'cpu'
     runtime_device_policy = kwargs.get('runtime_device_policy', 'auto_discrete')
     runtime_allow_integrated_gpu = kwargs.get('runtime_allow_integrated_gpu', False)
 
@@ -109,7 +114,36 @@ def main(url, **kwargs):
     openai_transcription_model = kwargs.get('openai_transcription_model', 'gpt-4o-mini-transcribe')
     processing_proxy = kwargs.get('processing_proxy')
     openai_api_key = kwargs.get('openai_api_key')
+    openai_transcription_api_key = kwargs.get('openai_transcription_api_key') or openai_api_key
     google_api_key = kwargs.get('google_api_key')
+
+    if use_qwen3_asr:
+        asr_engine = 'qwen3-asr'
+        asr_model = qwen3_asr_model or model
+    elif use_sensevoice_asr:
+        asr_engine = 'sensevoice'
+        asr_model = sensevoice_model
+    elif use_fun_asr:
+        asr_engine = 'fun-asr-nano'
+        asr_model = fun_asr_model
+    elif use_hf_asr:
+        asr_engine = 'hf-asr'
+        asr_model = model
+    elif use_nemo_asr:
+        asr_engine = 'parakeet-ctc-ja'
+        asr_model = nemo_asr_model or model
+    elif use_simul_streaming:
+        asr_engine = 'simul-streaming'
+        asr_model = model
+    elif use_faster_whisper:
+        asr_engine = 'faster-whisper'
+        asr_model = model
+    elif use_openai_transcription_api:
+        asr_engine = 'openai-api'
+        asr_model = openai_transcription_model
+    else:
+        asr_engine = 'whisper'
+        asr_model = model
 
     translation_prompt = kwargs.get('translation_prompt')
     gemini_model = kwargs.get('gemini_model', 'gemini-2.5-flash-lite')
@@ -126,6 +160,7 @@ def main(url, **kwargs):
         gemini_base_url = google_base_url
 
     translation_glossary = kwargs.get('translation_glossary')
+    translation_glossary_audit_enabled = kwargs.get('translation_glossary_audit_enabled', False)
     translation_timeout = kwargs.get('translation_timeout', 10)
     retry_if_translation_fails = kwargs.get('retry_if_translation_fails', False)
     translation_model_family = kwargs.get('translation_model_family', 'auto')
@@ -238,6 +273,18 @@ def main(url, **kwargs):
                 'asr_correction_rules': asr_correction_rules,
                 'asr_corrections_case_sensitive': asr_corrections_case_sensitive,
             }
+            if str(asr_compute_backend).lower() == 'cpu':
+                sherpa_model = None
+                if use_qwen3_asr:
+                    sherpa_model = qwen3_asr_model or model
+                elif use_sensevoice_asr:
+                    sherpa_model = sensevoice_model
+                elif use_fun_asr:
+                    sherpa_model = fun_asr_model
+                elif use_nemo_asr:
+                    sherpa_model = nemo_asr_model or model
+                if sherpa_model:
+                    return SherpaOnnxTranscriber(model=sherpa_model, language=language, **common_args)
             if use_qwen3_asr:
                 import torch
                 qwen_model = qwen3_asr_model or model
@@ -317,6 +364,7 @@ def main(url, **kwargs):
                 return RemoteOpenaiTranscriber(model=openai_transcription_model,
                                                language=language,
                                                proxy=processing_proxy,
+                                               api_key=openai_transcription_api_key,
                                                **common_args)
             else:
                 return OpenaiWhisper(model=model, language=language, **common_args)
@@ -365,6 +413,7 @@ def main(url, **kwargs):
                     output_format=translation_output_format,
                     max_output_tokens=translation_max_output_tokens,
                     provider=provider,
+                    glossary_audit_enabled=translation_glossary_audit_enabled,
                 )
             else:
                 llm_client = LLMClient(
@@ -379,6 +428,7 @@ def main(url, **kwargs):
                     output_format=translation_output_format,
                     max_output_tokens=translation_max_output_tokens,
                     provider=provider,
+                    glossary_audit_enabled=translation_glossary_audit_enabled,
                 )
             return ParallelTranslator(
                 llm_client=llm_client,
@@ -564,6 +614,7 @@ def run_preloaded_cli(url: str, args: dict) -> None:
 
 
 def cli():
+    configure_utf8_stdio()
     print(f'{INFO}Version: {__version__}')
     parser = argparse.ArgumentParser(description='Parameters for translator.py')
     parser.add_argument(
@@ -585,6 +636,12 @@ def cli():
         default=None,
         help=
         'Google API key if using Gemini translation. If you have multiple keys, you can separate them with \",\" and each key will be used in turn.'
+    )
+    parser.add_argument(
+        '--openai_transcription_api_key',
+        type=str,
+        default=None,
+        help='OpenAI API key used only by the remote transcription engine.'
     )
     parser.add_argument('--openai_base_url',
                         type=str,
@@ -678,7 +735,7 @@ def cli():
     parser.add_argument('--vad_backend',
                         type=str,
                         choices=['silero', 'firered'],
-                        default='silero',
+                        default='firered',
                         help='VAD backend used for audio slicing. FireRedVAD requires the omnivad library.')
     parser.add_argument('--firered_vad_model_path',
                         type=str,
@@ -751,6 +808,7 @@ def cli():
     parser.add_argument('--qwen3_asr_bnb_4bit_quant_type', type=str, choices=['nf4', 'fp4'], default=None, help='4-bit quant type.')
     parser.add_argument('--qwen3_asr_bnb_4bit_use_double_quant', action='store_true', help='Double quant for Qwen3-ASR.')
     parser.add_argument('--runtime_profile', type=str, choices=['cuda', 'cpu', 'rocm'], default='cuda', help='Runtime profile used to select local ASR accelerator policy.')
+    parser.add_argument('--asr_compute_backend', type=str, choices=['auto', 'gpu', 'cpu'], default='auto', help='Select GPU-native ASR or the sherpa-onnx CPU sidecar independently from the package profile.')
     parser.add_argument('--runtime_device_policy', type=str, choices=['auto_discrete', 'auto_any', 'manual', 'cpu'], default='auto_discrete', help='Device selection policy for local ASR backends.')
     parser.add_argument('--runtime_allow_integrated_gpu', action='store_true', help='Allow integrated GPUs for experimental local ASR acceleration.')
 
@@ -781,6 +839,10 @@ def cli():
                         help='JSON list of ASR correction rules with canonical and aliases fields.')
     parser.add_argument('--asr_corrections_case_sensitive', action='store_true',
                         help='Match ASR correction aliases case-sensitively.')
+    parser.add_argument('--asr_correction_log_enabled', action='store_true',
+                        help='Write applied ASR correction details to the standalone JSONL log.')
+    parser.add_argument('--asr_correction_learning_enabled', action='store_true',
+                        help='Collect unmatched ASR observations and conservative alias suggestions.')
     parser.add_argument('--gpt_model',
                         type=str,
                         default='gpt-5-nano',
@@ -801,6 +863,11 @@ def cli():
         type=str,
         default=None,
         help='Terminology glossary as a JSON string, e.g. \'{"FPS":"每秒幀數","CPU":"中央處理器"}\'.'
+    )
+    parser.add_argument(
+        '--translation_glossary_audit_enabled',
+        action='store_true',
+        help='Audit glossary compliance and aggregate repeated missing terminology.',
     )
     parser.add_argument(
         '--translation_history_size',
@@ -1053,7 +1120,7 @@ def cli():
         print(f'{ERROR}Cannot use multiple transcription decoder backends at the same time')
         sys.exit(1)
 
-    if args['use_openai_transcription_api'] and not args['openai_api_key']:
+    if args['use_openai_transcription_api'] and not (args['openai_transcription_api_key'] or args['openai_api_key']):
         print(f'{ERROR}Please fill in the OpenAI API key when enabling OpenAI Transcription API')
         sys.exit(1)
 

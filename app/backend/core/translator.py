@@ -17,7 +17,7 @@ from functools import lru_cache
 from typing import Dict, Any, AsyncGenerator, Optional, List, FrozenSet
 from pathlib import Path
 from backend.config import settings
-from backend.core.logging_setup import resolve_log_file
+from backend.core.logging_setup import resolve_log_dir, resolve_log_file
 from backend.core.portable_paths import apply_model_cache_environment
 
 logger = logging.getLogger(__name__)
@@ -26,6 +26,7 @@ _SUBTITLE_EVENT_PREFIX = "__ST_SUBTITLE_EVENT__"
 
 _SENSITIVE_ARG_NAMES = {
     "--openai_api_key",
+    "--openai_transcription_api_key",
     "--google_api_key",
     "--discord_webhook_url",
     "--telegram_token",
@@ -87,6 +88,20 @@ def _apply_source_pythonpath(env: Dict[str, str], cwd: str) -> None:
     env['PYTHONPATH'] = os.pathsep.join(parts)
 
 
+def _build_source_python_command(python_exe: str, cwd: str) -> List[str]:
+    """Prefer the workspace translator package when running from source."""
+    package_source = Path(cwd) / 'stream-translator-gpt'
+    if not package_source.exists():
+        return [python_exe, '-m', 'stream_translator_gpt']
+
+    bootstrap = (
+        "import runpy,sys;"
+        f"sys.path.insert(0,{str(package_source)!r});"
+        "runpy.run_module('stream_translator_gpt',run_name='__main__')"
+    )
+    return [python_exe, '-c', bootstrap]
+
+
 def _extract_supported_cli_args(help_text: str) -> FrozenSet[str]:
     """從 `stream_translator_gpt --help` 輸出解析可用 CLI 參數。"""
     if not help_text:
@@ -94,7 +109,37 @@ def _extract_supported_cli_args(help_text: str) -> FrozenSet[str]:
     return frozenset(re.findall(r'--([a-zA-Z0-9_]+)', help_text))
 
 
-def _resolve_profile_python(runtime_profile: str | None) -> Optional[str]:
+def _resolve_profile_python(runtime_profile: str | None, asr_compute_backend: str | None = None) -> Optional[str]:
+    profile = (runtime_profile or "").strip().lower()
+    compute = (asr_compute_backend or "auto").strip().lower()
+    candidates: List[Path] = []
+    if getattr(sys, 'frozen', False):
+        if compute == 'cpu':
+            runtime_name = '_runtime' if profile == 'cpu' else '_runtime_cpu_asr'
+            candidates.append(Path(sys.executable).parent / runtime_name / 'python.exe')
+        else:
+            candidates.append(Path(sys.executable).parent / '_runtime' / 'python.exe')
+    if compute == 'cpu':
+        candidates.append(settings.BASE_DIR / 'build-runtime-cache' / 'cpu-runtime' / 'python.exe')
+    elif profile:
+        candidates.append(settings.BASE_DIR / 'build-runtime-cache' / f'{profile}-runtime' / 'python.exe')
+    env_python = os.environ.get('STREAM_TRANSLATOR_BUILD_PYTHON')
+    if env_python:
+        candidates.append(Path(env_python))
+
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+def _obsolete_extract_supported_cli_args(help_text: str) -> FrozenSet[str]:
+    """從 `stream_translator_gpt --help` 輸出解析可用 CLI 參數。"""
+    if not help_text:
+        return frozenset()
+    return frozenset(re.findall(r'--([a-zA-Z0-9_]+)', help_text))
+
+
+def _obsolete_resolve_profile_python(runtime_profile: str | None) -> Optional[str]:
     profile = (runtime_profile or "").strip().lower()
     candidates: List[Path] = []
     if getattr(sys, 'frozen', False):
@@ -122,7 +167,7 @@ def _get_supported_cli_args(python_exe: str, cwd: str) -> Optional[FrozenSet[str
 
     try:
         result = subprocess.run(
-            [python_exe, '-m', 'stream_translator_gpt', '--help'],
+            [*_build_source_python_command(python_exe, cwd), '--help'],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             cwd=cwd,
@@ -201,12 +246,20 @@ class TranslationContext:
         # 檢查是否在打包環境中
         is_frozen = getattr(sys, 'frozen', False)
         cwd = str(settings.BASE_DIR.parent)
-        profile_python = _resolve_profile_python(str(self.config.get('runtime_profile') or ''))
+        profile_python = _resolve_profile_python(
+            str(self.config.get('runtime_profile') or ''),
+            str(self.config.get('asr_compute_backend') or 'auto'),
+        )
         
         if profile_python:
             logger.info(f"Using runtime profile Python: {profile_python}")
-            cmd = [profile_python, '-m', 'stream_translator_gpt']
+            cmd = _build_source_python_command(profile_python, cwd)
         elif is_frozen:
+            if str(self.config.get('asr_compute_backend') or 'auto').lower() == 'cpu':
+                raise RuntimeError(
+                    "CPU ASR sidecar is not installed. Install the optional sherpa-onnx CPU ASR runtime "
+                    "or select GPU ASR in transcription settings."
+                )
             # 打包環境：直接使用 Python，因為 stream_translator_gpt 已包含在 exe 中
             # 我們需要找到原始的 stream-translator-gpt 安裝
             base_dir = Path(sys.executable).parent
@@ -247,17 +300,19 @@ class TranslationContext:
         allowed_args = {
             'proxy', 'openai_api_key', 'google_api_key', 'format', 'list_format', 'cookies',
             'input_proxy', 'device_index', 'list_devices', 'device_recording_interval',
-            'runtime_profile', 'runtime_device_policy', 'runtime_allow_integrated_gpu',
+            'runtime_profile', 'asr_compute_backend', 'runtime_device_policy', 'runtime_allow_integrated_gpu',
             'min_audio_length', 'max_audio_length', 'target_audio_length',
             'continuous_no_speech_threshold', 'disable_dynamic_no_speech_threshold',
             'prefix_retention_length', 'vad_threshold', 'disable_dynamic_vad_threshold',
             'disable_vad', 'vad_every_n_frames',
             'model', 'language', 'use_faster_whisper', 'use_simul_streaming',
-            'use_openai_transcription_api', 'use_qwen3_asr', 'openai_transcription_model', 'whisper_filters',
+            'use_openai_transcription_api', 'use_qwen3_asr', 'openai_transcription_model', 'openai_transcription_api_key', 'whisper_filters',
             'transcription_initial_prompt', 'disable_transcription_context', 'qwen3_context',
             'qwen3_load_in_4bit', 'qwen3_dtype', 'qwen3_rms_threshold',
-            'asr_corrections_enabled', 'asr_correction_rules', 'asr_corrections_case_sensitive',
-            'gpt_model', 'gemini_model', 'translation_prompt', 'translation_glossary', 'translation_history_size',
+            'asr_corrections_enabled', 'asr_correction_log_enabled', 'asr_correction_learning_enabled',
+            'asr_correction_rules', 'asr_corrections_case_sensitive',
+            'gpt_model', 'gemini_model', 'translation_prompt', 'translation_glossary',
+            'translation_glossary_audit_enabled', 'translation_history_size',
             'translation_timeout', 'gpt_base_url', 'gemini_base_url', 'processing_proxy',
             'translation_model_family', 'translation_output_format',
             'translation_max_concurrency', 'translation_max_output_tokens',
@@ -385,6 +440,8 @@ class TranslationContext:
             # 設定環境變數
             env = apply_model_cache_environment()
             _apply_source_pythonpath(env, str(cwd))
+            env['STREAM_TRANSLATOR_ASR_CORRECTION_LOG_DIR'] = str(resolve_log_dir())
+            env['STREAM_TRANSLATOR_LOG_DIR'] = str(resolve_log_dir())
             env['PYTHONIOENCODING'] = 'utf-8'
             env['PYTHONUTF8'] = '1'
             env['PYTHONUNBUFFERED'] = '1'
@@ -651,13 +708,19 @@ class TranslationContext:
                             read_thread.join(timeout=2.0)
                         except Exception as join_err:
                             logger.warning(f"Failed to join subprocess reader threads: {join_err}")
-                        if return_code != 0:
+                        intentional_stop = self.stop_requested
+                        if return_code != 0 and not intentional_stop:
                             logger.error(
                                 "Translation subprocess exited with code %s. "
                                 "See logs/translator_stderr.log for stderr output.",
                                 return_code,
                             )
-                        status = "completed" if return_code == 0 else "error"
+                        elif return_code != 0:
+                            logger.info(
+                                "Translation subprocess exited with code %s after an intentional stop",
+                                return_code,
+                            )
+                        status = "completed" if return_code == 0 or intentional_stop else "error"
                         self._broadcast({
                             "type": "status",
                             "data": {"status": status, "code": return_code}

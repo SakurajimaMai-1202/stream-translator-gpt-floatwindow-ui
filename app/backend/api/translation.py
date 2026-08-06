@@ -5,6 +5,7 @@ import asyncio
 import copy
 from backend.models.translation import StartTranslationRequest, TranslationTaskResponse, DeviceListResponse, AudioDevice
 from backend.core.translator import active_translations, create_task, get_task, remove_task
+from backend.core.runtime_profiles import get_runtime_capabilities
 from backend.core.config_manager import ConfigManager
 from backend.core.app_sync import publish_app_event
 
@@ -107,6 +108,32 @@ async def start_translation(request: StartTranslationRequest, http_request: Requ
                     current_config[section].update(values)
         
         # 3. 轉換為命令行參數
+        # Coerce ASR backend based on runtime profile
+        runtime_config = current_config.get('runtime', {})
+        rt_capabilities = get_runtime_capabilities(runtime_config.get('profile'))
+        current_backend = str(current_config.get('transcription', {}).get('backend', '') or '')
+        if current_backend == 'parakeet-ctc-ja' and 'parakeet-ctc-ja' not in rt_capabilities.local_asr_engines:
+            # Parakeet is not supported by this runtime profile; coerce to a compatible backend
+            if 'qwen3-asr' in rt_capabilities.local_asr_engines:
+                new_backend = 'qwen3-asr'
+            elif 'faster-whisper' in rt_capabilities.local_asr_engines:
+                new_backend = 'faster-whisper'
+            elif 'sensevoice' in rt_capabilities.local_asr_engines:
+                new_backend = 'sensevoice'
+            elif 'fun-asr-nano' in rt_capabilities.local_asr_engines:
+                new_backend = 'fun-asr-nano'
+            elif 'openai-api' in rt_capabilities.remote_asr_engines:
+                new_backend = 'openai-api'
+            else:
+                new_backend = 'qwen3-asr'
+            current_config['transcription']['backend'] = new_backend
+            current_config['transcription']['use_nemo_asr'] = False
+            # Reset nemo model params that are stale for this profile
+            current_config['transcription'].pop('nemo_asr_model', None)
+            current_config['transcription'].pop('nemo_asr_device', None)
+            current_config['transcription'].pop('nemo_asr_decoding', None)
+            current_config['transcription'].pop('nemo_asr_dtype', None)
+
         cli_args = get_config_manager().to_main_args(current_config)
         
         # 4. 創建並啟動任務

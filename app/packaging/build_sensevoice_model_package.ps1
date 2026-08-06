@@ -1,5 +1,5 @@
-param(
-    [string]$Version = "1.3.8",
+﻿param(
+    [string]$Version = "1.3.9",
     [string]$SourcePath = "",
     [string]$OutputDir = ""
 )

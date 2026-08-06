@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick } from 'vue';
+import type { LatencyWindowSnapshot, SubtitleLatencyTrace } from '../services/api';
 
 // ─── 狀態 ───────────────────────────────────────────────
 type DesktopSubtitle = {
@@ -11,6 +12,8 @@ type DesktopSubtitle = {
   llm_latency_ms?: number | null;
   translation_queue_latency_ms?: number | null;
   total_latency_ms?: number | null;
+  latency_trace?: SubtitleLatencyTrace;
+  latency_window?: LatencyWindowSnapshot;
 };
 
 const subtitles = ref<DesktopSubtitle[]>([]);
@@ -22,7 +25,7 @@ const showPanel = ref(false);
 const fontSize = ref(Number(localStorage.getItem('dfw_fontSize') || 32));
 const showOriginal = ref(localStorage.getItem('dfw_showOriginal') !== 'false');
 const showTranslated = ref(localStorage.getItem('dfw_showTranslated') !== 'false');
-const showLatency = ref(localStorage.getItem('dfw_showLatency') === 'true');
+const showLatency = ref(localStorage.getItem('dfw_showLatency') !== 'false');
 const latencyColor = ref(localStorage.getItem('dfw_latencyColor') || '#7DD3FC');
 const maxItems = ref(Number(localStorage.getItem('dfw_maxItems') || 100));
 const layout = ref<'bottom' | 'top' | 'side'>(
@@ -135,6 +138,8 @@ function addOrUpdateSubtitle(data: Omit<DesktopSubtitle, 'id' | 'timestamp_id'> 
       subtitles.value[idx].llm_latency_ms = data.llm_latency_ms ?? null;
       subtitles.value[idx].translation_queue_latency_ms = data.translation_queue_latency_ms ?? null;
       subtitles.value[idx].total_latency_ms = data.total_latency_ms ?? null;
+      subtitles.value[idx].latency_trace = data.latency_trace;
+      subtitles.value[idx].latency_window = data.latency_window;
       // 更新不新增，不需要捲動
       return;
     }
@@ -148,6 +153,8 @@ function addOrUpdateSubtitle(data: Omit<DesktopSubtitle, 'id' | 'timestamp_id'> 
     llm_latency_ms: data.llm_latency_ms ?? null,
     translation_queue_latency_ms: data.translation_queue_latency_ms ?? null,
     total_latency_ms: data.total_latency_ms ?? null,
+    latency_trace: data.latency_trace,
+    latency_window: data.latency_window,
     ...(ts ? { timestamp_id: ts } : {})
   });
 

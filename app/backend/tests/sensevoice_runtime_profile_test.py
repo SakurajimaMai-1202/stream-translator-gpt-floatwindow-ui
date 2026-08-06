@@ -1,11 +1,10 @@
 from backend.core.config_manager import ConfigManager
-from backend.core.runtime_profiles import get_runtime_capabilities
+from backend.core.runtime_profiles import get_asr_capabilities, get_runtime_capabilities
+from backend.core.runtime_status import build_runtime_status
 from backend.core.asr_model_capabilities import (
     coerce_model_language,
     list_asr_model_capabilities,
 )
-from backend.core import translator as translator_module
-from backend.core.translator import TranslationContext
 
 
 def _config_for(profile: str) -> dict:
@@ -43,6 +42,49 @@ def _manager() -> ConfigManager:
     return ConfigManager.__new__(ConfigManager)
 
 
+def test_packaged_cpu_profile_is_locked_in_config_and_status(monkeypatch, tmp_path):
+    monkeypatch.setenv("STREAM_TRANSLATOR_PACKAGED_PROFILE", "cpu")
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("runtime:\n  profile: cuda\n  device_policy: auto_discrete\n", encoding="utf-8")
+
+    manager = ConfigManager(config_path)
+    assert manager.get_config()["runtime"]["profile"] == "cpu"
+    updated = manager.update_config({"runtime": {"profile": "rocm", "device_policy": "auto_any"}})
+    assert updated["runtime"]["profile"] == "cpu"
+    assert updated["runtime"]["device_policy"] == "cpu"
+    assert updated["transcription"]["asr_compute_backend"] == "cpu"
+
+    status = build_runtime_status(updated, devices=[])
+    assert status["profile_locked"] is True
+    assert status["packaged_profile"] == "cpu"
+    assert status["profile"] == "cpu"
+    assert status["effective_asr_compute_backend"] == "cpu"
+
+
+def test_cuda_package_can_select_cpu_sherpa_capabilities(monkeypatch):
+    monkeypatch.setenv("STREAM_TRANSLATOR_PACKAGED_PROFILE", "cuda")
+    config = _config_for("cuda")
+    config["transcription"].update({
+        "asr_compute_backend": "cpu",
+        "backend": "parakeet-ctc-ja",
+        "use_sensevoice_asr": False,
+        "use_nemo_asr": True,
+        "nemo_asr_model": "nvidia/parakeet-tdt-0.6b-v3",
+    })
+
+    args = _manager().to_main_args(config)
+    status = build_runtime_status(config, devices=[])
+
+    assert args["runtime_profile"] == "cuda"
+    assert args["asr_compute_backend"] == "cpu"
+    assert args["model"] == "nvidia/parakeet-tdt-0.6b-v3"
+    assert status["profile"] == "cuda"
+    assert status["effective_asr_compute_backend"] == "cpu"
+    assert status["asr_capabilities"]["profile"] == "cpu"
+    assert "nvidia/parakeet-tdt-0.6b-v3" in status["asr_capabilities"]["parakeet_model_ids"]
+    assert get_asr_capabilities("rocm", "cpu").profile == "cpu"
+
+
 def test_sensevoice_is_profile_aware():
     cuda = get_runtime_capabilities("cuda")
     cpu = get_runtime_capabilities("cpu")
@@ -52,26 +94,30 @@ def test_sensevoice_is_profile_aware():
     assert "sensevoice" in cpu.local_asr_engines
     assert "sensevoice" in rocm.local_asr_engines
     assert cuda.sensevoice_status == "compatibility"
-    assert cpu.sensevoice_status == "compatibility"
+    assert cpu.sensevoice_status == "official"
     assert rocm.sensevoice_status == "experimental"
     assert cuda.sensevoice_model_ids == ("iic/SenseVoiceSmall",)
 
 
-def test_nvidia_parakeet_is_cuda_only():
+def test_nvidia_parakeet_uses_sherpa_only_in_cpu_profile():
     cuda = get_runtime_capabilities("cuda")
     cpu = get_runtime_capabilities("cpu")
     rocm = get_runtime_capabilities("rocm")
 
     assert "parakeet-ctc-ja" in cuda.local_asr_engines
-    assert "parakeet-ctc-ja" not in cpu.local_asr_engines
+    assert "parakeet-ctc-ja" in cpu.local_asr_engines
     assert "parakeet-ctc-ja" not in rocm.local_asr_engines
     assert cuda.parakeet_status == "experimental"
-    assert cpu.parakeet_status == "disabled"
+    assert cpu.parakeet_status == "official"
     assert rocm.parakeet_status == "disabled"
     assert cuda.parakeet_model_ids == (
         "nvidia/parakeet-tdt_ctc-0.6b-ja",
         "nvidia/parakeet-tdt_ctc-1.1b",
         "grider-transwithai/parakeet-ctc-1.1b-ja",
+    )
+    assert cpu.parakeet_model_ids == (
+        "nvidia/parakeet-tdt-0.6b-v3",
+        "nvidia/parakeet-tdt_ctc-0.6b-ja",
     )
 
 
@@ -82,6 +128,9 @@ def test_asr_model_capabilities_distinguish_fixed_and_multilingual_models():
 
     assert capabilities["nvidia/parakeet-tdt_ctc-1.1b"]["language_mode"] == "fixed"
     assert capabilities["nvidia/parakeet-tdt_ctc-1.1b"]["supported_languages"] == ["en"]
+    assert capabilities["nvidia/parakeet-tdt-0.6b-v3"]["language_mode"] == "multilingual"
+    assert capabilities["nvidia/parakeet-tdt-0.6b-v3"]["default_language"] == "auto"
+    assert len(capabilities["nvidia/parakeet-tdt-0.6b-v3"]["supported_languages"]) == 25
     assert capabilities["FunAudioLLM/Fun-ASR-Nano-2512"]["supported_languages"] == [
         "zh", "en", "ja"
     ]
@@ -97,6 +146,7 @@ def test_model_language_is_coerced_by_backend():
     ) == "ja"
     assert coerce_model_language("FunAudioLLM/Fun-ASR-Nano-2512", "de") == "auto"
     assert coerce_model_language("FunAudioLLM/Fun-ASR-MLT-Nano-2512", "sv") == "sv"
+    assert coerce_model_language("nvidia/parakeet-tdt-0.6b-v3", "ja") == "auto"
 
 
 def test_qwen3_anime_model_replaces_legacy_ja_model():
@@ -177,7 +227,7 @@ def test_nvidia_parakeet_en_model_forces_english_language():
     assert args["language"] == "en"
 
 
-def test_parakeet_ctc_ja_falls_back_outside_cuda_profile():
+def test_cpu_parakeet_coerces_legacy_model_to_sherpa_model():
     config = _config_for("cpu")
     config["transcription"].update({
         "backend": "parakeet-ctc-ja",
@@ -188,8 +238,9 @@ def test_parakeet_ctc_ja_falls_back_outside_cuda_profile():
 
     args = _manager().to_main_args(config)
 
-    assert args["use_nemo_asr"] is False
-    assert args["use_qwen3_asr"] is True
+    assert args["use_nemo_asr"] is True
+    assert args["use_qwen3_asr"] is False
+    assert args["model"] == "nvidia/parakeet-tdt-0.6b-v3"
 
 
 def test_sensevoice_model_id_overrides_stale_backend():
@@ -322,6 +373,43 @@ def test_translation_backend_selects_provider_without_api_key_heuristics():
     assert args["google_api_key"] == "google-key"
 
 
+def test_cloud_api_keys_are_scoped_by_feature_and_provider():
+    config = _config_for("cuda")
+    config["transcription"].update({
+        "use_openai_transcription_api": True,
+        "openai_api_key": "asr-openai-key",
+    })
+    config["translation"].update({
+        "backend": "gemini",
+        "openai_api_key": "translation-openai-key",
+        "google_api_key": "translation-google-key",
+    })
+
+    args = _manager().to_main_args(config)
+
+    assert args["openai_transcription_api_key"] == "asr-openai-key"
+    assert args["openai_api_key"] == "translation-openai-key"
+    assert args["google_api_key"] == "translation-google-key"
+
+
+def test_legacy_general_cloud_keys_are_migrated_to_scoped_fields():
+    manager = _manager()
+    config = _config_for("cuda")
+    config["general"].update({
+        "openai_api_key": "legacy-openai-key",
+        "google_api_key": "legacy-google-key",
+    })
+
+    migrated, changed = manager._migrate_legacy_config(config)
+
+    assert changed is True
+    assert "openai_api_key" not in migrated["general"]
+    assert "google_api_key" not in migrated["general"]
+    assert migrated["transcription"]["openai_api_key"] == "legacy-openai-key"
+    assert migrated["translation"]["openai_api_key"] == "legacy-openai-key"
+    assert migrated["translation"]["google_api_key"] == "legacy-google-key"
+
+
 def test_fun_asr_nano_models_are_profile_aware():
     expected = (
         "FunAudioLLM/Fun-ASR-Nano-2512",
@@ -332,10 +420,10 @@ def test_fun_asr_nano_models_are_profile_aware():
     rocm = get_runtime_capabilities("rocm")
 
     assert cuda.fun_asr_model_ids == expected
-    assert cpu.fun_asr_model_ids == expected
+    assert cpu.fun_asr_model_ids == ("FunAudioLLM/Fun-ASR-Nano-2512",)
     assert rocm.fun_asr_model_ids == expected
     assert cuda.fun_asr_status == "compatibility"
-    assert cpu.fun_asr_status == "experimental"
+    assert cpu.fun_asr_status == "official"
     assert rocm.fun_asr_status == "experimental"
     assert all("fun-asr-nano" in profile.local_asr_engines for profile in (cuda, cpu, rocm))
 
@@ -363,6 +451,9 @@ def test_fun_asr_mlt_config_maps_to_main_args():
 
 
 def test_fun_asr_command_reprobes_stale_runtime_capabilities(monkeypatch):
+    from backend.core import translator as translator_module
+    from backend.core.translator import TranslationContext
+
     config = _config_for("cuda")
     config["transcription"].update(
         {
@@ -398,10 +489,42 @@ def test_fun_asr_command_reprobes_stale_runtime_capabilities(monkeypatch):
     monkeypatch.setattr(
         translator_module,
         "_resolve_profile_python",
-        lambda _: "python",
+        lambda *_: "python",
     )
 
     command = TranslationContext(args, "fun-asr-test")._build_command()
 
     assert "--use_fun_asr" in command
     assert command[command.index("--fun_asr_model") + 1] == "FunAudioLLM/Fun-ASR-Nano-2512"
+
+
+def test_runtime_command_prioritizes_workspace_translator_source(tmp_path):
+    from backend.core import translator as translator_module
+
+    (tmp_path / "stream-translator-gpt").mkdir()
+
+    command = translator_module._build_source_python_command("python", str(tmp_path))
+
+    assert command[:2] == ["python", "-c"]
+    assert repr(str(tmp_path / "stream-translator-gpt")) in command[2]
+
+
+def test_packaged_gpu_profile_selects_isolated_cpu_asr_sidecar(monkeypatch, tmp_path):
+    from backend.core import translator as translator_module
+
+    packaged_exe = tmp_path / "Stream Translator.exe"
+    packaged_exe.touch()
+    gpu_python = tmp_path / "_runtime" / "python.exe"
+    cpu_python = tmp_path / "_runtime_cpu_asr" / "python.exe"
+    gpu_python.parent.mkdir()
+    cpu_python.parent.mkdir()
+    gpu_python.touch()
+    cpu_python.touch()
+
+    monkeypatch.setattr(translator_module.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(translator_module.sys, "executable", str(packaged_exe))
+
+    assert translator_module._resolve_profile_python("cuda", "gpu") == str(gpu_python)
+    assert translator_module._resolve_profile_python("cuda", "cpu") == str(cpu_python)
+    assert translator_module._resolve_profile_python("rocm", "cpu") == str(cpu_python)
+    assert translator_module._resolve_profile_python("cpu", "cpu") == str(gpu_python)

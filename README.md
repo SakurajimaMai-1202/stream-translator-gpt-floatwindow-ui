@@ -14,6 +14,8 @@
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Windows-lightgrey" alt="Platform">
   <img src="https://img.shields.io/badge/GPU-NVIDIA%20CUDA-green" alt="NVIDIA CUDA">
+  <img src="https://img.shields.io/badge/GPU-AMD%20ROCm%20Experimental-orange" alt="AMD ROCm Experimental">
+  <img src="https://img.shields.io/badge/CPU-sherpa--onnx-blueviolet" alt="CPU sherpa-onnx">
   <img src="https://img.shields.io/badge/python-3.10--3.12-blue" alt="Python">
 </p>
 
@@ -28,6 +30,8 @@ Stream Translator FloatWindow 是一個給 Windows 使用的即時字幕翻譯�
 本專案基於 [stream-translator-gpt](https://github.com/ionic-bond/stream-translator-gpt) 擴充桌面 GUI、浮動字幕、模型管理與字幕分享功能。若需要串聯手機端，也可搭配 [SubtitleOverlay](https://github.com/W-Nana/SubtitleOverlay)。
 
 > 本專案提供 CUDA / CPU / ROCm Experimental 三種 Windows 打包版。請依硬體下載對應 profile，不要混用 App Update。
+>
+> v1.3.9 開始 CUDA Full 與 ROCm Full 完整包已內含 CPU ASR sidecar，無需另行下載。既有 CUDA／ROCm 使用者可從 Release Assets 單獨下載 `StreamTranslator-CPU-ASR-Sidecar-v1.3.9.zip`，並在設定頁的「ASR 模型管理」中安裝。
 
 ---
 
@@ -46,7 +50,7 @@ Stream Translator FloatWindow 是一個給 Windows 使用的即時字幕翻譯�
 
 ### 一般使用者推薦
 
-建議從 GitHub Release 依照硬體下載對應的 v1.3.8 完整包，合併分割檔後解壓執行：
+建議從 GitHub Release 依照硬體下載對應的 v1.3.9 完整包，合併分割檔後解壓執行：
 
 - GitHub Release：<https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest>
 
@@ -54,47 +58,50 @@ Stream Translator FloatWindow 是一個給 Windows 使用的即時字幕翻譯�
 
 | 版本 | GitHub Release 檔案 | 適用情境 |
 |------|------|------|
-| CUDA | `StreamTranslator-win64-CUDA-Full.zip.part01` ~ `.part03` | NVIDIA CUDA 正式版 |
-| CPU | `StreamTranslator-win64-CPU-Full.zip.part01` | CPU 相容版，使用 CPU-only PyTorch runtime |
-| ROCm Experimental | `StreamTranslator-win64-ROCm-Experimental-Full.zip.part01` ~ `.part02` | AMD ROCm/HIP 實驗版 |
+| CUDA | `StreamTranslator-win64-CUDA-Full.zip.part01` ~ `.part02` | NVIDIA CUDA 正式版（內含 CPU ASR sidecar） |
+| CPU | `StreamTranslator-win64-CPU-Full.zip.part01` | CPU-only 版，使用 sherpa-onnx／ONNX Runtime，不含 PyTorch |
+| ROCm Experimental | `StreamTranslator-win64-ROCm-Experimental-Full.zip.part01` | AMD ROCm/HIP 實驗版（內含 CPU ASR sidecar） |
 | App Update | `StreamTranslator-*-App-Update.zip` | 僅適合同 profile 完整包覆蓋更新 |
-| SHA256 | `SHA256SUMS-v1.3.8.txt` | 驗證下載與合併後檔案完整性 |
+| Sidecar | `StreamTranslator-CPU-ASR-Sidecar-v1.3.9.zip` | 獨立 CPU ASR sidecar，供 CUDA／ROCm 使用者另行下載安裝 |
+| SHA256 | `SHA256SUMS-v1.3.9.txt` | 驗證下載與合併後檔案完整性 |
 
 GitHub Release 因為單檔容量限制，Full package 以分割包提供。
 
 請不要下載 GitHub 自動產生的 `Source code (zip)` 當作執行版；那只是原始碼，不能直接雙擊啟動。
 
-### v1.3.8 重要注意事項
+> CUDA Full 從 v1.3.9 起改為 2 個分割檔（原 3 個），ROCm Full 改為 1 個分割檔（原 2 個）。
 
-v1.3.8 是目前建議使用的版本，新增 Fun-ASR Nano／MLT Nano、NVIDIA Parakeet 日文與英文官方模型、Qwen3-ASR 日文 Anime／Galgame 模型，以及依模型自動限制語言的能力表。本版也重製 Windows 原生浮動字幕，改善模型管理、遠端字幕延遲顯示、ASR 預載與 CUDA／CPU／ROCm profile 能力提示。v1.3.2 與 v1.3.3 已知存在設定頁與轉錄選項相關問題，請直接升級 v1.3.8。
+### v1.3.9 重要注意事項
 
-- v1.3.2：不建議繼續使用，請升級 v1.3.8。
-- v1.3.3：包含部分修正，但打包後仍可能在設定頁點選轉錄/ASR 選項時凍結，請升級 v1.3.8。
+v1.3.9 是目前的建議版本，重整 CPU ASR 架構，新增獨立 CPU ASR sidecar 安裝流程，讓 CUDA／ROCm 使用者可在同一套程式中切換 GPU ASR 與 CPU ASR。CPU 版改用 sherpa-onnx／ONNX Runtime，不再內含 PyTorch。本版同時重整 Llama 執行與模型選擇流程、拆分 OpenAI ASR／OpenAI 翻譯／Gemini 金鑰、改善字幕分享與字幕外觀、內建 yt-dlp 所需 JavaScript Runtime，並修正設定載入與頁面刷新閃爍。
+
+- v1.3.2：不建議繼續使用，請升級最新版。
+- v1.3.3：包含部分修正，但打包後仍可能在設定頁點選轉錄/ASR 選項時凍結，請升級最新版。
+- v1.3.9：重整 CPU ASR 架構，新增獨立 CPU ASR sidecar 安裝流程，支援五種 CPU ASR 模型，CPU 版改用 sherpa-onnx／ONNX Runtime。
+- v1.3.8：新增 Fun-ASR Nano／MLT Nano、Parakeet 0.6B JA／1.1B EN、Qwen3-ASR 1.7B JA Anime／Galgame，重製原生浮動字幕。
 - v1.3.4：修正設定頁凍結與 ASR 選項互斥問題；CPU 版改用 CPU-only PyTorch runtime，Full package 顯著縮小。
 - v1.3.5：配置讀取改用快取與外部修改偵測，減少重複 YAML 解析、重複 API 請求、重複磁碟寫入與不必要的硬體偵測。
 - v1.3.6：新增 Hy-MT2／一般聊天模型／結構化 API 翻譯策略、ASR 重疊去重、短句組句、直播 VAD 參數與字幕延遲顯示。
 - v1.3.7：新增分平台 Cookie 匯入，改善停止轉譯狀態清理與 Windows WebView 顯示穩定性，並加速 CUDA／CPU／ROCm 三版本打包、分割與驗證。
-- v1.3.8：新增 Fun-ASR Nano／MLT Nano、Parakeet 0.6B JA／1.1B EN、Qwen3-ASR 1.7B JA Anime／Galgame，重製原生浮動字幕，並改善模型／語言選擇、模型下載、延遲顯示及三種 runtime profile 的穩定性。
+
 
 ### GitHub 分割包
 
 如果從 GitHub Release 下載，請把以下檔案放在同一個資料夾：
 
-- CUDA Full package（NVIDIA CUDA 正式版）：
+- CUDA Full package（NVIDIA CUDA 正式版，內含 CPU ASR sidecar）：
   - `StreamTranslator-win64-CUDA-Full.zip.part01`
   - `StreamTranslator-win64-CUDA-Full.zip.part02`
-  - `StreamTranslator-win64-CUDA-Full.zip.part03`
 
-- CPU Full package（無 GPU / 相容版）：
+- CPU Full package（CPU 相容版，sherpa-onnx／ONNX Runtime）：
   - `StreamTranslator-win64-CPU-Full.zip.part01`
 
-- ROCm Experimental Full package（AMD ROCm/HIP 實驗版）：
+- ROCm Experimental Full package（AMD ROCm 實驗版，內含 CPU ASR sidecar）：
   - `StreamTranslator-win64-ROCm-Experimental-Full.zip.part01`
-  - `StreamTranslator-win64-ROCm-Experimental-Full.zip.part02`
 
 - 建議一起下載：
   - `merge-full-package.bat`
-  - `SHA256SUMS-v1.3.8.txt`
+  - `SHA256SUMS-v1.3.9.txt`
 
 合併分割包後會得到對應的 Full zip：
 
@@ -118,7 +125,7 @@ try {
 }
 ```
 
-也可以使用 7-Zip 或其他支援分割檔的工具，從 `.part01` 開始合併/解壓。合併後請依照 `SHA256SUMS-v1.3.8.txt` 驗證檔案完整性。
+也可以使用 7-Zip 或其他支援分割檔的工具，從 `.part01` 開始合併/解壓。合併後請依照 `SHA256SUMS-v1.3.9.txt` 驗證檔案完整性。
 
 如果只是從同 profile 舊版更新，可以下載對應的 App Update：
 
@@ -551,7 +558,7 @@ stream-translator-gpt-floatwindow-ui/
 | Profile | 輸出 | 用途 |
 |------|------|------|
 | `cuda` | `app/dist-cuda/StreamTranslator-win64-CUDA` | NVIDIA CUDA 正式版；包含 Faster-Whisper 全系列、Qwen3-ASR、Fun-ASR、SenseVoiceSmall 與 NVIDIA Parakeet |
-| `cpu` | `app/dist-cpu/StreamTranslator-win64-CPU` | CPU-only 版；使用 CPU-only PyTorch，支援遠端 API、字幕分享、Qwen3-ASR 0.6B、Fun-ASR、SenseVoiceSmall、faster-whisper small / medium |
+| `cpu` | `app/dist-cpu/StreamTranslator-win64-CPU` | CPU-only 版；使用 sherpa-onnx\uff0fONNX Runtime，不含 PyTorch。支援遠端 API、字幕分享、Qwen3-ASR 0.6B、Fun-ASR、SenseVoiceSmall、faster-whisper small / medium |
 | `rocm` | `app/dist-rocm/StreamTranslator-win64-ROCm-Experimental` | AMD ROCm/HIP 實驗版；提供 Qwen3-ASR、Fun-ASR 與 SenseVoiceSmall，實際支援取決於 GPU、驅動及 ROCm runtime，不包含 NVIDIA Parakeet |
 
 打包前先檢查 Build Python。三個 profile 應分別指向不同環境：
@@ -570,22 +577,24 @@ cd .\app
 cd .\app
 
 $env:STREAM_TRANSLATOR_BUILD_PYTHON = "D:\Python\cuda-runtime\python.exe"
-.\build_release.ps1 -Profile cuda -Version 1.3.8
+.\build_release.ps1 -Profile cuda -Version 1.3.9
 
 $env:STREAM_TRANSLATOR_BUILD_PYTHON = "D:\Python\cpu-runtime\python.exe"
-.\build_release.ps1 -Profile cpu -Version 1.3.8
+.\build_release.ps1 -Profile cpu -Version 1.3.9
 
 $env:STREAM_TRANSLATOR_BUILD_PYTHON = "D:\Python\rocm-runtime\python.exe"
-.\build_release.ps1 -Profile rocm -Version 1.3.8
+.\build_release.ps1 -Profile rocm -Version 1.3.9
 ```
 
 打包後驗證：
 
 ```powershell
 .\validate_runtime_artifact.ps1 -Profile cuda
-.\validate_runtime_artifact.ps1 -Profile cpu -ExpectedTorchBackend cpu
+.\validate_runtime_artifact.ps1 -Profile cpu
 .\validate_runtime_artifact.ps1 -Profile rocm
 ```
+
+> CPU profile 從 v1.3.9 起使用 sherpa-onnx\uff0fONNX Runtime，不再包含 PyTorch，因此不需要 -ExpectedTorchBackend cpu。
 
 CUDA / CPU / ROCm 的 App Update 只能覆蓋同 profile 完整包。不要用 CUDA App Update 覆蓋 CPU 或 ROCm 完整包。
 
@@ -594,7 +603,7 @@ CUDA / CPU / ROCm 的 App Update 只能覆蓋同 profile 完整包。不要用 C
 Full package 會輸出完整 zip，GitHub Release 使用 `.part01`、`.part02` 這種分割檔。請同步提供：
 
 - `merge-full-package.bat`
-- `SHA256SUMS-v1.3.8.txt`
+- `SHA256SUMS-v1.3.9.txt`
 
 三版本建議使用共享 GUI 打包入口，避免重複執行三次 Vite 與 PyInstaller：
 
@@ -602,11 +611,11 @@ Full package 會輸出完整 zip，GitHub Release 使用 `.part01`、`.part02` �
 cd app
 
 # 日常驗證：共用 GUI 只建一次，不壓縮 Full ZIP
-.\build_all_profiles.ps1 -Version 1.3.8 -Mode Quick -ReuseRuntimeCache
+.\build_all_profiles.ps1 -Version 1.3.9 -Mode Quick -ReuseRuntimeCache
 
 # 正式發佈：標準 Deflate 高壓縮、分割、重新合併與 SHA256 驗證
 .\build_all_profiles.ps1 `
-  -Version 1.3.8 `
+  -Version 1.3.9 `
   -Mode Final `
   -ReuseRuntimeCache `
   -CompressionLevel 7 `
@@ -643,6 +652,9 @@ cd .\app
 - Qwen3-ASR 在 CUDA / ROCm 預設 `bfloat16`；CPU profile 使用 `float32`。
 - NVIDIA Parakeet 只開在 CUDA profile，不放進 CPU / ROCm；官方 hybrid 模型預設 TDT，舊版日文模型使用 CTC。
 - SenseVoiceSmall 會優先檢查本機 ModelScope cache / 模型包路徑，找不到才交由 FunASR 走線上來源。
+- CPU profile 從 v1.3.9 起使用 sherpa-onnx\uff0fONNX Runtime，不再需要 PyTorch；CPU ASR 模型限定 Parakeet TDT 0.6B v3、NVIDIA Parakeet TDT-CTC 0.6B JA、Fun-ASR Nano 2512、SenseVoice 與 Qwen3-ASR 0.6B。
+- CUDA\uff0fROCm 使用者可在設定頁「ASR 模型管理」安裝 CPU ASR sidecar，安裝後需重新啟動程式方可切換至 CPU / sherpa-onnx 模式。
+- Sidecar 安裝流程包含 SHA-256 驗證、安全解壓、原子安裝與 runtime import 驗證，失敗自動回復。
 - 相關設計文件請看 `app/docs/RUNTIME_PROFILES_zh-TW.md`、`app/docs/PACKAGING_zh-TW.md`、`app/docs/SENSEVOICE_MODEL_PACKAGE_zh-TW.md`。
 
 ---

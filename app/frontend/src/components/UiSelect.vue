@@ -15,11 +15,15 @@ const props = withDefaults(defineProps<{
   placeholder?: string;
   buttonClass?: string;
   menuClass?: string;
+  searchable?: boolean;
+  searchPlaceholder?: string;
 }>(), {
   disabled: false,
   placeholder: '請選擇',
   buttonClass: '',
-  menuClass: ''
+  menuClass: '',
+  searchable: false,
+  searchPlaceholder: '搜尋…'
 });
 
 const emit = defineEmits<{
@@ -27,6 +31,7 @@ const emit = defineEmits<{
 }>();
 
 const isOpen = ref(false);
+const searchQuery = ref('');
 const rootRef = ref<HTMLElement | null>(null);
 const menuRef = ref<HTMLElement | null>(null);
 const menuStyle = reactive({
@@ -45,7 +50,9 @@ const groupedOptions = computed(() => {
   const order: string[] = [];
   const groups = new Map<string, UiSelectOption[]>();
 
+  const query = searchQuery.value.trim().toLowerCase();
   for (const option of props.options) {
+    if (query && !option.label.toLowerCase().includes(query)) continue;
     const groupName = option.group || '';
     if (!groups.has(groupName)) {
       groups.set(groupName, []);
@@ -67,6 +74,7 @@ function toggleOpen() {
 
 function close() {
   isOpen.value = false;
+  searchQuery.value = '';
 }
 
 function selectOption(option: UiSelectOption) {
@@ -180,6 +188,11 @@ onBeforeUnmount(detachOpenListeners);
           menuClass
         ]"
       >
+        <div v-if="searchable" class="sticky top-0 z-10 p-2 bg-slate-900 border-b border-white/10">
+          <input v-model="searchQuery" :placeholder="searchPlaceholder" autofocus
+            class="w-full px-3 py-2 rounded-md bg-slate-950 border border-white/15 text-sm text-white outline-none focus:border-blue-400"
+            @pointerdown.stop @click.stop />
+        </div>
         <template v-for="(group, idx) in groupedOptions" :key="`group-${idx}-${group.group || 'default'}`">
           <div v-if="group.group" class="px-3 py-2 text-xs text-white/50 bg-slate-900/70 border-b border-white/10">
             {{ group.group }}

@@ -1,6 +1,6 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 param(
-    [string]$Version = "1.3.7",
+    [string]$Version = "1.3.9",
     [ValidateSet("Quick", "Final")][string]$Mode = "Quick",
     [switch]$ReuseRuntimeCache,
     [switch]$ReuseSharedGui,
@@ -8,7 +8,8 @@ param(
     [string]$SevenZipPath = "",
     [ValidateRange(0, 9)][int]$CompressionLevel = 7,
     [ValidateRange(64, 2047)][int]$SplitSizeMiB = 1900,
-    [ValidateRange(1, 128)][int]$CopyThreads = 16
+    [ValidateRange(1, 128)][int]$CopyThreads = 16,
+    [switch]$IncludeCpuAsrSidecar = $true
 )
 
 $ErrorActionPreference = "Stop"
@@ -30,6 +31,18 @@ if (-not $ReuseRuntimeCache) {
 }
 $overallTimer = [Diagnostics.Stopwatch]::StartNew()
 $stepTimings = [ordered]@{}
+
+& (Join-Path $packagingDir "build_profile_runtime.ps1") -Profile cpu
+if (-not $?) { throw "CPU ASR runtime cache build failed" }
+
+& (Join-Path $packagingDir "build_cpu_asr_sidecar.ps1") `
+    -Version $Version `
+    -SevenZipPath $sevenZipExe `
+    -CompressionLevel $effectiveCompressionLevel `
+    -CopyThreads $CopyThreads
+if (-not $?) { throw "CPU ASR sidecar build failed" }
+$sidecarAsset = Get-Item -LiteralPath (Join-Path $appDir "dist-cpu-asr-sidecar\StreamTranslator-CPU-ASR-Sidecar-v$Version.zip")
+$sidecarChecksum = Get-Item -LiteralPath "$($sidecarAsset.FullName).sha256"
 
 Write-Host "Stream Translator three-profile build" -ForegroundColor Cyan
 Write-Host "Version=$Version Mode=$Mode Compression=$effectiveCompressionLevel Split=${SplitSizeMiB}MiB Threads=$CopyThreads"
@@ -69,6 +82,7 @@ foreach ($profile in $profiles) {
     if ($reuseValidatedRuntimeCaches) { $releaseArgs.ReuseRuntimeCache = $true }
     if ($Mode -eq "Quick") { $releaseArgs.SkipFullZip = $true }
     if ($Mode -eq "Quick") { $releaseArgs.SkipRuntimeDependenciesInAppUpdate = $true }
+    if ($profile -ne "cpu") { $releaseArgs.IncludeCpuAsrSidecar = [bool]$IncludeCpuAsrSidecar }
 
     if ($ReuseProfileArtifacts) {
         Write-Host "Reusing assembled $profile artifact" -ForegroundColor Green
@@ -76,7 +90,11 @@ foreach ($profile in $profiles) {
         & (Join-Path $packagingDir "build_profile_release.ps1") @releaseArgs
         if (-not $?) { throw "$profile package build failed" }
     }
-    & (Join-Path $packagingDir "validate_runtime_artifact.ps1") -Profile $profile
+    $validationArgs = @{ Profile = $profile }
+    if ($IncludeCpuAsrSidecar -and $profile -ne "cpu") {
+        $validationArgs.RequireCpuAsrSidecar = $true
+    }
+    & (Join-Path $packagingDir "validate_runtime_artifact.ps1") @validationArgs
     if (-not $?) { throw "$profile artifact validation failed" }
     $timer.Stop()
     $stepTimings["$profile`_package_seconds"] = [Math]::Round($timer.Elapsed.TotalSeconds, 2)
@@ -127,7 +145,18 @@ if (Test-Path -LiteralPath $assetDir) {
 }
 New-Item -ItemType Directory -Path $assetDir -Force | Out-Null
 
+Copy-Item -LiteralPath $sidecarAsset.FullName -Destination $assetDir -Force
+Copy-Item -LiteralPath $sidecarChecksum.FullName -Destination $assetDir -Force
+
 $checksumEntries = @()
+$checksumEntries += [pscustomobject]@{
+    hash = (Get-FileHash -LiteralPath $sidecarAsset.FullName -Algorithm SHA256).Hash
+    name = $sidecarAsset.Name
+}
+$checksumEntries += [pscustomobject]@{
+    hash = (Get-FileHash -LiteralPath $sidecarChecksum.FullName -Algorithm SHA256).Hash
+    name = $sidecarChecksum.Name
+}
 foreach ($result in $profileResults) {
     $packageInfo = Get-RuntimeProfilePackageInfo -RuntimeProfile $result.profile
     $distDir = Join-Path $appDir $packageInfo.DistDirName
@@ -193,6 +222,11 @@ $manifest = [ordered]@{
     }
     split_size_mib = if ($Mode -eq "Final") { $SplitSizeMiB } else { $null }
     shared_gui_sha256 = $sharedGuiHash
+    cpu_asr_sidecar = [ordered]@{
+        name = $sidecarAsset.Name
+        size_bytes = $sidecarAsset.Length
+        sha256 = (Get-FileHash -LiteralPath $sidecarAsset.FullName -Algorithm SHA256).Hash
+    }
     profiles = $profileResults
     timings = $stepTimings
     total_seconds = [Math]::Round($overallTimer.Elapsed.TotalSeconds, 2)

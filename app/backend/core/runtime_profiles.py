@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Literal
@@ -7,6 +7,7 @@ from .hardware_detector import DevicePolicy, RuntimeProfile
 
 
 SupportStatus = Literal["official", "compatibility", "experimental", "disabled"]
+AsrComputeBackend = Literal["auto", "gpu", "cpu"]
 
 
 @dataclass(frozen=True)
@@ -77,26 +78,26 @@ _CAPABILITIES: dict[RuntimeProfile, RuntimeCapabilities] = {
         default_device_policy="cpu",
         allow_integrated_gpu=False,
         qwen3_default_dtype="float32",
-        qwen3_offline_models=("0.6B",),
+        qwen3_offline_models=("0.6B INT8 (sherpa-onnx)",),
         qwen3_asr_model_ids=("Qwen/Qwen3-ASR-0.6B",),
-        sensevoice_status="compatibility",
-        sensevoice_models=("SenseVoiceSmall",),
+        sensevoice_status="official",
+        sensevoice_models=("SenseVoiceSmall INT8 (sherpa-onnx)",),
         sensevoice_model_ids=("iic/SenseVoiceSmall",),
-        sensevoice_note="CPU-capable; performance depends on CPU generation and audio segment length.",
-        fun_asr_status="experimental",
-        fun_asr_models=("Fun-ASR Nano (ZH/EN/JA)", "Fun-ASR MLT Nano (31 languages)"),
-        fun_asr_model_ids=("FunAudioLLM/Fun-ASR-Nano-2512", "FunAudioLLM/Fun-ASR-MLT-Nano-2512"),
-        fun_asr_note="CPU inference is available but real-time performance is hardware-dependent.",
-        parakeet_status="disabled",
-        parakeet_models=(),
-        parakeet_model_ids=(),
-        parakeet_note="NVIDIA Parakeet is CUDA-only in this build.",
-        faster_whisper_status="compatibility",
-        faster_whisper_models=("small", "medium"),
-        faster_whisper_model_ids=("small", "medium"),
+        sensevoice_note="INT8 CPU inference through sherpa-onnx; no PyTorch runtime is used.",
+        fun_asr_status="official",
+        fun_asr_models=("Fun-ASR Nano INT8 (ZH/EN/JA, sherpa-onnx)",),
+        fun_asr_model_ids=("FunAudioLLM/Fun-ASR-Nano-2512",),
+        fun_asr_note="INT8 CPU inference through sherpa-onnx; timestamps are not available.",
+        parakeet_status="official",
+        parakeet_models=("Parakeet TDT 0.6B v3 INT8 (25 languages)", "Parakeet TDT-CTC 0.6B INT8 JA"),
+        parakeet_model_ids=("nvidia/parakeet-tdt-0.6b-v3", "nvidia/parakeet-tdt_ctc-0.6b-ja"),
+        parakeet_note="INT8 CPU inference through sherpa-onnx; independent from NVIDIA NeMo/CUDA.",
+        faster_whisper_status="disabled",
+        faster_whisper_models=(),
+        faster_whisper_model_ids=(),
         faster_whisper_gpu_enabled=False,
-        faster_whisper_cpu_fallback=True,
-        local_asr_engines=("faster-whisper", "qwen3-asr", "sensevoice", "fun-asr-nano"),
+        faster_whisper_cpu_fallback=False,
+        local_asr_engines=("qwen3-asr", "sensevoice", "fun-asr-nano", "parakeet-ctc-ja"),
         remote_asr_engines=("openai-api",),
     ),
     "rocm": RuntimeCapabilities(
@@ -134,6 +135,30 @@ _CAPABILITIES: dict[RuntimeProfile, RuntimeCapabilities] = {
 def get_runtime_capabilities(profile: str | None) -> RuntimeCapabilities:
     normalized = normalize_runtime_profile(profile)
     return _CAPABILITIES[normalized]
+
+
+def normalize_asr_compute_backend(value: str | None, package_profile: str | None) -> AsrComputeBackend:
+    """Normalize the independently selectable ASR compute backend.
+
+    CPU packages cannot provide a GPU ASR runtime. CUDA and ROCm packages keep
+    ``auto`` as a user-facing choice, which currently prefers their packaged
+    GPU runtime and can be extended with runtime failure fallback later.
+    """
+    profile = normalize_runtime_profile(package_profile)
+    if profile == "cpu":
+        return "cpu"
+    normalized = str(value or "auto").strip().lower()
+    return normalized if normalized in {"auto", "gpu", "cpu"} else "auto"  # type: ignore[return-value]
+
+
+def effective_asr_compute_backend(value: str | None, package_profile: str | None) -> Literal["gpu", "cpu"]:
+    normalized = normalize_asr_compute_backend(value, package_profile)
+    return "cpu" if normalized == "cpu" else "gpu"
+
+
+def get_asr_capabilities(package_profile: str | None, compute_backend: str | None) -> RuntimeCapabilities:
+    effective = effective_asr_compute_backend(compute_backend, package_profile)
+    return _CAPABILITIES["cpu" if effective == "cpu" else normalize_runtime_profile(package_profile)]
 
 
 def normalize_runtime_profile(profile: str | None) -> RuntimeProfile:

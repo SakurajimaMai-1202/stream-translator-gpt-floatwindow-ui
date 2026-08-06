@@ -14,16 +14,20 @@ import time
 from contextlib import contextmanager
 from backend.config import settings
 from backend.core.cookie_manager import resolve_cookie_path
-from backend.core.runtime_profiles import get_runtime_capabilities
+from backend.core.runtime_profiles import (
+    effective_asr_compute_backend,
+    get_asr_capabilities,
+    get_runtime_capabilities,
+    normalize_asr_compute_backend,
+)
 from backend.core.asr_model_capabilities import coerce_model_language
+from backend.core.portable_paths import get_packaged_runtime_profile
 
 class ConfigManager:
     """配置管理器 - 處理所有配置相關操作"""
     
     DEFAULT_CONFIG = {
         'general': {
-            'openai_api_key': '',
-            'google_api_key': '',
             'log_level': 'INFO'
         },
         'server': {
@@ -70,11 +74,13 @@ class ConfigManager:
             'prefix_retention_length': 0.25,
             'vad_enabled': True,
             'vad_every_n_frames': 1,
-            'vad_backend': 'silero',
+            'vad_backend': 'firered',
             'firered_vad_model_path': ''
         },
         'transcription': {
+            'openai_api_key': '',
             'backend': 'qwen3-asr',
+            'asr_compute_backend': 'auto',
             'model': 'Qwen/Qwen3-ASR-1.7B',
             'language': 'auto',
             'filters': [],
@@ -97,6 +103,8 @@ class ConfigManager:
             'nemo_asr_decoding': 'tdt',
             'nemo_asr_dtype': 'bfloat16',
             'asr_corrections_enabled': False,
+            'asr_correction_log_enabled': False,
+            'asr_correction_learning_enabled': False,
             'asr_corrections_case_sensitive': False,
             'asr_correction_rules': [],
             'openai_transcription_model': 'whisper-1',
@@ -105,6 +113,8 @@ class ConfigManager:
             'transcription_initial_prompt': ''
         },
         'translation': {
+            'openai_api_key': '',
+            'google_api_key': '',
             'backend': 'custom:localllm',
             'model': 'localllm',
             'translation_prompt': '翻譯成繁體中文',
@@ -115,8 +125,8 @@ class ConfigManager:
             'gemini_model': 'gemini-2.0-flash-exp',
             'translation_history_size': 0,
             'translation_timeout': 10,
-            'gpt_base_url': 'http://127.0.0.1:8080',
-            'gemini_base_url': '',
+            'gpt_base_url': 'https://api.openai.com/v1',
+            'gemini_base_url': 'https://generativelanguage.googleapis.com',
             'processing_proxy': '',
             'use_json_result': False,
             'retry_if_translation_fails': True,
@@ -130,7 +140,6 @@ class ConfigManager:
             'subtitle_assembler_wait_ms': 400,
             'subtitle_assembler_max_duration': 6.0,
             'subtitle_assembler_gap_threshold': 0.8,
-            'api_key': '',
             'use_smart_prompt': True,
             'smart_prompt_enabled': True,
             'custom_models': [
@@ -144,6 +153,7 @@ class ConfigManager:
         },
         'terminology': {
             'use_terminology_glossary': False,
+            'translation_glossary_audit_enabled': False,
             'terminology_glossary': {},
             'glossary': '',
             'glossary_list': [],
@@ -172,13 +182,14 @@ class ConfigManager:
             'hide_transcribe_result': False
         },
         'subtitle_settings': {
+            '_visibility_defaults_v2': False,
             'fontSize': 24,
             'fontWeight': 700,
             'opacity': 100,
             'showOriginal': True,
             'showTranslated': True,
-            'showTimestamp': False,
-            'showLatency': False,
+            'showTimestamp': True,
+            'showLatency': True,
             'position': 'bottom',
             'autoScroll': True,
             'maxDisplayCount': 5,
@@ -212,6 +223,8 @@ class ConfigManager:
         'llama': {
             'model_dir': '',
             'model_path': '',
+            'recent_model_paths': [],
+            'favorite_model_paths': [],
             'selected_preset': '',
             'default_preset': '',
             'host': '127.0.0.1',
@@ -240,7 +253,7 @@ class ConfigManager:
             config_path: 配置檔案路徑
         """
         self.config_path = config_path if config_path else settings.CONFIG_FILE
-        self.config = self._load_or_create()
+        self.config = self._enforce_packaged_runtime(self._load_or_create())
         self._file_signature = self._get_file_signature()
     
     def _load_or_create(self) -> Dict[str, Any]:
@@ -253,7 +266,11 @@ class ConfigManager:
                         config = yaml.safe_load(f) or {}
                     merged = self._merge_with_defaults(config)
                     migrated, _changed = self._migrate_legacy_config(merged)
-                    self._save(migrated)
+                    try:
+                        with self._config_lock():
+                            self._save(migrated)
+                    except OSError as save_error:
+                        print(f"舊版配置已載入，但遷移結果暫時無法寫回: {save_error}")
                     return migrated
                 except Exception as e:
                     print(f"舊版配置載入失敗: {e}，使用預設值")
@@ -267,7 +284,13 @@ class ConfigManager:
                     # 舊版設定遷移（例如 localllm -> llama）
                     migrated, changed = self._migrate_legacy_config(merged)
                     if changed or migrated != config:
-                        self._save(migrated)
+                        try:
+                            with self._config_lock():
+                                self._save(migrated)
+                        except OSError as save_error:
+                            # A transient Windows sharing violation must not
+                            # discard a successfully parsed user config.
+                            print(f"配置已載入，但更新後的配置暫時無法寫回: {save_error}")
                     return migrated
             except Exception as e:
                 print(f"配置載入失敗: {e}，使用預設值")
@@ -308,11 +331,50 @@ class ConfigManager:
                 result[key] = self._deep_copy(value)
         return result
 
+    def _enforce_packaged_runtime(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        packaged_profile = get_packaged_runtime_profile()
+        if packaged_profile is None:
+            return config
+        runtime = config.setdefault('runtime', {})
+        runtime['profile'] = packaged_profile
+        if packaged_profile == 'cpu':
+            runtime['device_policy'] = 'cpu'
+            runtime['allow_integrated_gpu'] = False
+            config.setdefault('transcription', {})['asr_compute_backend'] = 'cpu'
+        return config
+
     def _migrate_legacy_config(self, config: Dict[str, Any]) -> tuple[Dict[str, Any], bool]:
         """遷移舊版配置到新版欄位/枚舉值。回傳 (config, 是否有變更)"""
         changed = False
         translation = config.get('translation', {})
+        transcription = config.get('transcription', {})
+        general = config.get('general', {})
         backend = str(translation.get('backend', '') or '').strip().lower()
+
+        # Move the former global/provider-shared keys into their owning
+        # feature sections so ASR, OpenAI translation, and Gemini translation
+        # are unambiguous in both the UI and persisted config.
+        legacy_openai = str(general.get('openai_api_key', '') or '').strip()
+        legacy_google = str(general.get('google_api_key', '') or '').strip()
+        legacy_translation = str(translation.get('api_key', '') or '').strip()
+        if not transcription.get('openai_api_key') and legacy_openai:
+            transcription['openai_api_key'] = legacy_openai
+            changed = True
+        if not translation.get('openai_api_key') and (legacy_translation if backend == 'gpt' else legacy_openai):
+            translation['openai_api_key'] = legacy_translation if backend == 'gpt' and legacy_translation else legacy_openai
+            changed = True
+        if not translation.get('google_api_key') and (legacy_translation if backend == 'gemini' else legacy_google):
+            translation['google_api_key'] = legacy_translation if backend == 'gemini' and legacy_translation else legacy_google
+            changed = True
+        for legacy_field in ('openai_api_key', 'google_api_key'):
+            if legacy_field in general:
+                general.pop(legacy_field, None)
+                changed = True
+        if 'api_key' in translation:
+            translation.pop('api_key', None)
+            changed = True
+        config['general'] = general
+        config['transcription'] = transcription
 
         # 舊版本曾使用 localllm/localllm，統一遷移為 llama
         # 注意：custom:localllm 代表使用者自訂模型，不應強制改成 llama，
@@ -324,6 +386,25 @@ class ConfigManager:
         if backend in legacy_backends:
             translation['backend'] = 'llama'
             config['translation'] = translation
+            changed = True
+
+        # 舊版以空字串代表官方端點；改為顯式保存，讓設定頁能直接顯示
+        # 實際使用的預設 URL，同時保留所有非空白的自訂端點。
+        endpoint_defaults = {
+            'gpt_base_url': 'https://api.openai.com/v1',
+            'gemini_base_url': 'https://generativelanguage.googleapis.com',
+        }
+        for key, default_url in endpoint_defaults.items():
+            if not str(translation.get(key, '') or '').strip():
+                translation[key] = default_url
+                changed = True
+        config['translation'] = translation
+
+        subtitle_settings = config.setdefault('subtitle_settings', {})
+        if not subtitle_settings.get('_visibility_defaults_v2'):
+            for key in ('showOriginal', 'showTranslated', 'showTimestamp', 'showLatency', 'autoScroll'):
+                subtitle_settings[key] = True
+            subtitle_settings['_visibility_defaults_v2'] = True
             changed = True
 
         return config, changed
@@ -352,7 +433,21 @@ class ConfigManager:
                 )
                 f.flush()
                 os.fsync(f.fileno())
-            os.replace(temp_name, self.config_path)
+            replace_error = None
+            for attempt in range(5):
+                try:
+                    os.replace(temp_name, self.config_path)
+                    replace_error = None
+                    break
+                except PermissionError as error:
+                    replace_error = error
+                    if os.name != 'nt' or attempt == 4:
+                        raise
+                    # Windows can briefly deny replacement while another
+                    # process, antivirus, or indexer has the YAML open.
+                    time.sleep(0.03 * (2 ** attempt))
+            if replace_error is not None:
+                raise replace_error
         except Exception:
             try:
                 os.unlink(temp_name)
@@ -369,7 +464,7 @@ class ConfigManager:
             loaded = yaml.safe_load(f) or {}
         merged = self._merge_with_defaults(loaded)
         migrated, _changed = self._migrate_legacy_config(merged)
-        return migrated
+        return self._enforce_packaged_runtime(migrated)
 
     def _get_file_signature(self):
         """Return a cheap signature used to detect external config changes."""
@@ -433,18 +528,24 @@ class ConfigManager:
         """
         translation_config = config.get('translation', {})
         general_config = config.get('general', {})
+        legacy_key = str(translation_config.get('api_key', '') or '').strip()
+        backend = str(translation_config.get('backend', '') or '')
 
-        backend = translation_config.get('backend', '')
-        override_key = str(translation_config.get('api_key', '') or '').strip()
-
-        resolved_openai_key = str(general_config.get('openai_api_key', '') or '').strip()
-        resolved_google_key = str(general_config.get('google_api_key', '') or '').strip()
-
-        if override_key:
-            if backend == 'gemini':
-                resolved_google_key = override_key
-            elif not str(backend).startswith('custom:'):
-                resolved_openai_key = override_key
+        # Provider-specific fields prevent OpenAI and Gemini keys from being
+        # overwritten when the user switches translation backends.  The old
+        # fields remain read-only fallbacks for upgrades from existing config.
+        resolved_openai_key = str(
+            translation_config.get('openai_api_key', '')
+            or (legacy_key if backend == 'gpt' else '')
+            or general_config.get('openai_api_key', '')
+            or ''
+        ).strip()
+        resolved_google_key = str(
+            translation_config.get('google_api_key', '')
+            or (legacy_key if backend == 'gemini' else '')
+            or general_config.get('google_api_key', '')
+            or ''
+        ).strip()
 
         return {
             'openai_api_key': resolved_openai_key,
@@ -463,13 +564,23 @@ class ConfigManager:
         # 檢查 API 金鑰（使用與執行階段一致的解析規則）
         resolved_api_keys = self._resolve_translation_api_keys(self.config)
         translation_backend = self.config.get('translation', {}).get('backend', '')
+        transcription_config = self.config.get('transcription', {})
+
+        if (transcription_config.get('use_openai_transcription_api')
+                and not str(transcription_config.get('openai_api_key', '') or '').strip()):
+            warnings.append({
+                'level': 'error',
+                'message': 'OpenAI ASR API 金鑰未設定',
+                'action': 'setting',
+                'page': 'transcription'
+            })
 
         if not resolved_api_keys.get('openai_api_key') and translation_backend == 'gpt':
             warnings.append({
                 'level': 'error',
                 'message': 'OpenAI API 金鑰未設定',
                 'action': 'setting', # 前端動作標識
-                'page': 'general'
+                'page': 'translation'
             })
         
         if not resolved_api_keys.get('google_api_key') and translation_backend == 'gemini':
@@ -477,7 +588,7 @@ class ConfigManager:
                 'level': 'error',
                 'message': 'Google API 金鑰未設定',
                 'action': 'setting',
-                'page': 'general'
+                'page': 'translation'
             })
         
         # 檢查輸入設定
@@ -581,12 +692,24 @@ class ConfigManager:
         
         runtime_config = config.get('runtime', {})
         runtime_capabilities = get_runtime_capabilities(runtime_config.get('profile'))
+        configured_asr_compute_backend = normalize_asr_compute_backend(
+            config['transcription'].get('asr_compute_backend'),
+            runtime_capabilities.profile,
+        )
+        effective_asr_backend = effective_asr_compute_backend(
+            configured_asr_compute_backend,
+            runtime_capabilities.profile,
+        )
+        asr_capabilities = get_asr_capabilities(
+            runtime_capabilities.profile,
+            configured_asr_compute_backend,
+        )
         requested_transcription_backend = config['transcription'].get('backend', 'faster-whisper')
-        if config['transcription'].get('model') in runtime_capabilities.sensevoice_model_ids:
+        if config['transcription'].get('model') in asr_capabilities.sensevoice_model_ids:
             requested_transcription_backend = 'sensevoice'
-        if config['transcription'].get('model') in runtime_capabilities.fun_asr_model_ids:
+        if config['transcription'].get('model') in asr_capabilities.fun_asr_model_ids:
             requested_transcription_backend = 'fun-asr-nano'
-        if config['transcription'].get('model') in runtime_capabilities.parakeet_model_ids:
+        if config['transcription'].get('model') in asr_capabilities.parakeet_model_ids:
             requested_transcription_backend = 'parakeet-ctc-ja'
         if config['transcription'].get('use_fun_asr'):
             requested_transcription_backend = 'fun-asr-nano'
@@ -607,7 +730,7 @@ class ConfigManager:
 
         transcription_backend = self._coerce_transcription_backend(
             requested_transcription_backend,
-            runtime_capabilities,
+            asr_capabilities,
         )
         runtime_device_policy = runtime_config.get('device_policy') or runtime_capabilities.default_device_policy
         if runtime_capabilities.profile == 'cpu':
@@ -618,10 +741,10 @@ class ConfigManager:
         ))
         qwen3_dtype = config['transcription'].get('qwen3_dtype')
         if not qwen3_dtype or (
-            runtime_capabilities.profile == 'cpu' and qwen3_dtype == 'bfloat16'
+            effective_asr_backend == 'cpu' and qwen3_dtype == 'bfloat16'
         ):
-            qwen3_dtype = runtime_capabilities.qwen3_default_dtype
-        qwen3_device_map = 'cpu' if runtime_capabilities.profile == 'cpu' else 'auto'
+            qwen3_dtype = asr_capabilities.qwen3_default_dtype
+        qwen3_device_map = 'cpu' if effective_asr_backend == 'cpu' else 'auto'
         # Qwen3-ASR 使用獨立模型欄位，其他後端沿用一般 model 欄位
         if transcription_backend == 'qwen3-asr':
             requested_qwen3_model = config['transcription'].get('qwen3_asr_model')
@@ -629,31 +752,31 @@ class ConfigManager:
                 requested_qwen3_model = 'jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame'
             transcription_model = self._coerce_model_id(
                 requested_qwen3_model,
-                runtime_capabilities.qwen3_asr_model_ids,
+                asr_capabilities.qwen3_asr_model_ids,
                 'Qwen/Qwen3-ASR-0.6B',
             )
         elif transcription_backend == 'sensevoice':
             transcription_model = self._coerce_model_id(
                 config['transcription'].get('sensevoice_model'),
-                runtime_capabilities.sensevoice_model_ids,
+                asr_capabilities.sensevoice_model_ids,
                 'iic/SenseVoiceSmall',
             )
         elif transcription_backend == 'fun-asr-nano':
             transcription_model = self._coerce_model_id(
                 config['transcription'].get('fun_asr_model'),
-                runtime_capabilities.fun_asr_model_ids,
+                asr_capabilities.fun_asr_model_ids,
                 'FunAudioLLM/Fun-ASR-Nano-2512',
             )
         elif transcription_backend == 'parakeet-ctc-ja':
             transcription_model = self._coerce_model_id(
                 config['transcription'].get('nemo_asr_model'),
-                runtime_capabilities.parakeet_model_ids,
+                asr_capabilities.parakeet_model_ids,
                 'nvidia/parakeet-tdt_ctc-0.6b-ja',
             )
         else:
             transcription_model = self._coerce_model_id(
                 config['transcription'].get('model', 'base'),
-                runtime_capabilities.faster_whisper_model_ids,
+                asr_capabilities.faster_whisper_model_ids,
                 'small',
             )
 
@@ -675,6 +798,7 @@ class ConfigManager:
             'device_index': input_config.get('device_index'),
             'device_recording_interval': input_config.get('device_recording_interval', 0.1),
             'runtime_profile': runtime_capabilities.profile,
+            'asr_compute_backend': configured_asr_compute_backend,
             'runtime_device_policy': runtime_device_policy,
             'runtime_allow_integrated_gpu': runtime_allow_integrated_gpu,
             
@@ -689,7 +813,7 @@ class ConfigManager:
             'prefix_retention_length': config.get('audio_slicing_vad', {}).get('prefix_retention_length', 0.25),
             'disable_vad': not config.get('audio_slicing_vad', {}).get('vad_enabled', True),
             'vad_every_n_frames': config.get('audio_slicing_vad', {}).get('vad_every_n_frames', 1),
-            'vad_backend': config.get('audio_slicing_vad', {}).get('vad_backend', 'silero'),
+            'vad_backend': config.get('audio_slicing_vad', {}).get('vad_backend', 'firered'),
             'firered_vad_model_path': config.get('audio_slicing_vad', {}).get('firered_vad_model_path', ''),
             'preload_asr_model': transcription_backend in ['qwen3-asr', 'faster-whisper', 'whisper', 'sensevoice', 'fun-asr-nano', 'parakeet-ctc-ja'],
             'keep_asr_loaded': transcription_backend in ['qwen3-asr', 'faster-whisper', 'whisper', 'sensevoice', 'fun-asr-nano', 'parakeet-ctc-ja'],
@@ -714,9 +838,9 @@ class ConfigManager:
             'qwen3_load_in_4bit': config['transcription'].get('qwen3_load_in_4bit', False),
             'qwen3_rms_threshold': config['transcription'].get('qwen3_rms_threshold', 0.005),
             'sensevoice_model': transcription_model if transcription_backend == 'sensevoice' else config['transcription'].get('sensevoice_model', 'iic/SenseVoiceSmall'),
-            'sensevoice_device': 'cpu' if runtime_capabilities.profile == 'cpu' else 'auto',
+            'sensevoice_device': 'cpu' if effective_asr_backend == 'cpu' else 'auto',
             'fun_asr_model': transcription_model if transcription_backend == 'fun-asr-nano' else config['transcription'].get('fun_asr_model', 'FunAudioLLM/Fun-ASR-Nano-2512'),
-            'fun_asr_device': 'cpu' if runtime_capabilities.profile == 'cpu' else 'auto',
+            'fun_asr_device': 'cpu' if effective_asr_backend == 'cpu' else 'auto',
             'nemo_asr_model': transcription_model if transcription_backend == 'parakeet-ctc-ja' else config['transcription'].get('nemo_asr_model', 'nvidia/parakeet-tdt_ctc-0.6b-ja'),
             'nemo_asr_device': 'auto',
             'nemo_asr_decoding': (
@@ -825,7 +949,21 @@ class ConfigManager:
             else:
                 # 使用自訂提示詞
                 args['translation_prompt'] = config['translation'].get('translation_prompt', '')
-                args['translation_glossary'] = None
+
+                # A custom prompt replaces only the prompt text; an enabled glossary still applies.
+                terminology_config = config.get('terminology', {})
+                glossary = terminology_config.get('terminology_glossary', {})
+                glossary_list = terminology_config.get('glossary_list', [])
+                if not glossary and glossary_list:
+                    glossary = {
+                        item['original']: item['translated']
+                        for item in glossary_list
+                        if item.get('original') and item.get('translated')
+                    }
+                if terminology_config.get('use_terminology_glossary', False) and glossary:
+                    args['translation_glossary'] = json.dumps(glossary, ensure_ascii=False)
+                else:
+                    args['translation_glossary'] = None
         else:
             args['translation_prompt'] = ''
             args['translation_glossary'] = None
@@ -839,6 +977,7 @@ class ConfigManager:
         else:
             translation_provider = 'openai'
         args.update({
+            'translation_glossary_audit_enabled': config.get('terminology', {}).get('translation_glossary_audit_enabled', False),
             'translation_provider': translation_provider,
             'translation_history_size': translation_config.get('translation_history_size', 0),
             'translation_timeout': translation_config.get('translation_timeout', 10),
@@ -903,6 +1042,11 @@ class ConfigManager:
             args['openai_api_key'] = resolved_api_keys.get('openai_api_key', '')
         
         args['google_api_key'] = resolved_api_keys.get('google_api_key', '')
+        args['openai_transcription_api_key'] = str(
+            config.get('transcription', {}).get('openai_api_key', '')
+            or config.get('general', {}).get('openai_api_key', '')
+            or ''
+        ).strip()
         
         # 輸出配置
         output_notification = config.get('output_notification', {})
@@ -975,7 +1119,7 @@ class ConfigManager:
         """Merge updates into the latest disk state and persist them once."""
         with self._config_lock():
             current = self._read_current_config()
-            updated = self._deep_merge(current, updates)
+            updated = self._enforce_packaged_runtime(self._deep_merge(current, updates))
             self._save(updated)
             signature = self._get_file_signature()
         self.config = updated
@@ -988,6 +1132,6 @@ class ConfigManager:
 
     def reset_to_defaults(self):
         """重置為預設配置"""
-        self.config = self._deep_copy(self.DEFAULT_CONFIG)
+        self.config = self._enforce_packaged_runtime(self._deep_copy(self.DEFAULT_CONFIG))
         self.save()
         self._file_signature = self._get_file_signature()

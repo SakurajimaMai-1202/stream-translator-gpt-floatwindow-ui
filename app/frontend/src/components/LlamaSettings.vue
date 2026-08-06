@@ -43,6 +43,15 @@
           <button
             v-if="llamaStore.isServerRunning"
             type="button"
+            @click="handleApplyAndRestart"
+            :disabled="!llamaStore.selectedModelPath || llamaStore.isLoading"
+            class="btn-start-quick"
+          >
+            ♻️ 套用並重啟
+          </button>
+          <button
+            v-if="llamaStore.isServerRunning"
+            type="button"
             @click="handleStopServer"
             :disabled="llamaStore.isLoading"
             class="btn-stop"
@@ -50,6 +59,28 @@
             🛑 停止伺服器
           </button>
         </div>
+      </div>
+
+      <div class="quick-model-picker">
+        <div class="quick-model-label">
+          <span>快速選擇模型</span>
+          <small v-if="llamaStore.currentModel">執行中：{{ llamaStore.currentModel }}</small>
+        </div>
+        <div class="quick-model-controls">
+          <UiSelect
+            :model-value="llamaStore.selectedModelPath"
+            :options="quickModelOptions"
+            searchable
+            search-placeholder="搜尋 GGUF 模型…"
+            placeholder="請先到模型管理掃描 GGUF"
+            button-class="quick-model-select"
+            @update:model-value="handleQuickModelSelect"
+          />
+          <button type="button" class="favorite-model-button" :disabled="!llamaStore.selectedModelPath" @click="llamaStore.toggleFavoriteModel(llamaStore.selectedModelPath)"
+            :title="isSelectedModelFavorite ? '取消收藏' : '收藏此模型'">{{ isSelectedModelFavorite ? '★' : '☆' }}</button>
+          <button type="button" class="ghost-button" @click="router.push('/llm-models')">完整模型管理</button>
+        </div>
+        <p v-if="hasPendingRuntimeChanges" class="quick-model-pending">已選擇新的模型或參數；目前服務不受影響，按「套用並重啟」後生效。</p>
       </div>
 
       <div v-if="!llamaStore.isServerRunning" class="status-target">
@@ -73,7 +104,78 @@
           <span class="value">{{ llamaStore.serverStatus.pid || 'N/A' }}</span>
         </div>
       </div>
+
+      <div class="inline-test-workspace">
+        <div class="inline-test-heading">
+          <div>
+            <strong>啟動與測試</strong>
+            <p>{{ llamaStore.isServerReady ? '服務已就緒，可直接驗證目前模型的翻譯效果。' : '選好模型後可在這裡啟動並立即測試。' }}</p>
+          </div>
+          <span v-if="hasPendingRuntimeChanges" class="sync-badge warn">參數尚未套用至執行中服務</span>
+        </div>
+        <textarea v-model="testText" class="form-textarea" rows="3" placeholder="輸入要測試翻譯的文字…"></textarea>
+        <div class="inline-test-actions">
+          <button type="button" @click="executePrimaryTest" :disabled="!testText.trim() || !llamaStore.selectedModelPath || isTesting || llamaStore.isLoading" class="btn-test">
+            {{ primaryTestButtonLabel }}
+          </button>
+          <span v-if="llamaStore.serverStatus.performance?.latency_ms" class="test-performance">
+            {{ llamaStore.serverStatus.performance.latency_ms }} ms · {{ llamaStore.serverStatus.performance.tokens_predicted || 0 }} tokens · {{ llamaStore.serverStatus.performance.tokens_per_second || 0 }} tok/s
+          </span>
+        </div>
+        <div class="inline-test-result">
+          <span>翻譯結果</span>
+          <p v-if="testResult">{{ testResult }}</p>
+          <p v-else class="empty-result">尚未執行測試</p>
+        </div>
+      </div>
     </div>
+
+    <div class="runtime-overview-grid">
+      <section class="panel compact-overview">
+        <h3>📊 即時資源</h3>
+        <div class="overview-metrics">
+          <span>CPU <strong>{{ llamaStore.serverStatus.resources?.cpu_percent ?? '-' }}%</strong></span>
+          <span>RAM <strong>{{ llamaStore.serverStatus.resources?.ram_used_gb ?? '-' }} / {{ llamaStore.serverStatus.resources?.ram_total_gb ?? '-' }} GB</strong></span>
+          <span>程序 RAM <strong>{{ llamaStore.serverStatus.resources?.process_ram_mb ?? '-' }} MB</strong></span>
+          <span>GPU <strong>{{ llamaStore.serverStatus.resources?.gpu_name || '未偵測' }}</strong></span>
+          <span>VRAM <strong>{{ llamaStore.serverStatus.resources?.vram_used_mb ?? '-' }} / {{ llamaStore.serverStatus.resources?.vram_total_mb ?? '-' }} MB</strong></span>
+          <span>生成速度 <strong>{{ llamaStore.serverStatus.performance?.tokens_per_second ?? '-' }} tok/s</strong></span>
+        </div>
+      </section>
+      <section class="panel compact-overview">
+        <h3>🧩 llama.cpp Runtime</h3>
+        <p class="runtime-version">{{ llamaStore.serverStatus.runtime?.version || '讀取中…' }}</p>
+        <p class="hint break-path">{{ llamaStore.serverStatus.runtime?.path || '尚未找到 llama-server' }}</p>
+        <button type="button" @click="openRuntimeInstaller" class="btn-start-quick runtime-download">在此下載／更新 Runtime</button>
+        <a :href="llamaStore.serverStatus.runtime?.download_url || 'https://github.com/ggml-org/llama.cpp/releases/latest'" target="_blank" rel="noopener" class="runtime-official-link">查看官方 Release</a>
+      </section>
+    </div>
+
+    <section v-if="showRuntimeInstaller" class="panel runtime-installer">
+      <div class="panel-header">
+        <div><h3>下載 llama.cpp Runtime</h3><p class="panel-subtitle">來源為官方 GitHub Release，並依目前 Runtime Profile 標示推薦的 Windows x64 套件。</p></div>
+        <button type="button" class="btn-secondary compact" @click="showRuntimeInstaller = false">關閉</button>
+      </div>
+      <div v-if="runtimeReleaseLoading" class="runtime-install-message">正在讀取官方最新版…</div>
+      <div v-else-if="runtimeReleaseError" class="alert alert-error">{{ runtimeReleaseError }}</div>
+      <template v-else-if="runtimeRelease">
+        <div class="runtime-release-meta">官方最新版：<strong>{{ runtimeRelease.tag }}</strong></div>
+        <div class="runtime-variant-grid">
+          <label v-for="variant in runtimeRelease.variants" :key="variant.id" :class="['runtime-variant', selectedRuntimeVariant === variant.id && 'selected']">
+            <input v-model="selectedRuntimeVariant" type="radio" :value="variant.id" />
+            <span class="runtime-variant-content"><strong>{{ variant.label }}</strong><span v-if="variant.recommended" class="recommended-badge">依目前版本推薦</span><small>{{ formatRuntimeBytes(variant.size) }} · {{ variant.assets.length }} 個官方檔案</small></span>
+          </label>
+        </div>
+        <div v-if="runtimeInstallStatus && runtimeInstallStatus.state !== 'idle'" class="runtime-progress-wrap">
+          <div class="runtime-progress"><span :style="{ width: `${Math.round(runtimeInstallStatus.progress * 100)}%` }"></span></div>
+          <p>{{ runtimeInstallStatus.message }} <span v-if="runtimeInstallStatus.progress">{{ Math.round(runtimeInstallStatus.progress * 100) }}%</span></p>
+          <p v-if="runtimeInstallStatus.error" class="runtime-error">{{ runtimeInstallStatus.error }}</p>
+        </div>
+        <button type="button" class="btn-start-quick" :disabled="!selectedRuntimeVariant || runtimeInstallBusy || llamaStore.isServerRunning" @click="installSelectedRuntime">{{ runtimeInstallBusy ? '下載安裝中…' : '下載並安裝選取版本' }}</button>
+        <p v-if="llamaStore.isServerRunning" class="hint warn-text">請先停止 llama.cpp 伺服器，才能更換 Runtime。</p>
+        <p class="hint">安裝後會保留現有 Runtime，模型與執行參數不會被刪除。</p>
+      </template>
+    </section>
 
     <div v-if="llamaStore.errorMessage" class="alert alert-error">❌ {{ llamaStore.errorMessage }}</div>
     <div v-if="llamaStore.successMessage" class="alert alert-success">✅ {{ llamaStore.successMessage }}</div>
@@ -239,7 +341,7 @@
       </section>
     </div>
 
-    <section class="panel">
+    <section v-if="false" class="panel">
       <div class="panel-header">
         <div>
           <h3>📁 模型管理</h3>
@@ -557,48 +659,6 @@
       </div>
     </section>
 
-    <div class="action-buttons">
-      <button
-        type="button"
-        @click="handleTestTranslation"
-        :disabled="!llamaStore.isServerReady || llamaStore.isLoading"
-        class="btn-test full-width"
-      >
-        🧪 測試翻譯
-      </button>
-    </div>
-
-    <div v-if="showTestDialog" class="modal-overlay" @click.self="showTestDialog = false">
-      <div class="modal-content">
-        <h3>測試翻譯</h3>
-        <div class="form-group">
-          <label>輸入文字</label>
-          <textarea
-            v-model="testText"
-            class="form-textarea"
-            rows="3"
-            placeholder="輸入要翻譯的文字..."
-          ></textarea>
-        </div>
-        <div class="form-group">
-          <label>翻譯結果</label>
-          <textarea
-            v-model="testResult"
-            class="form-textarea"
-            rows="4"
-            readonly
-            placeholder="翻譯結果將顯示在這裡..."
-          ></textarea>
-        </div>
-        <div class="modal-actions">
-          <button type="button" @click="executeTest" :disabled="!testText || llamaStore.isLoading" class="btn-primary compact">
-            {{ llamaStore.isLoading ? '翻譯中...' : '執行翻譯' }}
-          </button>
-          <button type="button" @click="showTestDialog = false" class="btn-secondary">關閉</button>
-        </div>
-      </div>
-    </div>
-
     <div v-if="showSaveDialog" class="modal-overlay" @click.self="showSaveDialog = false">
       <div class="modal-content">
         <h3>💾 保存配置預設</h3>
@@ -705,9 +765,67 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
 import UiSelect, { type UiSelectOption } from './UiSelect.vue';
 import { useLlamaStore } from '../stores/llama';
-import type { ServerConfig } from '../services/llamaApi';
+import { llamaApi, type RuntimeInstallStatus, type RuntimeReleaseInfo, type ServerConfig } from '../services/llamaApi';
+
+const showRuntimeInstaller = ref(false);
+const runtimeReleaseLoading = ref(false);
+const runtimeReleaseError = ref('');
+const runtimeRelease = ref<RuntimeReleaseInfo | null>(null);
+const selectedRuntimeVariant = ref('');
+const runtimeInstallStatus = ref<RuntimeInstallStatus | null>(null);
+let runtimeInstallPollTimer: number | null = null;
+
+const runtimeInstallBusy = computed(() => ['resolving', 'downloading', 'installing'].includes(runtimeInstallStatus.value?.state || ''));
+
+function formatRuntimeBytes(bytes: number) {
+  if (!bytes) return '大小未知';
+  return `${(bytes / 1024 / 1024).toFixed(0)} MB`;
+}
+
+async function openRuntimeInstaller() {
+  showRuntimeInstaller.value = true;
+  runtimeReleaseLoading.value = true;
+  runtimeReleaseError.value = '';
+  try {
+    runtimeRelease.value = await llamaApi.getRuntimeReleases();
+    selectedRuntimeVariant.value = runtimeRelease.value.variants.find(item => item.recommended)?.id
+      || runtimeRelease.value.variants[0]?.id || '';
+    runtimeInstallStatus.value = await llamaApi.getRuntimeInstallStatus();
+  } catch (error: any) {
+    runtimeReleaseError.value = error.response?.data?.detail || error.message;
+  } finally {
+    runtimeReleaseLoading.value = false;
+  }
+}
+
+function stopRuntimeInstallPolling() {
+  if (runtimeInstallPollTimer) window.clearInterval(runtimeInstallPollTimer);
+  runtimeInstallPollTimer = null;
+}
+
+async function pollRuntimeInstallStatus() {
+  runtimeInstallStatus.value = await llamaApi.getRuntimeInstallStatus();
+  if (['completed', 'error'].includes(runtimeInstallStatus.value.state)) {
+    stopRuntimeInstallPolling();
+    if (runtimeInstallStatus.value.state === 'completed') await llamaStore.refreshServerStatus();
+  }
+}
+
+async function installSelectedRuntime() {
+  if (!selectedRuntimeVariant.value || llamaStore.isServerRunning) return;
+  if (!confirm('要下載並安裝選取的 llama.cpp Runtime 嗎？模型與現有 Runtime 會保留。')) return;
+  try {
+    await llamaApi.installRuntime(selectedRuntimeVariant.value);
+    await pollRuntimeInstallStatus();
+    stopRuntimeInstallPolling();
+    runtimeInstallPollTimer = window.setInterval(() => void pollRuntimeInstallStatus(), 1000);
+  } catch (error: any) {
+    runtimeReleaseError.value = error.response?.data?.detail || error.message;
+  }
+}
 
 const DEFAULT_TUNING: Required<Pick<ServerConfig, 'n_ctx' | 'n_gpu_layers' | 'n_threads' | 'n_parallel' | 'top_k' | 'top_p' | 'temp' | 'repeat_penalty' | 'n_predict' | 'flash_attn' | 'no_mmap'>> = {
   n_ctx: 2048,
@@ -745,12 +863,14 @@ const quickProfiles = [
 ] as const;
 
 const llamaStore = useLlamaStore();
+const router = useRouter();
 const modelDirectory = ref('');
 const modelSearchQuery = ref('');
 const modelSeriesFilter = ref<string | number | null>('');
-const showTestDialog = ref(false);
 const testText = ref('Hello, how are you today?');
 const testResult = ref('');
+const isTesting = ref(false);
+const appliedRuntimeFingerprint = ref('');
 const showSaveDialog = ref(false);
 const presetName = ref('');
 
@@ -892,6 +1012,43 @@ const presetSyncText = computed(() => {
   return isSelectedPresetSynced.value ? '與所選預設完全同步' : '已偏離所選預設，建議另存新版本';
 });
 
+const runtimeFingerprint = computed(() => JSON.stringify({ ...llamaStore.serverConfig, model_path: llamaStore.selectedModelPath }));
+const hasPendingRuntimeChanges = computed(() => llamaStore.isServerRunning
+  && Boolean(appliedRuntimeFingerprint.value)
+  && runtimeFingerprint.value !== appliedRuntimeFingerprint.value);
+const primaryTestButtonLabel = computed(() => {
+  if (isTesting.value) return '測試中…';
+  if (!llamaStore.isServerReady) return '🚀 啟動並測試';
+  if (hasPendingRuntimeChanges.value) return '♻️ 套用、重啟並測試';
+  return '🧪 測試翻譯';
+});
+const isSelectedModelFavorite = computed(() => llamaStore.favoriteModelPaths.includes(llamaStore.selectedModelPath));
+const quickModelOptions = computed<UiSelectOption[]>(() => {
+  const byPath = new Map(llamaStore.models.map(model => [model.path, model]));
+  const format = (path: string, status = '') => {
+    const model = byPath.get(path);
+    const name = model?.name || getModelName(path);
+    const size = model ? ` · ${model.size_mb.toFixed(0)} MB` : '';
+    return { value: path, label: `${status}${name}${size}` };
+  };
+  const favorites = llamaStore.favoriteModelPaths.filter(path => byPath.has(path));
+  const recent = llamaStore.recentModelPaths.filter(path => byPath.has(path) && !favorites.includes(path));
+  const used = new Set([...favorites, ...recent]);
+  const options: UiSelectOption[] = [
+    ...favorites.map(path => ({ ...format(path, '★ '), group: '收藏模型' })),
+    ...recent.map(path => ({ ...format(path, '最近 · '), group: '最近使用' })),
+    ...llamaStore.models.filter(model => !used.has(model.path)).map(model => ({ ...format(model.path), group: '全部模型' })),
+  ];
+  if (llamaStore.selectedModelPath && !byPath.has(llamaStore.selectedModelPath)) {
+    options.unshift({ ...format(llamaStore.selectedModelPath, '✓ '), group: '目前選擇' });
+  }
+  return options;
+});
+
+function handleQuickModelSelect(value: string | number | null) {
+  if (typeof value === 'string' && value) llamaStore.selectModel(value);
+}
+
 const activeModelInfo = computed(() => llamaStore.models.find((model) => model.path === llamaStore.selectedModelPath));
 
 const currentConfigItems = computed(() => [
@@ -1031,6 +1188,7 @@ async function handleLoadModels() {
 async function handleStartServer() {
   try {
     await llamaStore.startServer();
+    appliedRuntimeFingerprint.value = runtimeFingerprint.value;
   } catch (error) {
     console.error('啟動失敗:', error);
   }
@@ -1044,11 +1202,6 @@ async function handleStopServer() {
   } catch (error) {
     console.error('停止失敗:', error);
   }
-}
-
-function handleTestTranslation() {
-  showTestDialog.value = true;
-  testResult.value = '';
 }
 
 async function executeTest() {
@@ -1118,6 +1271,7 @@ function cancelEditSeries() {
 
 onMounted(async () => {
   await llamaStore.initialize();
+  if (llamaStore.isServerRunning) appliedRuntimeFingerprint.value = runtimeFingerprint.value;
   if (llamaStore.modelDirectory) {
     modelDirectory.value = llamaStore.modelDirectory;
   }
@@ -1126,16 +1280,12 @@ onMounted(async () => {
 let pollTimer: number | null = null;
 
 watch(
-  () => [llamaStore.isServerRunning, llamaStore.isServerReady],
-  ([running, ready]) => {
-    if (running && !ready) {
+  () => llamaStore.isServerRunning,
+  (running) => {
+    if (running) {
       if (!pollTimer) {
         pollTimer = window.setInterval(async () => {
           await llamaStore.refreshServerStatus();
-          if (llamaStore.isServerReady && pollTimer) {
-            clearInterval(pollTimer);
-            pollTimer = null;
-          }
         }, 2000);
       }
     } else if (pollTimer) {
@@ -1147,14 +1297,135 @@ watch(
 );
 
 onUnmounted(() => {
+  stopRuntimeInstallPolling();
   if (pollTimer) {
     clearInterval(pollTimer);
     pollTimer = null;
   }
 });
+
+async function handleApplyAndRestart() {
+  if (!confirm('將停止目前服務，套用模型與參數後重新啟動。是否繼續？')) return;
+  try {
+    await llamaStore.applyAndRestart();
+    appliedRuntimeFingerprint.value = runtimeFingerprint.value;
+  } catch (error) {
+    console.error('套用並重啟失敗:', error);
+  }
+}
+
+async function executePrimaryTest() {
+  if (!testText.value.trim()) return;
+  isTesting.value = true;
+  testResult.value = '';
+  try {
+    if (!llamaStore.isServerReady) {
+      await llamaStore.startServer();
+      appliedRuntimeFingerprint.value = runtimeFingerprint.value;
+    } else if (hasPendingRuntimeChanges.value) {
+      await llamaStore.applyAndRestart();
+      appliedRuntimeFingerprint.value = runtimeFingerprint.value;
+    }
+    await executeTest();
+    await llamaStore.refreshServerStatus();
+  } finally {
+    isTesting.value = false;
+  }
+}
 </script>
 
 <style scoped>
+.runtime-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.inline-test-workspace {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  display: grid;
+  gap: 12px;
+}
+
+.quick-model-picker {
+  margin-top: 16px;
+  padding: 14px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.65);
+  border: 1px solid rgba(103, 232, 249, 0.16);
+}
+
+.quick-model-label,
+.quick-model-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.quick-model-label { justify-content: space-between; margin-bottom: 9px; font-weight: 700; }
+.quick-model-label small { color: rgba(255, 255, 255, 0.45); font-weight: 500; }
+.quick-model-controls > :first-child { flex: 1; min-width: 0; }
+.favorite-model-button { width: 42px; height: 42px; border-radius: 9px; border: 1px solid rgba(250, 204, 21, 0.3); background: rgba(250, 204, 21, 0.08); color: #fde047; font-size: 1.35rem; }
+.favorite-model-button:disabled { opacity: 0.35; }
+.quick-model-pending { margin: 9px 0 0; color: #fcd34d; font-size: 0.78rem; }
+
+.inline-test-heading,
+.inline-test-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.inline-test-heading p { margin: 4px 0 0; color: rgba(255, 255, 255, 0.5); font-size: 0.82rem; }
+.inline-test-actions { justify-content: flex-start; flex-wrap: wrap; }
+.test-performance { color: rgba(255, 255, 255, 0.55); font-size: 0.78rem; }
+.inline-test-result { padding: 12px; border-radius: 10px; background: rgba(2, 6, 23, 0.55); border: 1px solid rgba(255, 255, 255, 0.08); }
+.inline-test-result > span { color: rgba(255, 255, 255, 0.45); font-size: 0.75rem; }
+.inline-test-result p { margin: 7px 0 0; white-space: pre-wrap; }
+.inline-test-result .empty-result { color: rgba(255, 255, 255, 0.3); }
+
+.compact-overview {
+  margin: 0;
+}
+
+.overview-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.overview-metrics span {
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.overview-metrics strong { display: block; color: white; margin-top: 3px; }
+.runtime-version { color: #a5f3fc; font-weight: 700; margin-top: 12px; }
+.break-path { overflow-wrap: anywhere; }
+.runtime-download { display: inline-flex; margin-top: 12px; text-decoration: none; }
+.runtime-official-link { display: inline-block; margin: 12px 0 0 12px; color: #94a3b8; font-size: 12px; }
+.runtime-installer { margin-top: 16px; }
+.runtime-release-meta { color: #cbd5e1; margin: 12px 0; }
+.runtime-variant-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; margin-bottom: 16px; }
+.runtime-variant { display: flex; gap: 10px; padding: 13px; border: 1px solid rgba(255,255,255,.1); border-radius: 10px; background: rgba(255,255,255,.03); cursor: pointer; }
+.runtime-variant.selected { border-color: rgba(34,211,238,.55); background: rgba(34,211,238,.08); }
+.runtime-variant-content { display: grid; gap: 5px; color: #e2e8f0; }
+.runtime-variant-content small { color: #94a3b8; }
+.recommended-badge { width: fit-content; padding: 2px 7px; border-radius: 999px; background: rgba(16,185,129,.15); color: #6ee7b7; font-size: 11px; }
+.runtime-progress-wrap { margin: 14px 0; color: #cbd5e1; font-size: 13px; }
+.runtime-progress { height: 8px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.08); }
+.runtime-progress span { display: block; height: 100%; background: linear-gradient(90deg,#10b981,#22d3ee); transition: width .25s ease; }
+.runtime-error, .warn-text { color: #fbbf24; }
+
+@media (max-width: 900px) {
+  .runtime-overview-grid { grid-template-columns: 1fr; }
+}
 .llama-settings {
   contain: layout style;
   isolation: isolate;

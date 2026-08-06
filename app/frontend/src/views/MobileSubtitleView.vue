@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { LatencyWindowSnapshot, SubtitleLatencyTrace } from '../services/api';
 import { ref, onMounted, onUnmounted, nextTick } from 'vue';
 
 // ─── 類型 ───────────────────────────────────────────────
@@ -12,6 +13,8 @@ interface SubtitleItem {
   asr_latency_ms?: number | null;
   llm_latency_ms?: number | null;
   total_latency_ms?: number | null;
+  latency_trace?: SubtitleLatencyTrace;
+  latency_window?: LatencyWindowSnapshot;
 }
 
 // ─── 狀態 ───────────────────────────────────────────────
@@ -212,6 +215,8 @@ function addOrUpdateSubtitle(data: {
       item.asr_latency_ms = data.asr_latency_ms ?? null;
       item.llm_latency_ms = data.llm_latency_ms ?? null;
       item.total_latency_ms = data.total_latency_ms ?? null;
+      item.latency_trace = data.latency_trace;
+      item.latency_window = data.latency_window;
       // 有新字元時繼續打字動畫
       startTyping(item.id);
       return;
@@ -227,6 +232,8 @@ function addOrUpdateSubtitle(data: {
     asr_latency_ms: data.asr_latency_ms ?? null,
     llm_latency_ms: data.llm_latency_ms ?? null,
     total_latency_ms: data.total_latency_ms ?? null,
+    latency_trace: data.latency_trace,
+    latency_window: data.latency_window,
     ...(ts ? { timestamp_id: ts } : {})
   };
   subtitles.value.push(newItem);

@@ -1,4 +1,4 @@
-"""
+﻿"""
 UI2 主程式
 PyQt6 + WebView + FastAPI 整合啟動器
 """
@@ -435,7 +435,18 @@ def run_backend_directly(port: int):
     """在打包模式下直接啟動後端"""
     import uvicorn
     from backend.main import app
-    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info", access_log=False)
+    # A windowed PyInstaller executable has no console streams. Uvicorn's
+    # default formatter probes sys.stderr.isatty(), which crashes when the
+    # packaged app is launched with --backend. Application file logging is
+    # configured separately, so disable only uvicorn's console log config.
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=port,
+        log_level="info",
+        access_log=False,
+        log_config=None,
+    )
 
 
 if __name__ == "__main__":

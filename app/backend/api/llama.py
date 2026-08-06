@@ -12,7 +12,9 @@ import subprocess
 import asyncio
 import logging
 import os
+import time
 from backend.config import settings
+from backend.core.llama_runtime_installer import active_runtime_executable, installer, list_latest_variants
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +28,7 @@ class LlamaState:
         self.is_running: bool = False
         self.is_ready: bool = False  # 新增就緒狀態
         self.current_model: Optional[str] = None
+        self.last_inference: Dict[str, Any] = {}
         
 llama_state = LlamaState()
 
@@ -141,6 +144,9 @@ class ServerStatus(BaseModel):
     server_url: Optional[str]
     current_model: Optional[str]
     pid: Optional[int]
+    resources: Dict[str, Any] = Field(default_factory=dict)
+    performance: Dict[str, Any] = Field(default_factory=dict)
+    runtime: Dict[str, Any] = Field(default_factory=dict)
 
 class InferenceRequest(BaseModel):
     """推論請求"""
@@ -156,6 +162,9 @@ class TranslateRequest(BaseModel):
     source_lang: str = "English"
     target_lang: str = "Traditional Chinese"
     context: Optional[str] = None
+
+class RuntimeInstallRequest(BaseModel):
+    variant: str
 
 # ==================== API 端點 ====================
 
@@ -356,8 +365,114 @@ async def get_server_status():
         is_ready=llama_state.is_ready,  # 返回就緒狀態
         server_url=llama_state.server_url,
         current_model=llama_state.current_model,
-        pid=llama_state.server_process.pid if llama_state.server_process else None
+        pid=llama_state.server_process.pid if llama_state.server_process else None,
+        resources=_collect_resource_status(),
+        performance=llama_state.last_inference,
+        runtime=_get_llama_runtime_info(),
     )
+
+
+@router.get("/runtime/releases")
+async def get_runtime_releases():
+    try:
+        from backend.api.config import get_config_manager
+        profile = str(get_config_manager().get_config().get("runtime", {}).get("profile", "cpu"))
+        return await asyncio.to_thread(list_latest_variants, profile)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"無法讀取 llama.cpp 官方版本：{exc}")
+
+
+@router.get("/runtime/install/status")
+async def get_runtime_install_status():
+    return installer.status()
+
+
+@router.post("/runtime/install")
+async def install_runtime(request: RuntimeInstallRequest, background_tasks: BackgroundTasks):
+    if llama_state.is_running:
+        raise HTTPException(status_code=409, detail="請先停止 llama.cpp 伺服器再更新 Runtime")
+    from backend.api.config import get_config_manager
+    profile = str(get_config_manager().get_config().get("runtime", {}).get("profile", "cpu"))
+    if installer.status()["state"] in {"resolving", "downloading", "installing"}:
+        raise HTTPException(status_code=409, detail="llama.cpp Runtime 正在下載或安裝")
+    background_tasks.add_task(installer.install, request.variant, profile)
+    return {"success": True, "message": "已開始下載 llama.cpp Runtime"}
+
+
+def _find_llama_server() -> Optional[Path]:
+    active_runtime = active_runtime_executable()
+    candidates = [
+        active_runtime,
+        settings.BASE_DIR / "../llama/llama-server.exe",
+        settings.BASE_DIR / "llama/llama-server.exe",
+        Path("llama.cpp/bin/llama-server.exe"),
+        Path("llama-server.exe"),
+        Path("llama.cpp/llama-server.exe"),
+        Path("../llama/llama-server.exe"),
+    ]
+    return next((path.resolve() for path in candidates if path and path.exists()), None)
+
+
+def _get_llama_runtime_info() -> Dict[str, Any]:
+    executable = _find_llama_server()
+    version = "未安裝"
+    if executable:
+        try:
+            result = subprocess.run(
+                [str(executable), "--version"], capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=5,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            )
+            lines = (result.stdout + "\n" + result.stderr).strip().splitlines()
+            version = next((line.strip() for line in lines if line.strip().lower().startswith("version:")), lines[0] if lines else "未知版本")
+        except Exception:
+            version = "無法讀取版本"
+    return {
+        "installed": executable is not None,
+        "path": str(executable) if executable else "",
+        "version": version,
+        "download_url": "https://github.com/ggml-org/llama.cpp/releases/latest",
+    }
+
+
+def _collect_resource_status() -> Dict[str, Any]:
+    result: Dict[str, Any] = {}
+    try:
+        import psutil
+        memory = psutil.virtual_memory()
+        result.update({
+            "cpu_percent": psutil.cpu_percent(interval=None),
+            "ram_used_gb": round(memory.used / 1024 ** 3, 2),
+            "ram_total_gb": round(memory.total / 1024 ** 3, 2),
+            "process_ram_mb": 0.0,
+        })
+        if llama_state.server_process and llama_state.server_process.poll() is None:
+            process = psutil.Process(llama_state.server_process.pid)
+            result["process_ram_mb"] = round(process.memory_info().rss / 1024 ** 2, 1)
+            result["process_cpu_percent"] = process.cpu_percent(interval=None)
+    except Exception:
+        pass
+    try:
+        gpu = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name,memory.used,memory.total,utilization.gpu", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=3,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        if gpu.returncode == 0 and gpu.stdout.strip():
+            name, used, total, utilization = [part.strip() for part in gpu.stdout.splitlines()[0].split(",")]
+            result.update({"gpu_name": name, "vram_used_mb": float(used), "vram_total_mb": float(total), "gpu_percent": float(utilization)})
+    except Exception:
+        pass
+    if not result.get("gpu_name"):
+        try:
+            from backend.core.hardware_detector import detect_gpus
+            devices = detect_gpus()
+            if devices:
+                result["gpu_name"] = devices[0].name
+                result["vram_total_mb"] = devices[0].memory_mb
+        except Exception:
+            pass
+    return result
 
 
 @router.post("/inference")
@@ -375,6 +490,7 @@ async def inference(request: InferenceRequest):
         import httpx
         
         async with httpx.AsyncClient() as client:
+            started_at = time.perf_counter()
             response = await client.post(
                 f"{llama_state.server_url}/completion",
                 json={
@@ -388,6 +504,13 @@ async def inference(request: InferenceRequest):
             )
             response.raise_for_status()
             result = response.json()
+            elapsed_ms = (time.perf_counter() - started_at) * 1000
+            predicted = int(result.get("tokens_predicted", 0) or 0)
+            llama_state.last_inference = {
+                "latency_ms": round(elapsed_ms, 1),
+                "tokens_predicted": predicted,
+                "tokens_per_second": round(predicted / (elapsed_ms / 1000), 2) if elapsed_ms > 0 else 0,
+            }
             
             return {
                 "text": result.get("content", ""),

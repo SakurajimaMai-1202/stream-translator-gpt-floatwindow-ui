@@ -61,6 +61,8 @@ class SubtitleSegmenter(LoopWorkerBase):
         return bool(_SENTENCE_END_RE.search(str(task.transcript or "").strip()))
 
     def _prepare(self, task: TranslationTask) -> TranslationTask | None:
+        if task.latency_trace.assembler_received_at is None:
+            task.latency_trace.assembler_received_at = time.perf_counter()
         transcript = str(task.transcript or "").strip()
         if self.deduplicate_overlap:
             transcript = remove_text_overlap(self.previous_transcript, transcript)
@@ -77,6 +79,7 @@ class SubtitleSegmenter(LoopWorkerBase):
         first.time_range = (first.time_range[0], second.time_range[1])
         if first.asr_latency_ms is not None and second.asr_latency_ms is not None:
             first.asr_latency_ms += second.asr_latency_ms
+        first.latency_trace.merge(second.latency_trace)
         return first
 
     def _can_merge(self, first: TranslationTask, second: TranslationTask) -> bool:
@@ -90,8 +93,10 @@ class SubtitleSegmenter(LoopWorkerBase):
 
     @staticmethod
     def _emit(task: TranslationTask, output_queue: queue.SimpleQueue[TranslationTask]) -> None:
+        task.latency_trace.assembler_emitted_at = time.perf_counter()
         if task.translation_queued_at is None:
-            task.translation_queued_at = time.perf_counter()
+            task.translation_queued_at = task.latency_trace.assembler_emitted_at
+        task.latency_trace.translation_queued_at = task.translation_queued_at
         output_queue.put(task)
 
     def loop(

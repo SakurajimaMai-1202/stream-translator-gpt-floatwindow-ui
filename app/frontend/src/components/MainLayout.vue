@@ -3,7 +3,7 @@ import { useRouter, useRoute } from 'vue-router';
 
 const router = useRouter();
 const route = useRoute();
-const appVersion = import.meta.env.VITE_APP_VERSION || '1.3.8';
+const appVersion = import.meta.env.VITE_APP_VERSION || '1.3.9';
 
 // Define navigation items
 const primaryNavigation = [
@@ -11,7 +11,8 @@ const primaryNavigation = [
   { path: '/subtitle-style', name: '字幕外觀', icon: '🎨', id: 'subtitle-style' }
 ];
 
-const settingsGroups = [
+type SettingsNavItem = { id: string; name: string; icon: string; path?: string };
+const settingsGroups: Array<{ groupName: string; items: SettingsNavItem[] }> = [
   {
     groupName: '系統與輸入',
     items: [
@@ -32,7 +33,8 @@ const settingsGroups = [
     groupName: '翻譯與術語',
     items: [
       { id: 'translation', name: '翻譯選項', icon: '🌐' },
-      { id: 'llama', name: 'Llama 設定', icon: '🦙' },
+      { id: 'llama', name: 'Llama 執行設定', icon: '🦙' },
+      { id: 'llm-models', path: '/llm-models', name: 'LLM 模型管理', icon: '🧠' },
       { id: 'terminology', name: '術語表', icon: '📖' }
     ]
   }
@@ -40,6 +42,7 @@ const settingsGroups = [
 
 // Check active status
 function isTabActive(tabId: string) {
+  if (tabId === 'llm-models') return route.path === '/llm-models';
   if (route.path === '/settings') {
     return (route.query.tab || 'general') === tabId;
   }
@@ -101,7 +104,7 @@ function navigateTo(path: string, tabId?: string) {
               <button
                 v-for="tab in group.items"
                 :key="tab.id"
-                @click="navigateTo('/settings', tab.id)"
+                @click="tab.path ? navigateTo(tab.path) : navigateTo('/settings', tab.id)"
                 :class="[
                   'w-full flex items-center py-2 px-2.5 font-semibold text-left transition-all duration-200 rounded-lg text-xs',
                   isTabActive(tab.id)

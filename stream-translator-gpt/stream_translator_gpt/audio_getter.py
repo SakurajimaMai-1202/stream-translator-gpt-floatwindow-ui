@@ -7,6 +7,7 @@ import sys
 import tempfile
 import threading
 import time
+from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -144,16 +145,46 @@ def _resolve_ffmpeg_dir() -> str | None:
     return None
 
 
+@lru_cache(maxsize=1)
 def _resolve_js_runtime_arg() -> str | None:
-    """解析可用的 yt-dlp JavaScript runtime 參數。"""
-    node_exe = shutil.which('node') or shutil.which('node.exe')
-    if node_exe:
-        return f'node:{node_exe}'
+    """解析 yt-dlp JavaScript runtime，包含 UI 啟動時可能遺失的 Windows PATH。"""
+    executable_dir = Path(sys.executable).resolve().parent
+    app_root = Path(__file__).resolve().parents[2]
+    program_files = Path(os.environ.get('ProgramFiles', r'C:\Program Files'))
+    local_app_data = Path(os.environ.get('LOCALAPPDATA', '')) if os.environ.get('LOCALAPPDATA') else None
 
-    deno_exe = shutil.which('deno') or shutil.which('deno.exe')
-    if deno_exe:
-        return f'deno:{deno_exe}'
+    node_candidates = [
+        shutil.which('node'),
+        shutil.which('node.exe'),
+        executable_dir / 'node.exe',
+        executable_dir / '_js_runtime' / 'node.exe',
+        executable_dir.parent / 'node.exe',
+        executable_dir.parent / '_js_runtime' / 'node.exe',
+        app_root / 'node' / 'node.exe',
+        app_root / 'runtime' / 'node.exe',
+        program_files / 'nodejs' / 'node.exe',
+        local_app_data / 'Programs' / 'nodejs' / 'node.exe' if local_app_data else None,
+    ]
+    deno_candidates = [
+        shutil.which('deno'),
+        shutil.which('deno.exe'),
+        executable_dir / 'deno.exe',
+        executable_dir.parent / 'deno.exe',
+        app_root / 'deno' / 'deno.exe',
+        local_app_data / 'deno' / 'bin' / 'deno.exe' if local_app_data else None,
+    ]
 
+    for runtime, candidates in (('node', node_candidates), ('deno', deno_candidates)):
+        for candidate in candidates:
+            if not candidate:
+                continue
+            path = Path(candidate).expanduser()
+            if path.is_file():
+                resolved = str(path.resolve())
+                print(f'{INFO}yt-dlp JavaScript runtime: {runtime} ({resolved})')
+                return f'{runtime}:{resolved}'
+
+    print(f'{WARNING}找不到 yt-dlp 支援的 JavaScript runtime；YouTube 可用格式可能不完整。')
     return None
 
 
@@ -203,6 +234,10 @@ def _open_stream(url: str, format: str, cookies: str, proxy: str, cwd: str):
     env = os.environ.copy()
     if ffmpeg_dir:
         env['PATH'] = ffmpeg_dir + os.pathsep + env.get('PATH', '')
+    if js_runtime_arg and ':' in js_runtime_arg:
+        runtime_path = js_runtime_arg.split(':', 1)[1]
+        runtime_dir = str(Path(runtime_path).parent)
+        env['PATH'] = runtime_dir + os.pathsep + env.get('PATH', '')
 
     try:
         ytdlp_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, cwd=cwd, env=env)

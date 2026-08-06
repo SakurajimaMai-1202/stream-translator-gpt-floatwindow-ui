@@ -1,9 +1,10 @@
-"""Resolve portable application data paths shared by the UI and ASR runtime."""
+﻿"""Resolve portable application data paths shared by the UI and ASR runtime."""
 
 from __future__ import annotations
 
 import os
 import sys
+import json
 from pathlib import Path
 from typing import Mapping
 
@@ -16,6 +17,44 @@ def get_app_root() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return settings.BASE_DIR.resolve()
+
+
+def get_packaged_runtime_profile() -> str | None:
+    """Return the immutable profile embedded in a packaged build, if present."""
+    override = os.environ.get("STREAM_TRANSLATOR_PACKAGED_PROFILE", "").strip().lower()
+    if override in {"cuda", "cpu", "rocm"}:
+        return override
+
+    manifest_path = get_app_root() / "_runtime" / "runtime-version.json"
+    if not manifest_path.is_file():
+        return None
+    try:
+        profile = str(json.loads(manifest_path.read_text(encoding="utf-8")).get("profile", "")).lower()
+    except (OSError, ValueError, TypeError):
+        return None
+    return profile if profile in {"cuda", "cpu", "rocm"} else None
+
+
+def get_cpu_asr_runtime_path() -> Path:
+    """Return the isolated sherpa-onnx runtime used for CPU ASR."""
+    app_root = get_app_root()
+    profile = get_packaged_runtime_profile()
+    if profile == "cpu":
+        return app_root / "_runtime"
+    if profile in {"cuda", "rocm"}:
+        return app_root / "_runtime_cpu_asr"
+    return app_root / "build-runtime-cache" / "cpu-runtime"
+
+
+def get_cpu_asr_runtime_status() -> dict[str, object]:
+    runtime_path = get_cpu_asr_runtime_path()
+    python_path = runtime_path / "python.exe"
+    return {
+        "available": python_path.is_file(),
+        "path": str(runtime_path),
+        "python": str(python_path),
+        "is_sidecar": get_packaged_runtime_profile() in {"cuda", "rocm"},
+    }
 
 
 def get_model_storage_root() -> Path:
@@ -49,6 +88,7 @@ def ensure_model_storage() -> Path:
     root = get_model_storage_root()
     (root / "hub").mkdir(parents=True, exist_ok=True)
     (root / "modelscope").mkdir(parents=True, exist_ok=True)
+    (root / "sherpa-onnx").mkdir(parents=True, exist_ok=True)
     return root
 
 
@@ -59,4 +99,5 @@ def apply_model_cache_environment(env: Mapping[str, str] | None = None) -> dict[
     result["HUGGINGFACE_HUB_CACHE"] = str(root / "hub")
     result["TRANSFORMERS_CACHE"] = str(root / "hub")
     result["MODELSCOPE_CACHE"] = str(root / "modelscope")
+    result["SHERPA_ONNX_MODEL_DIR"] = str(root / "sherpa-onnx")
     return result

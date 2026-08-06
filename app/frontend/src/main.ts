@@ -54,7 +54,10 @@ async function bootstrap() {
     const isQtWebView = !!(window as any).qt || window.location.protocol === 'qrc:';
     if (isQtWebView) {
         try {
-            await loadQtWebChannel();
+            await Promise.race([
+                loadQtWebChannel(),
+                new Promise<void>((resolve) => window.setTimeout(resolve, 900)),
+            ]);
         } catch (error) {
             console.error('Qt WebChannel 初始化腳本載入失敗:', error);
         }

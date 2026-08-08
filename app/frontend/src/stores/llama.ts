@@ -32,6 +32,7 @@ export const useLlamaStore = defineStore('llama', () => {
   const modelDirectory = ref<string>('');
   const recentModelPaths = ref<string[]>([]);
   const favoriteModelPaths = ref<string[]>([]);
+  const localLlmEnabled = ref(false);
   const isLoading = ref(false);
   const errorMessage = ref('');
   const successMessage = ref('');
@@ -133,6 +134,9 @@ export const useLlamaStore = defineStore('llama', () => {
         if (serverStatus.value.is_ready) {
           break;
         }
+        if (!serverStatus.value.is_running) {
+          throw new Error(serverStatus.value.last_error || 'llama.cpp 啟動後立即結束');
+        }
         await new Promise(resolve => setTimeout(resolve, 1000));
         retries++;
       }
@@ -170,6 +174,16 @@ export const useLlamaStore = defineStore('llama', () => {
       throw error;
     } finally {
       isLoading.value = false;
+    }
+  }
+
+  async function setLocalLlmEnabled(enabled: boolean) {
+    localLlmEnabled.value = enabled;
+    await saveConfig();
+    if (enabled) {
+      if (!isServerReady.value) await startServer();
+    } else if (isServerRunning.value) {
+      await stopServer();
     }
   }
 
@@ -240,6 +254,7 @@ export const useLlamaStore = defineStore('llama', () => {
       if (config.llama) {
         // 更新伺服器配置
         const llamaConfig = config.llama;
+        localLlmEnabled.value = llamaConfig.local_llm_enabled === true;
         serverConfig.value = {
           model_path: llamaConfig.model_path || '',
           host: llamaConfig.host || '127.0.0.1',
@@ -300,6 +315,7 @@ export const useLlamaStore = defineStore('llama', () => {
   async function saveConfig() {
     try {
       const llamaConfig = {
+        local_llm_enabled: localLlmEnabled.value,
         model_dir: modelDirectory.value,
         model_path: selectedModelPath.value,
         recent_model_paths: recentModelPaths.value,
@@ -592,6 +608,7 @@ export const useLlamaStore = defineStore('llama', () => {
     modelDirectory,
     recentModelPaths,
     favoriteModelPaths,
+    localLlmEnabled,
     isLoading,
     errorMessage,
     successMessage,
@@ -613,6 +630,7 @@ export const useLlamaStore = defineStore('llama', () => {
     refreshServerStatus,
     startServer,
     stopServer,
+    setLocalLlmEnabled,
     applyAndRestart,
     translate,
     selectModel,

@@ -13,6 +13,7 @@ import asyncio
 import logging
 import os
 import time
+from functools import lru_cache
 from backend.config import settings
 from backend.core.llama_runtime_installer import active_runtime_executable, installer, list_latest_variants
 
@@ -28,9 +29,34 @@ class LlamaState:
         self.is_running: bool = False
         self.is_ready: bool = False  # 新增就緒狀態
         self.current_model: Optional[str] = None
+        self.last_error: Optional[str] = None
         self.last_inference: Dict[str, Any] = {}
         
 llama_state = LlamaState()
+
+
+@lru_cache(maxsize=8)
+def _flash_attn_args(server_exe: str) -> List[str]:
+    """Return the Flash Attention syntax supported by this llama.cpp build."""
+    try:
+        result = subprocess.run(
+            [server_exe, "--help"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+            check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        help_text = f"{result.stdout}\n{result.stderr}".lower()
+        if "--flash-attn [on|off|auto]" in help_text:
+            return ["--flash-attn", "on"]
+    except Exception as exc:
+        logger.debug("Could not inspect llama.cpp Flash Attention syntax: %s", exc)
+
+    # Older builds expose Flash Attention as a value-less boolean switch.
+    return ["--flash-attn"]
 
 
 # ==================== 啟動探測 ====================
@@ -143,6 +169,7 @@ class ServerStatus(BaseModel):
     is_ready: bool  # 新增就緒狀態
     server_url: Optional[str]
     current_model: Optional[str]
+    last_error: Optional[str] = None
     pid: Optional[int]
     resources: Dict[str, Any] = Field(default_factory=dict)
     performance: Dict[str, Any] = Field(default_factory=dict)
@@ -231,6 +258,7 @@ async def start_server(config: ServerConfig, background_tasks: BackgroundTasks):
     else:
         # 預設路徑
         possible_paths = [
+            active_runtime_executable(),
             # 嘗試使用 settings Based 路徑
             settings.BASE_DIR / "../llama/llama-server.exe",
             settings.BASE_DIR / "llama/llama-server.exe",
@@ -242,7 +270,7 @@ async def start_server(config: ServerConfig, background_tasks: BackgroundTasks):
         ]
         server_exe = None
         for p in possible_paths:
-            if p.exists():
+            if p and p.exists():
                 server_exe = p.resolve() # 獲取絕對路徑
                 break
         
@@ -268,7 +296,7 @@ async def start_server(config: ServerConfig, background_tasks: BackgroundTasks):
     
     # 進階選項
     if config.flash_attn:
-        cmd.extend(["--flash-attn", "on"])
+        cmd.extend(_flash_attn_args(str(server_exe)))
     if config.no_mmap:
         cmd.append("--no-mmap")
     
@@ -289,12 +317,19 @@ async def start_server(config: ServerConfig, background_tasks: BackgroundTasks):
         )
         
         # 啟動輸出讀取線程
+        llama_state.last_error = None
+
         def log_output(pipe, prefix):
             try:
                 for line in iter(pipe.readline, ''):
                     if line:
                         line_stripped = line.strip()
                         logger.info(f"[{prefix}] {line_stripped}")
+                        if prefix == "Llama-Stderr" and any(
+                            marker in line_stripped.lower()
+                            for marker in ("error", "invalid argument", "fatal", "failed")
+                        ):
+                            llama_state.last_error = line_stripped
                         
                         # 检测是否就绪
                         if "listening on" in line_stripped or "HTTP server listening" in line_stripped:
@@ -315,6 +350,18 @@ async def start_server(config: ServerConfig, background_tasks: BackgroundTasks):
         llama_state.is_running = True
         llama_state.server_url = f"http://{config.host}:{config.port}"
         llama_state.current_model = Path(config.model_path).name
+
+        def monitor_process():
+            return_code = process.wait()
+            if llama_state.server_process is process:
+                if return_code != 0 and not llama_state.last_error:
+                    llama_state.last_error = f"llama-server exited with code {return_code}"
+                llama_state.is_running = False
+                llama_state.is_ready = False
+                llama_state.server_process = None
+                logger.info("Llama server process exited with code %s", return_code)
+
+        threading.Thread(target=monitor_process, daemon=True).start()
         
         return {
             "status": "started",
@@ -365,6 +412,7 @@ async def get_server_status():
         is_ready=llama_state.is_ready,  # 返回就緒狀態
         server_url=llama_state.server_url,
         current_model=llama_state.current_model,
+        last_error=llama_state.last_error,
         pid=llama_state.server_process.pid if llama_state.server_process else None,
         resources=_collect_resource_status(),
         performance=llama_state.last_inference,
@@ -376,8 +424,10 @@ async def get_server_status():
 async def get_runtime_releases():
     try:
         from backend.api.config import get_config_manager
+        from backend.core.hardware_detector import detect_gpus
         profile = str(get_config_manager().get_config().get("runtime", {}).get("profile", "cpu"))
-        return await asyncio.to_thread(list_latest_variants, profile)
+        devices = await asyncio.to_thread(detect_gpus)
+        return await asyncio.to_thread(list_latest_variants, profile, devices)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"無法讀取 llama.cpp 官方版本：{exc}")
 
@@ -393,10 +443,12 @@ async def install_runtime(request: RuntimeInstallRequest, background_tasks: Back
         raise HTTPException(status_code=409, detail="請先停止 llama.cpp 伺服器再更新 Runtime")
     from backend.api.config import get_config_manager
     profile = str(get_config_manager().get_config().get("runtime", {}).get("profile", "cpu"))
-    if installer.status()["state"] in {"resolving", "downloading", "installing"}:
-        raise HTTPException(status_code=409, detail="llama.cpp Runtime 正在下載或安裝")
-    background_tasks.add_task(installer.install, request.variant, profile)
-    return {"success": True, "message": "已開始下載 llama.cpp Runtime"}
+    try:
+        job_id = installer.begin(request.variant)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    background_tasks.add_task(installer.install, job_id, request.variant, profile)
+    return {"success": True, "message": "已開始下載 llama.cpp Runtime", "job_id": job_id}
 
 
 def _find_llama_server() -> Optional[Path]:

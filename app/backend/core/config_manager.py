@@ -216,11 +216,13 @@ class ConfigManager:
             'bg_opacity': 75,
             'windows': {
                 'home': {'x': 100, 'y': 100, 'width': 600, 'height': 500, 'visible': True},
+                'main_window': {'width': 1287, 'height': 917},
                 'settings': {'x': 150, 'y': 150, 'width': 800, 'height': 600, 'visible': False},
                 'floating_subtitle': {'x': 200, 'y': 200, 'width': 800, 'height': 200, 'visible': True, 'transparency': 80}
             }
         },
         'llama': {
+            'local_llm_enabled': False,
             'model_dir': '',
             'model_path': '',
             'recent_model_paths': [],

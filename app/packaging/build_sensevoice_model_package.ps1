@@ -1,5 +1,5 @@
 ﻿param(
-    [string]$Version = "1.3.9",
+    [string]$Version = "1.3.10",
     [string]$SourcePath = "",
     [string]$OutputDir = ""
 )

@@ -407,15 +407,17 @@ def main():
             if sys.platform == "win32":
                 # Qt 的置頂／半透明多視窗可能讓 Chromium 誤判 WebView 已被
                 # Windows 遮蔽，暫停繪製後再恢復時便出現整塊灰底閃爍。
-                # 僅停用 native occlusion 判斷，保留 GPU raster/compositing。
+                # 保留 GPU 渲染，但停用 DirectComposition 的顯示交換路徑；
+                # 在部分 NVIDIA/ANGLE 組合中，這比完整停用 GPU 更快且穩定。
                 append_chromium_flags(
                     "--disable-features=CalculateNativeWinOcclusion",
                 )
                 if not args.enable_webview_direct_composition:
                     append_chromium_flags(
+                        "--disable-direct-composition",
                         "--disable-direct-composition-video-overlays",
                     )
-                logger.info("WebView GPU 相容模式：已停用 Native Win Occlusion，保留 GPU 合成")
+                logger.info("WebView GPU 相容模式：已停用 Native Win Occlusion/DirectComposition，保留 GPU 渲染")
             if args.enable_webview_gpu:
                 logger.info("--enable-webview-gpu 已不再需要；目前預設即為自動 GPU 相容模式")
             

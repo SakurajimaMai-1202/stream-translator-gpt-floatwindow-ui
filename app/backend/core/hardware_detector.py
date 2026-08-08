@@ -164,7 +164,16 @@ def detect_windows_video_controllers() -> list[GpuDevice]:
         ),
     ]
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=5, check=False)
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+            check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
     except Exception:
         return []
     if result.returncode != 0 or not result.stdout.strip():

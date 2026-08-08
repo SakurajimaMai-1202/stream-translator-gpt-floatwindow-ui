@@ -3,12 +3,13 @@ import { useRouter, useRoute } from 'vue-router';
 
 const router = useRouter();
 const route = useRoute();
-const appVersion = import.meta.env.VITE_APP_VERSION || '1.3.9';
+const appVersion = import.meta.env.VITE_APP_VERSION || '1.3.10';
 
 // Define navigation items
 const primaryNavigation = [
   { path: '/', name: '即時轉譯', icon: '🎙️', id: 'home' },
-  { path: '/subtitle-style', name: '字幕外觀', icon: '🎨', id: 'subtitle-style' }
+  { path: '/subtitle-style', name: '字幕外觀', icon: '🎨', id: 'subtitle-style' },
+  { path: '/guide', name: '使用教學', icon: '📖', id: 'guide' }
 ];
 
 type SettingsNavItem = { id: string; name: string; icon: string; path?: string };
@@ -63,7 +64,7 @@ function navigateTo(path: string, tabId?: string) {
 <template>
   <div class="flex h-screen w-screen overflow-hidden bg-slate-950 text-white font-sans">
     <!-- Left Sidebar -->
-    <aside class="w-60 bg-slate-950/80 border-r border-white/10 flex-shrink-0 flex flex-col justify-between backdrop-blur-xl">
+    <aside class="w-60 bg-slate-950/95 border-r border-white/10 flex-shrink-0 flex flex-col justify-between">
       <div>
         <!-- App Header / Logo -->
         <div class="p-5 border-b border-white/5 flex items-center gap-3">

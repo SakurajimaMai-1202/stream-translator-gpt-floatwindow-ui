@@ -84,11 +84,3 @@ function description(modelId: string) {
     </div>
   </div>
 </template>
-
-<style scoped>
-.asr-model-group {
-  /* 將每一組模型的重繪限制在自身，不建立整頁的大型 paint layer。 */
-  contain: layout paint style;
-  isolation: isolate;
-}
-</style>

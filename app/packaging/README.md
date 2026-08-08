@@ -17,22 +17,22 @@ Use `app/build_release.ps1` for normal release builds:
 Build all three profiles from one shared frontend/PyInstaller GUI artifact:
 
 ```powershell
-.\build_all_profiles.ps1 -Version 1.3.9 -Mode Quick -ReuseRuntimeCache
-.\build_all_profiles.ps1 -Version 1.3.9 -Mode Final -ReuseRuntimeCache -CompressionLevel 7 -SplitSizeMiB 1900
+.\build_all_profiles.ps1 -Version 1.3.10 -Mode Quick -ReuseRuntimeCache
+.\build_all_profiles.ps1 -Version 1.3.10 -Mode Final -ReuseRuntimeCache -CompressionLevel 7 -SplitSizeMiB 1900
 ```
 
 After a packaging-stage failure, keep a previously completed shared GUI and
 resume without rerunning Vite/PyInstaller:
 
 ```powershell
-.\build_all_profiles.ps1 -Version 1.3.9 -Mode Quick -ReuseRuntimeCache -ReuseSharedGui
+.\build_all_profiles.ps1 -Version 1.3.10 -Mode Quick -ReuseRuntimeCache -ReuseSharedGui
 ```
 
 If all three profile folders and App Update archives already passed their
 individual builds, resume only validation and asset collection:
 
 ```powershell
-.\build_all_profiles.ps1 -Version 1.3.9 -Mode Quick -ReuseSharedGui -ReuseProfileArtifacts
+.\build_all_profiles.ps1 -Version 1.3.10 -Mode Quick -ReuseSharedGui -ReuseProfileArtifacts
 ```
 
 `Quick` builds the shared GUI once, validates and assembles all three profile
@@ -42,6 +42,10 @@ packages or copying unchanged ASR runtime dependencies.
 7-Zip, splits each Full ZIP into `.partNN` files, recombines the parts, checks
 the original/recombined SHA256, tests the recombined ZIP, and writes a release
 manifest plus checksum file.
+
+Starting with v1.3.10, all three Full packages intentionally exclude the
+`llama` folder. The application downloads and manages the llama.cpp Runtime on
+demand, so an obsolete bundled server is never shipped with a profile package.
 
 App Update archives place `Stream Translator.exe`, `_internal`, and `_runtime`
 directly at the ZIP root so extracting into an existing package replaces the
@@ -132,7 +136,7 @@ default, so users can switch between the packaged GPU runtime and sherpa-onnx
 CPU ASR without another install. Build all profiles with:
 
 ```powershell
-.\build_all_profiles.ps1 -Version 1.3.9 -Mode Final
+.\build_all_profiles.ps1 -Version 1.3.10 -Mode Final
 ```
 
 For a deliberately smaller GPU-only artifact, opt out explicitly with

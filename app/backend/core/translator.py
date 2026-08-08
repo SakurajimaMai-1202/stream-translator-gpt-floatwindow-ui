@@ -132,6 +132,40 @@ def _resolve_profile_python(runtime_profile: str | None, asr_compute_backend: st
             return str(candidate)
     return None
 
+
+def _validate_cpu_asr_runtime(python_exe: str) -> None:
+    """Fail early when a portable sidecar has been overwritten by another Python."""
+    runtime_root = str(Path(python_exe).resolve().parent)
+    probe = (
+        "import glob, pathlib, sherpa_onnx, stream_translator_gpt.main, sys; "
+        "from pathlib import Path; "
+        "root=Path(sys.executable).resolve().parent; "
+        "paths=[Path(pathlib.__file__).resolve(), Path(glob.__file__).resolve()]; "
+        "assert all(root == p.parent or root in p.parents for p in paths), paths"
+    )
+    try:
+        result = subprocess.run(
+            [python_exe, "-I", "-c", probe],
+            cwd=runtime_root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            "CPU ASR sidecar 無法啟動；請在 ASR 模型管理重新安裝與目前版本相符的 sherpa-onnx CPU sidecar。"
+        ) from exc
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip().splitlines()[-1:] or ["unknown runtime error"]
+        raise RuntimeError(
+            "CPU ASR sidecar Runtime 已損壞或被其他 Python 覆蓋；請在 ASR 模型管理重新安裝與目前版本相符的 sherpa-onnx CPU sidecar。 "
+            + detail[0][-240:]
+        )
+
 def _obsolete_extract_supported_cli_args(help_text: str) -> FrozenSet[str]:
     """從 `stream_translator_gpt --help` 輸出解析可用 CLI 參數。"""
     if not help_text:
@@ -253,6 +287,8 @@ class TranslationContext:
         
         if profile_python:
             logger.info(f"Using runtime profile Python: {profile_python}")
+            if is_frozen and str(self.config.get('asr_compute_backend') or 'auto').lower() == 'cpu':
+                _validate_cpu_asr_runtime(profile_python)
             cmd = _build_source_python_command(profile_python, cwd)
         elif is_frozen:
             if str(self.config.get('asr_compute_backend') or 'auto').lower() == 'cpu':

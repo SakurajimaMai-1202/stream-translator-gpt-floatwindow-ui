@@ -2,7 +2,7 @@
 param(
     [ValidateSet("cuda", "cpu", "rocm")]
     [string]$Profile = "cuda",
-    [string]$Version = "1.3.9",
+    [string]$Version = "1.3.10",
     [switch]$ForceRuntime,
     [switch]$ReuseRuntimeCache,
     [switch]$SkipFullZip,
@@ -255,12 +255,11 @@ foreach ($name in @("ffmpeg.exe", "ffprobe.exe")) {
     if (Test-Path $source) { Copy-Item $source $ffmpegTarget }
 }
 
-$llamaSource = Join-Path $projectRoot "llama"
-if (Test-Path $llamaSource) {
-    $llamaTarget = Join-Path $releaseRoot "llama"
-    New-Item $llamaTarget -ItemType Directory -Force | Out-Null
-    Get-ChildItem $llamaSource -File | Where-Object { $_.Extension -in @('.exe', '.dll') } |
-        Copy-Item -Destination $llamaTarget
+# llama.cpp Runtime is installed on demand by the application and is intentionally
+# excluded from all v1.3.10 Full packages. This keeps the three profiles smaller
+# and prevents an obsolete bundled server from being used accidentally.
+if (Test-Path -LiteralPath (Join-Path $releaseRoot "llama")) {
+    throw "Packaging guard failed: llama folder must not be included in v$Version package"
 }
 
 if (-not $SkipFullZip) {

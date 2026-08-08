@@ -146,7 +146,9 @@
         <h3>🧩 llama.cpp Runtime</h3>
         <p class="runtime-version">{{ llamaStore.serverStatus.runtime?.version || '讀取中…' }}</p>
         <p class="hint break-path">{{ llamaStore.serverStatus.runtime?.path || '尚未找到 llama-server' }}</p>
-        <button type="button" @click="openRuntimeInstaller" class="btn-start-quick runtime-download">在此下載／更新 Runtime</button>
+        <span v-if="runtimeReleaseLoading && !runtimeRelease" class="runtime-current-badge checking">正在核對官方最新版…</span>
+        <span v-else-if="runtimeRelease?.is_latest" class="runtime-current-badge">✓ 已是最新版本 {{ runtimeRelease.tag }}</span>
+        <button v-else type="button" @click="openRuntimeInstaller" class="btn-start-quick runtime-download">在此下載／更新 Runtime</button>
         <a :href="llamaStore.serverStatus.runtime?.download_url || 'https://github.com/ggml-org/llama.cpp/releases/latest'" target="_blank" rel="noopener" class="runtime-official-link">查看官方 Release</a>
       </section>
     </div>
@@ -159,19 +161,48 @@
       <div v-if="runtimeReleaseLoading" class="runtime-install-message">正在讀取官方最新版…</div>
       <div v-else-if="runtimeReleaseError" class="alert alert-error">{{ runtimeReleaseError }}</div>
       <template v-else-if="runtimeRelease">
-        <div class="runtime-release-meta">官方最新版：<strong>{{ runtimeRelease.tag }}</strong></div>
+        <div class="runtime-release-meta">
+          <span>來源：<strong>{{ runtimeRelease.source === 'github' ? 'GitHub 官方 Release' : runtimeRelease.source }}</strong></span>
+          <span>最新版：<strong>{{ runtimeRelease.tag }}</strong></span>
+          <span v-if="runtimeRelease.installed_tag">目前安裝：<strong>{{ runtimeRelease.installed_tag }}<template v-if="runtimeRelease.installed_variant"> / {{ runtimeRelease.installed_variant }}</template></strong></span>
+        </div>
+        <div v-if="runtimeRelease.is_latest" class="alert alert-success">✅ 已安裝官方最新版本，無需重複下載。</div>
+        <div v-if="runtimeInstallNotice" class="alert alert-success">✅ {{ runtimeInstallNotice }}</div>
+        <div v-if="runtimeRelease.detected_gpus?.length" class="runtime-hardware-summary">
+          <span v-for="gpu in runtimeRelease.detected_gpus" :key="`${gpu.name}-${gpu.backend}`">
+            {{ gpu.name }}<small>{{ gpu.is_integrated ? '內顯' : '獨立 GPU' }}<template v-if="gpu.memory_mb"> · {{ Math.round(gpu.memory_mb / 1024) }} GB</template></small>
+          </span>
+        </div>
+        <p v-if="runtimeRelease.recommendation_reason" class="runtime-recommendation">{{ runtimeRelease.recommendation_reason }}</p>
         <div class="runtime-variant-grid">
-          <label v-for="variant in runtimeRelease.variants" :key="variant.id" :class="['runtime-variant', selectedRuntimeVariant === variant.id && 'selected']">
-            <input v-model="selectedRuntimeVariant" type="radio" :value="variant.id" />
-            <span class="runtime-variant-content"><strong>{{ variant.label }}</strong><span v-if="variant.recommended" class="recommended-badge">依目前版本推薦</span><small>{{ formatRuntimeBytes(variant.size) }} · {{ variant.assets.length }} 個官方檔案</small></span>
+          <label v-for="variant in runtimeRelease.variants" :key="variant.id" :class="['runtime-variant', selectedRuntimeVariant === variant.id && 'selected', !variant.installable && 'disabled']">
+            <input v-model="selectedRuntimeVariant" type="radio" :value="variant.id" :disabled="!variant.installable" />
+            <span class="runtime-variant-content">
+              <span class="runtime-variant-title"><strong>{{ variant.label }}</strong><span v-if="variant.recommended" class="recommended-badge">依偵測硬體推薦</span><span v-if="variant.installed_latest" class="recommended-badge">已安裝最新版</span></span>
+              <small>{{ formatRuntimeBytes(variant.size) }} · {{ variant.assets.length }} 個官方檔案<template v-if="variant.runtime_version"> · CUDA {{ variant.runtime_version }}</template></small>
+              <span class="runtime-asset-list">
+                <small v-for="asset in variant.assets" :key="asset.name"><b>{{ asset.role === 'dependency' ? 'CUDA-RT' : 'llama.cpp' }}</b>{{ asset.name }}</small>
+              </span>
+              <small v-if="variant.compatibility_error" class="runtime-error">{{ variant.compatibility_error }}</small>
+            </span>
           </label>
         </div>
         <div v-if="runtimeInstallStatus && runtimeInstallStatus.state !== 'idle'" class="runtime-progress-wrap">
           <div class="runtime-progress"><span :style="{ width: `${Math.round(runtimeInstallStatus.progress * 100)}%` }"></span></div>
-          <p>{{ runtimeInstallStatus.message }} <span v-if="runtimeInstallStatus.progress">{{ Math.round(runtimeInstallStatus.progress * 100) }}%</span></p>
+          <p>{{ runtimeInstallStatus.message }} <span v-if="runtimeInstallStatus.progress">{{ Math.round(runtimeInstallStatus.progress * 100) }}%</span><small class="runtime-state-badge">{{ runtimeStateLabel(runtimeInstallStatus.state) }}</small></p>
+          <div v-if="runtimeInstallStatus.files?.length" class="runtime-file-progress-list">
+            <div v-for="file in runtimeInstallStatus.files" :key="file.name" class="runtime-file-progress-item">
+              <div class="runtime-file-progress-head">
+                <span><b>{{ file.role === 'dependency' ? 'CUDA-RT' : 'llama.cpp' }}</b>{{ file.name }}</span>
+                <small>{{ runtimeStateLabel(file.state) }} · {{ formatRuntimeBytes(file.downloaded_bytes) }} / {{ formatRuntimeBytes(file.total_bytes) }}</small>
+              </div>
+              <div class="runtime-progress file"><span :class="{ error: file.state === 'error' }" :style="{ width: `${Math.round(file.progress * 100)}%` }"></span></div>
+              <small v-if="file.error" class="runtime-error">{{ file.error }}</small>
+            </div>
+          </div>
           <p v-if="runtimeInstallStatus.error" class="runtime-error">{{ runtimeInstallStatus.error }}</p>
         </div>
-        <button type="button" class="btn-start-quick" :disabled="!selectedRuntimeVariant || runtimeInstallBusy || llamaStore.isServerRunning" @click="installSelectedRuntime">{{ runtimeInstallBusy ? '下載安裝中…' : '下載並安裝選取版本' }}</button>
+        <button type="button" class="btn-start-quick" :disabled="!selectedRuntimeOption?.installable || runtimeInstallBusy || llamaStore.isServerRunning || runtimeRelease.is_latest" @click="installSelectedRuntime">{{ runtimeInstallBusy ? '下載安裝中…' : runtimeRelease.is_latest ? '目前已是最新版本' : '下載並安裝選取版本' }}</button>
         <p v-if="llamaStore.isServerRunning" class="hint warn-text">請先停止 llama.cpp 伺服器，才能更換 Runtime。</p>
         <p class="hint">安裝後會保留現有 Runtime，模型與執行參數不會被刪除。</p>
       </template>
@@ -776,26 +807,46 @@ const runtimeReleaseError = ref('');
 const runtimeRelease = ref<RuntimeReleaseInfo | null>(null);
 const selectedRuntimeVariant = ref('');
 const runtimeInstallStatus = ref<RuntimeInstallStatus | null>(null);
+const runtimeInstallNotice = ref('');
+let runtimeCompletionNotifiedJobId = '';
 let runtimeInstallPollTimer: number | null = null;
 
-const runtimeInstallBusy = computed(() => ['resolving', 'downloading', 'installing'].includes(runtimeInstallStatus.value?.state || ''));
+const runtimeInstallBusy = computed(() => ['resolving', 'downloading', 'verifying', 'staging', 'activating'].includes(runtimeInstallStatus.value?.state || ''));
+const selectedRuntimeOption = computed(() => runtimeRelease.value?.variants.find(item => item.id === selectedRuntimeVariant.value));
 
 function formatRuntimeBytes(bytes: number) {
-  if (!bytes) return '大小未知';
+  if (!bytes) return '0 MB';
   return `${(bytes / 1024 / 1024).toFixed(0)} MB`;
+}
+
+function runtimeStateLabel(state: string) {
+  return ({
+    idle: '待命', resolving: '解析版本', pending: '等待下載', downloading: '下載中',
+    verifying: '驗證中', staging: '準備安裝', activating: '切換版本', completed: '完成', error: '失敗',
+  } as Record<string, string>)[state] || state;
 }
 
 async function openRuntimeInstaller() {
   showRuntimeInstaller.value = true;
-  runtimeReleaseLoading.value = true;
-  runtimeReleaseError.value = '';
+  await refreshRuntimeRelease(false);
   try {
-    runtimeRelease.value = await llamaApi.getRuntimeReleases();
-    selectedRuntimeVariant.value = runtimeRelease.value.variants.find(item => item.recommended)?.id
-      || runtimeRelease.value.variants[0]?.id || '';
     runtimeInstallStatus.value = await llamaApi.getRuntimeInstallStatus();
+    if (runtimeInstallBusy.value) startRuntimeInstallPolling();
   } catch (error: any) {
     runtimeReleaseError.value = error.response?.data?.detail || error.message;
+  }
+}
+
+async function refreshRuntimeRelease(silent = true) {
+  runtimeReleaseLoading.value = true;
+  if (!silent) runtimeReleaseError.value = '';
+  runtimeInstallNotice.value = '';
+  try {
+    runtimeRelease.value = await llamaApi.getRuntimeReleases();
+    selectedRuntimeVariant.value = runtimeRelease.value.variants.find(item => item.recommended && item.installable)?.id
+      || runtimeRelease.value.variants.find(item => item.installable)?.id || '';
+  } catch (error: any) {
+    if (!silent) runtimeReleaseError.value = error.response?.data?.detail || error.message;
   } finally {
     runtimeReleaseLoading.value = false;
   }
@@ -806,22 +857,34 @@ function stopRuntimeInstallPolling() {
   runtimeInstallPollTimer = null;
 }
 
+function startRuntimeInstallPolling() {
+  stopRuntimeInstallPolling();
+  runtimeInstallPollTimer = window.setInterval(() => void pollRuntimeInstallStatus(), 1000);
+}
+
 async function pollRuntimeInstallStatus() {
   runtimeInstallStatus.value = await llamaApi.getRuntimeInstallStatus();
   if (['completed', 'error'].includes(runtimeInstallStatus.value.state)) {
     stopRuntimeInstallPolling();
-    if (runtimeInstallStatus.value.state === 'completed') await llamaStore.refreshServerStatus();
+    if (runtimeInstallStatus.value.state === 'completed') {
+      await llamaStore.refreshServerStatus();
+      runtimeRelease.value = await llamaApi.getRuntimeReleases();
+      if (runtimeCompletionNotifiedJobId !== runtimeInstallStatus.value.job_id) {
+        runtimeCompletionNotifiedJobId = runtimeInstallStatus.value.job_id;
+        runtimeInstallNotice.value = `llama.cpp Runtime ${runtimeInstallStatus.value.tag} 已下載、驗證並安裝完成。`;
+      }
+    }
   }
 }
 
 async function installSelectedRuntime() {
-  if (!selectedRuntimeVariant.value || llamaStore.isServerRunning) return;
+  if (!selectedRuntimeOption.value?.installable || llamaStore.isServerRunning || runtimeRelease.value?.is_latest) return;
   if (!confirm('要下載並安裝選取的 llama.cpp Runtime 嗎？模型與現有 Runtime 會保留。')) return;
   try {
+    runtimeInstallNotice.value = '';
     await llamaApi.installRuntime(selectedRuntimeVariant.value);
     await pollRuntimeInstallStatus();
-    stopRuntimeInstallPolling();
-    runtimeInstallPollTimer = window.setInterval(() => void pollRuntimeInstallStatus(), 1000);
+    startRuntimeInstallPolling();
   } catch (error: any) {
     runtimeReleaseError.value = error.response?.data?.detail || error.message;
   }
@@ -1271,6 +1334,7 @@ function cancelEditSeries() {
 
 onMounted(async () => {
   await llamaStore.initialize();
+  void refreshRuntimeRelease(true);
   if (llamaStore.isServerRunning) appliedRuntimeFingerprint.value = runtimeFingerprint.value;
   if (llamaStore.modelDirectory) {
     modelDirectory.value = llamaStore.modelDirectory;
@@ -1409,18 +1473,37 @@ async function executePrimaryTest() {
 .runtime-version { color: #a5f3fc; font-weight: 700; margin-top: 12px; }
 .break-path { overflow-wrap: anywhere; }
 .runtime-download { display: inline-flex; margin-top: 12px; text-decoration: none; }
+.runtime-current-badge { display: inline-flex; align-items: center; margin-top: 12px; padding: 9px 13px; border: 1px solid rgba(52, 211, 153, 0.28); border-radius: 10px; background: rgba(16, 185, 129, 0.1); color: #6ee7b7; font-size: 13px; font-weight: 700; }
+.runtime-current-badge.checking { border-color: rgba(56, 189, 248, 0.2); background: rgba(14, 165, 233, 0.08); color: #7dd3fc; }
 .runtime-official-link { display: inline-block; margin: 12px 0 0 12px; color: #94a3b8; font-size: 12px; }
 .runtime-installer { margin-top: 16px; }
-.runtime-release-meta { color: #cbd5e1; margin: 12px 0; }
+.runtime-release-meta { display: flex; flex-wrap: wrap; gap: 8px 18px; color: #cbd5e1; margin: 12px 0; }
+.runtime-hardware-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.runtime-hardware-summary > span { display: grid; gap: 2px; padding: 8px 10px; border-radius: 9px; background: rgba(255,255,255,.04); color: #e2e8f0; font-size: 13px; }
+.runtime-hardware-summary small { color: #94a3b8; font-size: 11px; }
+.runtime-recommendation { margin: 8px 0 14px; color: #a5f3fc; font-size: 13px; }
 .runtime-variant-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; margin-bottom: 16px; }
 .runtime-variant { display: flex; gap: 10px; padding: 13px; border: 1px solid rgba(255,255,255,.1); border-radius: 10px; background: rgba(255,255,255,.03); cursor: pointer; }
 .runtime-variant.selected { border-color: rgba(34,211,238,.55); background: rgba(34,211,238,.08); }
+.runtime-variant.disabled { opacity: .55; cursor: not-allowed; }
 .runtime-variant-content { display: grid; gap: 5px; color: #e2e8f0; }
+.runtime-variant-title { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
 .runtime-variant-content small { color: #94a3b8; }
+.runtime-asset-list { display: grid; gap: 4px; padding-top: 5px; border-top: 1px solid rgba(255,255,255,.07); }
+.runtime-asset-list small { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 6px; overflow-wrap: anywhere; }
+.runtime-asset-list b, .runtime-file-progress-head b { color: #67e8f9; font-size: 10px; letter-spacing: .03em; }
 .recommended-badge { width: fit-content; padding: 2px 7px; border-radius: 999px; background: rgba(16,185,129,.15); color: #6ee7b7; font-size: 11px; }
 .runtime-progress-wrap { margin: 14px 0; color: #cbd5e1; font-size: 13px; }
 .runtime-progress { height: 8px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.08); }
 .runtime-progress span { display: block; height: 100%; background: linear-gradient(90deg,#10b981,#22d3ee); transition: width .25s ease; }
+.runtime-progress.file { height: 5px; }
+.runtime-progress span.error { background: #ef4444; }
+.runtime-state-badge { margin-left: 8px; padding: 2px 7px; border-radius: 999px; background: rgba(34,211,238,.1); color: #67e8f9; }
+.runtime-file-progress-list { display: grid; gap: 10px; margin-top: 12px; }
+.runtime-file-progress-item { display: grid; gap: 6px; padding: 10px; border: 1px solid rgba(255,255,255,.08); border-radius: 9px; background: rgba(0,0,0,.12); }
+.runtime-file-progress-head { display: flex; justify-content: space-between; gap: 12px; }
+.runtime-file-progress-head > span { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+.runtime-file-progress-head > small { flex: none; color: #94a3b8; }
 .runtime-error, .warn-text { color: #fbbf24; }
 
 @media (max-width: 900px) {

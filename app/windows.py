@@ -228,7 +228,7 @@ class HomeWindow(WebViewWindow):
 
     def __init__(self, base_url: str = "http://localhost:5173", config_manager=None, on_open_subtitle=None):
         self.config_manager = config_manager
-        width, height = 1000, 700
+        width, height = 1287, 917
         x, y = None, None
         
         if config_manager:
@@ -236,8 +236,8 @@ class HomeWindow(WebViewWindow):
                 ui_config = config_manager.get_config().get('ui', {})
                 windows_config = ui_config.get('windows', {})
                 main_config = windows_config.get('main_window', {})
-                width = main_config.get('width', 1000)
-                height = main_config.get('height', 700)
+                width = main_config.get('width', 1287)
+                height = main_config.get('height', 917)
                 x = main_config.get('x', None)
                 y = main_config.get('y', None)
             except Exception as e:

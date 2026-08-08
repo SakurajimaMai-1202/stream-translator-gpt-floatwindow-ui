@@ -1505,12 +1505,12 @@ async function handleFileChange(event: Event) {
     <input type="file" ref="fileInput" accept=".yaml,.yml" class="hidden" @change="handleFileChange" />
 
     <!-- Error/Status Messages -->
-    <div v-if="store.errorMessage" class="mb-4 p-3 bg-red-500/20 border border-red-500/30 text-red-200 rounded-xl flex justify-between items-center text-xs backdrop-blur-xl">
+    <div v-if="store.errorMessage" class="mb-4 p-3 bg-red-950/80 border border-red-500/30 text-red-200 rounded-xl flex justify-between items-center text-xs">
       <span>{{ store.errorMessage }}</span>
       <button @click="store.clearError()" class="hover:text-white font-bold text-lg leading-none p-1">✕</button>
     </div>
 
-    <div v-if="store.statusMessage" class="mb-4 p-3 bg-green-500/20 border border-green-500/30 text-green-200 rounded-xl flex justify-between items-center text-xs backdrop-blur-xl">
+    <div v-if="store.statusMessage" class="mb-4 p-3 bg-green-950/80 border border-green-500/30 text-green-200 rounded-xl flex justify-between items-center text-xs">
       <span>{{ store.statusMessage }}</span>
       <button @click="store.clearStatus()" class="hover:text-white font-bold text-lg leading-none p-1">✕</button>
     </div>

@@ -67,6 +67,7 @@ def _read_ffmpeg_version(ffmpeg_path: Path) -> Optional[str]:
             timeout=5,
             encoding="utf-8",
             errors="replace",
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         if result.returncode != 0:
             return None

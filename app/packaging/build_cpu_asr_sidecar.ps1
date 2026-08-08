@@ -1,6 +1,6 @@
 ﻿#!/usr/bin/env pwsh
 param(
-    [string]$Version = "1.3.9",
+    [string]$Version = "1.3.10",
     [string]$SevenZipPath = "",
     [ValidateRange(0, 9)][int]$CompressionLevel = 7,
     [ValidateRange(1, 128)][int]$CopyThreads = 16
@@ -42,7 +42,7 @@ $manifest | Add-Member -NotePropertyName app_version -NotePropertyValue $Version
 [IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json) + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
 
 $runtimePython = Join-Path $stagingRuntime "python.exe"
-& $runtimePython -c "import sherpa_onnx, stream_translator_gpt.main; print('CPU ASR sidecar import check OK', sherpa_onnx.__version__)"
+& $runtimePython -I -c "import glob, pathlib, sherpa_onnx, stream_translator_gpt.main, sys; from pathlib import Path; root=Path(sys.executable).resolve().parent; paths=[Path(pathlib.__file__).resolve(), Path(glob.__file__).resolve()]; assert all(root == p.parent or root in p.parents for p in paths), paths; print('CPU ASR sidecar import check OK', sherpa_onnx.__version__)"
 if ($LASTEXITCODE -ne 0) { throw "CPU ASR sidecar import validation failed" }
 
 Compress-ReleaseDirectory `

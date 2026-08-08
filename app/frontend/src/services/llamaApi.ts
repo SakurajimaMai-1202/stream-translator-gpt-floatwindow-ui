@@ -40,6 +40,7 @@ export interface ServerStatus {
   is_ready: boolean;
   server_url: string | null;
   current_model: string | null;
+  last_error?: string | null;
   pid: number | null;
   resources: Record<string, any>;
   performance: Record<string, any>;
@@ -70,25 +71,62 @@ export interface TranslateResponse {
 export interface RuntimeVariant {
   id: string;
   label: string;
+  backend: string;
+  runtime_version: string;
   recommended: boolean;
+  installable: boolean;
+  compatibility_error: string;
+  installed?: boolean;
+  installed_latest?: boolean;
   size: number;
-  assets: Array<{ name: string; url: string }>;
+  assets: Array<{
+    name: string;
+    url: string;
+    size: number;
+    digest: string;
+    role: 'runtime' | 'dependency';
+  }>;
 }
 
 export interface RuntimeReleaseInfo {
+  source: 'github';
   tag: string;
   published_at: string | null;
+  installed_tag?: string;
+  installed_variant?: string;
+  is_latest?: boolean;
+  recommended_variant?: string;
+  recommendation_reason?: string;
+  detected_gpus?: Array<{
+    name: string;
+    vendor: string;
+    backend: string;
+    memory_mb: number | null;
+    is_integrated: boolean;
+  }>;
   variants: RuntimeVariant[];
 }
 
 export interface RuntimeInstallStatus {
-  state: 'idle' | 'resolving' | 'downloading' | 'installing' | 'completed' | 'error';
+  state: 'idle' | 'resolving' | 'downloading' | 'verifying' | 'staging' | 'activating' | 'completed' | 'error';
   message: string;
   progress: number;
+  job_id: string;
   variant: string;
   tag: string;
   installed_path: string;
+  previous_runtime: string;
   error: string;
+  files: Array<{
+    name: string;
+    role: 'runtime' | 'dependency';
+    state: 'pending' | 'downloading' | 'verifying' | 'completed' | 'error';
+    progress: number;
+    downloaded_bytes: number;
+    total_bytes: number;
+    sha256: string;
+    error: string;
+  }> | null;
 }
 
 export const llamaApi = {
@@ -97,7 +135,7 @@ export const llamaApi = {
     return response.data;
   },
 
-  async installRuntime(variant: string): Promise<any> {
+  async installRuntime(variant: string): Promise<{ success: boolean; message: string; job_id: string }> {
     const response = await axios.post(`${API_BASE}/runtime/install`, { variant });
     return response.data;
   },

@@ -2,13 +2,13 @@
 
 Windows 即時語音辨識、翻譯與浮動字幕工具。可擷取線上影音網址、系統聲音或音訊輸入，透過本機／雲端 ASR 轉錄，再使用 OpenAI、Google Gemini 或本機 llama.cpp 翻譯。
 
-[下載最新版](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest) · [v1.3.9 更新說明](app/docs/RELEASE_NOTES_v1.3.9_zh-TW.md) · [問題回報](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/issues)
+[下載最新版](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest) · [v1.3.10 更新說明](app/docs/RELEASE_NOTES_v1.3.10_zh-TW.md) · [問題回報](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/issues)
 
 ![Windows](https://img.shields.io/badge/platform-Windows-lightgrey)
 ![NVIDIA CUDA](https://img.shields.io/badge/GPU-NVIDIA%20CUDA-green)
 ![AMD ROCm](https://img.shields.io/badge/GPU-AMD%20ROCm%20Experimental-orange)
 ![CPU sherpa-onnx](https://img.shields.io/badge/CPU-sherpa--onnx-blueviolet)
-![Release](https://img.shields.io/badge/release-v1.3.9-blue)
+![Release](https://img.shields.io/badge/release-v1.3.10-blue)
 
 <img width="2381" height="1058" alt="Stream Translator FloatWindow" src="https://github.com/user-attachments/assets/0a663535-dd94-40a6-8444-3c00844bc563" />
 
@@ -25,10 +25,14 @@ Windows 即時語音辨識、翻譯與浮動字幕工具。可擷取線上影音
 - 提供桌面浮動字幕、瀏覽器字幕頁、行動裝置字幕分享及 SRT／TXT／ASS 匯出。
 - 內建 ASR 與 LLM 模型管理、llama.cpp Runtime 安裝與伺服器控制。
 - 支援 VAD 切片、術語表、ASR 修正規則、字幕外觀與延遲資訊。
+- 即時轉譯頁提供本地 LLM 開關、模型名稱與 Runtime 狀態，只有開啟時才會啟動 llama.cpp。
+- ASR 模型遺失時會在開始轉譯前提示並提供下載進度；模型管理會區分 GPU 與 sherpa-onnx CPU 格式。
+- 新增使用教學頁，說明 ASR 模型、GGUF、llama.cpp Runtime 與本地翻譯設定。
+- llama.cpp Runtime 會檢查已安裝版本；已是最新版本時不會重複要求下載更新。
 
-## v1.3.9 重點
+## v1.3.10 重點
 
-v1.3.9 重新整理 Runtime、ASR 模型與設定流程：
+v1.3.10 延續 Runtime、ASR 模型與設定流程的改善，並補強本地 LLM 與使用教學：
 
 - CPU 版本改用不含 PyTorch 的 sherpa-onnx／ONNX Runtime。
 - CUDA 與 ROCm Full 包內含獨立 CPU ASR sidecar，可切換 GPU／CPU ASR。
@@ -38,12 +42,13 @@ v1.3.9 重新整理 Runtime、ASR 模型與設定流程：
 - 完善字幕分享頁與安全說明，並改善設定載入、頁面刷新及字幕畫面閃爍。
 - 打包版內建 Node.js 22+，供 yt-dlp 處理新版 YouTube JavaScript 擷取流程。
 - 修正 Windows 配置檔暫時鎖定時誤載入預設值的問題。
+- v1.3.10 起 Full package 不再內含 `llama` 資料夾；需要本地 LLM 時，請從 LLM 模型管理下載相符的 llama.cpp Runtime，GGUF 模型也獨立管理。
 
-完整內容請見 [v1.3.9 更新說明](app/docs/RELEASE_NOTES_v1.3.9_zh-TW.md)。
+完整內容請見 [v1.3.10 更新說明](app/docs/RELEASE_NOTES_v1.3.10_zh-TW.md)。
 
 ## 下載版本選擇
 
-請從 [GitHub Releases](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/tag/v1.3.9) 下載，不要使用 GitHub 自動產生的 `Source code (zip)` 作為執行版。
+請從 [GitHub Releases](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/tag/v1.3.10) 下載，不要使用 GitHub 自動產生的 `Source code (zip)` 作為執行版。
 
 | 版本 | 適用環境 | ASR Runtime | 完整包檔案 |
 |---|---|---|---|
@@ -58,7 +63,7 @@ ROCm 支援仍屬實驗性質；不同 AMD 顯示卡、驅動與 Windows ROCm Ru
 1. 下載同一版本、同一 Profile 的所有 `.partXX`。
 2. 將分割檔與 `merge-full-package.bat` 放在同一資料夾。
 3. 執行 `merge-full-package.bat`。
-4. 使用 `SHA256SUMS-v1.3.9.txt` 驗證合併後 ZIP。
+4. 使用 `SHA256SUMS-v1.3.10.txt` 驗證合併後 ZIP。
 5. 解壓縮至可寫入的獨立資料夾，再啟動 `Stream Translator.exe`。
 
 不要只下載 `.part01` 後直接解壓縮；CUDA 與 ROCm 完整包必須先合併全部分割檔。
@@ -75,9 +80,11 @@ ROCm 支援仍屬實驗性質；不同 AMD 顯示卡、驅動與 Windows ROCm Ru
 
 CUDA／ROCm 使用者若缺少 CPU ASR sidecar，可在「ASR 模型管理」內安裝，或下載：
 
-- `StreamTranslator-CPU-ASR-Sidecar-v1.3.9.zip`
+- `StreamTranslator-CPU-ASR-Sidecar-v1.3.10.zip`
 
 Sidecar 只包含 CPU ASR Runtime，不包含模型權重；模型仍須在模型管理頁另行下載。
+
+v1.3.10 的三種 Full package 都不包含 `llama` 資料夾。這是預期行為，可避免把過時的 llama.cpp Runtime 一起帶入；首次啟用本地 LLM 時，請依使用教學下載 Runtime。
 
 ## 快速開始
 
@@ -217,7 +224,7 @@ Runtime 與 GGUF 模型是兩個不同項目：Runtime 決定推論後端，GGUF
 
 ## 媒體輸入注意事項
 
-- v1.3.9 打包版內建 Node.js 22+，yt-dlp 會自動指定 JavaScript Runtime。
+- v1.3.10 打包版內建 Node.js 22+，yt-dlp 會自動指定 JavaScript Runtime。
 - YouTube、Twitch 等平台可能要求登入 Cookie；可在輸入選項選擇瀏覽器 Cookie 或匯入 Netscape `cookies.txt`。
 - 使用瀏覽器 Cookie 時，Firefox 通常比受 App-Bound Encryption 保護的 Chromium 瀏覽器更容易讀取。
 - 系統聲音擷取使用 Windows 音訊裝置；請確認輸出裝置與程式選擇一致。
@@ -229,7 +236,7 @@ Runtime 與 GGUF 模型是兩個不同項目：Runtime 決定推論後端，GGUF
 - 字幕匯出：由輸出與通知設定指定
 - 日誌：程式資料目錄下的 `logs`
 
-請勿將程式解壓到需要系統管理員權限才能寫入的位置。Windows 若暫時鎖定配置檔，v1.3.9 會重試並保留已載入設定，不再直接回退預設值。
+請勿將程式解壓到需要系統管理員權限才能寫入的位置。Windows 若暫時鎖定配置檔，v1.3.10 會重試並保留已載入設定，不再直接回退預設值。
 
 ## 從原始碼執行
 
@@ -260,11 +267,11 @@ python .\main.py
 cd .\app
 
 # 快速驗證
-.\build_all_profiles.ps1 -Version 1.3.9 -Mode Quick -ReuseRuntimeCache
+.\build_all_profiles.ps1 -Version 1.3.10 -Mode Quick -ReuseRuntimeCache
 
 # 正式發佈
 .\build_all_profiles.ps1 `
-  -Version 1.3.9 `
+  -Version 1.3.10 `
   -Mode Final `
   -ReuseRuntimeCache `
   -CompressionLevel 7 `
@@ -272,7 +279,7 @@ cd .\app
   -CopyThreads 16
 ```
 
-正式資產輸出至 `app/release-v1.3.9-assets/`，包含 App Update、Full package 分割檔、manifest、SHA-256 清單與合併工具。
+正式資產輸出至 `app/release-v1.3.10-assets/`，包含 App Update、Full package 分割檔、manifest、SHA-256 清單與合併工具。
 
 ## 專案來源
 

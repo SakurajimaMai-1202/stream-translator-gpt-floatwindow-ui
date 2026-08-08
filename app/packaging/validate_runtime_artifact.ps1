@@ -94,7 +94,7 @@ if ($Profile -ne "cpu") {
         if ($cpuAsrManifest.profile -ne "cpu" -or $cpuAsrManifest.torch_backend -ne "none" -or -not $cpuAsrManifest.sherpa_onnx) {
             throw "CPU ASR sidecar manifest is invalid: $cpuAsrManifestPath"
         }
-        & $cpuAsrPython -c "import importlib.util, sherpa_onnx, stream_translator_gpt.main; assert importlib.util.find_spec('torch') is None, 'CPU ASR sidecar must not include torch'; print(sherpa_onnx.__version__)"
+        & $cpuAsrPython -I -c "import glob, pathlib, importlib.util, sherpa_onnx, stream_translator_gpt.main, sys; from pathlib import Path; root=Path(sys.executable).resolve().parent; paths=[Path(pathlib.__file__).resolve(), Path(glob.__file__).resolve()]; assert all(root == p.parent or root in p.parents for p in paths), paths; assert importlib.util.find_spec('torch') is None, 'CPU ASR sidecar must not include torch'; print(sherpa_onnx.__version__)"
         if ($LASTEXITCODE -ne 0) { throw "CPU ASR sidecar runtime validation failed: $cpuAsrRuntimePath" }
         $cpuAsrSidecar = $cpuAsrManifest.sherpa_onnx
     }

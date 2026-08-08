@@ -3,7 +3,8 @@ import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router';
 import { useTranslationStore } from '../stores/translation';
 import { useLlamaStore } from '../stores/llama';
-import { translationApi, configApi, serverApi, systemApi, type AudioSource, type AudioDevice, type Config, type FfmpegCheckResult } from '../services/api';
+import { useModelDownloadStore } from '../stores/modelDownload';
+import { translationApi, configApi, serverApi, systemApi, type AudioSource, type AudioDevice, type Config, type FfmpegCheckResult, type ModelComputeBackend, type ModelEngine } from '../services/api';
 import UiSelect, { type UiSelectOption } from '../components/UiSelect.vue';
 import { useAppSyncEvents } from '../composables/useAppSyncEvents';
 import {
@@ -15,6 +16,7 @@ import {
 const router = useRouter();
 const store = useTranslationStore();
 const llamaStore = useLlamaStore();
+const modelDownloadStore = useModelDownloadStore();
 
 // 公開端口（分享用）
 const publicPort = ref(8765);
@@ -166,6 +168,7 @@ async function toggleSubtitleSharing() {
 // 基本控制
 const urlInput = ref('');
 const isLoading = ref(false);
+const isPreparingAsrModel = ref(false);
 const showAdvancedConfig = ref(true);
 
 // 音訊來源選擇
@@ -361,6 +364,47 @@ const selectedInputLanguage = ref('auto');
 const selectedOutputLanguage = ref('Traditional Chinese');
 const selectedBackend = ref('gpt');
 const translationEnabled = ref(true);  // 🔧 新增: 翻譯開關
+
+const localLlmModelName = computed(() => {
+  const value = llamaStore.currentModel || llamaStore.selectedModelPath;
+  if (!value) return '尚未選擇模型';
+  return value.split(/[\\/]/).pop()?.replace(/\.gguf$/i, '') || value;
+});
+const selectedDownloadEngine = computed<ModelEngine | null>(() => {
+  if (['faster-whisper', 'simul-streaming', 'faster-whisper-simul'].includes(selectedTranscriptionEngine.value)) return 'faster-whisper';
+  if (['qwen3-asr', 'sensevoice', 'fun-asr-nano', 'parakeet-ctc-ja'].includes(selectedTranscriptionEngine.value)) {
+    return selectedTranscriptionEngine.value as ModelEngine;
+  }
+  return null;
+});
+const selectedModelComputeBackend = computed<ModelComputeBackend>(() =>
+  store.runtimeStatus?.effective_asr_compute_backend === 'cpu' || selectedAsrComputeBackend.value === 'cpu' ? 'cpu' : 'gpu'
+);
+const selectedAsrDownloadTask = computed(() => selectedDownloadEngine.value
+  ? modelDownloadStore.getTask(selectedDownloadEngine.value, selectedAsrModelId.value, selectedModelComputeBackend.value)
+  : undefined
+);
+const selectedAsrModelDownloaded = computed(() => !selectedDownloadEngine.value || modelDownloadStore.isDownloaded(
+  selectedDownloadEngine.value,
+  selectedAsrModelId.value,
+  selectedModelComputeBackend.value,
+));
+
+const localLlmStatusLabel = computed(() => {
+  if (llamaStore.isLoading) return llamaStore.localLlmEnabled ? '正在啟動' : '正在停止';
+  if (llamaStore.isServerReady) return '服務已就緒';
+  if (llamaStore.isServerRunning) return '模型載入中';
+  if (llamaStore.localLlmEnabled && llamaStore.serverStatus.last_error) return '啟動失敗';
+  return llamaStore.localLlmEnabled ? '等待啟動' : '目前關閉';
+});
+
+const localLlmStatusDescription = computed(() => {
+  if (!llamaStore.selectedModelPath) return '請先到「LLM 模型管理」選擇 GGUF 模型';
+  if (llamaStore.isServerReady) return '即時轉譯會使用此模型進行本地翻譯';
+  if (llamaStore.isLoading || llamaStore.isServerRunning) return '正在載入模型，完成後即可開始轉譯';
+  if (llamaStore.localLlmEnabled && llamaStore.serverStatus.last_error) return llamaStore.serverStatus.last_error;
+  return '開啟後會啟動 llama.cpp，關閉則不使用本地模型';
+});
 
 // 自動保存 debounce timer
 const runtimeCapabilities = computed(() => store.runtimeStatus?.asr_capabilities || store.runtimeStatus?.capabilities || null);
@@ -875,6 +919,7 @@ onMounted(async () => {
   // 載入公開端口資訊
   await fetchPublicPort();
   await checkSystemDependencies();
+  await modelDownloadStore.refreshAll();
   // Llama 初始化在背景執行，不阻塞頁面顯示
   llamaStore.initialize().catch((e: any) => {
     console.warn('[HomeView] llamaStore 初始化失敗:', e);
@@ -959,6 +1004,33 @@ async function handleStart() {
     store.errorMessage = '請先修正配置錯誤';
     return;
   }
+
+  if (selectedDownloadEngine.value && !selectedAsrModelDownloaded.value) {
+    const confirmed = window.confirm(
+      `尚未下載 ASR 模型「${selectedAsrModelId.value}」。\n\n要現在下載嗎？下載完成後會自動繼續啟動即時轉譯。`
+    );
+    if (!confirmed) {
+      store.errorMessage = '需要先下載所選的 ASR 模型才能開始轉譯';
+      return;
+    }
+    try {
+      isPreparingAsrModel.value = true;
+      addLog(`⬇️ 開始下載 ASR 模型：${selectedAsrModelId.value}`);
+      await modelDownloadStore.ensureDownloaded(
+        selectedDownloadEngine.value,
+        selectedAsrModelId.value,
+        selectedModelComputeBackend.value,
+      );
+      addLog(`✅ ASR 模型下載完成：${selectedAsrModelId.value}`);
+    } catch (error: any) {
+      const message = error.response?.data?.detail || error.message || '模型下載失敗';
+      store.errorMessage = message;
+      addLog(`❌ ASR 模型下載失敗：${message}`);
+      return;
+    } finally {
+      isPreparingAsrModel.value = false;
+    }
+  }
   isLoading.value = true;
   addLog('啟動翻譯系統...');
   addLog(`音訊來源: ${audioSource.value}`);
@@ -974,6 +1046,11 @@ async function handleStart() {
   addLog(`目標語言: ${selectedOutputLanguage.value}`);
   
   try {
+    if (llamaStore.localLlmEnabled && !llamaStore.isServerReady) {
+      addLog('🦙 正在啟動本地 LLM...');
+      await llamaStore.startServer();
+      addLog('✅ 本地 LLM 已就緒');
+    }
     // 使用新的 API 格式
     const result = await translationApi.start({
       audio_source: audioSource.value,
@@ -1038,6 +1115,36 @@ async function handleStart() {
     store.errorMessage = error.message;
   } finally {
     isLoading.value = false;
+  }
+}
+
+async function handleLocalLlmToggle(event: Event) {
+  const enabled = (event.target as HTMLInputElement).checked;
+  try {
+    await llamaStore.setLocalLlmEnabled(enabled);
+    addLog(enabled ? '✅ 已啟用本地 LLM' : '⏹️ 已停用本地 LLM');
+  } catch (error: any) {
+    addLog(`❌ 本地 LLM 切換失敗: ${error.response?.data?.detail || error.message}`);
+  }
+}
+
+async function downloadSelectedAsrModel() {
+  if (!selectedDownloadEngine.value || selectedAsrModelDownloaded.value) return;
+  try {
+    isPreparingAsrModel.value = true;
+    addLog(`⬇️ 開始下載 ASR 模型：${selectedAsrModelId.value}`);
+    await modelDownloadStore.ensureDownloaded(
+      selectedDownloadEngine.value,
+      selectedAsrModelId.value,
+      selectedModelComputeBackend.value,
+    );
+    addLog(`✅ ASR 模型下載完成：${selectedAsrModelId.value}`);
+  } catch (error: any) {
+    const message = error.response?.data?.detail || error.message || '模型下載失敗';
+    store.errorMessage = message;
+    addLog(`❌ ASR 模型下載失敗：${message}`);
+  } finally {
+    isPreparingAsrModel.value = false;
   }
 }
 
@@ -1114,13 +1221,18 @@ function clearLogs() {
             </span>
           </div>
         </div>
-        <div v-if="store.currentUrl" class="text-white/40 text-[10px] truncate max-w-xs sm:max-w-md font-mono bg-white/5 px-2.5 py-0.5 rounded-lg border border-white/5">
-          {{ store.currentUrl }}
+        <div class="flex items-center gap-2 min-w-0">
+          <div v-if="store.currentUrl" class="text-white/40 text-[10px] truncate max-w-xs sm:max-w-md font-mono bg-white/5 px-2.5 py-0.5 rounded-lg border border-white/5">
+            {{ store.currentUrl }}
+          </div>
+          <button type="button" class="rounded-lg border border-cyan-400/20 bg-cyan-400/10 px-2.5 py-1 text-[10px] font-bold text-cyan-200 transition hover:bg-cyan-400/20" @click="router.push('/guide')">
+            ？ 使用教學
+          </button>
         </div>
       </div>
 
       <!-- System notification blocks -->
-      <div v-if="showFfmpegWarning" class="mb-4 p-3.5 bg-yellow-500/10 border border-yellow-500/30 text-yellow-200 rounded-xl flex justify-between items-start gap-3 backdrop-blur-xl">
+      <div v-if="showFfmpegWarning" class="mb-4 p-3.5 bg-yellow-950/70 border border-yellow-500/30 text-yellow-200 rounded-xl flex justify-between items-start gap-3">
         <div class="flex-1">
           <div class="font-bold text-sm">⚠️ 未偵測到 ffmpeg</div>
           <p class="text-xs text-yellow-100/70 mt-1 leading-relaxed">
@@ -1131,7 +1243,7 @@ function clearLogs() {
       </div>
 
       <!-- 配置警告面板 (僅在有警告/錯誤時動態顯示) -->
-      <div v-if="configWarnings.length > 0" class="mb-4 p-4 rounded-xl backdrop-blur-xl bg-slate-900/60 border"
+      <div v-if="configWarnings.length > 0" class="mb-4 p-4 rounded-xl bg-slate-950/90 border"
         :class="hasErrors ? 'border-red-500/30 bg-red-500/10' : 'border-yellow-500/30 bg-yellow-500/10'">
         <div class="flex items-center gap-2 mb-2">
           <span class="text-base">{{ hasErrors ? '❌' : '⚠️' }}</span>
@@ -1154,24 +1266,24 @@ function clearLogs() {
       </div>
 
       <!-- Error/Status Messages -->
-      <div v-if="store.errorMessage" class="mb-4 p-3.5 bg-red-500/20 backdrop-blur-xl border border-red-500/30 text-red-200 rounded-xl flex justify-between items-center text-sm">
+      <div v-if="store.errorMessage" class="mb-4 p-3.5 bg-red-950/80 border border-red-500/30 text-red-200 rounded-xl flex justify-between items-center text-sm">
         <span class="flex items-center gap-2"><span>❌</span> {{ store.errorMessage }}</span>
         <button @click="store.clearError()" class="text-red-400 hover:text-white transition font-bold text-lg p-1">✕</button>
       </div>
 
-      <div v-if="store.statusMessage" class="mb-4 p-3.5 bg-green-500/20 backdrop-blur-xl border border-green-500/30 text-green-200 rounded-xl flex justify-between items-center text-sm">
+      <div v-if="store.statusMessage" class="mb-4 p-3.5 bg-green-950/80 border border-green-500/30 text-green-200 rounded-xl flex justify-between items-center text-sm">
         <span class="flex items-center gap-2"><span>ℹ️</span> {{ store.statusMessage }}</span>
         <button @click="store.clearStatus()" class="text-green-400 hover:text-white transition font-bold text-lg p-1">✕</button>
       </div>
 
       <!-- Dashboard Grid Layout -->
-      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+      <div class="grid grid-cols-1 items-start gap-6 lg:grid-cols-12 lg:items-stretch">
         
         <!-- Left Column: Controls & Configuration (col-span-7 or 8) -->
         <div class="lg:col-span-7 xl:col-span-8 space-y-6">
           
           <!-- Main Control Card -->
-          <div class="bg-slate-950/40 backdrop-blur-xl rounded-2xl border border-white/10 shadow-2xl p-5">
+          <div class="bg-slate-950/90 rounded-2xl border border-white/10 shadow-2xl p-5">
             
             <!-- 音訊來源選擇 -->
             <div class="mb-5">
@@ -1396,18 +1508,55 @@ function clearLogs() {
                     />
                   </div>
 
-                  <!-- 翻譯後端 -->
+                  <!-- 翻譯模型／後端 -->
                   <div class="flex flex-col md:col-span-3">
-                    <label class="text-white/50 text-[9px] font-bold tracking-wider mb-1">翻譯後端</label>
+                    <label class="text-white/70 text-[10px] font-bold tracking-wider mb-1">🧠 翻譯模型／後端</label>
                     <UiSelect
                       v-model="selectedBackend"
                       :options="backendOptions"
                       :disabled="store.isRunning || !translationEnabled"
                       button-class="bg-white/5 border border-white/10 text-[10px] rounded-lg disabled:opacity-40"
                     />
+                    <p class="mt-1 text-[9px] text-cyan-200/55">翻譯開關開啟後，ASR 只負責把聲音轉成文字；這裡的模型才負責翻譯成目標語言。</p>
                   </div>
                 </div>
               </Transition>
+            </div>
+
+            <div
+              v-if="selectedDownloadEngine && (!selectedAsrModelDownloaded || (selectedAsrDownloadTask && ['pending', 'downloading', 'failed'].includes(selectedAsrDownloadTask.status)))"
+              class="mb-4 rounded-xl border p-3"
+              :class="selectedAsrDownloadTask?.status === 'failed' ? 'border-rose-400/20 bg-rose-950/20' : 'border-cyan-400/15 bg-cyan-950/20'"
+            >
+              <div class="flex items-center justify-between gap-3">
+                <div class="min-w-0">
+                  <div class="flex items-center gap-2 text-[10px] font-bold text-cyan-200">
+                    <span>{{ selectedAsrDownloadTask && ['pending', 'downloading'].includes(selectedAsrDownloadTask.status) ? '⬇️ ASR 模型下載中' : '📦 尚未下載 ASR 模型' }}</span>
+                    <span v-if="selectedAsrDownloadTask && ['pending', 'downloading'].includes(selectedAsrDownloadTask.status)" class="rounded-full bg-cyan-400/10 px-2 py-0.5 text-cyan-300">
+                      {{ Math.round(selectedAsrDownloadTask.progress * 100) }}%
+                    </span>
+                  </div>
+                  <p class="mt-1 truncate text-[11px] font-semibold text-white/80">{{ selectedAsrModelId }}</p>
+                  <p class="mt-0.5 text-[9px] text-white/40">
+                    {{ selectedAsrDownloadTask?.error || selectedAsrDownloadTask?.message || '開始轉譯時會提醒並可自動下載，完成後接續啟動。' }}
+                  </p>
+                </div>
+                <button
+                  v-if="!selectedAsrDownloadTask || !['pending', 'downloading'].includes(selectedAsrDownloadTask.status)"
+                  type="button"
+                  class="flex-shrink-0 rounded-lg bg-cyan-600 px-3 py-1.5 text-[10px] font-bold text-white transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:opacity-50"
+                  :disabled="isPreparingAsrModel"
+                  @click="downloadSelectedAsrModel"
+                >
+                  {{ isPreparingAsrModel ? '準備中…' : '立即下載' }}
+                </button>
+              </div>
+              <div v-if="selectedAsrDownloadTask && ['pending', 'downloading'].includes(selectedAsrDownloadTask.status)" class="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
+                <div
+                  class="h-full rounded-full bg-gradient-to-r from-cyan-500 to-emerald-400 transition-all duration-500"
+                  :style="{ width: `${Math.max(3, selectedAsrDownloadTask.progress * 100)}%` }"
+                ></div>
+              </div>
             </div>
 
             <!-- 控制按鈕 (啟動/停止 與 字幕視窗) -->
@@ -1416,10 +1565,10 @@ function clearLogs() {
               <button
                 v-if="!store.isRunning"
                 @click="handleStart"
-                :disabled="isLoading || !isConfigReady"
+                :disabled="isLoading || isPreparingAsrModel || !isConfigReady"
                 class="flex-1 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:via-indigo-500 hover:to-purple-500 disabled:from-slate-800 disabled:to-slate-900 disabled:text-white/40 disabled:border-white/5 disabled:shadow-none text-white font-bold py-3.5 px-5 rounded-xl transition-all duration-200 active:scale-[0.98] shadow-lg shadow-indigo-600/20 flex items-center justify-center gap-2"
               >
-                <span class="text-sm font-semibold">{{ isLoading ? '⏳ 啟動中...' : '▶️ 啟動即時轉譯' }}</span>
+                <span class="text-sm font-semibold">{{ isPreparingAsrModel ? '⬇️ 正在下載 ASR 模型...' : isLoading ? '⏳ 啟動中...' : '▶️ 啟動即時轉譯' }}</span>
               </button>
 
               <button
@@ -1443,53 +1592,79 @@ function clearLogs() {
 
           </div>
 
-          <!-- Llama 伺服器狀態列 (精簡版) -->
-          <div v-if="selectedBackend === 'llama' || llamaStore.isServerRunning" class="p-3 bg-slate-950/40 rounded-2xl border border-white/5 backdrop-blur-md flex items-center justify-between gap-3">
-            <div class="flex items-center gap-2.5 min-w-0">
-              <div :class="[
-                'w-2 h-2 rounded-full relative flex-shrink-0',
-                llamaStore.isServerReady ? 'bg-green-400 shadow-md shadow-green-400/50' : 
-                llamaStore.isServerRunning ? 'bg-orange-400 animate-pulse' : 'bg-gray-500'
-              ]">
-                <span v-if="llamaStore.isServerRunning && !llamaStore.isServerReady" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75"></span>
+          <!-- 本地 LLM 快速控制 -->
+          <div
+            class="relative overflow-hidden rounded-2xl border p-4 transition-all duration-300"
+            :class="llamaStore.localLlmEnabled
+              ? 'border-emerald-400/25 bg-gradient-to-r from-emerald-950/35 via-slate-950/95 to-cyan-950/25 shadow-lg shadow-emerald-950/20'
+              : 'border-white/5 bg-slate-950/90'"
+          >
+            <div v-if="llamaStore.localLlmEnabled" class="pointer-events-none absolute inset-y-0 left-0 w-1 bg-gradient-to-b from-emerald-400 to-cyan-500"></div>
+            <div class="flex items-center justify-between gap-4">
+              <div class="flex min-w-0 items-center gap-3">
+                <div
+                  class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl border text-lg transition-colors"
+                  :class="llamaStore.localLlmEnabled ? 'border-emerald-400/20 bg-emerald-400/10' : 'border-white/5 bg-white/[0.03]'"
+                >
+                  🧠
+                </div>
+                <div class="min-w-0">
+                  <div class="mb-1 flex flex-wrap items-center gap-2">
+                    <h3 class="text-xs font-bold tracking-wide text-white">本地 LLM 翻譯</h3>
+                    <span
+                      class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[9px] font-bold"
+                      :class="llamaStore.isServerReady
+                        ? 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300'
+                        : llamaStore.isServerRunning || llamaStore.isLoading
+                          ? 'border-amber-400/25 bg-amber-400/10 text-amber-300'
+                          : 'border-white/10 bg-white/5 text-white/40'"
+                    >
+                      <span
+                        class="h-1.5 w-1.5 rounded-full"
+                        :class="llamaStore.isServerReady ? 'bg-emerald-400' : llamaStore.isServerRunning || llamaStore.isLoading ? 'animate-pulse bg-amber-400' : 'bg-slate-500'"
+                      ></span>
+                      {{ localLlmStatusLabel }}
+                    </span>
+                  </div>
+                  <p class="truncate text-[11px] font-semibold" :class="llamaStore.selectedModelPath ? 'text-cyan-200/90' : 'text-amber-300/80'">
+                    {{ localLlmModelName }}
+                  </p>
+                  <p class="mt-0.5 max-w-[560px] truncate text-[9px] text-white/35" :title="localLlmStatusDescription">
+                    {{ localLlmStatusDescription }}
+                  </p>
+                </div>
               </div>
-              <div class="min-w-0">
-                <h3 class="text-white/80 text-[10px] font-bold tracking-wide">Llama 本地翻譯伺服器</h3>
-                <p class="text-white/40 text-[9px] truncate font-mono">
-                  {{ 
-                    llamaStore.isServerReady ? `就緒 (${llamaStore.currentModel || '未知模型'})` : 
-                    llamaStore.isServerRunning ? '正在啟動服務...' : '已停止' 
-                  }}
-                </p>
-              </div>
+
+              <label
+                class="flex flex-shrink-0 items-center gap-2.5"
+                :class="llamaStore.isLoading || (!llamaStore.selectedModelPath && !llamaStore.localLlmEnabled) ? 'cursor-not-allowed opacity-45' : 'cursor-pointer'"
+                :title="!llamaStore.selectedModelPath ? '請先到 LLM 模型管理選擇模型' : llamaStore.localLlmEnabled ? '關閉本地 LLM' : '啟動本地 LLM'"
+              >
+                <span class="text-[10px] font-bold" :class="llamaStore.localLlmEnabled ? 'text-emerald-300' : 'text-white/45'">
+                  {{ llamaStore.localLlmEnabled ? '開啟' : '關閉' }}
+                </span>
+                <span class="relative inline-flex">
+                  <input
+                    type="checkbox"
+                    class="peer sr-only"
+                    :checked="llamaStore.localLlmEnabled"
+                    :disabled="llamaStore.isLoading || (!llamaStore.selectedModelPath && !llamaStore.localLlmEnabled)"
+                    @change="handleLocalLlmToggle"
+                  />
+                  <span class="h-6 w-12 rounded-full border border-white/10 bg-slate-700 shadow-inner transition-all duration-300 peer-checked:border-emerald-400/40 peer-checked:bg-emerald-500 peer-focus-visible:ring-2 peer-focus-visible:ring-emerald-300/50"></span>
+                  <span class="absolute left-1 top-1 h-4 w-4 rounded-full bg-white shadow-md transition-transform duration-300 peer-checked:translate-x-6"></span>
+                </span>
+              </label>
             </div>
-            
-            <button
-              v-if="!llamaStore.isServerRunning"
-              @click="llamaStore.startServer()"
-              :disabled="!llamaStore.selectedModelPath || llamaStore.isLoading"
-              class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-white/40 disabled:cursor-not-allowed text-white rounded-lg transition font-bold text-[10px] flex items-center gap-1 shadow-sm"
-            >
-              {{ llamaStore.isLoading ? '⏳' : '🚀' }} 啟動
-            </button>
-            
-            <button
-              v-else
-              @click="llamaStore.stopServer()"
-              :disabled="llamaStore.isLoading"
-              class="px-3 py-1.5 bg-red-600/80 hover:bg-red-500 text-white rounded-lg transition font-bold text-[10px] shadow-sm"
-            >
-              ⏹️ 停止
-            </button>
           </div>
 
         </div>
 
         <!-- Right Column: Monitoring & Sharing (col-span-5 or 4) -->
-        <div class="lg:col-span-5 xl:col-span-4 space-y-6">
+        <div class="flex h-full flex-col gap-6 lg:col-span-5 xl:col-span-4">
           
           <!-- 執行日誌 -->
-          <div class="bg-slate-950/40 backdrop-blur-xl rounded-2xl border border-white/10 shadow-2xl p-4 flex flex-col h-[270px]">
+          <div class="flex min-h-[400px] flex-1 flex-col rounded-2xl border border-white/10 bg-slate-950/90 p-4 shadow-2xl">
             <div class="flex items-center justify-between mb-2.5">
               <h2 class="text-xs font-bold text-white tracking-widest uppercase flex items-center gap-1.5">
                 <span class="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
@@ -1509,7 +1684,7 @@ function clearLogs() {
           </div>
 
           <!-- 🌐 公開分享連結 -->
-          <div class="bg-slate-950/40 backdrop-blur-xl rounded-2xl border border-indigo-500/20 shadow-2xl p-4">
+          <div class="bg-slate-950/90 rounded-2xl border border-indigo-500/20 shadow-2xl p-4">
             <div class="flex items-center justify-between mb-2.5">
               <h2 class="text-xs font-bold text-white tracking-widest uppercase flex items-center gap-1.5">
                 <span class="w-1.5 h-1.5 rounded-full bg-indigo-400"></span>

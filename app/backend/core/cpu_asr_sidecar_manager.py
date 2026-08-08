@@ -157,7 +157,14 @@ class CpuAsrSidecarManager:
         if not manifest.get("sherpa_onnx"):
             raise RuntimeError("CPU ASR sidecar manifest does not declare sherpa-onnx")
         result = subprocess.run(
-            [str(python), "-c", "import sherpa_onnx, stream_translator_gpt.main; print(sherpa_onnx.__version__)"],
+            [
+                str(python), "-I", "-c",
+                "import glob, pathlib, sherpa_onnx, stream_translator_gpt.main, sys; "
+                "from pathlib import Path; root=Path(sys.executable).resolve().parent; "
+                "paths=[Path(pathlib.__file__).resolve(), Path(glob.__file__).resolve()]; "
+                "assert all(root == p.parent or root in p.parents for p in paths), paths; "
+                "print(sherpa_onnx.__version__)",
+            ],
             cwd=str(runtime), capture_output=True, text=True, timeout=90,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )

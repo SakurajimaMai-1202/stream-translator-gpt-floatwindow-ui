@@ -71,7 +71,7 @@ export const useModelDownloadStore = defineStore('modelDownload', () => {
       const existing = taskMap.value[`${computeBackend}:${engine}:${modelId}`];
       if (existing && (existing.status === 'pending' || existing.status === 'downloading')) {
         successMessage.value = '此模型已在下載中';
-        return;
+        return existing.task_id;
       }
 
       const response = await modelApi.startDownload({
@@ -83,8 +83,33 @@ export const useModelDownloadStore = defineStore('modelDownload', () => {
       successMessage.value = response.message || '下載任務已啟動';
       await loadTasks();
       startPolling();
+      return response.task_id;
     } catch (error: any) {
       errorMessage.value = `啟動下載失敗: ${error?.response?.data?.detail || error?.message || error}`;
+      throw error;
+    }
+  }
+
+  async function ensureDownloaded(engine: ModelEngine, modelId: string, computeBackend: ModelComputeBackend = 'gpu') {
+    await loadDownloadedModels();
+    if (isDownloaded(engine, modelId, computeBackend)) return;
+
+    const taskId = await startDownload(engine, modelId, computeBackend);
+    if (!taskId) throw new Error('無法建立模型下載任務');
+
+    while (true) {
+      await loadTasks();
+      const task = tasks.value.find((item) => item.task_id === taskId);
+      if (!task) throw new Error('找不到模型下載任務');
+      if (task.status === 'completed') {
+        await loadDownloadedModels();
+        successMessage.value = `模型下載完成：${modelId}`;
+        return;
+      }
+      if (task.status === 'failed') {
+        throw new Error(task.error || task.message || '模型下載失敗');
+      }
+      await new Promise(resolve => window.setTimeout(resolve, POLL_INTERVAL_MS));
     }
   }
 
@@ -170,6 +195,7 @@ export const useModelDownloadStore = defineStore('modelDownload', () => {
     successMessage,
     refreshAll,
     startDownload,
+    ensureDownloaded,
     openStorage,
     deleteModel,
     pollOnce,

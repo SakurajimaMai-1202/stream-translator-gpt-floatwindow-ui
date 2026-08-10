@@ -2,7 +2,10 @@ import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { modelApi, type DownloadedModelInfo, type ModelDownloadTask, type ModelEngine, type ModelComputeBackend, type ModelStorageInfo } from '../services/api';
 
-const POLL_INTERVAL_MS = 1500;
+// Backend download callbacks update byte progress twice per second. Poll at
+// the same cadence so large ASR downloads visibly move instead of appearing
+// stuck between coarse status transitions.
+const POLL_INTERVAL_MS = 500;
 
 export const useModelDownloadStore = defineStore('modelDownload', () => {
   const tasks = ref<ModelDownloadTask[]>([]);
@@ -185,6 +188,14 @@ export const useModelDownloadStore = defineStore('modelDownload', () => {
     return `${sizeBytes} B`;
   }
 
+  function displayProgress(task?: ModelDownloadTask): number {
+    if (!task) return 0;
+    if (task.total_bytes > 0) {
+      return Math.min(1, Math.max(0, task.downloaded_bytes / task.total_bytes));
+    }
+    return Math.min(1, Math.max(0, task.progress || 0));
+  }
+
   return {
     tasks,
     downloadedModels,
@@ -202,6 +213,7 @@ export const useModelDownloadStore = defineStore('modelDownload', () => {
     startPolling,
     stopPolling,
     getTask,
+    displayProgress,
     isDownloaded,
     formatSize,
     clearMessages

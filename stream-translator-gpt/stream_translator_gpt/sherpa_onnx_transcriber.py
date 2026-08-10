@@ -10,6 +10,7 @@ import numpy as np
 
 from .audio_transcriber import AudioTranscriber
 from .common import INFO, SAMPLE_RATE
+from .qwen3_asr_postprocess import strip_qwen3_asr_markers
 from .sherpa_onnx_models import get_sherpa_model_spec, resolve_sherpa_model_dir
 
 
@@ -35,6 +36,7 @@ class SherpaOnnxTranscriber(AudioTranscriber):
                  num_threads: int | None = None, sherpa_module: Any | None = None, **kwargs) -> None:
         super().__init__(**kwargs)
         self.model_id = model
+        self.output_language = language
         self.language = _language_hint(language)
         self.spec = get_sherpa_model_spec(model)
         self.model_dir = resolve_sherpa_model_dir(model, model_root)
@@ -45,7 +47,7 @@ class SherpaOnnxTranscriber(AudioTranscriber):
             except ImportError as exc:
                 raise RuntimeError(
                     "The CPU runtime requires sherpa-onnx. Install the CPU package or run "
-                    "pip install sherpa-onnx==1.12.36."
+                    "pip install sherpa-onnx==1.13.4."
                 ) from exc
         print(f"{INFO}Loading CPU sherpa-onnx model: {model} ({self.num_threads} threads)")
         self.recognizer = self._create_recognizer(sherpa_module)
@@ -88,5 +90,7 @@ class SherpaOnnxTranscriber(AudioTranscriber):
         self.recognizer.decode_stream(stream)
         result = stream.result
         text = str(getattr(result, "text", "") or "").strip()
+        if self.spec.family == "qwen3_asr":
+            text = strip_qwen3_asr_markers(text)
         tokens = list(getattr(result, "tokens", []) or [])
         return text, tokens or None

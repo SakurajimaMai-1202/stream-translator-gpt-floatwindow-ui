@@ -28,7 +28,7 @@ function statusText(modelId: string) {
   if (!task) return '未下載';
   if (task.status === 'failed') return '下載失敗';
   if (task.status === 'completed') return '已下載';
-  if (task.status === 'downloading') return `下載中 ${(task.progress * 100).toFixed(0)}%`;
+  if (task.status === 'downloading') return `下載中 ${(modelDownloadStore.displayProgress(task) * 100).toFixed(1)}%`;
   return '準備中';
 }
 
@@ -75,7 +75,7 @@ function description(modelId: string) {
           <div class="h-2 bg-white/10 rounded-full overflow-hidden">
             <div
               class="h-full bg-gradient-to-r from-blue-500 to-cyan-400 transition-all"
-              :style="{ width: `${Math.max(5, (getTask(modelId)?.progress || 0) * 100)}%` }"
+              :style="{ width: `${Math.max(5, modelDownloadStore.displayProgress(getTask(modelId)) * 100)}%` }"
             />
           </div>
           <div class="text-xs text-white/60 mt-1">{{ getTask(modelId)?.message }}</div>

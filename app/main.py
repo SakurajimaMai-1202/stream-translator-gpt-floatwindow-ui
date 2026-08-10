@@ -256,6 +256,8 @@ class UI2Application:
             )
             self.home_window.bridge.subtitleUpdated.connect(self.subtitle_window.update_subtitle_json)
             self.home_window.bridge.subtitleSettingsUpdated.connect(self.subtitle_window.update_settings_json)
+            self.home_window.bridge.recordingStateUpdated.connect(self.subtitle_window.update_recording_state)
+            self.subtitle_window.update_recording_state(self.home_window.bridge.is_recording)
         self.subtitle_window.destroyed.connect(lambda: setattr(self, 'subtitle_window', None))
         self.subtitle_window.show()
         self.subtitle_window.raise_()

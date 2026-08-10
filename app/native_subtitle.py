@@ -29,6 +29,7 @@ class NativeSubtitleWindow(QWidget):
         self.on_stop_translation = on_stop_translation
         self._lines: list[dict[str, Any]] = []
         self._history_offset = 0
+        self._is_recording = False
         self._drag_offset: QPoint | None = None
         self._resize_edge = 0
         self._resize_start_global: QPoint | None = None
@@ -39,6 +40,9 @@ class NativeSubtitleWindow(QWidget):
         self._geometry_save_timer.setSingleShot(True)
         self._geometry_save_timer.setInterval(250)
         self._geometry_save_timer.timeout.connect(self._save_geometry)
+        self._typing_timer = QTimer(self)
+        self._typing_timer.setInterval(32)
+        self._typing_timer.timeout.connect(self._advance_typing)
 
         self.settings: dict[str, Any] = {
             "fontSize": 24,
@@ -95,13 +99,58 @@ class NativeSubtitleWindow(QWidget):
         key = data.get("backend_timestamp") or data.get("id")
         index = next((i for i, line in enumerate(self._lines) if (line.get("backend_timestamp") or line.get("id")) == key), -1)
         if index >= 0:
+            previous = self._lines[index]
+            data["_display_original"] = self._reconcile_display(
+                str(previous.get("_display_original", "")), str(data.get("original", ""))
+            )
+            data["_display_translated"] = self._reconcile_display(
+                str(previous.get("_display_translated", "")), str(data.get("translated", ""))
+            )
             self._lines[index] = data
         else:
+            data["_display_original"] = ""
+            data["_display_translated"] = ""
             self._lines.append(data)
         self._lines = self._lines[-50:]
         if self.settings.get("autoScroll", True):
             self._history_offset = 0
+        if self._has_pending_typing():
+            self._typing_timer.start()
         self.update()
+
+    @staticmethod
+    def _reconcile_display(rendered: str, target: str) -> str:
+        """保留仍相同的前綴，避免串流內容修訂時整句閃爍。"""
+        prefix_length = 0
+        for old_char, new_char in zip(rendered, target):
+            if old_char != new_char:
+                break
+            prefix_length += 1
+        return target[:prefix_length]
+
+    def _has_pending_typing(self) -> bool:
+        return any(
+            str(line.get(f"_display_{field}", "")) != str(line.get(field, ""))
+            for line in self._lines
+            for field in ("original", "translated")
+        )
+
+    def _advance_typing(self) -> None:
+        changed = False
+        for line in self._lines:
+            for field in ("original", "translated"):
+                target = str(line.get(field, ""))
+                display_key = f"_display_{field}"
+                rendered = str(line.get(display_key, ""))
+                if len(rendered) < len(target):
+                    # 長句每格多顯示一些字，仍保有清楚的流動感且不拖慢字幕。
+                    step = max(1, (len(target) + 89) // 90)
+                    line[display_key] = target[:len(rendered) + step]
+                    changed = True
+        if changed:
+            self.update()
+        if not self._has_pending_typing():
+            self._typing_timer.stop()
 
     def update_settings_json(self, payload: str) -> None:
         try:
@@ -110,6 +159,10 @@ class NativeSubtitleWindow(QWidget):
             self.update()
         except (TypeError, ValueError, json.JSONDecodeError):
             logger.warning("原生字幕收到無效設定 JSON")
+
+    def update_recording_state(self, is_recording: bool) -> None:
+        self._is_recording = bool(is_recording)
+        self.update()
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
@@ -122,6 +175,15 @@ class NativeSubtitleWindow(QWidget):
         path = QPainterPath()
         path.addRoundedRect(0, 0, self.width(), self.height(), 14, 14)
         painter.fillPath(path, background)
+
+        # 綠色代表正在收音／翻譯；紅色代表尚未啟動或已停止。
+        indicator_color = QColor("#22C55E" if self._is_recording else "#EF4444")
+        painter.setPen(QColor(255, 255, 255, 90))
+        painter.setBrush(indicator_color)
+        indicator_size = 11
+        indicator_x = self.width() - 25 - indicator_size // 2
+        indicator_y = 8
+        painter.drawEllipse(indicator_x, indicator_y, indicator_size, indicator_size)
 
         font_size = max(10, int(self.settings.get("fontSize", 24)))
         font_weight = max(100, min(900, int(self.settings.get("fontWeight", 700))))
@@ -184,11 +246,11 @@ class NativeSubtitleWindow(QWidget):
             ).height() if metadata else 0
             rows: list[tuple[str, QColor, int]] = []
             if self.settings.get("showOriginal", True) and line.get("original"):
-                text = str(line["original"])
+                text = str(line.get("_display_original", line["original"]))
                 height = max(text_metrics.height(), text_metrics.boundingRect(QRect(0, 0, width - 10, 4000), Qt.TextFlag.TextWordWrap, text).height())
                 rows.append((text, QColor(str(self.settings.get("textColor", "#FFFFFF"))), height))
             if self.settings.get("showTranslated", True) and line.get("translated"):
-                text = str(line["translated"])
+                text = str(line.get("_display_translated", line["translated"]))
                 height = max(text_metrics.height(), text_metrics.boundingRect(QRect(0, 0, width - 10, 4000), Qt.TextFlag.TextWordWrap, text).height())
                 rows.append((text, QColor(str(self.settings.get("translatedColor", "#FFDD00"))), height))
             entries.append({
@@ -238,16 +300,16 @@ class NativeSubtitleWindow(QWidget):
             painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, symbol)
 
     def _settings_rect(self) -> QRect:
-        return QRect(self.width() - 42, 8, 34, 30)
+        return QRect(self.width() - 42, 28, 34, 30)
 
     def _close_rect(self) -> QRect:
-        return QRect(self.width() - 42, 116, 32, 32)
+        return QRect(self.width() - 42, 136, 32, 32)
 
     def _stop_rect(self) -> QRect:
-        return QRect(self.width() - 42, 44, 32, 32)
+        return QRect(self.width() - 42, 64, 32, 32)
 
     def _clear_rect(self) -> QRect:
-        return QRect(self.width() - 42, 80, 32, 32)
+        return QRect(self.width() - 42, 100, 32, 32)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
@@ -267,6 +329,7 @@ class NativeSubtitleWindow(QWidget):
                 event.accept()
                 return
             if self._clear_rect().contains(local_pos):
+                self._typing_timer.stop()
                 self._lines.clear()
                 self._history_offset = 0
                 self.update()

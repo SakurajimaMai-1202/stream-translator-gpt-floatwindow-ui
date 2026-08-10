@@ -70,6 +70,8 @@ def main(url, **kwargs):
     disable_transcription_context = kwargs.get('disable_transcription_context', False)
     transcription_initial_prompt = kwargs.get('transcription_initial_prompt')
     asr_corrections_enabled = kwargs.get('asr_corrections_enabled', False)
+    asr_correction_log_enabled = kwargs.get('asr_correction_log_enabled', False)
+    asr_correction_learning_enabled = kwargs.get('asr_correction_learning_enabled', False)
     asr_correction_rules = kwargs.get('asr_correction_rules')
     asr_corrections_case_sensitive = kwargs.get('asr_corrections_case_sensitive', False)
     runtime_profile = kwargs.get('runtime_profile', 'cuda')
@@ -270,8 +272,11 @@ def main(url, **kwargs):
                 'disable_transcription_context': disable_transcription_context,
                 'transcription_initial_prompt': transcription_initial_prompt,
                 'asr_corrections_enabled': asr_corrections_enabled,
+                'asr_correction_log_enabled': asr_correction_log_enabled,
+                'asr_correction_learning_enabled': asr_correction_learning_enabled,
                 'asr_correction_rules': asr_correction_rules,
                 'asr_corrections_case_sensitive': asr_corrections_case_sensitive,
+                'asr_output_language': language,
             }
             if str(asr_compute_backend).lower() == 'cpu':
                 sherpa_model = None

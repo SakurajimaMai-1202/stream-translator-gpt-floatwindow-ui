@@ -350,6 +350,8 @@ export interface ModelDownloadTask {
   compute_backend: ModelComputeBackend;
   status: 'pending' | 'downloading' | 'completed' | 'failed';
   progress: number;
+  downloaded_bytes: number;
+  total_bytes: number;
   message: string;
   error?: string | null;
   created_at: string;

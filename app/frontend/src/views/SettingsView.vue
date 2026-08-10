@@ -667,12 +667,13 @@ const packageProfileLabel = computed(() => {
   return profile.toUpperCase();
 });
 const modelManagementBackend = ref<ModelComputeBackend>(effectiveAsrComputeBackend.value);
-const cpuQwenModels = ['Qwen/Qwen3-ASR-0.6B'];
+const cpuQwenModels = ['Qwen/Qwen3-ASR-0.6B', 'Qwen/Qwen3-ASR-1.7B'];
 const cpuSenseVoiceModels = ['iic/SenseVoiceSmall'];
 const cpuFunAsrModels = ['FunAudioLLM/Fun-ASR-Nano-2512'];
 const cpuParakeetModels = ['nvidia/parakeet-tdt-0.6b-v3', 'nvidia/parakeet-tdt_ctc-0.6b-ja'];
 const cpuQwenDescriptions = {
   'Qwen/Qwen3-ASR-0.6B': 'Sherpa-ONNX 專用 INT8 ONNX bundle；CPU 離線推論，不使用 PyTorch、CUDA dtype 或 4-bit 設定。',
+  'Qwen/Qwen3-ASR-1.7B': 'Sherpa-ONNX INT8 1.7B CPU bundle；準確度較高，但下載約 2.4 GB、推論速度與記憶體需求也高於 0.6B。',
 };
 const cpuSenseVoiceDescriptions = {
   'iic/SenseVoiceSmall': 'Sherpa-ONNX INT8 多語言模型，支援中文、英文、日文、韓文與粵語；CPU 離線推論。',
@@ -1281,6 +1282,219 @@ function removeTermEntry(term: any) {
   if (index >= 0) removeTerm(index);
 }
 
+/**
+ * Parse the two-column files accepted by the settings page.
+ *
+ * The old implementation used `split(',')`, which made an exported glossary
+ * unusable as soon as a term contained a comma, a quote, or a line break.  A
+ * small RFC-4180 compatible parser keeps this dependency-free and also accepts
+ * tab-separated text exported by spreadsheet applications.
+ */
+function parseDelimitedRows(text: string): string[][] {
+  const source = text.replace(/^\uFEFF/, '');
+  const firstLine = source.split(/\r?\n/, 1)[0] || '';
+  const delimiterCounts = { ',': 0, '\t': 0, '，': 0 } as Record<string, number>;
+  let delimiterQuoted = false;
+  for (let index = 0; index < firstLine.length; index += 1) {
+    const character = firstLine[index];
+    if (character === '"') {
+      if (firstLine[index + 1] === '"') index += 1;
+      else delimiterQuoted = !delimiterQuoted;
+    } else if (!delimiterQuoted && character in delimiterCounts) {
+      delimiterCounts[character] += 1;
+    }
+  }
+  const delimiter = (Object.entries(delimiterCounts)
+    .sort((left, right) => right[1] - left[1])[0]?.[1] || 0) > 0
+    ? Object.entries(delimiterCounts).sort((left, right) => right[1] - left[1])[0][0]
+    : ',';
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = '';
+  let quoted = false;
+
+  const pushRow = () => {
+    // Keep quoted whitespace intact, but ignore the incidental whitespace
+    // around unquoted values that is common in hand-written CSV files.
+    row.push(field);
+    if (row.some(value => value.trim())) rows.push(row);
+    row = [];
+    field = '';
+  };
+
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index];
+    if (quoted) {
+      if (character === '"') {
+        if (source[index + 1] === '"') {
+          field += '"';
+          index += 1;
+        } else {
+          quoted = false;
+        }
+      } else {
+        field += character;
+      }
+    } else if (character === '"' && field.trim() === '') {
+      // Permit the common `  "quoted value"` spelling while avoiding the
+      // incidental spaces becoming part of the parsed value.
+      field = '';
+      quoted = true;
+    } else if (character === delimiter) {
+      row.push(field.trim());
+      field = '';
+    } else if (character === '\n') {
+      pushRow();
+    } else if (character === '\r') {
+      if (source[index + 1] === '\n') index += 1;
+      pushRow();
+    } else {
+      field += character;
+    }
+  }
+  if (field.length > 0 || row.length > 0) pushRow();
+  return rows;
+}
+
+function isGlossaryHeader(row: string[]): boolean {
+  const original = (row[0] || '').trim().toLowerCase();
+  const translated = (row[1] || '').trim().toLowerCase();
+  return ['original', 'source', '原文', '來源'].includes(original)
+    && ['translated', 'translation', 'target', '翻譯', '譯文'].includes(translated);
+}
+
+function isAsrCorrectionHeader(row: string[]): boolean {
+  const canonical = (row[0] || '').trim().toLowerCase();
+  return ['canonical', 'standard', 'name', '標準', '標準名稱', '正確名稱'].includes(canonical);
+}
+
+function csvField(value: unknown): string {
+  const text = String(value ?? '');
+  return /[",\r\n\t]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function glossaryExportRows(): string[][] {
+  const terminology = localConfig.value.terminology || {};
+  const rows: string[][] = [];
+  const seen = new Set<string>();
+  const add = (original: unknown, translated: unknown) => {
+    const source = String(original ?? '').trim();
+    const target = String(translated ?? '').trim();
+    if (!source || !target) return;
+    const key = `${source}\u0000${target}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    rows.push([source, target]);
+  };
+
+  if (Array.isArray(terminology.glossary_list)) {
+    for (const term of terminology.glossary_list) add(term?.original, term?.translated);
+  }
+  if (terminology.terminology_glossary && typeof terminology.terminology_glossary === 'object') {
+    for (const [original, translated] of Object.entries(terminology.terminology_glossary)) {
+      add(original, translated);
+    }
+  }
+  // Older configurations used `glossary` as either a JSON object or a small
+  // delimited text block. Include it as well so export always means *all*.
+  if (typeof terminology.glossary === 'string' && terminology.glossary.trim()) {
+    const legacy = terminology.glossary.trim();
+    try {
+      const parsed = JSON.parse(legacy);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        for (const [original, translated] of Object.entries(parsed)) add(original, translated);
+      }
+    } catch {
+      for (const row of parseDelimitedRows(legacy)) {
+        if (row.length >= 2 && !isGlossaryHeader(row)) add(row[0], row[1]);
+      }
+    }
+  }
+  return rows;
+}
+
+function asrCorrectionExportRows(): string[][] {
+  const rawRules = localConfig.value.transcription?.asr_correction_rules;
+  let rules: any[] = Array.isArray(rawRules) ? rawRules : [];
+  if (typeof rawRules === 'string' && rawRules.trim()) {
+    try {
+      const parsed = JSON.parse(rawRules);
+      if (Array.isArray(parsed)) rules = parsed;
+      else if (parsed && typeof parsed === 'object') {
+        rules = Object.entries(parsed).map(([canonical, aliases]) => ({ canonical, aliases }));
+      }
+    } catch {
+      rules = parseDelimitedRows(rawRules).map(row => ({ canonical: row[0], aliases: row.slice(1) }));
+    }
+  }
+
+  const rows: string[][] = [];
+  const seen = new Set<string>();
+  for (const rule of rules) {
+    const canonical = String(rule?.canonical ?? rule?.original ?? '').trim();
+    const aliases = Array.isArray(rule?.aliases)
+      ? rule.aliases
+      : String(rule?.aliases ?? '').split(/[,，\t\r\n]/);
+    const values = [canonical, ...aliases.map((value: unknown) => String(value ?? '').trim())]
+      .filter((value, index, all) => value && (index === 0 || value !== canonical) && all.indexOf(value) === index);
+    if (values.length < 2) continue;
+    const key = values.join('\u0000');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push(values);
+  }
+  return rows;
+}
+
+async function downloadCsv(filename: string, rows: string[][], label: string): Promise<boolean> {
+  if (rows.length === 0) {
+    store.statusMessage = `沒有可匯出的${label}`;
+    return false;
+  }
+  // UTF-8 BOM makes Traditional Chinese display correctly in Excel on
+  // Windows.  CRLF is also the format Excel expects for a CSV file.
+  const csv = `\uFEFF${rows.map(row => row.map(csvField).join(',')).join('\r\n')}\r\n`;
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+
+  // Chromium supports a real Save As dialog in normal browser builds. Use it
+  // when available; this also works around WebView builds that ignore a
+  // synthetic download click.
+  const saveFilePicker = (window as any).showSaveFilePicker;
+  if (typeof saveFilePicker === 'function') {
+    try {
+      const handle = await saveFilePicker({
+        suggestedName: filename,
+        types: [{ description: 'CSV 檔案', accept: { 'text/csv': ['.csv'] } }],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      store.statusMessage = `已匯出全部 ${rows.length} 筆${label}`;
+      return true;
+    } catch (error: any) {
+      // User cancellation is not an error. Other picker failures fall back to
+      // the standard anchor download below.
+      if (error?.name === 'AbortError') return false;
+      console.warn('[SettingsView] Save As CSV 失敗，改用瀏覽器下載:', error);
+    }
+  }
+
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  // Keep the anchor and object URL alive long enough for Qt WebEngine and
+  // Chromium download handlers to receive the click.
+  window.setTimeout(() => {
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }, 10_000);
+  store.statusMessage = `已匯出全部 ${rows.length} 筆${label}`;
+  return true;
+}
+
 function importGlossary() {
   const input = document.createElement('input');
   input.type = 'file';
@@ -1288,15 +1502,11 @@ function importGlossary() {
   input.onchange = async (e: any) => {
     const file = e.target.files[0];
     if (!file) return;
-    const text = await file.text();
-    const lines = text.split('\n').filter((l: string) => l.trim());
-    const newTerms: any[] = [];
-    for (const line of lines) {
-      const parts = line.split(/[,\t]/);
-      if (parts.length >= 2) {
-        newTerms.push({ original: parts[0].trim(), translated: parts[1].trim() });
-      }
-    }
+    const rows = parseDelimitedRows(await file.text());
+    const newTerms: any[] = rows
+      .filter(row => row.length >= 2 && !isGlossaryHeader(row))
+      .map(row => ({ original: row[0].trim(), translated: row[1].trim() }))
+      .filter(term => term.original && term.translated);
     localConfig.value.terminology.glossary_list = [
       ...(localConfig.value.terminology.glossary_list || []),
       ...newTerms
@@ -1307,15 +1517,7 @@ function importGlossary() {
 }
 
 function exportGlossary() {
-  const list = localConfig.value.terminology.glossary_list || [];
-  const csv = list.map((t: any) => `${t.original},${t.translated}`).join('\n');
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'glossary.csv';
-  a.click();
-  URL.revokeObjectURL(url);
+  void downloadCsv('glossary.csv', glossaryExportRows(), '術語');
 }
 
 function addAsrCorrection() {
@@ -1346,11 +1548,16 @@ function importAsrCorrections() {
   input.onchange = async (event: any) => {
     const file = event.target.files[0];
     if (!file) return;
-    const imported = (await file.text())
-      .split(/\r?\n/)
-      .map((line: string) => line.split(/[,，\t]/).map(value => value.trim()).filter(Boolean))
-      .filter((parts: string[]) => parts.length >= 2)
-      .map((parts: string[]) => ({ canonical: parts[0], aliases: parts.slice(1) }));
+    const imported = parseDelimitedRows(await file.text())
+      .filter(row => row.length >= 2 && !isAsrCorrectionHeader(row))
+      .map(row => {
+        const canonical = row[0].trim();
+        const aliases = row.slice(1)
+          .map(value => value.trim())
+          .filter((value, index, values) => value && value !== canonical && values.indexOf(value) === index);
+        return { canonical, aliases };
+      })
+      .filter(rule => rule.canonical && rule.aliases.length > 0);
     localConfig.value.transcription.asr_correction_rules = [
       ...(localConfig.value.transcription.asr_correction_rules || []),
       ...imported,
@@ -1361,15 +1568,7 @@ function importAsrCorrections() {
 }
 
 function exportAsrCorrections() {
-  const rules = localConfig.value.transcription.asr_correction_rules || [];
-  const csv = rules.map((rule: any) => [rule.canonical, ...(rule.aliases || [])].join(',')).join('\n');
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = 'asr-name-corrections.csv';
-  anchor.click();
-  URL.revokeObjectURL(url);
+  void downloadCsv('asr-name-corrections.csv', asrCorrectionExportRows(), 'ASR 修正規則');
 }
 
 // 自訂模型操作
@@ -2016,7 +2215,7 @@ async function handleFileChange(event: Event) {
                   <div class="flex-1">
                     <span class="text-white font-medium">使用 Qwen3-ASR</span>
                     <p class="text-white/50 text-sm mt-1">
-                      <template v-if="isSherpaOnnxMode">使用 Qwen3-ASR 0.6B 的 Sherpa-ONNX INT8 CPU bundle；不套用 dtype、4-bit 或 GPU 裝置設定。</template>
+                      <template v-if="isSherpaOnnxMode">使用 Qwen3-ASR 0.6B／1.7B 的 Sherpa-ONNX INT8 CPU bundle；不套用 dtype、4-bit 或 GPU 裝置設定。</template>
                       <template v-else>使用 Qwen3-ASR GPU 原生模型進行多語言轉錄；CUDA 可攜版已內建所需執行環境。</template>
                     </p>
                   </div>
@@ -2903,10 +3102,10 @@ async function handleFileChange(event: Event) {
               <div class="flex flex-wrap gap-3">
                 <input v-model="asrCorrectionSearchQuery" type="text" placeholder="搜尋標準名稱或誤辨文字..."
                   class="flex-1 min-w-[220px] px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-cyan-400" />
-                <button @click="importAsrCorrections" class="bg-white/10 hover:bg-white/20 text-white font-semibold py-2 px-4 rounded-lg transition border border-white/20">
+                <button type="button" @click="importAsrCorrections" class="bg-white/10 hover:bg-white/20 text-white font-semibold py-2 px-4 rounded-lg transition border border-white/20">
                   匯入 CSV
                 </button>
-                <button @click="exportAsrCorrections" class="bg-white/10 hover:bg-white/20 text-white font-semibold py-2 px-4 rounded-lg transition border border-white/20">
+                <button type="button" @click="exportAsrCorrections" class="bg-white/10 hover:bg-white/20 text-white font-semibold py-2 px-4 rounded-lg transition border border-white/20">
                   匯出 CSV
                 </button>
               </div>
@@ -2972,10 +3171,10 @@ async function handleFileChange(event: Event) {
             <div class="flex flex-wrap gap-3 mb-4">
               <input v-model="termSearchQuery" type="text" placeholder="搜尋術語..."
                 class="flex-1 min-w-[200px] px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
-              <button @click="importGlossary" class="bg-white/10 hover:bg-white/20 text-white font-semibold py-2 px-4 rounded-lg transition border border-white/20">
+              <button type="button" @click="importGlossary" class="bg-white/10 hover:bg-white/20 text-white font-semibold py-2 px-4 rounded-lg transition border border-white/20">
                 📂 匯入 CSV
               </button>
-              <button @click="exportGlossary" class="bg-white/10 hover:bg-white/20 text-white font-semibold py-2 px-4 rounded-lg transition border border-white/20">
+              <button type="button" @click="exportGlossary" class="bg-white/10 hover:bg-white/20 text-white font-semibold py-2 px-4 rounded-lg transition border border-white/20">
                 💾 匯出 CSV
               </button>
             </div>

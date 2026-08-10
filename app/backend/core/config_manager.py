@@ -853,6 +853,11 @@ class ConfigManager:
             ),
             'nemo_asr_dtype': config['transcription'].get('nemo_asr_dtype', 'bfloat16'),
             'asr_corrections_enabled': config['transcription'].get('asr_corrections_enabled', False),
+            # Forward the auxiliary switches edited in SettingsView.  Without
+            # these keys the rule list is loaded, but correction logging and
+            # learned aliases silently remain disabled in the runtime.
+            'asr_correction_log_enabled': config['transcription'].get('asr_correction_log_enabled', False),
+            'asr_correction_learning_enabled': config['transcription'].get('asr_correction_learning_enabled', False),
             'asr_corrections_case_sensitive': config['transcription'].get('asr_corrections_case_sensitive', False),
             'asr_correction_rules': json.dumps(
                 config['transcription'].get('asr_correction_rules', []),
@@ -865,8 +870,11 @@ class ConfigManager:
         if transcription_backend == 'qwen3-asr':
             qwen3_lang_map = {
                 'ja': 'Japanese', 'en': 'English', 'zh': 'Chinese',
-                'zh-tw': 'Chinese', 'zh-hant': 'Chinese',
-                'zh-cn': 'Chinese', 'zh-hans': 'Chinese',
+                # Preserve the requested Chinese script for deterministic
+                # post-ASR OpenCC conversion. The transcriber still maps these
+                # language hints to Chinese when calling the model itself.
+                'zh-tw': 'zh-tw', 'zh-hant': 'zh-hant',
+                'zh-cn': 'zh-cn', 'zh-hans': 'zh-hans',
                 'ko': 'Korean', 'fr': 'French', 'de': 'German',
                 'es': 'Spanish', 'pt': 'Portuguese', 'ru': 'Russian',
                 'it': 'Italian', 'ar': 'Arabic', 'th': 'Thai',

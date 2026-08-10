@@ -81,7 +81,7 @@ function Get-RuntimeProfileDocText {
         [Parameter(Mandatory = $true)]
         [ValidateSet("cuda", "cpu", "rocm")]
         [string]$RuntimeProfile,
-        [string]$Version = "1.3.10",
+        [string]$Version = "1.3.11",
         [Parameter(Mandatory = $true)]
         [ValidateSet("portable_guide", "update_notes", "readme")]
         [string]$Document
@@ -115,11 +115,11 @@ function Get-RuntimeProfileDocText {
         $name = "Stream Translator CPU"
         $status = "相容版"
         $runtime = "CPU profile / sherpa-onnx INT8"
-        $requirements = "不需要 NVIDIA 或 AMD 獨立顯示卡。五個本地模型都透過 sherpa-onnx 在 CPU 執行。"
+        $requirements = "不需要 NVIDIA 或 AMD 獨立顯示卡。六個本地模型都透過 sherpa-onnx 在 CPU 執行。"
         $models = @(
             "Parakeet TDT 0.6B v3 INT8: 25 languages with auto detection",
             "Parakeet TDT-CTC 0.6B INT8: Japanese",
-            "Fun-ASR Nano / SenseVoiceSmall / Qwen3-ASR 0.6B: INT8"
+            "Fun-ASR Nano / SenseVoiceSmall / Qwen3-ASR 0.6B / 1.7B: INT8"
         )
         $notes = @(
             "本版本是 CPU 相容版，不會承諾 GPU 加速。",
@@ -282,7 +282,7 @@ function Write-RuntimeProfileDocs {
         [Parameter(Mandatory = $true)]
         [ValidateSet("cuda", "cpu", "rocm")]
         [string]$RuntimeProfile,
-        [string]$Version = "1.3.10"
+        [string]$Version = "1.3.11"
     )
 
     if (-not (Test-Path $Destination)) {

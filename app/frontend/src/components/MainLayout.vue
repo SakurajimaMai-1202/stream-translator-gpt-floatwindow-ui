@@ -1,9 +1,11 @@
 <script setup lang="ts">
+import { ref, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 
 const router = useRouter();
 const route = useRoute();
-const appVersion = import.meta.env.VITE_APP_VERSION || '1.3.10';
+const appVersion = import.meta.env.VITE_APP_VERSION || '1.3.11';
+const isMobileMenuOpen = ref(false);
 
 // Define navigation items
 const primaryNavigation = [
@@ -51,6 +53,7 @@ function isTabActive(tabId: string) {
 }
 
 function navigateTo(path: string, tabId?: string) {
+  isMobileMenuOpen.value = false;
   if (tabId) {
     if (route.path === '/settings' && route.query.tab === tabId) return;
     router.replace({ path: '/settings', query: { tab: tabId } });
@@ -59,12 +62,51 @@ function navigateTo(path: string, tabId?: string) {
     router.push(path);
   }
 }
+
+watch(() => route.fullPath, () => {
+  isMobileMenuOpen.value = false;
+});
 </script>
 
 <template>
-  <div class="flex h-screen w-screen overflow-hidden bg-slate-950 text-white font-sans">
+  <div class="flex h-screen w-screen flex-col overflow-hidden bg-slate-950 text-white font-sans md:flex-row">
+    <!-- Mobile Header -->
+    <header class="relative z-40 flex h-14 flex-shrink-0 items-center justify-between border-b border-white/10 bg-slate-950/95 px-4 backdrop-blur md:hidden">
+      <div class="flex min-w-0 items-center gap-2.5">
+        <span class="text-xl">🎙️</span>
+        <div class="min-w-0">
+          <h1 class="truncate text-[11px] font-bold uppercase tracking-[0.16em] text-white">Stream Translator</h1>
+          <p class="mt-0.5 text-[9px] font-semibold tracking-wider text-indigo-300/60">即時字幕翻譯系統</p>
+        </div>
+      </div>
+      <button
+        type="button"
+        class="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-lg text-white transition active:scale-95 active:bg-white/10"
+        :aria-expanded="isMobileMenuOpen"
+        aria-label="開啟導覽選單"
+        @click="isMobileMenuOpen = true"
+      >
+        ☰
+      </button>
+    </header>
+
+    <Transition name="drawer-fade">
+      <button
+        v-if="isMobileMenuOpen"
+        type="button"
+        class="fixed inset-0 z-40 bg-black/65 backdrop-blur-[2px] md:hidden"
+        aria-label="關閉導覽選單"
+        @click="isMobileMenuOpen = false"
+      ></button>
+    </Transition>
+
     <!-- Left Sidebar -->
-    <aside class="w-60 bg-slate-950/95 border-r border-white/10 flex-shrink-0 flex flex-col justify-between">
+    <aside
+      :class="[
+        'fixed inset-y-0 right-0 z-50 flex w-[min(19rem,86vw)] flex-shrink-0 flex-col justify-between border-l border-white/10 bg-slate-950/98 shadow-2xl transition-transform duration-200 md:static md:z-auto md:w-60 md:translate-x-0 md:border-l-0 md:border-r md:bg-slate-950/95 md:shadow-none',
+        isMobileMenuOpen ? 'translate-x-0' : 'translate-x-full'
+      ]"
+    >
       <div>
         <!-- App Header / Logo -->
         <div class="p-5 border-b border-white/5 flex items-center gap-3">
@@ -73,6 +115,14 @@ function navigateTo(path: string, tabId?: string) {
             <h1 class="text-xs font-bold text-white tracking-widest uppercase">Stream Translator</h1>
             <p class="text-[9px] text-indigo-300/60 font-semibold tracking-wider mt-0.5">即時字幕翻譯系統</p>
           </div>
+          <button
+            type="button"
+            class="ml-auto flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-white/70 md:hidden"
+            aria-label="關閉導覽選單"
+            @click="isMobileMenuOpen = false"
+          >
+            ✕
+          </button>
         </div>
 
         <!-- Navigation Links -->
@@ -128,7 +178,7 @@ function navigateTo(path: string, tabId?: string) {
     </aside>
 
     <!-- Right Content Panel -->
-    <main class="app-scroll-surface flex-1 overflow-y-auto bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950/40 relative">
+    <main class="app-scroll-surface relative min-h-0 min-w-0 flex-1 overflow-y-auto bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950/40">
       <router-view />
     </main>
   </div>
@@ -164,6 +214,16 @@ function navigateTo(path: string, tabId?: string) {
 
 .fade-enter-from,
 .fade-leave-to {
+  opacity: 0;
+}
+
+.drawer-fade-enter-active,
+.drawer-fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.drawer-fade-enter-from,
+.drawer-fade-leave-to {
   opacity: 0;
 }
 </style>

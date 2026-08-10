@@ -32,6 +32,8 @@ const showFfmpegWarning = computed(() => {
 
 interface PyQtClipboardBridge {
   copyToClipboard?: (text: string, callback?: (result: boolean) => void) => void;
+  chooseLocalFile?: (callback: (path: string) => void) => void;
+  updateNativeRecordingState?: (isRecording: boolean) => void;
 }
 
 type WindowWithPyQt = Window & {
@@ -167,15 +169,69 @@ async function toggleSubtitleSharing() {
 
 // 基本控制
 const urlInput = ref('');
+const urlInputRef = ref<HTMLInputElement | null>(null);
+const localFileInputRef = ref<HTMLInputElement | null>(null);
+const localMediaAccept = '.mp4,.mkv,.webm,.avi,.mov,.mp3,.wav,.m4a,.flac,.ogg,.aac,.wma';
 const isLoading = ref(false);
 const isPreparingAsrModel = ref(false);
 const showAdvancedConfig = ref(true);
+
+watch(
+  () => store.isRunning,
+  (isRunning) => {
+    (window as WindowWithPyQt).pyqt?.updateNativeRecordingState?.(isRunning);
+  },
+  { immediate: true }
+);
 
 // 音訊來源選擇
 const audioSource = ref<AudioSource>('url');
 const availableDevices = ref<AudioDevice[]>([]);
 const selectedDeviceIndex = ref<number | null>(null);
 const isLoadingDevices = ref(false);
+
+function chooseLocalFile() {
+  const bridge = (window as WindowWithPyQt).pyqt;
+  if (bridge?.chooseLocalFile) {
+    try {
+      // Qt WebChannel 的 result=str slot 會以 callback 回傳完整 Windows 路徑。
+      bridge.chooseLocalFile((selectedPath: string) => {
+        const path = String(selectedPath || '').trim();
+        if (!path) return;
+        urlInput.value = path;
+        if (store.errorMessage === '瀏覽器模式無法取得檔案的完整路徑，請使用桌面版的「選擇檔案」或手動輸入路徑。') {
+          store.errorMessage = '';
+        }
+        nextTick(() => urlInputRef.value?.focus());
+      });
+    } catch (error) {
+      console.warn('[HomeView] 原生檔案選擇器開啟失敗:', error);
+      store.errorMessage = '開啟檔案選擇器失敗，請改為手動輸入檔案路徑。';
+    }
+    return;
+  }
+
+  // 開發瀏覽器的備援入口；一般瀏覽器會隱藏絕對路徑，無法直接交給本機後端。
+  localFileInputRef.value?.click();
+}
+
+function handleLocalFileInputChange(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+
+  const browserFile = file as File & { path?: string };
+  const path = String(browserFile.path || '').trim();
+  if (path) {
+    urlInput.value = path;
+    store.errorMessage = '';
+    nextTick(() => urlInputRef.value?.focus());
+  } else {
+    store.errorMessage = '瀏覽器模式無法取得檔案的完整路徑，請使用桌面版的「選擇檔案」或手動輸入路徑。';
+  }
+  // 允許再次選取同一個檔案時仍會觸發 change。
+  input.value = '';
+}
 
 // 模型選擇
 const whisperModels = ['tiny', 'base', 'small', 'medium', 'large-v2', 'large-v3', 'large-v3-turbo'];
@@ -618,6 +674,7 @@ interface ConfigWarning {
   level: 'warning' | 'error';
   message: string;
   page?: string;
+  actionLabel?: string;
 }
 
 const configWarnings = computed<ConfigWarning[]>(() => {
@@ -629,8 +686,9 @@ const configWarnings = computed<ConfigWarning[]>(() => {
   if (requiresUrlInput && !(urlInput.value || '').trim()) {
     warnings.push({
       level: 'warning',
-      message: audioSource.value === 'url' ? '未設定直播 URL' : '未設定檔案路徑',
-      page: 'input'
+      message: audioSource.value === 'url' ? '未設定 YouTube Live／Twitch／X／TikTok 直播網址' : '未選擇檔案或未輸入檔案路徑',
+      page: 'home-input',
+      actionLabel: audioSource.value === 'url' ? '前往直播網址' : '選擇檔案',
     });
   }
 
@@ -936,6 +994,7 @@ onMounted(async () => {
   }
 
   await store.syncRunningState();
+  (window as WindowWithPyQt).pyqt?.updateNativeRecordingState?.(store.isRunning);
 
   // 初始化完成後，延後建立 watch 避免初始化誤觸發自動保存
   await nextTick();
@@ -995,7 +1054,9 @@ async function handleStart() {
   // 驗證輸入
   if (audioSource.value === 'url' || audioSource.value === 'file') {
     if (!urlInput.value.trim()) {
-      store.errorMessage = audioSource.value === 'url' ? '請輸入直播 URL' : '請輸入檔案路徑';
+      store.errorMessage = audioSource.value === 'url'
+        ? '請輸入 YouTube Live、Twitch、X、TikTok 等直播網址'
+        : '請輸入檔案路徑';
       return;
     }
   }
@@ -1178,9 +1239,15 @@ function openSubtitleWindow() {
 }
 
 function goToWarningPage(page?: string) {
-  if (page) {
-    router.push(`/settings?tab=${page}`);
+  if (!page) return;
+  if (page === 'home-input') {
+    nextTick(() => {
+      urlInputRef.value?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      urlInputRef.value?.focus();
+    });
+    return;
   }
+  router.push(`/settings?tab=${page}`);
 }
 
 function getFileName(path: string): string {
@@ -1194,11 +1261,11 @@ function clearLogs() {
 </script>
 
 <template>
-  <div class="p-4 sm:p-5 h-full max-w-7xl mx-auto flex flex-col justify-between">
+  <div class="mx-auto flex min-h-full max-w-7xl flex-col justify-between p-3 sm:p-5">
     <div>
       <!-- Header Status Bar -->
-      <div class="flex items-center justify-between mb-4 border-b border-white/5 pb-2.5 gap-3">
-        <div class="flex items-center gap-3">
+      <div class="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-white/5 pb-2.5 sm:gap-3">
+        <div class="flex flex-wrap items-center gap-2 sm:gap-3">
           <!-- Status dot -->
           <div class="flex items-center gap-1.5 bg-white/5 px-2.5 py-0.5 rounded-full border border-white/10 text-[10px]">
             <div :class="[
@@ -1221,7 +1288,7 @@ function clearLogs() {
             </span>
           </div>
         </div>
-        <div class="flex items-center gap-2 min-w-0">
+        <div class="flex min-w-0 items-center gap-2 max-md:w-full max-md:justify-between">
           <div v-if="store.currentUrl" class="text-white/40 text-[10px] truncate max-w-xs sm:max-w-md font-mono bg-white/5 px-2.5 py-0.5 rounded-lg border border-white/5">
             {{ store.currentUrl }}
           </div>
@@ -1257,9 +1324,9 @@ function clearLogs() {
               <span class="w-1.5 h-1.5 rounded-full" :class="warning.level === 'error' ? 'bg-red-400' : 'bg-yellow-400'"></span>
               {{ warning.message }}
             </span>
-            <button v-if="warning.page" @click="goToWarningPage(warning.page)"
+            <button v-if="warning.page" type="button" @click="goToWarningPage(warning.page)"
               class="px-2 py-0.5 bg-white/10 hover:bg-white/20 text-white rounded text-[10px] transition border border-white/5">
-              前往設定
+              {{ warning.actionLabel || '前往設定' }}
             </button>
           </li>
         </ul>
@@ -1283,7 +1350,7 @@ function clearLogs() {
         <div class="lg:col-span-7 xl:col-span-8 space-y-6">
           
           <!-- Main Control Card -->
-          <div class="bg-slate-950/90 rounded-2xl border border-white/10 shadow-2xl p-5">
+          <div class="rounded-2xl border border-white/10 bg-slate-950/90 p-4 shadow-2xl sm:p-5">
             
             <!-- 音訊來源選擇 -->
             <div class="mb-5">
@@ -1318,7 +1385,7 @@ function clearLogs() {
                   ]"
                 >
                   <span class="text-2xl mb-1.5 transition-transform group-hover:scale-110 duration-200">📁</span>
-                  <span class="font-bold text-xs">本地檔案</span>
+                  <span class="font-bold text-xs"><span class="md:hidden">電腦</span>本地檔案</span>
                   <span class="text-[9px] text-white/40 mt-1 hidden sm:inline-block leading-tight">轉譯本機影音檔</span>
                 </button>
                 <button
@@ -1334,7 +1401,7 @@ function clearLogs() {
                   ]"
                 >
                   <span class="text-2xl mb-1.5 transition-transform group-hover:scale-110 duration-200">🎤</span>
-                  <span class="font-bold text-xs">麥克風</span>
+                  <span class="font-bold text-xs"><span class="md:hidden">電腦</span>麥克風</span>
                   <span class="text-[9px] text-white/40 mt-1 hidden sm:inline-block leading-tight">錄製麥克風輸入</span>
                 </button>
                 <button
@@ -1350,7 +1417,7 @@ function clearLogs() {
                   ]"
                 >
                   <span class="text-2xl mb-1.5 transition-transform group-hover:scale-110 duration-200">🔊</span>
-                  <span class="font-bold text-xs">系統音訊</span>
+                  <span class="font-bold text-xs"><span class="md:hidden">電腦</span>系統音訊</span>
                   <span class="text-[9px] text-white/40 mt-1 hidden sm:inline-block leading-tight">捕獲系統播放音</span>
                 </button>
               </div>
@@ -1359,16 +1426,40 @@ function clearLogs() {
             <!-- URL/檔案輸入 -->
             <div v-if="audioSource === 'url' || audioSource === 'file'" class="mb-5">
               <label class="block text-white/80 font-bold mb-1.5 text-xs tracking-wider uppercase">
-                {{ audioSource === 'url' ? '🔗 直播 URL' : '📁 檔案路徑' }}
+                {{ audioSource === 'url' ? '🔗 直播網址（YouTube Live／Twitch／X／TikTok 等）' : '📁 本地檔案' }}
               </label>
+              <div class="flex flex-col gap-2 sm:flex-row">
+                <input
+                  ref="urlInputRef"
+                  v-model="urlInput"
+                  type="text"
+                  spellcheck="false"
+                  :placeholder="audioSource === 'url' ? '貼上 YouTube Live、Twitch、X、TikTok 等直播網址' : 'C:\\path\\to\\video.mp4'"
+                  :disabled="store.isRunning"
+                  class="flex-1 min-w-0 px-4 py-2.5 bg-white/5 border border-white/15 rounded-xl text-white placeholder-white/30 focus:outline-none focus:border-blue-500/80 focus:ring-1 focus:ring-blue-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition duration-200 text-sm"
+                />
+                <button
+                  v-if="audioSource === 'file'"
+                  type="button"
+                  @click="chooseLocalFile"
+                  :disabled="store.isRunning"
+                  class="shrink-0 px-4 py-2.5 bg-blue-600/90 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl transition border border-blue-400/40 text-sm font-semibold whitespace-nowrap"
+                  title="開啟檔案選擇器"
+                >
+                  📂 選擇檔案
+                </button>
+              </div>
               <input
-                v-model="urlInput"
-                type="text"
-                spellcheck="false"
-                :placeholder="audioSource === 'url' ? 'https://www.youtube.com/watch?v=... 或 Twitch/X 等' : 'C:\\path\\to\\video.mp4'"
-                :disabled="store.isRunning"
-                class="w-full px-4 py-2.5 bg-white/5 border border-white/15 rounded-xl text-white placeholder-white/30 focus:outline-none focus:border-blue-500/80 focus:ring-1 focus:ring-blue-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition duration-200 text-sm"
+                v-if="audioSource === 'file'"
+                ref="localFileInputRef"
+                type="file"
+                :accept="localMediaAccept"
+                class="hidden"
+                @change="handleLocalFileInputChange"
               />
+              <p v-if="audioSource === 'file'" class="text-white/40 text-[10px] mt-1.5 tracking-wide">
+                支援 MP4、MKV、WebM、MOV、MP3、WAV 等格式；桌面版按鈕會開啟原生檔案選擇器。
+              </p>
             </div>
 
             <!-- 設備選擇 -->
@@ -1399,7 +1490,7 @@ function clearLogs() {
             </div>
 
             <!-- 快速設定 (輸入語言, 啟用翻譯, 目標語言) -->
-            <div class="grid grid-cols-2 gap-4 mb-4">
+            <div class="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
               <!-- 輸入語言 -->
               <div class="flex flex-col">
                 <label class="text-white/60 text-[10px] font-bold tracking-wider uppercase mb-1.5">🎙️ 輸入語言</label>
@@ -1437,9 +1528,10 @@ function clearLogs() {
               <button
                 @click="showAdvancedConfig = !showAdvancedConfig"
                 type="button"
-                class="text-[10px] text-indigo-400 hover:text-indigo-300 transition flex items-center gap-1 font-semibold"
+                class="flex min-h-10 w-full items-center justify-between gap-2 rounded-xl border border-indigo-400/15 bg-indigo-400/5 px-3 text-left text-[10px] font-semibold text-indigo-300 transition hover:bg-indigo-400/10 md:min-h-0 md:w-auto md:border-0 md:bg-transparent md:px-0 md:text-indigo-400"
               >
-                <span>{{ showAdvancedConfig ? '▼ 收起進階配置' : '▶ 展開進階配置 (引擎與模型)' }}</span>
+                <span>{{ showAdvancedConfig ? '▼ 收起進階配置' : '▶ 展開進階配置（引擎與模型）' }}</span>
+                <span v-if="!showAdvancedConfig" class="truncate text-[9px] text-white/40 md:hidden">{{ selectedTranscriptionEngine }}</span>
               </button>
 
               <Transition name="fade-slide">
@@ -1533,7 +1625,7 @@ function clearLogs() {
                   <div class="flex items-center gap-2 text-[10px] font-bold text-cyan-200">
                     <span>{{ selectedAsrDownloadTask && ['pending', 'downloading'].includes(selectedAsrDownloadTask.status) ? '⬇️ ASR 模型下載中' : '📦 尚未下載 ASR 模型' }}</span>
                     <span v-if="selectedAsrDownloadTask && ['pending', 'downloading'].includes(selectedAsrDownloadTask.status)" class="rounded-full bg-cyan-400/10 px-2 py-0.5 text-cyan-300">
-                      {{ Math.round(selectedAsrDownloadTask.progress * 100) }}%
+                      {{ (modelDownloadStore.displayProgress(selectedAsrDownloadTask) * 100).toFixed(1) }}%
                     </span>
                   </div>
                   <p class="mt-1 truncate text-[11px] font-semibold text-white/80">{{ selectedAsrModelId }}</p>
@@ -1554,13 +1646,13 @@ function clearLogs() {
               <div v-if="selectedAsrDownloadTask && ['pending', 'downloading'].includes(selectedAsrDownloadTask.status)" class="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
                 <div
                   class="h-full rounded-full bg-gradient-to-r from-cyan-500 to-emerald-400 transition-all duration-500"
-                  :style="{ width: `${Math.max(3, selectedAsrDownloadTask.progress * 100)}%` }"
+                  :style="{ width: `${Math.max(3, modelDownloadStore.displayProgress(selectedAsrDownloadTask) * 100)}%` }"
                 ></div>
               </div>
             </div>
 
             <!-- 控制按鈕 (啟動/停止 與 字幕視窗) -->
-            <div class="flex gap-3">
+            <div class="hidden gap-3 md:flex">
               <!-- 啟動/停止按鈕 -->
               <button
                 v-if="!store.isRunning"
@@ -1661,10 +1753,10 @@ function clearLogs() {
         </div>
 
         <!-- Right Column: Monitoring & Sharing (col-span-5 or 4) -->
-        <div class="flex h-full flex-col gap-6 lg:col-span-5 xl:col-span-4">
+        <div class="flex min-w-0 flex-col gap-6 lg:col-span-5 xl:col-span-4">
           
           <!-- 執行日誌 -->
-          <div class="flex min-h-[400px] flex-1 flex-col rounded-2xl border border-white/10 bg-slate-950/90 p-4 shadow-2xl">
+          <div class="flex h-[420px] min-h-0 flex-col rounded-2xl border border-white/10 bg-slate-950/90 p-4 shadow-2xl lg:h-[500px]">
             <div class="flex items-center justify-between mb-2.5">
               <h2 class="text-xs font-bold text-white tracking-widest uppercase flex items-center gap-1.5">
                 <span class="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
@@ -1677,8 +1769,8 @@ function clearLogs() {
                 🗑️ 清除
               </button>
             </div>
-            <div ref="logContainer" class="flex-1 overflow-y-auto bg-black/40 rounded-xl p-3 font-mono text-[11px] leading-relaxed custom-scrollbar border border-white/5">
-              <div v-for="(log, idx) in logs" :key="idx" class="text-green-400/80 mb-1 last:mb-0">{{ log }}</div>
+            <div ref="logContainer" class="min-h-0 flex-1 overflow-y-auto bg-black/40 rounded-xl p-3 font-mono text-[11px] leading-relaxed custom-scrollbar border border-white/5">
+              <div v-for="(log, idx) in logs" :key="idx" class="mb-1 break-words text-green-400/80 last:mb-0">{{ log }}</div>
               <div v-if="logs.length === 0" class="text-white/20 h-full flex items-center justify-center italic">暫無執行日誌，等待啟動...</div>
             </div>
           </div>
@@ -1741,6 +1833,42 @@ function clearLogs() {
 
       </div>
     </div>
+
+    <!-- Reserve real scroll space so the fixed mobile action bar never hides the final card. -->
+    <div class="mobile-action-spacer flex-shrink-0 md:hidden" aria-hidden="true"></div>
+
+    <!-- Mobile primary action bar -->
+    <div class="mobile-action-bar fixed inset-x-0 bottom-0 z-30 border-t border-white/10 bg-slate-950/95 px-3 pb-3 pt-2 shadow-[0_-12px_35px_rgba(2,6,23,0.8)] backdrop-blur md:hidden">
+      <div class="mx-auto flex max-w-7xl items-center gap-2">
+        <div class="min-w-0 flex-1">
+          <div class="flex items-center gap-1.5 text-[10px] font-bold text-white/80">
+            <span :class="store.isRunning ? 'text-green-400' : 'text-slate-500'">●</span>
+            <span>{{ store.isRunning ? '即時轉譯中' : '準備啟動' }}</span>
+          </div>
+          <p class="mt-0.5 truncate text-[9px] text-white/40">
+            {{ selectedInputLanguage }} → {{ translationEnabled ? selectedOutputLanguage : '僅轉錄' }}
+          </p>
+        </div>
+        <button
+          v-if="!store.isRunning"
+          type="button"
+          class="min-h-12 min-w-[9.5rem] rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 px-4 text-sm font-bold text-white shadow-lg shadow-indigo-600/25 transition active:scale-[0.98] disabled:from-slate-800 disabled:to-slate-900 disabled:text-white/40 disabled:shadow-none"
+          :disabled="isLoading || isPreparingAsrModel || !isConfigReady"
+          @click="handleStart"
+        >
+          {{ isPreparingAsrModel ? '⬇️ 下載模型中' : isLoading ? '⏳ 啟動中' : '▶️ 開始轉譯' }}
+        </button>
+        <button
+          v-else
+          type="button"
+          class="min-h-12 min-w-[9.5rem] rounded-xl bg-gradient-to-r from-rose-600 to-red-600 px-4 text-sm font-bold text-white shadow-lg shadow-red-600/25 transition active:scale-[0.98] disabled:from-slate-800 disabled:to-slate-900 disabled:text-white/40 disabled:shadow-none"
+          :disabled="isLoading"
+          @click="handleStop"
+        >
+          {{ isLoading ? '⏳ 停止中' : '⏹️ 停止轉譯' }}
+        </button>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -1774,5 +1902,13 @@ function clearLogs() {
 }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.35);
+}
+
+.mobile-action-bar {
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+}
+
+.mobile-action-spacer {
+  height: calc(9rem + env(safe-area-inset-bottom));
 }
 </style>

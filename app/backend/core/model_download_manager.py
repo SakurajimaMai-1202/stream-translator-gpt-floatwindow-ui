@@ -1,5 +1,6 @@
 ﻿import asyncio
 import copy
+import fnmatch
 import logging
 import os
 import shutil
@@ -31,10 +32,15 @@ SHERPA_CPU_BUNDLES = {
     "FunAudioLLM/Fun-ASR-Nano-2512": ("sherpa-onnx-funasr-nano-int8-2025-12-30", ("encoder_adaptor.int8.onnx", "llm.int8.onnx", "embedding.int8.onnx", "Qwen3-0.6B")),
     "iic/SenseVoiceSmall": ("sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17", ("model.int8.onnx", "tokens.txt")),
     "Qwen/Qwen3-ASR-0.6B": ("sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25", ("conv_frontend.onnx", "encoder.int8.onnx", "decoder.int8.onnx", "tokenizer")),
+    "Qwen/Qwen3-ASR-1.7B": ("sherpa-onnx-qwen3-asr-1.7B-int8", ("conv_frontend.onnx", "encoder.int8.onnx", "decoder.int8.onnx", "tokenizer")),
 }
 SHERPA_RELEASE_ROOT = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models"
+SHERPA_HF_REPOS = {
+    "Qwen/Qwen3-ASR-1.7B": "thieunv/sherpa-onnx-qwen3-asr-1.7B-int8",
+}
 SHERPA_CPU_ENGINES = {
     "Qwen/Qwen3-ASR-0.6B": "qwen3-asr",
+    "Qwen/Qwen3-ASR-1.7B": "qwen3-asr",
     "iic/SenseVoiceSmall": "sensevoice",
     "FunAudioLLM/Fun-ASR-Nano-2512": "fun-asr-nano",
     "nvidia/parakeet-tdt-0.6b-v3": "parakeet-ctc-ja",
@@ -98,12 +104,60 @@ class ModelDownloadManager:
     def _now(self) -> datetime:
         return datetime.now()
 
+    @staticmethod
+    def _format_bytes(value: int) -> str:
+        size = float(max(0, value))
+        for unit in ("B", "KB", "MB", "GB", "TB"):
+            if size < 1024 or unit == "TB":
+                return f"{size:.0f} {unit}" if unit in {"B", "KB"} else f"{size:.1f} {unit}"
+            size /= 1024
+        return f"{size:.1f} TB"
+
+    @staticmethod
+    def _directory_size(path: Path) -> int:
+        if not path.exists():
+            return 0
+        total = 0
+        for item in path.rglob("*"):
+            try:
+                if item.is_file():
+                    total += item.stat().st_size
+            except OSError:
+                continue
+        return total
+
+    @staticmethod
+    def _has_required_paths(path: Path, required_paths: tuple[str, ...]) -> bool:
+        """Return False for incomplete or temporarily inaccessible model folders."""
+        try:
+            return path.is_dir() and all((path / name).exists() for name in required_paths)
+        except OSError:
+            logger.warning("Skipping inaccessible model directory: %s", path, exc_info=True)
+            return False
+
+    def _update_byte_progress(self, task_id: str, downloaded: int, total: int, label: str) -> None:
+        if total <= 0:
+            return
+        ratio = min(1.0, max(0.0, downloaded / total))
+        self._update_task(
+            task_id,
+            progress=0.15 + ratio * 0.80,
+            downloaded_bytes=min(downloaded, total),
+            total_bytes=total,
+            message=(
+                f"{label} {ratio * 100:.1f}% "
+                f"({self._format_bytes(downloaded)} / {self._format_bytes(total)})"
+            ),
+        )
+
     def _update_task(
         self,
         task_id: str,
         *,
         status: Optional[Literal["pending", "downloading", "completed", "failed"]] = None,
         progress: Optional[float] = None,
+        downloaded_bytes: Optional[int] = None,
+        total_bytes: Optional[int] = None,
         message: Optional[str] = None,
         error: Optional[str] = None,
     ) -> None:
@@ -116,6 +170,10 @@ class ModelDownloadManager:
                 task.status = status
             if progress is not None:
                 task.progress = max(0.0, min(1.0, progress))
+            if downloaded_bytes is not None:
+                task.downloaded_bytes = max(0, downloaded_bytes)
+            if total_bytes is not None:
+                task.total_bytes = max(0, total_bytes)
             if message is not None:
                 task.message = message
             if error is not None:
@@ -218,10 +276,64 @@ class ModelDownloadManager:
         target = (model_root / bundle).resolve()
         archive = (model_root / f"{bundle}.tar.bz2").resolve()
 
+        if model_id in SHERPA_HF_REPOS:
+            state = {"total": 0}
+
+            def blocking_hf_download() -> None:
+                if target.exists() and all((target / name).exists() for name in required_paths):
+                    return
+                from huggingface_hub import HfApi, snapshot_download
+
+                repo_id = SHERPA_HF_REPOS[model_id]
+                allow_patterns = ["*.onnx", "tokenizer/*", "LICENSE*", "README*"]
+                info = HfApi().model_info(repo_id, files_metadata=True)
+                state["total"] = sum(
+                    int(sibling.size or 0)
+                    for sibling in info.siblings
+                    if any(fnmatch.fnmatch(sibling.rfilename, pattern) for pattern in allow_patterns)
+                )
+
+                snapshot_download(
+                    repo_id=repo_id,
+                    local_dir=str(target),
+                    allow_patterns=allow_patterns,
+                )
+                missing = [name for name in required_paths if not (target / name).exists()]
+                if missing:
+                    raise RuntimeError(f"Incomplete sherpa model download; missing: {', '.join(missing)}")
+
+            self._update_task(task_id, progress=0.15, message="Downloading sherpa-onnx INT8 model from Hugging Face")
+            download = asyncio.create_task(asyncio.to_thread(blocking_hf_download))
+            while not download.done():
+                total = state["total"]
+                if total > 0:
+                    downloaded = min(total, await asyncio.to_thread(self._directory_size, target))
+                    self._update_byte_progress(task_id, downloaded, total, "下載中")
+                await asyncio.sleep(0.5)
+            await download
+            self._update_task(task_id, progress=0.95, message=f"sherpa-onnx model ready: {target}")
+            return
+
         def blocking_download() -> None:
             if target.exists() and all((target / name).exists() for name in required_paths):
                 return
-            urllib.request.urlretrieve(f"{SHERPA_RELEASE_ROOT}/{archive.name}", archive)
+            last_update = {"time": 0.0, "progress": -1.0}
+
+            def reporthook(block_count: int, block_size: int, total_size: int) -> None:
+                if total_size <= 0:
+                    return
+                downloaded = min(total_size, block_count * block_size)
+                ratio = downloaded / total_size
+                now = time.monotonic()
+                if ratio >= 1.0 or ratio - last_update["progress"] >= 0.002 or now - last_update["time"] >= 0.5:
+                    last_update.update(time=now, progress=ratio)
+                    self._update_byte_progress(task_id, downloaded, total_size, "下載中")
+
+            urllib.request.urlretrieve(
+                f"{SHERPA_RELEASE_ROOT}/{archive.name}",
+                archive,
+                reporthook=reporthook,
+            )
             with tarfile.open(archive, "r:bz2") as model_archive:
                 for member in model_archive.getmembers():
                     extracted = (model_root / member.name).resolve()
@@ -242,14 +354,19 @@ class ModelDownloadManager:
         self._update_task(task_id, progress=0.95, message=f"sherpa-onnx model ready: {target}")
 
     async def _download_from_hf(self, task_id: str, repo_id: str) -> None:
-        """透過 HuggingFace Hub 下載模型（第一版為階段式進度）"""
+        """Download a Hugging Face model with byte-based progress."""
         self._update_task(task_id, progress=0.15, message="初始化 HuggingFace 下載")
+        state = {"total": 0, "blob_dir": None}
 
         def blocking_download():
-            from huggingface_hub import snapshot_download
+            from huggingface_hub import HfApi, snapshot_download
 
             cache_dir = get_huggingface_hub_cache()
             cache_dir.mkdir(parents=True, exist_ok=True)
+            repo_cache = cache_dir / f"models--{repo_id.replace('/', '--')}"
+            state["blob_dir"] = repo_cache / "blobs"
+            info = HfApi().model_info(repo_id, files_metadata=True)
+            state["total"] = sum(int(sibling.size or 0) for sibling in info.siblings)
             return snapshot_download(
                 repo_id=repo_id,
                 cache_dir=str(cache_dir),
@@ -257,13 +374,15 @@ class ModelDownloadManager:
                 local_files_only=False,
             )
 
-        # 第一版先採階段式進度，避免引入額外下載 callback 複雜度
-        progress_steps = [0.25, 0.45, 0.65, 0.85]
-        for step in progress_steps:
-            self._update_task(task_id, progress=step, message="下載中，請稍候")
-            await asyncio.sleep(0.05)
-
-        path = await asyncio.to_thread(blocking_download)
+        download = asyncio.create_task(asyncio.to_thread(blocking_download))
+        while not download.done():
+            total = state["total"]
+            blob_dir = state["blob_dir"]
+            if total > 0 and isinstance(blob_dir, Path):
+                downloaded = min(total, await asyncio.to_thread(self._directory_size, blob_dir))
+                self._update_byte_progress(task_id, downloaded, total, "下載中")
+            await asyncio.sleep(0.5)
+        path = await download
         self._update_task(task_id, progress=0.95, message=f"模型已快取至 {path}")
 
     async def _download_sensevoice_from_modelscope(self, task_id: str, model_id: str) -> None:
@@ -425,7 +544,7 @@ class ModelDownloadManager:
         sherpa_root = get_model_storage_root() / "sherpa-onnx"
         for model_id, (bundle, required_paths) in SHERPA_CPU_BUNDLES.items():
             model_dir = sherpa_root / bundle
-            if model_dir.is_dir() and all((model_dir / name).exists() for name in required_paths):
+            if self._has_required_paths(model_dir, required_paths):
                 engine = "qwen3-asr" if model_id.startswith("Qwen/") else (
                     "sensevoice" if model_id.startswith("iic/") else
                     "fun-asr-nano" if model_id.startswith("FunAudioLLM/") else "parakeet-ctc-ja"

@@ -25,6 +25,8 @@ class ModelDownloadTask(BaseModel):
     compute_backend: ModelComputeBackend = "gpu"
     status: Literal["pending", "downloading", "completed", "failed"]
     progress: float = Field(0.0, ge=0.0, le=1.0)
+    downloaded_bytes: int = Field(0, ge=0)
+    total_bytes: int = Field(0, ge=0)
     message: str = ""
     error: Optional[str] = None
     created_at: datetime

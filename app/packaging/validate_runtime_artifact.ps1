@@ -16,6 +16,8 @@ $packageInfo = Get-RuntimeProfilePackageInfo -RuntimeProfile $Profile
 $distDir = Join-Path $scriptDir $packageInfo.DistDirName
 $packageDir = Join-Path $distDir $packageInfo.PackageName
 $configPath = Join-Path $packageDir "config.yaml"
+$runtimePath = Join-Path $packageDir "_runtime"
+$runtimePython = Join-Path $runtimePath "python.exe"
 $runtimeManifestPath = Join-Path $packageDir "_runtime\runtime-version.json"
 $appUpdateZip = Join-Path $distDir $packageInfo.AppUpdateZip
 $nodeRuntimePath = Join-Path $packageDir "_js_runtime\node.exe"
@@ -30,7 +32,7 @@ if ($ExpectedTorchBackend -eq "auto") {
     }
 }
 
-foreach ($requiredPath in @($distDir, $packageDir, $configPath, $runtimeManifestPath, $appUpdateZip, $nodeRuntimePath)) {
+foreach ($requiredPath in @($distDir, $packageDir, $configPath, $runtimePython, $runtimeManifestPath, $appUpdateZip, $nodeRuntimePath)) {
     if (-not (Test-Path $requiredPath)) {
         throw "Missing runtime artifact path: $requiredPath"
     }
@@ -72,6 +74,10 @@ if ($Profile -eq "rocm" -and -not $manifest.hip) {
 if ($Profile -eq "cpu" -and -not $manifest.sherpa_onnx) {
     throw "CPU artifact manifest missing sherpa-onnx version: $runtimeManifestPath"
 }
+& $runtimePython -I -c "import opencc, stream_translator_gpt.main; print('ASR script normalization dependencies OK')"
+if ($LASTEXITCODE -ne 0) {
+    throw "Runtime is missing OpenCC ASR script normalization support: $runtimePath"
+}
 if ((& $nodeRuntimePath --version) -notmatch '^v(2[2-9]|[3-9][0-9])\.') {
     throw "Packaged Node.js runtime must be version 22 or newer: $nodeRuntimePath"
 }
@@ -94,7 +100,7 @@ if ($Profile -ne "cpu") {
         if ($cpuAsrManifest.profile -ne "cpu" -or $cpuAsrManifest.torch_backend -ne "none" -or -not $cpuAsrManifest.sherpa_onnx) {
             throw "CPU ASR sidecar manifest is invalid: $cpuAsrManifestPath"
         }
-        & $cpuAsrPython -I -c "import glob, pathlib, importlib.util, sherpa_onnx, stream_translator_gpt.main, sys; from pathlib import Path; root=Path(sys.executable).resolve().parent; paths=[Path(pathlib.__file__).resolve(), Path(glob.__file__).resolve()]; assert all(root == p.parent or root in p.parents for p in paths), paths; assert importlib.util.find_spec('torch') is None, 'CPU ASR sidecar must not include torch'; print(sherpa_onnx.__version__)"
+        & $cpuAsrPython -I -c "import glob, pathlib, importlib.util, opencc, sherpa_onnx, stream_translator_gpt.main, sys; from pathlib import Path; root=Path(sys.executable).resolve().parent; paths=[Path(pathlib.__file__).resolve(), Path(glob.__file__).resolve()]; assert all(root == p.parent or root in p.parents for p in paths), paths; assert importlib.util.find_spec('torch') is None, 'CPU ASR sidecar must not include torch'; print(sherpa_onnx.__version__)"
         if ($LASTEXITCODE -ne 0) { throw "CPU ASR sidecar runtime validation failed: $cpuAsrRuntimePath" }
         $cpuAsrSidecar = $cpuAsrManifest.sherpa_onnx
     }

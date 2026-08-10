@@ -1,6 +1,6 @@
 ﻿#!/usr/bin/env pwsh
 param(
-    [string]$Version = "1.3.10",
+    [string]$Version = "1.3.11",
     [ValidateSet("Quick", "Final")][string]$Mode = "Quick",
     [switch]$ReuseRuntimeCache,
     [switch]$ReuseSharedGui,

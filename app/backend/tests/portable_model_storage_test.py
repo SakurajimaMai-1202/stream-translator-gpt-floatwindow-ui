@@ -55,6 +55,7 @@ def test_delete_model_only_removes_expected_repo(monkeypatch, tmp_path):
 
 def test_sensevoice_model_download_metadata_and_delete(monkeypatch, tmp_path):
     manager = ModelDownloadManager()
+    monkeypatch.setattr(model_manager_module, "get_model_storage_root", lambda: tmp_path / "models")
     cache_root = tmp_path / "modelscope"
     repo_dir = cache_root / "models" / "iic" / "SenseVoiceSmall"
     repo_dir.mkdir(parents=True)
@@ -76,6 +77,7 @@ def test_sensevoice_model_download_metadata_and_delete(monkeypatch, tmp_path):
 
 def test_sensevoice_legacy_modelscope_path_is_listed_and_deleted(monkeypatch, tmp_path):
     manager = ModelDownloadManager()
+    monkeypatch.setattr(model_manager_module, "get_model_storage_root", lambda: tmp_path / "models")
     cache_root = tmp_path / "modelscope"
     repo_dir = cache_root / "iic" / "SenseVoiceSmall"
     repo_dir.mkdir(parents=True)

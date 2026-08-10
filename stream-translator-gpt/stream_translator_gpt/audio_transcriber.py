@@ -24,7 +24,10 @@ from .asr_postprocessor import (
     ASRTermCorrector,
     configure_asr_correction_learning,
     configure_asr_correction_logging,
+    log_asr_correction,
+    observe_asr_correction_candidate,
 )
+from .qwen3_asr_postprocess import normalize_chinese_script, strip_qwen3_asr_markers
 
 
 def compression_ratio(text: str) -> float:
@@ -113,7 +116,8 @@ class AudioTranscriber(LoopWorkerBase):
                  transcription_filters: str = None, asr_corrections_enabled: bool = False,
                  asr_correction_rules: str = None, asr_corrections_case_sensitive: bool = False,
                  asr_correction_log_enabled: bool = False, asr_engine: str | None = None,
-                 asr_model: str | None = None, asr_correction_learning_enabled: bool = False):
+                 asr_model: str | None = None, asr_correction_learning_enabled: bool = False,
+                 asr_output_language: str | None = None):
         self.whisper_filters = whisper_filters or transcription_filters or ""
         self.print_result = print_result
         self.output_timestamps = output_timestamps
@@ -122,6 +126,7 @@ class AudioTranscriber(LoopWorkerBase):
         self.asr_correction_log_enabled = bool(asr_correction_log_enabled)
         self.asr_engine = asr_engine or self.__class__.__name__
         self.asr_model = asr_model
+        self.asr_output_language = asr_output_language
         self.asr_correction_learning_enabled = bool(asr_correction_learning_enabled)
         configure_asr_correction_logging(self.asr_correction_log_enabled)
         self.term_corrector = ASRTermCorrector(
@@ -181,6 +186,7 @@ class AudioTranscriber(LoopWorkerBase):
                     asr_started_at - task.latency_trace.asr_queued_at
                 ) * 1000
             text, tokens = self.transcribe(task.audio, initial_prompt=initial_prompt)
+            text = normalize_chinese_script(text, self.asr_output_language)
             task.latency_trace.asr_finished_at = time.perf_counter()
             task.asr_latency_ms = (task.latency_trace.asr_finished_at - asr_started_at) * 1000
             task.latency_trace.asr_inference_accumulated_ms = task.asr_latency_ms
@@ -988,6 +994,7 @@ class Qwen3ASRTranscriber(AudioTranscriber):
                  bnb_4bit_quant_type: str = 'nf4', bnb_4bit_use_double_quant: bool = False,
                  rms_threshold: float = 0.005, **kwargs) -> None:
         super().__init__(**kwargs)
+        self.output_language = language
 
         try:
             import torch
@@ -1159,5 +1166,7 @@ class Qwen3ASRTranscriber(AudioTranscriber):
         if result is None:
             return '', None
         if isinstance(result, dict):
-            return result.get('text', ''), None
-        return getattr(result, 'text', ''), None
+            text = result.get('text', '')
+        else:
+            text = getattr(result, 'text', '')
+        return strip_qwen3_asr_markers(text), None

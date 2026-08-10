@@ -42,6 +42,7 @@ const menuStyle = reactive({
 });
 let positionFrame: number | null = null;
 let listenersAttached = false;
+let rootResizeObserver: ResizeObserver | null = null;
 
 const selectedOption = computed(() => props.options.find(opt => opt.value === props.modelValue));
 const displayText = computed(() => selectedOption.value?.label || props.placeholder);
@@ -104,15 +105,32 @@ function updateMenuPosition() {
   const viewportPadding = 12;
   const spaceBelow = window.innerHeight - rect.bottom - viewportPadding;
   const spaceAbove = rect.top - viewportPadding;
-  const openUp = spaceBelow < 180 && spaceAbove > spaceBelow;
-  const maxHeight = Math.max(140, Math.min(288, openUp ? spaceAbove - gap : spaceBelow - gap));
+  // Measure the actual menu content before deciding which side to use.  The
+  // old fixed 180px threshold made a short three-item menu flip upward in a
+  // compact window even when it would fit below the button, which looked like
+  // the dropdown had detached from its control.
+  const contentHeight = menuRef.value?.scrollHeight || 0;
+  const desiredHeight = Math.min(288, Math.max(96, contentHeight || 288));
+  // Prefer the predictable downward placement.  Only flip when the lower
+  // area is too small to show a useful portion of the menu; otherwise a long
+  // list stays attached below the button and scrolls inside its viewport.
+  const minimumVisibleHeight = 132;
+  const openUp = spaceBelow < Math.min(minimumVisibleHeight, desiredHeight)
+    && spaceAbove > spaceBelow;
+  const availableSpace = Math.max(32, (openUp ? spaceAbove : spaceBelow) - gap);
+  const maxHeight = Math.min(288, availableSpace);
+  const maxMenuWidth = Math.max(80, window.innerWidth - viewportPadding * 2);
+  const menuWidth = Math.min(rect.width, maxMenuWidth);
+  const maxLeft = Math.max(viewportPadding, window.innerWidth - menuWidth - viewportPadding);
+  const left = Math.max(viewportPadding, Math.min(rect.left, maxLeft));
+  const rawTop = openUp ? rect.top - maxHeight - gap : rect.bottom + gap;
+  const maxTop = Math.max(viewportPadding, window.innerHeight - viewportPadding - maxHeight);
+  const top = Math.max(viewportPadding, Math.min(rawTop, maxTop));
 
-  menuStyle.left = `${Math.max(viewportPadding, Math.min(rect.left, window.innerWidth - rect.width - viewportPadding))}px`;
-  menuStyle.width = `${rect.width}px`;
+  menuStyle.left = `${left}px`;
+  menuStyle.width = `${menuWidth}px`;
   menuStyle.maxHeight = `${maxHeight}px`;
-  menuStyle.top = openUp
-    ? `${Math.max(viewportPadding, rect.top - maxHeight - gap)}px`
-    : `${Math.min(window.innerHeight - viewportPadding, rect.bottom + gap)}px`;
+  menuStyle.top = `${top}px`;
 }
 
 function scheduleMenuPositionUpdate() {
@@ -130,6 +148,12 @@ function attachOpenListeners() {
   document.addEventListener('keydown', handleKeydown);
   window.addEventListener('resize', scheduleMenuPositionUpdate);
   window.addEventListener('scroll', scheduleMenuPositionUpdate, true);
+  window.visualViewport?.addEventListener('resize', scheduleMenuPositionUpdate);
+  window.visualViewport?.addEventListener('scroll', scheduleMenuPositionUpdate);
+  if (typeof ResizeObserver !== 'undefined' && rootRef.value) {
+    rootResizeObserver = new ResizeObserver(scheduleMenuPositionUpdate);
+    rootResizeObserver.observe(rootRef.value);
+  }
 }
 
 function detachOpenListeners() {
@@ -139,6 +163,10 @@ function detachOpenListeners() {
   document.removeEventListener('keydown', handleKeydown);
   window.removeEventListener('resize', scheduleMenuPositionUpdate);
   window.removeEventListener('scroll', scheduleMenuPositionUpdate, true);
+  window.visualViewport?.removeEventListener('resize', scheduleMenuPositionUpdate);
+  window.visualViewport?.removeEventListener('scroll', scheduleMenuPositionUpdate);
+  rootResizeObserver?.disconnect();
+  rootResizeObserver = null;
   if (positionFrame !== null) {
     window.cancelAnimationFrame(positionFrame);
     positionFrame = null;
@@ -156,6 +184,10 @@ watch(isOpen, async (open) => {
 }, { flush: 'post' });
 
 watch(() => props.options, () => {
+  if (isOpen.value) nextTick(scheduleMenuPositionUpdate);
+}, { flush: 'post' });
+
+watch(searchQuery, () => {
   if (isOpen.value) nextTick(scheduleMenuPositionUpdate);
 }, { flush: 'post' });
 

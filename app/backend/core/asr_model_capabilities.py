@@ -151,12 +151,20 @@ def normalize_language_code(language: str | None) -> str:
 
 def coerce_model_language(model_id: str, requested_language: str | None) -> str:
     capability = ASR_MODEL_CAPABILITIES.get(model_id)
+    requested_raw = str(requested_language or "auto").strip().lower().replace("_", "-")
     requested = normalize_language_code(requested_language)
     if not capability:
         return requested
     if capability["language_mode"] == "fixed":
         return str(capability["default_language"])
     supported = capability["supported_languages"]
+    if requested == "zh" and requested in supported and requested_raw in {
+        "zh-tw", "zh-hant", "zh-cn", "zh-hans",
+    }:
+        # Capability checks treat all Chinese variants as the same spoken
+        # language, while the runtime still needs the original script choice
+        # for deterministic OpenCC output normalization.
+        return requested_raw
     if requested == "auto" or requested in supported:
         return requested
     return str(capability["default_language"])

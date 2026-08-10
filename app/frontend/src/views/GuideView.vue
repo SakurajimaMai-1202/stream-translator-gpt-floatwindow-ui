@@ -32,7 +32,7 @@ function goToHome() {
     <section id="quick-start" class="guide-section">
       <div class="guide-section-heading"><span class="guide-number">01</span><div><h2>快速開始</h2><p>最簡單的使用流程</p></div></div>
       <div class="grid gap-4 md:grid-cols-3">
-        <div class="guide-step"><b>1. 選擇音訊來源</b><p>在即時轉譯頁選「URL 串流」，貼上 YouTube、Twitch/X 或其他支援的網址。</p></div>
+        <div class="guide-step"><b>1. 選擇音訊來源</b><p>在即時轉譯頁選「URL 串流」，貼上 YouTube Live、Twitch、X、TikTok 或其他支援平台的直播網址。</p></div>
         <div class="guide-step"><b>2. 選擇語言與翻譯模型</b><p>選擇輸入語言、目標語言，勾選「翻譯」，再選 OpenAI、Gemini 或本地 LLM。</p></div>
         <div class="guide-step"><b>3. 按下啟動</b><p>第一次使用若缺 ASR 模型，程式會先提醒、顯示進度並協助下載，完成後自動開始。</p></div>
       </div>

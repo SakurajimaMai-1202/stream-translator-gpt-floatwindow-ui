@@ -191,6 +191,7 @@ def create_transcriber(config: ASRConfig):
         "asr_corrections_case_sensitive": config.asr_corrections_case_sensitive,
         "asr_engine": config.backend,
         "asr_model": asr_model,
+        "asr_output_language": config.language,
     }
 
     if (config.asr_compute_backend or "auto").lower() == "cpu" and config.backend in {

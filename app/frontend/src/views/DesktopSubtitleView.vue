@@ -331,12 +331,12 @@ function latencyLabel(sub: DesktopSubtitle): string {
           >
             <div v-if="showOriginal && sub.original"
               class="sub-line original"
-              :style="{ fontSize: fontSize + 'px' }">
+              :style="{ '--subtitle-font-size': fontSize + 'px' }">
               {{ sub.original }}
             </div>
             <div v-if="showTranslated && sub.translated"
               class="sub-line translated"
-              :style="{ fontSize: fontSize + 'px' }">
+              :style="{ '--subtitle-font-size': fontSize + 'px' }">
               {{ sub.translated }}
             </div>
             <div
@@ -693,6 +693,7 @@ function latencyLabel(sub: DesktopSubtitle): string {
 }
 
 .sub-line {
+  font-size: var(--subtitle-font-size);
   line-height: 1.55;
   word-break: break-word;
 }
@@ -767,5 +768,99 @@ function latencyLabel(sub: DesktopSubtitle): string {
 .settings-aside::-webkit-scrollbar { width: 4px; }
 .settings-aside::-webkit-scrollbar-thumb {
   background: var(--scrollbar-aside); border-radius: 99px;
+}
+
+/* ─── 窄螢幕：讓電腦端字幕頁在手機瀏覽器中也能舒適閱讀 ─── */
+@media (max-width: 767px) {
+  .desktop-root {
+    grid-template-rows: 56px minmax(0, 1fr);
+  }
+
+  .top-bar {
+    gap: 10px;
+    padding: 0 12px;
+  }
+
+  .brand {
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .brand-icon {
+    font-size: 16px;
+  }
+
+  .brand-name {
+    font-size: 15px;
+    white-space: nowrap;
+  }
+
+  .status-indicator {
+    gap: 5px;
+    min-width: 0;
+  }
+
+  .status-indicator .label {
+    overflow: hidden;
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .toolbar {
+    gap: 6px;
+  }
+
+  .icon-btn {
+    width: 38px;
+    height: 38px;
+    border-radius: 10px;
+  }
+
+  .icon-btn svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .settings-aside {
+    top: 56px;
+    width: min(22rem, 100vw);
+    padding: 20px 18px max(20px, env(safe-area-inset-bottom));
+  }
+
+  .subtitle-area {
+    padding: 12px 10px max(76px, calc(28px + env(safe-area-inset-bottom)));
+    overscroll-behavior: contain;
+  }
+
+  .subtitle-list {
+    gap: 10px;
+  }
+
+  .subtitle-card {
+    padding: 11px 12px;
+    border-left-width: 3px;
+    border-radius: 12px;
+  }
+
+  .sub-line {
+    font-size: clamp(18px, calc(var(--subtitle-font-size) * 0.82), 28px);
+    line-height: 1.45;
+  }
+
+  .sub-line.translated {
+    margin-top: 5px;
+  }
+
+  .latency-line {
+    margin-top: 6px;
+    font-size: 10px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+  }
+
+  .jump-btn {
+    bottom: max(16px, env(safe-area-inset-bottom));
+  }
 }
 </style>

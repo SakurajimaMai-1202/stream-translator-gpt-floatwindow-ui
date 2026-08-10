@@ -39,7 +39,7 @@ app/dist-rocm
 | 功能 | 支援 |
 | --- | --- |
 | Faster-Whisper | 不支援；CPU Profile 自 v1.3.9 起為純 sherpa-onnx／ONNX Runtime |
-| Qwen3-ASR offline | 0.6B |
+| Qwen3-ASR offline | 0.6B / 1.7B INT8（sherpa-onnx） |
 | SenseVoiceSmall | compatibility，CPU 可用，速度待測 |
 | Qwen3-ASR default dtype | `float32` |
 | 預設 device policy | `cpu` |

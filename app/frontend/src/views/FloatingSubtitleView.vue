@@ -24,6 +24,19 @@ const timestampColor = ref('#888888'); // 時間碼顏色(灰色)
 const latencyColor = ref('#7DD3FC');
 const backgroundColor = ref('#000000');
 const backgroundOpacity = ref(50);
+const isRecording = ref(false);
+let recordingStatusTimer: ReturnType<typeof setInterval> | null = null;
+
+async function refreshRecordingStatus() {
+  try {
+    const response = await fetch('/api/translation/status');
+    const data = await response.json();
+    isRecording.value = Array.isArray(data.tasks)
+      && data.tasks.some((task: any) => task.is_running);
+  } catch {
+    isRecording.value = false;
+  }
+}
 
 // 初始化旗標：防止 watch 在設定載入完成前覆蓋正確值
 const isInitializing = ref(true);
@@ -36,6 +49,8 @@ const subtitleHistory = ref<Array<{
   timestamp_id: string; // 來自後端的原始時間碼範圍字串
   original: string;
   translated: string;
+  displayOriginal: string;
+  displayTranslated: string;
   timestamp: Date;
   asr_latency_ms?: number | null;
   llm_latency_ms?: number | null;
@@ -44,6 +59,96 @@ const subtitleHistory = ref<Array<{
   latency_trace?: SubtitleLatencyTrace;
   latency_window?: LatencyWindowSnapshot;
 }>>([]); 
+
+// 流式逐字顯示：完整文字與目前已渲染文字分開保存。
+const typingTimers = new Map<number, ReturnType<typeof setInterval>>();
+const typingItemIds = ref<number[]>([]);
+const TYPING_SPEED_MS = 18;
+const MAX_TYPING_DURATION_MS = 1800;
+
+function removeTypingItem(itemId: number) {
+  const index = typingItemIds.value.indexOf(itemId);
+  if (index !== -1) typingItemIds.value.splice(index, 1);
+}
+
+function stopTyping(itemId: number) {
+  const timer = typingTimers.get(itemId);
+  if (timer) clearInterval(timer);
+  typingTimers.delete(itemId);
+  removeTypingItem(itemId);
+}
+
+function clearAllTypingTimers() {
+  typingTimers.forEach(timer => clearInterval(timer));
+  typingTimers.clear();
+  typingItemIds.value = [];
+}
+
+function reconcileRenderedText(rendered: string, target: string): string {
+  const renderedChars = Array.from(rendered);
+  const targetChars = Array.from(target);
+  let commonLength = 0;
+  while (
+    commonLength < renderedChars.length
+    && commonLength < targetChars.length
+    && renderedChars[commonLength] === targetChars[commonLength]
+  ) {
+    commonLength += 1;
+  }
+  return targetChars.slice(0, commonLength).join('');
+}
+
+function startTyping(itemId: number) {
+  const item = subtitleHistory.value.find(sub => sub.id === itemId);
+  if (!item) return;
+
+  stopTyping(itemId);
+  item.displayOriginal = reconcileRenderedText(item.displayOriginal, item.original);
+  item.displayTranslated = reconcileRenderedText(item.displayTranslated, item.translated);
+
+  const originalChars = Array.from(item.original);
+  const translatedChars = Array.from(item.translated);
+  const remaining = (originalChars.length - Array.from(item.displayOriginal).length)
+    + (translatedChars.length - Array.from(item.displayTranslated).length);
+  if (remaining <= 0) return;
+
+  typingItemIds.value.push(itemId);
+  const speed = Math.max(1, Math.min(TYPING_SPEED_MS, Math.floor(MAX_TYPING_DURATION_MS / remaining)));
+  let ticks = 0;
+  const timer = setInterval(() => {
+    const target = subtitleHistory.value.find(sub => sub.id === itemId);
+    if (!target) {
+      stopTyping(itemId);
+      return;
+    }
+
+    const targetOriginalChars = Array.from(target.original);
+    const targetTranslatedChars = Array.from(target.translated);
+    const renderedOriginalLength = Array.from(target.displayOriginal).length;
+    const renderedTranslatedLength = Array.from(target.displayTranslated).length;
+    let changed = false;
+
+    if (renderedOriginalLength < targetOriginalChars.length) {
+      target.displayOriginal = targetOriginalChars.slice(0, renderedOriginalLength + 1).join('');
+      changed = true;
+    }
+    if (renderedTranslatedLength < targetTranslatedChars.length) {
+      target.displayTranslated = targetTranslatedChars.slice(0, renderedTranslatedLength + 1).join('');
+      changed = true;
+    }
+
+    if (!changed) {
+      stopTyping(itemId);
+      return;
+    }
+
+    ticks += 1;
+    if (ticks % 4 === 0 && autoScroll.value && !isUserScrolling.value) {
+      scrollToBottom();
+    }
+  }, speed);
+  typingTimers.set(itemId, timer);
+}
 
 // 滾動容器引用
 const scrollContainer = ref<HTMLElement | null>(null);
@@ -95,13 +200,16 @@ function addOrUpdateSubtitle(newSub: any, source: string = 'Store') {
     subtitleHistory.value[existingIndex].total_latency_ms = newSub.total_latency_ms ?? null;
     subtitleHistory.value[existingIndex].latency_trace = newSub.latency_trace;
     subtitleHistory.value[existingIndex].latency_window = newSub.latency_window;
+    startTyping(subtitleHistory.value[existingIndex].id);
   } else {
     // 沒找到，新增一筆
-    subtitleHistory.value.push({
+    const newItem = {
       id: Date.now() + Math.random(), // 確保 key 唯一
       timestamp_id: ts || '',
       original: newSub.original || '',
       translated: newSub.translated || '',
+      displayOriginal: '',
+      displayTranslated: '',
       timestamp: new Date(),
       asr_latency_ms: newSub.asr_latency_ms ?? null,
       llm_latency_ms: newSub.llm_latency_ms ?? null,
@@ -109,12 +217,15 @@ function addOrUpdateSubtitle(newSub: any, source: string = 'Store') {
       total_latency_ms: newSub.total_latency_ms ?? null,
       latency_trace: newSub.latency_trace,
       latency_window: newSub.latency_window,
-    });
+    };
+    subtitleHistory.value.push(newItem);
+    startTyping(newItem.id);
   }
   
   // 限制歷史數量
   while (subtitleHistory.value.length > 50) {
-    subtitleHistory.value.shift();
+    const removed = subtitleHistory.value.shift();
+    if (removed) stopTyping(removed.id);
   }
   
   // 自動捲動到底部
@@ -366,6 +477,8 @@ async function loadSettingsFromBackend() {
 }
 
 onMounted(async () => {
+  await refreshRecordingStatus();
+  recordingStatusTimer = setInterval(refreshRecordingStatus, 1000);
   console.log('FloatingSubtitleView mounted');
   console.log('Store:', store);
   console.log('Latest subtitle:', store.latestSubtitle);
@@ -427,6 +540,7 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  if (recordingStatusTimer) clearInterval(recordingStatusTimer);
   // 移除事件監聽器
   window.removeEventListener('storage', handleStorageChange);
   if (saveTimer !== null) {
@@ -441,6 +555,7 @@ onUnmounted(() => {
   if (settingsChannel) {
     settingsChannel.close();
   }
+  clearAllTypingTimers();
 });
 
 // 處理 storage 變更事件（備用方案）
@@ -468,6 +583,7 @@ const activeSettingsTab = ref<'display' | 'color'>('display');
 
 // 清除歷史
 function clearHistory() {
+  clearAllTypingTimers();
   subtitleHistory.value = [];
 }
 
@@ -536,6 +652,12 @@ async function stopTranslation() {
 
 <template>
   <div class="relative w-full h-full overflow-hidden bg-transparent group">
+    <div
+      class="absolute top-2 right-[19px] z-50 w-3 h-3 rounded-full border border-white/40 shadow-lg"
+      :class="isRecording ? 'bg-green-500 shadow-green-500/60' : 'bg-red-500 shadow-red-500/60'"
+      :title="isRecording ? '正在收音' : '尚未收音'"
+      :aria-label="isRecording ? '正在收音' : '尚未收音'"
+    ></div>
     <!-- Subtitle Display -->
     <div
       ref="scrollContainer"
@@ -582,7 +704,10 @@ async function stopTranslation() {
                 textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
                 transition: 'color 0.3s ease'
               }"
-            >{{ sub.original }}</span>
+            >{{ sub.displayOriginal }}<span
+              v-if="typingItemIds.includes(sub.id) && sub.displayOriginal.length < sub.original.length"
+              class="typing-cursor"
+            >|</span></span>
           </div>
          
           <!-- 翻譯 -->
@@ -603,7 +728,10 @@ async function stopTranslation() {
                 textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
                 transition: 'color 0.3s ease'
               }"
-            >{{ sub.translated }}</span>
+            >{{ sub.displayTranslated }}<span
+              v-if="typingItemIds.includes(sub.id) && sub.displayTranslated.length < sub.translated.length"
+              class="typing-cursor"
+            >|</span></span>
           </div>
         </div>
       </div>
@@ -625,7 +753,7 @@ async function stopTranslation() {
     </div>
 
     <!-- 垂直按鈕列（預設可見，避免首次開啟 hover 未觸發導致消失） -->
-    <div class="subtitle-floating-controls absolute top-2 right-2 flex flex-col gap-2 opacity-75 hover:opacity-100 transition-opacity z-50">
+    <div class="subtitle-floating-controls absolute top-7 right-2 flex flex-col gap-2 opacity-75 hover:opacity-100 transition-opacity z-50">
       <!-- Settings Toggle Button -->
       <button
         @click="openSettings"
@@ -829,6 +957,18 @@ async function stopTranslation() {
   font-weight: 500;
   line-height: 1.25;
   opacity: 0.78;
+}
+
+.typing-cursor {
+  display: inline-block;
+  margin-left: 1px;
+  font-weight: 300;
+  animation: typing-cursor-blink 0.7s ease-in-out infinite;
+}
+
+@keyframes typing-cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
 }
 
 .subtitle-floating-controls {

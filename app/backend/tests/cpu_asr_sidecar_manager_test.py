@@ -12,7 +12,7 @@ APP_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(APP_DIR))
 
 config_stub = types.ModuleType("backend.config")
-config_stub.settings = types.SimpleNamespace(APP_VERSION="1.3.10")
+config_stub.settings = types.SimpleNamespace(APP_VERSION="1.3.11")
 paths_stub = types.ModuleType("backend.core.portable_paths")
 paths_stub.get_app_root = lambda: APP_DIR
 paths_stub.get_cpu_asr_runtime_path = lambda: APP_DIR / "_runtime_cpu_asr"

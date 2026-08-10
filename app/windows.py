@@ -6,7 +6,7 @@ PyQt6 視窗管理器
 import sys
 from pathlib import Path
 from time import monotonic
-from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QApplication
+from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QApplication, QFileDialog
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings, QWebEngineScript
 from PyQt6.QtWebChannel import QWebChannel
@@ -37,11 +37,16 @@ class SubtitleBridge(QObject):
 
 
 class HomeBridge(QObject):
-    """主頁橋接：開啟字幕視窗、複製到剪貼簿"""
+    """主頁橋接：開啟字幕視窗、檔案選擇、複製到剪貼簿"""
 
     openSubtitleWindowRequested = pyqtSignal()
     subtitleUpdated = pyqtSignal(str)
     subtitleSettingsUpdated = pyqtSignal(str)
+    recordingStateUpdated = pyqtSignal(bool)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.is_recording = False
 
     @pyqtSlot()
     def openSubtitleWindow(self):
@@ -56,6 +61,27 @@ class HomeBridge(QObject):
     @pyqtSlot(str)
     def updateNativeSubtitleSettings(self, payload: str):
         self.subtitleSettingsUpdated.emit(payload)
+
+    @pyqtSlot(bool)
+    def updateNativeRecordingState(self, is_recording: bool):
+        self.is_recording = bool(is_recording)
+        self.recordingStateUpdated.emit(self.is_recording)
+
+    @pyqtSlot(result=str)
+    def chooseLocalFile(self) -> str:
+        """開啟原生檔案選擇器，回傳可交給後端使用的完整路徑。
+
+        WebView 中的 HTML ``input[type=file]`` 只能取得檔名，無法取得
+        Windows 本機的絕對路徑；本地檔案轉譯需要完整路徑，因此由 Qt
+        橋接直接呼叫原生 QFileDialog。
+        """
+        file_path, _ = QFileDialog.getOpenFileName(
+            None,
+            "選擇要轉譯的影音檔案",
+            "",
+            "影音檔案 (*.mp4 *.mkv *.webm *.avi *.mov *.mp3 *.wav *.m4a *.flac *.ogg *.aac *.wma);;所有檔案 (*.*)",
+        )
+        return file_path or ""
 
     @pyqtSlot(str, result=bool)
     def copyToClipboard(self, text: str) -> bool:

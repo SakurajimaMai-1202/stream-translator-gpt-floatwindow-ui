@@ -61,6 +61,12 @@ SHERPA_CPU_MODELS: dict[str, SherpaModelSpec] = {
         bundle="sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25",
         required_paths=("conv_frontend.onnx", "encoder.int8.onnx", "decoder.int8.onnx", "tokenizer"),
     ),
+    "Qwen/Qwen3-ASR-1.7B": SherpaModelSpec(
+        model_id="Qwen/Qwen3-ASR-1.7B",
+        family="qwen3_asr",
+        bundle="sherpa-onnx-qwen3-asr-1.7B-int8",
+        required_paths=("conv_frontend.onnx", "encoder.int8.onnx", "decoder.int8.onnx", "tokenizer"),
+    ),
 }
 
 

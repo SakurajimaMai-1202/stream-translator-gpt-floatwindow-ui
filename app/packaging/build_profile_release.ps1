@@ -13,7 +13,9 @@ param(
     [switch]$SkipRuntimeDependenciesInAppUpdate,
     [switch]$IncludeCpuAsrSidecar = $true,
     [string]$MinimumUpgradableVersion = "1.3.11",
-    [switch]$RequiresFullInstall
+    [switch]$RequiresFullInstall,
+    [ValidateSet("app_only", "runtime_replace")]
+    [string]$UpdateMode = "app_only"
 )
 
 $ErrorActionPreference = "Stop"
@@ -188,8 +190,6 @@ $updateRoot = Join-Path $distDir "App-Update"
 Invoke-FastDirectoryCopy -Source $builtApp -Destination $updateRoot -Threads $CopyThreads
 Copy-PortableJsRuntime -DestinationRoot $updateRoot
 $updatePackageDir = Join-Path $updateRoot "_runtime\Lib\site-packages"
-New-Item $updatePackageDir -ItemType Directory -Force | Out-Null
-Copy-Item (Join-Path $projectRoot "stream-translator-gpt\stream_translator_gpt") $updatePackageDir -Recurse -Force
 $runtimePackageDir = Join-Path $runtimeCache "Lib\site-packages"
 $runtimeUpdateExcludePatterns = @(
     "stream_translator_gpt",
@@ -201,20 +201,22 @@ $runtimeUpdateExcludePatterns = @(
     "PyInstaller", "pyinstaller-*", "_pytest", "pytest", "pytest-*",
     "~orch", "~orch-*", "__editable__*", "*.egg-link"
 )
-if ((Test-Path $runtimePackageDir) -and -not $SkipRuntimeDependenciesInAppUpdate) {
-    Invoke-FastDirectoryCopyExcluding `
-        -Source $runtimePackageDir `
-        -Destination $updatePackageDir `
-        -Exclude $runtimeUpdateExcludePatterns `
-        -Threads $CopyThreads
-} elseif ($SkipRuntimeDependenciesInAppUpdate) {
-    Write-Host "Quick mode: runtime dependency copy omitted from App Update" -ForegroundColor DarkYellow
+if ($UpdateMode -eq "runtime_replace") {
+    Remove-BuildDirectoryFast -Path (Join-Path $updateRoot "_runtime") -AllowedRoot $distDir
+    Invoke-FastDirectoryCopy -Source $runtimeCache -Destination (Join-Path $updateRoot "_runtime") -Threads $CopyThreads
+    Set-RuntimeManifestAppVersion -RuntimeDir (Join-Path $updateRoot "_runtime")
+} else {
+    # App-only updates deliberately omit _runtime.  The updater preserves the
+    # installed profile runtime verbatim instead of replacing it with a
+    # partial dependency tree.
+    Remove-BuildDirectoryFast -Path (Join-Path $updateRoot "_runtime") -AllowedRoot $distDir
 }
 $appUpdateBuildInfo = [ordered]@{
-    schema = 1
+    schema = 2
     profile = $Profile
     version = $Version
-    runtime_dependencies_included = (-not $SkipRuntimeDependenciesInAppUpdate)
+    update_mode = $UpdateMode
+    runtime_dependencies_included = ($UpdateMode -eq "runtime_replace")
     minimum_upgradable_version = $MinimumUpgradableVersion
     requires_full_install = [bool]$RequiresFullInstall
 }

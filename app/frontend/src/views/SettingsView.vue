@@ -1227,23 +1227,30 @@ watch(activeTab, async (tab) => {
 onMounted(async () => {
   settingsReady.value = false;
   try {
-    const [, , serverInfo] = await Promise.all([
-      store.loadConfig(),
-      store.loadRuntimeStatus(),
-      serverApi.getInfo().catch(() => null),
-      refreshAppUpdateStatus().catch(() => null),
-    ]);
-    if (serverInfo?.lan_addresses) sharingLanAddresses.value = serverInfo.lan_addresses;
-    await applyStoreConfigToLocalConfig(store.config, true);
+    // Config is a fast, cached YAML read.  Do not keep the whole settings UI
+    // behind cold Torch/GPU or llama.cpp probes, which can take many seconds.
+    await store.loadConfig();
+    await applyStoreConfigToLocalConfig(store.config, false);
   } finally {
     await nextTick();
     settingsReady.value = true;
   }
+
+  const runtimeStatusPromise = store.loadRuntimeStatus();
+  void serverApi.getInfo().then((serverInfo) => {
+    if (serverInfo?.lan_addresses) sharingLanAddresses.value = serverInfo.lan_addresses;
+  }).catch(() => null);
+  void refreshAppUpdateStatus().catch(() => null);
+  void (async () => {
+    await llamaStore.loadConfig();
+    await llamaStore.refreshServerStatus();
+  })();
   
   // 從 URL 參數設定 tab
   syncActiveTabFromRoute();
 
   if (activeTab.value === 'model_management') {
+    await runtimeStatusPromise;
     await refreshCpuAsrSidecarStatus();
     await modelDownloadStore.refreshAll();
     if (modelDownloadStore.activeTasks.length > 0) {
@@ -1826,6 +1833,9 @@ async function handleFileChange(event: Event) {
                 <p class="text-xs text-white/55">{{ appUpdateStatus?.message }} · {{ Math.round((appUpdateStatus?.progress || 0) * 100) }}%</p>
               </div>
               <p v-if="appUpdateStatus?.status === 'up_to_date'" class="text-sm text-emerald-300">目前已是最新版。</p>
+              <p v-if="appUpdateStatus?.status === 'full_install_required'" class="text-sm text-yellow-200">
+                此版本無法直接從 UI 升級，請下載相同 Profile 的 Full 完整包。
+              </p>
               <p v-if="appUpdateStatus?.status === 'unsupported'" class="text-sm text-yellow-200">開發模式不提供自動更新；正式 CPU／CUDA／ROCm 包才會啟用。</p>
               <p v-if="appUpdateStatus?.status === 'cancelled'" class="text-sm text-white/55">下載已取消，下次會從暫存進度繼續。</p>
               <p v-if="appUpdateStatus?.error" class="text-sm text-red-300 break-words">{{ appUpdateStatus.error }}</p>

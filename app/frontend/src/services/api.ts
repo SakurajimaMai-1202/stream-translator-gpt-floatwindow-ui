@@ -318,6 +318,7 @@ export interface AppUpdateStatus {
   ready_to_apply: boolean;
   minimum_upgradable_version: string;
   requires_full_install: boolean;
+  update_mode: 'app_only' | 'runtime_replace';
 }
 
 export interface CpuAsrSidecarInstallStatus {

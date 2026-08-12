@@ -26,6 +26,8 @@ ASSET_NAMES = {
     "cpu": "StreamTranslator-CPU-App-Update.zip",
     "rocm": "StreamTranslator-ROCm-Experimental-App-Update.zip",
 }
+MINIMUM_DIRECT_UPDATE_VERSION = "1.3.11"
+UPDATE_MODES = {"app_only", "runtime_replace"}
 ALLOWED_UPDATE_NAMES = {
     "app-update-build.json", "StreamTranslatorUpdater.exe", "diagnose_runtime.ps1",
     "PORTABLE_GUIDE_zh-TW.txt", "smoke_sensevoice_asr.ps1", "Stream Translator.exe",
@@ -53,6 +55,7 @@ class AppUpdateState:
     ready_to_apply: bool = False
     minimum_upgradable_version: str = ""
     requires_full_install: bool = False
+    update_mode: str = "app_only"
 
 
 class AppUpdateManager:
@@ -67,6 +70,7 @@ class AppUpdateManager:
         self._worker: threading.Thread | None = None
         self._cancel = threading.Event()
         self._expected_digest = ""
+        self._assets: list[dict[str, Any]] = []
         self._archive: Path | None = None
         self._staging: Path | None = None
 
@@ -89,11 +93,12 @@ class AppUpdateManager:
             pass
 
     def _current_version(self) -> str:
-        manifest = get_app_root() / "_runtime" / "runtime-version.json"
-        try:
-            return str(json.loads(manifest.read_text(encoding="utf-8")).get("app_version") or settings.APP_VERSION)
-        except (OSError, ValueError, TypeError):
-            return settings.APP_VERSION
+        # The runtime manifest describes the packaged Python/GPU runtime.  It
+        # can legitimately remain older after an app-only update, so using its
+        # app_version here causes an already-updated UI/backend to offer the
+        # same release again.  The running backend is the authoritative source
+        # for the application version.
+        return str(settings.APP_VERSION)
 
     def status(self) -> dict[str, Any]:
         with self._lock:
@@ -130,18 +135,32 @@ class AppUpdateManager:
                 release = json.loads(response.read().decode("utf-8"))
             latest = str(release.get("tag_name") or "").lstrip("v")
             asset_name = ASSET_NAMES[profile]
-            asset = next((item for item in release.get("assets", []) if item.get("name") == asset_name), None)
-            if not latest or not asset:
+            release_assets = list(release.get("assets", []))
+            asset = next((item for item in release_assets if item.get("name") == asset_name), None)
+            parts = sorted(
+                (item for item in release_assets if str(item.get("name") or "").startswith(asset_name + ".part")),
+                key=lambda item: str(item.get("name") or ""),
+            )
+            selected_assets = [asset] if asset else parts
+            if not latest or not selected_assets:
                 raise RuntimeError(f"Release does not contain {asset_name}")
-            digest = str(asset.get("digest") or "")
-            self._expected_digest = digest.removeprefix("sha256:").lower()
+            if any(not str(item.get("digest") or "").startswith("sha256:") for item in selected_assets):
+                raise RuntimeError("GitHub Release update asset does not provide SHA-256 digests")
+            self._assets = selected_assets
+            self._expected_digest = str(asset.get("digest") or "").removeprefix("sha256:").lower() if asset else ""
             available = self._version_tuple(latest) > self._version_tuple(self._state.current_version)
+            requires_full = available and self._version_tuple(self._state.current_version) < self._version_tuple(MINIMUM_DIRECT_UPDATE_VERSION)
             self._set(
-                status="available" if available else "up_to_date", available=available,
+                status="full_install_required" if requires_full else ("available" if available else "up_to_date"),
+                available=available and not requires_full,
                 latest_version=latest, asset_name=asset_name,
-                asset_url=str(asset.get("browser_download_url") or ""),
-                asset_size=int(asset.get("size") or 0), release_url=str(release.get("html_url") or ""),
-                release_notes=str(release.get("body") or ""), message="Update available" if available else "Already up to date",
+                asset_url=str(selected_assets[0].get("browser_download_url") or ""),
+                asset_size=sum(int(item.get("size") or 0) for item in selected_assets), release_url=str(release.get("html_url") or ""),
+                release_notes=str(release.get("body") or ""),
+                minimum_upgradable_version=MINIMUM_DIRECT_UPDATE_VERSION,
+                requires_full_install=requires_full,
+                message=(f"Full package required for versions older than {MINIMUM_DIRECT_UPDATE_VERSION}" if requires_full
+                         else ("Update available" if available else "Already up to date")),
             )
         except Exception as exc:
             self._set(status="error", error=str(exc), message="Update check failed")
@@ -153,6 +172,15 @@ class AppUpdateManager:
                 return asdict(self._state)
             if not self._state.available or not self._state.asset_url:
                 raise RuntimeError("No compatible application update is available")
+            # Before the manifest is staged we do not yet know whether the
+            # archive is app_only or runtime_replace.  Reserve conservatively
+            # for the download, extraction, and rollback copy.
+            free = shutil.disk_usage(get_app_root()).free
+            required = max(self._state.asset_size * 3, 512 * 1024 * 1024)
+            if free < required:
+                raise RuntimeError(
+                    f"Insufficient disk space for safe update: need at least {required / 1024**3:.1f} GiB free"
+                )
             self._cancel.clear()
             self._state.status = "starting"
             self._state.error = ""
@@ -224,13 +252,29 @@ class AppUpdateManager:
         if not manifest_path.is_file() or not exe.is_file():
             raise RuntimeError("Update package is missing its manifest or executable")
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        if manifest.get("schema") != 1 or manifest.get("profile") != self._state.profile:
+        schema = int(manifest.get("schema") or 0)
+        if schema not in {1, 2} or manifest.get("profile") != self._state.profile:
             raise RuntimeError("Update package profile or schema does not match this installation")
         if str(manifest.get("version")) != self._state.latest_version:
             raise RuntimeError("Update package version does not match the selected Release")
         minimum = str(manifest.get("minimum_upgradable_version") or "")
         requires_full = bool(manifest.get("requires_full_install", False))
-        self._set(minimum_upgradable_version=minimum, requires_full_install=requires_full)
+        update_mode = str(manifest.get("update_mode") or ("runtime_replace" if (staging / "_runtime").exists() else "app_only"))
+        if schema == 1 and (staging / "_runtime").exists():
+            raise RuntimeError("Legacy update package contains an unsafe partial _runtime; use the Full package")
+        if update_mode not in UPDATE_MODES:
+            raise RuntimeError(f"Unsupported update mode: {update_mode}")
+        runtime = staging / "_runtime"
+        if update_mode == "app_only" and runtime.exists():
+            raise RuntimeError("app_only update must not contain _runtime")
+        if update_mode == "runtime_replace":
+            required = (runtime / "python.exe", runtime / "runtime-version.json")
+            if not all(path.is_file() for path in required):
+                raise RuntimeError("runtime_replace update must contain a complete _runtime")
+            runtime_manifest = json.loads((runtime / "runtime-version.json").read_text(encoding="utf-8"))
+            if str(runtime_manifest.get("profile") or "").lower() != self._state.profile:
+                raise RuntimeError("Replacement runtime profile does not match this installation")
+        self._set(minimum_upgradable_version=minimum, requires_full_install=requires_full, update_mode=update_mode)
         if requires_full or (minimum and self._version_tuple(self._state.current_version) < self._version_tuple(minimum)):
             raise RuntimeError(f"此版本需要下載同 Profile Full 包安裝（最低可直接升級版本：{minimum or '不適用'}）")
         unexpected = sorted(item.name for item in staging.iterdir() if item.name not in ALLOWED_UPDATE_NAMES)
@@ -242,17 +286,42 @@ class AppUpdateManager:
             update_root = get_app_root() / ".app-update"
             downloads = update_root / "downloads"
             downloads.mkdir(parents=True, exist_ok=True)
-            archive = downloads / f"{self._state.asset_name}.part"
+            assets = self._assets or [{
+                "name": self._state.asset_name,
+                "browser_download_url": self._state.asset_url,
+                "size": self._state.asset_size,
+                "digest": f"sha256:{self._expected_digest}",
+            }]
+            downloaded_parts: list[Path] = []
+            total_size = sum(int(item.get("size") or 0) for item in assets)
+            completed_size = 0
+            for index, asset in enumerate(assets):
+                part = downloads / f"{asset['name']}.part"
+                self._set(asset_url=str(asset.get("browser_download_url") or ""), asset_size=total_size)
+                self._download(str(asset.get("browser_download_url") or ""), part)
+                actual_part = self._sha256(part)
+                expected_part = str(asset.get("digest") or "").removeprefix("sha256:").lower()
+                if not expected_part or actual_part != expected_part:
+                    part.unlink(missing_ok=True)
+                    raise RuntimeError(f"Update part SHA-256 mismatch: {asset.get('name')}")
+                downloaded_parts.append(part)
+                completed_size += part.stat().st_size
+                self._set(bytes_downloaded=completed_size, bytes_total=total_size, progress=(completed_size / total_size * 0.75) if total_size else 0.25)
+            archive = downloads / self._state.asset_name
+            if len(downloaded_parts) == 1:
+                shutil.copy2(downloaded_parts[0], archive)
+            else:
+                with archive.open("wb") as output:
+                    for part in downloaded_parts:
+                        with part.open("rb") as stream:
+                            shutil.copyfileobj(stream, output, length=8 * 1024 * 1024)
             self._archive = archive
-            self._download(self._state.asset_url, archive)
             self._raise_if_cancelled()
             self._set(status="verifying", message="Verifying application update", progress=0.78)
             actual = self._sha256(archive)
-            if self._expected_digest and actual != self._expected_digest:
+            if len(downloaded_parts) == 1 and self._expected_digest and actual != self._expected_digest:
                 archive.unlink(missing_ok=True)
                 raise RuntimeError(f"Application update SHA-256 mismatch: expected {self._expected_digest}, got {actual}")
-            if not self._expected_digest:
-                raise RuntimeError("GitHub Release asset does not provide a SHA-256 digest")
             staging = update_root / f"staging-{self._state.latest_version}"
             if staging.exists():
                 shutil.rmtree(staging)
@@ -278,8 +347,9 @@ class AppUpdateManager:
         if not updater.is_file():
             raise RuntimeError("StreamTranslatorUpdater.exe is missing")
         plan = {
-            "schema": 1, "app_root": str(app_root), "staging": str(staging),
+            "schema": 2, "app_root": str(app_root), "staging": str(staging),
             "version": self._state.latest_version, "profile": self._state.profile,
+            "update_mode": self._state.update_mode,
             "executable": "Stream Translator.exe", "parent_pid": os.getppid(),
         }
         plan_path = app_root / ".app-update" / "apply-plan.json"

@@ -5,6 +5,8 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Literal
@@ -33,6 +35,10 @@ DISCRETE_NAME_MARKERS = (
     "amd radeon pro",
     "amd instinct",
 )
+
+_GPU_CACHE_LOCK = threading.Lock()
+_GPU_CACHE: tuple[float, tuple["GpuDevice", ...]] | None = None
+GPU_CACHE_TTL_SECONDS = 60.0
 
 
 @dataclass(frozen=True)
@@ -213,14 +219,23 @@ def detect_windows_video_controllers() -> list[GpuDevice]:
     return devices
 
 
-def detect_gpus(include_windows_fallback: bool = True) -> list[GpuDevice]:
+def detect_gpus(include_windows_fallback: bool = True, *, force_refresh: bool = False) -> list[GpuDevice]:
+    global _GPU_CACHE
+    now = time.monotonic()
+    if include_windows_fallback and not force_refresh:
+        with _GPU_CACHE_LOCK:
+            if _GPU_CACHE is not None and now - _GPU_CACHE[0] < GPU_CACHE_TTL_SECONDS:
+                return list(_GPU_CACHE[1])
     runtime_devices = detect_runtime_python_gpus()
     if runtime_devices:
-        return runtime_devices
-    torch_devices = detect_torch_gpus()
-    if torch_devices or not include_windows_fallback:
-        return torch_devices
-    return detect_windows_video_controllers()
+        devices = runtime_devices
+    else:
+        torch_devices = detect_torch_gpus()
+        devices = torch_devices if (torch_devices or not include_windows_fallback) else detect_windows_video_controllers()
+    if include_windows_fallback:
+        with _GPU_CACHE_LOCK:
+            _GPU_CACHE = (time.monotonic(), tuple(devices))
+    return list(devices)
 
 
 def detect_runtime_python_gpus(python_exe: str | None = None) -> list[GpuDevice]:

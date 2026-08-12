@@ -11,7 +11,8 @@ param(
     [ValidateRange(0, 9)][int]$CompressionLevel = 7,
     [ValidateRange(1, 128)][int]$CopyThreads = 16,
     [switch]$SkipRuntimeDependenciesInAppUpdate,
-    [switch]$IncludeCpuAsrSidecar = $true
+    [switch]$IncludeCpuAsrSidecar = $true,
+    [ValidateSet("app_only", "runtime_replace")][string]$UpdateMode = "app_only"
 )
 
 $releaseArgs = @{
@@ -19,6 +20,7 @@ $releaseArgs = @{
     Version = $Version
     CompressionLevel = $CompressionLevel
     CopyThreads = $CopyThreads
+    UpdateMode = $UpdateMode
 }
 if ($ForceRuntime) { $releaseArgs.ForceRuntime = $true }
 if ($ReuseRuntimeCache) { $releaseArgs.ReuseRuntimeCache = $true }

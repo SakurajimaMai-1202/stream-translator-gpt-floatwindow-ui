@@ -56,6 +56,9 @@ v1.4.0 的重點包括：
 
 - 程式啟動後自動檢查一次；有新版時在首頁通知，但不自動下載或安裝。使用者確認後，才依 CUDA、CPU、ROCm Profile 下載相符的 App Update。
 - 更新前最多保留五份 `config.yaml`、翻譯術語表、ASR 修正規則與 Cookies 備份。
+- 更新協議改為 schema 2：一般程式更新使用 `app_only`，完整保留既有 `_runtime`；Python、Torch、CUDA／ROCm 或 ONNX Runtime 有變更時，使用完整且同 Profile 的 `runtime_replace` 原子替換並支援失敗回復。
+- 大型 Runtime 更新可由多個 `.partNN` 資產組成；程式會逐段驗證 GitHub SHA-256、重組後再進入安裝流程。
+- 設定頁會先顯示 config，再於背景載入 Runtime 與 llama 狀態；GPU 探測結果會短暫快取。
 - CPU ASR sidecar 支援健康檢查、修復／重新安裝、可取消下載與續傳。
 - 電腦版與手機版字幕採用接近浮動字幕的打字機式流式渲染，支援 ASR 修正版內容與 Unicode 字元。
 - 使用教學加入 Gemini API Key、`/v1beta` 端點、測試連線與金鑰安全說明。
@@ -92,7 +95,9 @@ ROCm 版本仍屬實驗性支援，能否使用取決於顯示卡、驅動程式
 - `StreamTranslator-CPU-App-Update.zip`
 - `StreamTranslator-ROCm-Experimental-App-Update.zip`
 
-更新前請備份 `config.yaml`。App Update 只能覆蓋相同 Profile，不要以 CUDA 更新包覆蓋 CPU 或 ROCm 安裝。
+更新器會在套用前備份 `config.yaml`、自訂術語、ASR 修正規則與 Cookies，最多保留五份。App Update 只能套用相同 Profile，不要以 CUDA 更新包更新 CPU 或 ROCm 安裝。
+
+更新包有兩種模式：`app_only` 不包含也不替換 `_runtime`；`runtime_replace` 必須包含完整 Runtime，並會在啟動失敗時回復舊 Runtime。低於最低可直接升級版本的安裝會在下載前提示改用同 Profile Full package。
 
 從 v1.4.0 起，上述流程已整合到「設定 → 一般設定」。從更舊版本首次升級到 v1.4.0 時，請完整解壓相同 Profile 的 App Update；更新包已包含 `StreamTranslatorUpdater.exe`，不需另外下載。
 

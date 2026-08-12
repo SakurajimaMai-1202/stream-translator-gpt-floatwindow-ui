@@ -9,7 +9,8 @@ param(
     [ValidateRange(0, 9)][int]$CompressionLevel = 7,
     [ValidateRange(64, 2047)][int]$SplitSizeMiB = 1900,
     [ValidateRange(1, 128)][int]$CopyThreads = 16,
-    [switch]$IncludeCpuAsrSidecar = $true
+    [switch]$IncludeCpuAsrSidecar = $true,
+    [ValidateSet("app_only", "runtime_replace")][string]$UpdateMode = "app_only"
 )
 
 $ErrorActionPreference = "Stop"
@@ -78,6 +79,7 @@ foreach ($profile in $profiles) {
         SevenZipPath = $sevenZipExe
         CompressionLevel = $effectiveCompressionLevel
         CopyThreads = $CopyThreads
+        UpdateMode = $UpdateMode
     }
     if ($reuseValidatedRuntimeCaches) { $releaseArgs.ReuseRuntimeCache = $true }
     if ($Mode -eq "Quick") { $releaseArgs.SkipFullZip = $true }
@@ -161,9 +163,24 @@ foreach ($result in $profileResults) {
     $packageInfo = Get-RuntimeProfilePackageInfo -RuntimeProfile $result.profile
     $distDir = Join-Path $appDir $packageInfo.DistDirName
     $appUpdatePath = Join-Path $distDir $packageInfo.AppUpdateZip
-    Copy-Item -LiteralPath $appUpdatePath -Destination $assetDir -Force
-    $appUpdateHash = (Get-FileHash -LiteralPath $appUpdatePath -Algorithm SHA256).Hash
-    $checksumEntries += [pscustomobject]@{ hash = $appUpdateHash; name = $packageInfo.AppUpdateZip }
+    $appUpdateFile = Get-Item -LiteralPath $appUpdatePath
+    $githubAssetLimit = [int64]$SplitSizeMiB * 1MB
+    if ($appUpdateFile.Length -gt $githubAssetLimit) {
+        $appUpdateParts = @(Split-ReleaseFile -Path $appUpdatePath -PartSizeMiB $SplitSizeMiB)
+        $verifiedAppUpdateHash = Test-SplitReleaseFile -OriginalPath $appUpdatePath -Parts $appUpdateParts -SevenZipPath $sevenZipExe
+        foreach ($part in ($appUpdateParts | Sort-Object Name)) {
+            Copy-Item -LiteralPath $part.FullName -Destination $assetDir -Force
+            $checksumEntries += [pscustomobject]@{
+                hash = (Get-FileHash -LiteralPath $part.FullName -Algorithm SHA256).Hash
+                name = $part.Name
+            }
+        }
+        $checksumEntries += [pscustomobject]@{ hash = $verifiedAppUpdateHash; name = $packageInfo.AppUpdateZip }
+    } else {
+        Copy-Item -LiteralPath $appUpdatePath -Destination $assetDir -Force
+        $appUpdateHash = (Get-FileHash -LiteralPath $appUpdatePath -Algorithm SHA256).Hash
+        $checksumEntries += [pscustomobject]@{ hash = $appUpdateHash; name = $packageInfo.AppUpdateZip }
+    }
 
     if ($Mode -eq "Final") {
         $timer.Restart()

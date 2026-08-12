@@ -14,7 +14,11 @@ router = APIRouter(prefix="/runtime", tags=["runtime"])
 async def get_runtime_status():
     try:
         config = get_config_manager().get_config()
-        return {"success": True, "data": build_runtime_status(config)}
+        # Importing Torch and probing the GPU can take 10-20 seconds on a cold
+        # packaged runtime.  Keep that work off the FastAPI event loop so a
+        # concurrent /config request remains responsive.
+        data = await asyncio.to_thread(build_runtime_status, config)
+        return {"success": True, "data": data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -47,10 +47,18 @@ Starting with v1.3.10, all three Full packages intentionally exclude the
 `llama` folder. The application downloads and manages the llama.cpp Runtime on
 demand, so an obsolete bundled server is never shipped with a profile package.
 
-App Update archives place `Stream Translator.exe`, `_internal`, and `_runtime`
-directly at the ZIP root so extracting into an existing package replaces the
-running application. Full archives keep their profile package directory as the
-ZIP root.
+App Update manifests use schema 2 and declare one of two modes:
+
+- `app_only` (default) places `Stream Translator.exe`, `_internal`,
+  `_js_runtime`, and the updater at the ZIP root. It must not contain
+  `_runtime`, so the installed CPU/CUDA/ROCm runtime is preserved verbatim.
+- `runtime_replace` also includes a complete profile-matched `_runtime` with
+  `python.exe` and `runtime-version.json`. The updater swaps that directory as
+  one rollback unit. Use `-UpdateMode runtime_replace` when Python, Torch,
+  CUDA/ROCm, ONNX Runtime, or another ABI-sensitive dependency changes.
+
+The CPU ASR sidecar remains independently managed. Full archives keep their
+profile package directory as the ZIP root.
 
 GUI builds always pass PyInstaller `--clean`. The fixed work directory must not
 reuse an older Analysis result, otherwise a newly built Vite bundle can be

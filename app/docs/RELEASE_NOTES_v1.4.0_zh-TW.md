@@ -13,6 +13,10 @@ v1.4.0 集中改善程式更新、CPU ASR sidecar、遠端字幕顯示與 Gemini
 - 下載後驗證 GitHub Release 提供的 SHA-256，並檢查版本、Profile 與更新包內容。
 - 更新檔會先放入隔離暫存區，再由獨立的 `StreamTranslatorUpdater.exe` 關閉主程式、套用檔案並重新啟動。
 - 更新器在新版啟動失敗時會嘗試回復上一版程式檔。
+- 修正應用程式版本誤讀舊 `_runtime/runtime-version.json`，已安裝 v1.4.0 時不會再重複提示更新。
+- 更新協議升級為 schema 2：`app_only` 完整保留既有 Runtime；相依套件有變更時使用完整且同 Profile 的 `runtime_replace` 原子替換並支援回復。
+- 危險的舊式部分 `_runtime` 更新包會被拒絕；大型 Runtime 支援 `.partNN` 逐段 SHA-256 驗證與重組。
+- 最低可升級版本與磁碟空間會在下載前檢查，不相容的舊版會直接提示使用同 Profile Full package。
 
 ### 更新前的使用者資料備份
 
@@ -44,6 +48,12 @@ v1.4.0 集中改善程式更新、CPU ASR sidecar、遠端字幕顯示與 Gemini
 - Gemini API Base URL 預設顯示為 `https://generativelanguage.googleapis.com/v1beta`。
 - 明確說明 OpenAI ASR、OpenAI GPT 與 Gemini 使用不同 API Key，不能互相代用。
 
+### 設定頁載入速度
+
+- `config.yaml` 載入完成後立即顯示設定，不再等待 GPU、Torch 與 llama.cpp 探測。
+- Runtime 硬體偵測移到背景執行，避免阻塞其他 API；GPU 探測結果加入短時間快取。
+- Runtime 與 llama.cpp 狀態會在設定頁顯示後陸續補上。
+
 ## 全新安裝
 
 1. 下載與硬體相符的 CUDA、CPU 或 ROCm Full package。
@@ -59,7 +69,7 @@ v1.4.0 集中改善程式更新、CPU ASR sidecar、遠端字幕顯示與 Gemini
 4. 確認備份項目後按「重新啟動並套用」。
 5. 若目前版本不符合更新包的最低可升級版本，請改下載同 Profile Full package 全新安裝。
 
-從 v1.3.11 首次升級時，請手動完整解壓同 Profile 的 v1.4.0 `App-Update.zip` 並覆蓋原安裝目錄。更新包已包含 `StreamTranslatorUpdater.exe`，不需另外下載；之後即可使用 UI 內建更新。CUDA、CPU、ROCm 不可混用。CPU ASR sidecar 只包含 Runtime，不包含模型權重。
+從 v1.3.11 首次升級時，請手動完整解壓同 Profile 的 v1.4.0 `App-Update.zip` 並覆蓋原安裝目錄。更新包已包含 `StreamTranslatorUpdater.exe`，不需另外下載；之後即可使用 UI 內建更新。這次重新發布的 App Update 採 `app_only`，不會替換既有 `_runtime`。CUDA、CPU、ROCm 不可混用。CPU ASR sidecar 只包含 Runtime，不包含模型權重。
 
 ## 重要注意事項
 

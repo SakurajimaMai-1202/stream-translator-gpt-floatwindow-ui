@@ -7,6 +7,8 @@ type DesktopSubtitle = {
   id: number;
   original: string;
   translated: string;
+  displayOriginal: string;
+  displayTranslated: string;
   timestamp_id?: string;
   asr_latency_ms?: number | null;
   llm_latency_ms?: number | null;
@@ -37,6 +39,73 @@ const theme = ref<'auto' | 'dark' | 'light'>((localStorage.getItem('dfw_theme') 
 // ─── 捲動控制 ───────────────────────────────────────────
 const scrollContainer = ref<HTMLElement | null>(null);
 const isAutoScroll = ref(true);
+const typingTimers = new Map<number, ReturnType<typeof setInterval>>();
+const typingItemIds = ref<number[]>([]);
+const TYPING_SPEED_MS = 18;
+const MAX_TYPING_DURATION_MS = 1800;
+
+function stopTyping(itemId: number) {
+  const timer = typingTimers.get(itemId);
+  if (timer) clearInterval(timer);
+  typingTimers.delete(itemId);
+  const index = typingItemIds.value.indexOf(itemId);
+  if (index !== -1) typingItemIds.value.splice(index, 1);
+}
+
+function clearAllTypingTimers() {
+  typingTimers.forEach(timer => clearInterval(timer));
+  typingTimers.clear();
+  typingItemIds.value = [];
+}
+
+function reconcileRenderedText(rendered: string, target: string): string {
+  const renderedChars = Array.from(rendered);
+  const targetChars = Array.from(target);
+  let commonLength = 0;
+  while (commonLength < renderedChars.length
+    && commonLength < targetChars.length
+    && renderedChars[commonLength] === targetChars[commonLength]) commonLength += 1;
+  return targetChars.slice(0, commonLength).join('');
+}
+
+function hasPendingText(rendered: string, target: string): boolean {
+  return Array.from(rendered).length < Array.from(target).length;
+}
+
+function startTyping(itemId: number) {
+  const item = subtitles.value.find(sub => sub.id === itemId);
+  if (!item) return;
+  stopTyping(itemId);
+  item.displayOriginal = reconcileRenderedText(item.displayOriginal, item.original);
+  item.displayTranslated = reconcileRenderedText(item.displayTranslated, item.translated);
+  const remaining = (Array.from(item.original).length - Array.from(item.displayOriginal).length)
+    + (Array.from(item.translated).length - Array.from(item.displayTranslated).length);
+  if (remaining <= 0) return;
+  typingItemIds.value.push(itemId);
+  const speed = Math.max(1, Math.min(TYPING_SPEED_MS, Math.floor(MAX_TYPING_DURATION_MS / remaining)));
+  let ticks = 0;
+  const timer = setInterval(() => {
+    const target = subtitles.value.find(sub => sub.id === itemId);
+    if (!target) { stopTyping(itemId); return; }
+    let changed = false;
+    const originalChars = Array.from(target.original);
+    const translatedChars = Array.from(target.translated);
+    const originalLength = Array.from(target.displayOriginal).length;
+    const translatedLength = Array.from(target.displayTranslated).length;
+    if (originalLength < originalChars.length) {
+      target.displayOriginal = originalChars.slice(0, originalLength + 1).join('');
+      changed = true;
+    }
+    if (translatedLength < translatedChars.length) {
+      target.displayTranslated = translatedChars.slice(0, translatedLength + 1).join('');
+      changed = true;
+    }
+    if (!changed) { stopTyping(itemId); return; }
+    ticks += 1;
+    if (ticks % 4 === 0 && isAutoScroll.value) scrollToBottom();
+  }, speed);
+  typingTimers.set(itemId, timer);
+}
 const SCROLL_THRESHOLD = 80; // px，距離底部多少以內視為「在底部」
 
 function handleScroll() {
@@ -140,15 +209,18 @@ function addOrUpdateSubtitle(data: Omit<DesktopSubtitle, 'id' | 'timestamp_id'> 
       subtitles.value[idx].total_latency_ms = data.total_latency_ms ?? null;
       subtitles.value[idx].latency_trace = data.latency_trace;
       subtitles.value[idx].latency_window = data.latency_window;
+      startTyping(subtitles.value[idx].id);
       // 更新不新增，不需要捲動
       return;
     }
   }
 
-  subtitles.value.push({
+  const newItem: DesktopSubtitle = {
     id: Date.now() + Math.random(),
     original: data.original || '',
     translated: data.translated || '',
+    displayOriginal: '',
+    displayTranslated: '',
     asr_latency_ms: data.asr_latency_ms ?? null,
     llm_latency_ms: data.llm_latency_ms ?? null,
     translation_queue_latency_ms: data.translation_queue_latency_ms ?? null,
@@ -156,10 +228,15 @@ function addOrUpdateSubtitle(data: Omit<DesktopSubtitle, 'id' | 'timestamp_id'> 
     latency_trace: data.latency_trace,
     latency_window: data.latency_window,
     ...(ts ? { timestamp_id: ts } : {})
-  });
+  };
+  subtitles.value.push(newItem);
+  startTyping(newItem.id);
 
   // 超出歷史記錄上限時移除最舊的
-  if (subtitles.value.length > maxItems.value) subtitles.value.shift();
+  if (subtitles.value.length > maxItems.value) {
+    const removed = subtitles.value.shift();
+    if (removed) stopTyping(removed.id);
+  }
 
   // 只有使用者在底部才自動捲動
   if (isAutoScroll.value) {
@@ -185,9 +262,11 @@ onMounted(() => { connect(); });
 onUnmounted(() => {
   sse?.close();
   if (reconnectTimer) clearTimeout(reconnectTimer);
+  clearAllTypingTimers();
 });
 
 function clearHistory() {
+  clearAllTypingTimers();
   subtitles.value = [];
 }
 
@@ -332,12 +411,16 @@ function latencyLabel(sub: DesktopSubtitle): string {
             <div v-if="showOriginal && sub.original"
               class="sub-line original"
               :style="{ '--subtitle-font-size': fontSize + 'px' }">
-              {{ sub.original }}
+              {{ sub.displayOriginal }}<span
+                v-if="typingItemIds.includes(sub.id) && hasPendingText(sub.displayOriginal, sub.original)"
+                class="typing-cursor">|</span>
             </div>
             <div v-if="showTranslated && sub.translated"
               class="sub-line translated"
               :style="{ '--subtitle-font-size': fontSize + 'px' }">
-              {{ sub.translated }}
+              {{ sub.displayTranslated }}<span
+                v-if="typingItemIds.includes(sub.id) && hasPendingText(sub.displayTranslated, sub.translated)"
+                class="typing-cursor">|</span>
             </div>
             <div
               v-if="showLatency && latencyLabel(sub)"
@@ -363,6 +446,18 @@ function latencyLabel(sub: DesktopSubtitle): string {
 
 <style scoped>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700;900&display=swap');
+
+.typing-cursor {
+  display: inline-block;
+  margin-left: 1px;
+  font-weight: 300;
+  animation: typing-cursor-blink 0.7s ease-in-out infinite;
+}
+
+@keyframes typing-cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 

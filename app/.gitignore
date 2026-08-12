@@ -59,6 +59,7 @@ test_api.py
 # PyInstaller
 *.spec
 !packaging/stream-translator-llm-gui.spec
+!packaging/stream-translator-updater.spec
 version_info.txt
 
 # Development executables

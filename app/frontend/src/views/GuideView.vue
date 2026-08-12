@@ -23,10 +23,11 @@ function goToHome() {
       <button type="button" class="rounded-xl bg-cyan-500 px-4 py-2.5 text-xs font-bold text-slate-950 shadow-lg shadow-cyan-950/30 transition hover:bg-cyan-400" @click="goToHome">回到即時轉譯</button>
     </div>
 
-    <div class="mb-7 grid gap-3 md:grid-cols-3">
+    <div class="mb-7 grid gap-3 md:grid-cols-4">
       <a href="#quick-start" class="guide-summary-card border-cyan-400/20 bg-cyan-950/20"><span>01</span><strong>快速開始</strong><small>貼網址並啟動翻譯</small></a>
       <a href="#asr" class="guide-summary-card border-indigo-400/20 bg-indigo-950/20"><span>02</span><strong>ASR 模型</strong><small>選擇、下載與用途</small></a>
-      <a href="#llama" class="guide-summary-card border-emerald-400/20 bg-emerald-950/20"><span>03</span><strong>本地 LLM</strong><small>llama.cpp 與 GGUF 設定</small></a>
+      <a href="#gemini" class="guide-summary-card border-blue-400/20 bg-blue-950/20"><span>03</span><strong>Gemini API</strong><small>API Key 與雲端翻譯</small></a>
+      <a href="#llama" class="guide-summary-card border-emerald-400/20 bg-emerald-950/20"><span>04</span><strong>本地 LLM</strong><small>llama.cpp 與 GGUF 設定</small></a>
     </div>
 
     <section id="quick-start" class="guide-section">
@@ -60,8 +61,42 @@ function goToHome() {
       <button type="button" class="guide-action" @click="goToSettings('model_management')">前往 ASR 模型管理</button>
     </section>
 
+    <section id="gemini" class="guide-section">
+      <div class="guide-section-heading"><span class="guide-number">03</span><div><h2>使用 Gemini API 翻譯</h2><p>用 Google AI Studio 的 API Key 進行雲端翻譯</p></div></div>
+      <div class="grid gap-4 md:grid-cols-2">
+        <div class="guide-card">
+          <h3>A. 取得 Gemini API Key</h3>
+          <ol>
+            <li>登入 <a class="guide-link" href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer">Google AI Studio API Keys</a>。</li>
+            <li>按「Create API key」；如果畫面要求選專案，選擇或匯入要使用的 Google Cloud 專案。</li>
+            <li>複製新建立的 API Key。API Key 像密碼一樣保管，不要貼到公開文章、截圖或 Git。</li>
+          </ol>
+          <p class="guide-muted">免費額度、模型可用性與計費規則由 Google 帳戶及專案決定；長時間直播前請先確認配額與帳單設定。</p>
+        </div>
+        <div class="guide-card">
+          <h3>B. 填入程式設定</h3>
+          <ol>
+            <li>開啟左側「設定」→「翻譯選項」。</li>
+            <li>將「翻譯後端」選為「Google Gemini」。</li>
+            <li>在「API Key」貼上剛才複製的金鑰；模型名稱保留畫面預設值，或改成帳戶目前可用的 Gemini 模型。API Base URL 保留 <code>https://generativelanguage.googleapis.com/v1beta</code>。</li>
+            <li>按右側「測試連線」，看到成功訊息後儲存設定。</li>
+          </ol>
+        </div>
+      </div>
+      <div class="guide-card mt-4">
+        <h3>C. 開始翻譯</h3>
+        <ol>
+          <li>回到「即時轉譯」，確認「翻譯」已開啟，並選好輸入語言與目標語言。</li>
+          <li>在「翻譯模型／後端」選擇「Google Gemini」，不要同時開啟「使用本地 LLM」。</li>
+          <li>按「啟動即時轉譯」；ASR 會先把語音轉成文字，再交給 Gemini 翻譯。</li>
+        </ol>
+      </div>
+      <div class="guide-warning">如果測試失敗，先檢查 API Key 是否完整、模型名稱是否仍可用、網路與 Google 配額是否正常。OpenAI ASR Key、OpenAI GPT 翻譯 Key 與 Gemini Key 是三組不同的金鑰，不能互相代用。</div>
+      <button type="button" class="guide-action" @click="goToSettings('translation')">前往 Gemini 翻譯設定</button>
+    </section>
+
     <section id="llama" class="guide-section">
-      <div class="guide-section-heading"><span class="guide-number">03</span><div><h2>本地 LLM／llama.cpp 怎麼設定</h2><p>本地 LLM 負責翻譯，不負責語音辨識</p></div></div>
+      <div class="guide-section-heading"><span class="guide-number">04</span><div><h2>本地 LLM／llama.cpp 怎麼設定</h2><p>本地 LLM 負責翻譯，不負責語音辨識</p></div></div>
       <div class="grid gap-4 md:grid-cols-2">
         <div class="guide-card"><h3>A. 先準備 llama.cpp Runtime</h3><ol><li>到左側「Llama 執行設定」。</li><li>Runtime 區會自動核對目前版本與官方最新版。</li><li>如果已是最新版本，畫面會顯示「已是最新版本」，不需要再下載。</li><li>如果有新版，選擇依硬體推薦的 CUDA、HIP、Vulkan 或 CPU Runtime。</li><li>等待下載、驗證、安裝完成通知。</li></ol><p class="guide-muted">NVIDIA 通常選 CUDA；AMD 可選 HIP；不確定時使用畫面上的硬體推薦。</p></div>
         <div class="guide-card"><h3>B. 下載並選擇 GGUF 模型</h3><ol><li>到左側「LLM 模型管理」。</li><li>下載或匯入 GGUF 格式模型，例如 Qwen、HY-MT 等。</li><li>回到「Llama 執行設定」，選擇模型檔案。</li><li>保留建議的上下文、執行緒與 GPU layers，先測試能否啟動。</li></ol><p class="guide-muted">模型越大通常翻譯品質越好，但需要更多 VRAM／RAM。第一次建議使用 7B、Q4 量化模型。</p></div>
@@ -71,7 +106,7 @@ function goToHome() {
       <button type="button" class="guide-action secondary" @click="router.push('/llm-models')">前往 LLM 模型管理</button>
     </section>
 
-    <section class="guide-section"><div class="guide-section-heading"><span class="guide-number">04</span><div><h2>常見問題</h2><p>遇到問題時先看這裡</p></div></div><div class="grid gap-3 md:grid-cols-2"><details class="guide-faq"><summary>按開始後為什麼要下載模型？</summary><p>模型沒有預先下載時，程式會先建立下載任務。看到進度完成後會自動接續啟動，不需要手動重開。</p></details><details class="guide-faq"><summary>ASR 有了，為什麼沒有翻譯？</summary><p>請確認「翻譯」勾選、目標語言已選擇，並且翻譯後端已設定。使用本地 LLM 時還要確認 llama.cpp 顯示服務已就緒。</p></details><details class="guide-faq"><summary>本地 LLM 啟動失敗怎麼辦？</summary><p>先確認 Runtime 已安裝、GGUF 模型路徑正確，再到 Llama 執行設定按測試。NVIDIA 優先選 CUDA Runtime。</p></details><details class="guide-faq"><summary>模型該選大還是小？</summary><p>先用較小模型確認流程正常，再依 VRAM／RAM 增加模型大小。即時翻譯通常要在品質與延遲之間取平衡。</p></details></div></section>
+    <section class="guide-section"><div class="guide-section-heading"><span class="guide-number">05</span><div><h2>常見問題</h2><p>遇到問題時先看這裡</p></div></div><div class="grid gap-3 md:grid-cols-2"><details class="guide-faq"><summary>按開始後為什麼要下載模型？</summary><p>模型沒有預先下載時，程式會先建立下載任務。看到進度完成後會自動接續啟動，不需要手動重開。</p></details><details class="guide-faq"><summary>ASR 有了，為什麼沒有翻譯？</summary><p>請確認「翻譯」勾選、目標語言已選擇，並且翻譯後端已設定。使用本地 LLM 時還要確認 llama.cpp 顯示服務已就緒。</p></details><details class="guide-faq"><summary>Gemini 測試連線失敗怎麼辦？</summary><p>回到「設定 → 翻譯選項」，確認後端是 Google Gemini、API Key 沒有多餘空白，模型名稱是帳戶目前可用的模型，再按一次「測試連線」。</p></details><details class="guide-faq"><summary>本地 LLM 啟動失敗怎麼辦？</summary><p>先確認 Runtime 已安裝、GGUF 模型路徑正確，再到 Llama 執行設定按測試。NVIDIA 優先選 CUDA Runtime。</p></details><details class="guide-faq"><summary>模型該選大還是小？</summary><p>先用較小模型確認流程正常，再依 VRAM／RAM 增加模型大小。即時翻譯通常要在品質與延遲之間取平衡。</p></details></div></section>
   </div>
 </template>
 
@@ -100,6 +135,8 @@ function goToHome() {
 .guide-action:hover { background: #22d3ee; }
 .guide-action.secondary { margin-left: 8px; background: rgba(255,255,255,.1); color: rgba(255,255,255,.75); }
 .guide-action.secondary:hover { background: rgba(255,255,255,.16); }
+.guide-link { color: #67e8f9; text-decoration: underline; text-underline-offset: 2px; }
+.guide-link:hover { color: #a5f3fc; }
 .guide-faq { border: 1px solid rgba(255,255,255,.08); border-radius: 13px; background: rgba(255,255,255,.035); padding: 13px 15px; }
 .guide-faq summary { cursor: pointer; color: rgba(255,255,255,.85); font-size: 12px; font-weight: 700; }
 .guide-faq p { margin-top: 9px; color: rgba(255,255,255,.55); font-size: 11px; line-height: 1.7; }

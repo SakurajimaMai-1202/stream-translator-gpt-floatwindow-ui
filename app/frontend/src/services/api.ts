@@ -272,17 +272,64 @@ export const runtimeApi = {
   async installCpuAsrSidecar(): Promise<CpuAsrSidecarInstallStatus> {
     const response = await axios.post(`${API_BASE}/runtime/cpu-asr-sidecar/install`, {});
     return response.data.data || response.data;
+  },
+  async cancelCpuAsrSidecarInstall(): Promise<CpuAsrSidecarInstallStatus> {
+    const response = await axios.post(`${API_BASE}/runtime/cpu-asr-sidecar/cancel`, {});
+    return response.data.data || response.data;
+  },
+  async getAppUpdateStatus(): Promise<AppUpdateStatus> {
+    const response = await axios.get(`${API_BASE}/runtime/app-update`);
+    return response.data.data || response.data;
+  },
+  async checkAppUpdate(): Promise<AppUpdateStatus> {
+    const response = await axios.post(`${API_BASE}/runtime/app-update/check`, {});
+    return response.data.data || response.data;
+  },
+  async downloadAppUpdate(): Promise<AppUpdateStatus> {
+    const response = await axios.post(`${API_BASE}/runtime/app-update/download`, {});
+    return response.data.data || response.data;
+  },
+  async cancelAppUpdate(): Promise<AppUpdateStatus> {
+    const response = await axios.post(`${API_BASE}/runtime/app-update/cancel`, {});
+    return response.data.data || response.data;
+  },
+  async prepareAppUpdateApply(): Promise<{ plan_path: string; updater_path: string }> {
+    const response = await axios.post(`${API_BASE}/runtime/app-update/apply`, {});
+    return response.data.data || response.data;
   }
 };
 
+export interface AppUpdateStatus {
+  status: string;
+  progress: number;
+  message: string;
+  error: string;
+  current_version: string;
+  latest_version: string;
+  profile: string;
+  available: boolean;
+  asset_name: string;
+  asset_url: string;
+  asset_size: number;
+  bytes_downloaded: number;
+  bytes_total: number;
+  release_url: string;
+  release_notes: string;
+  ready_to_apply: boolean;
+  minimum_upgradable_version: string;
+  requires_full_install: boolean;
+}
+
 export interface CpuAsrSidecarInstallStatus {
-  status: 'idle' | 'starting' | 'downloading' | 'verifying' | 'installing' | 'completed' | 'error';
+  status: 'idle' | 'starting' | 'downloading' | 'verifying' | 'installing' | 'completed' | 'cancelled' | 'error';
   progress: number;
   message: string;
   error: string;
   bytes_downloaded: number;
   bytes_total: number;
   installed: boolean;
+  healthy: boolean;
+  health_error: string;
   restart_required: boolean;
   version: string;
   asset_name: string;

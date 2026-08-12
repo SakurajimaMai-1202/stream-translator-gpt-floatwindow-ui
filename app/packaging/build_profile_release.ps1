@@ -2,7 +2,7 @@
 param(
     [ValidateSet("cuda", "cpu", "rocm")]
     [string]$Profile = "cuda",
-    [string]$Version = "1.3.11",
+    [string]$Version = "1.4.0",
     [switch]$ForceRuntime,
     [switch]$ReuseRuntimeCache,
     [switch]$SkipFullZip,
@@ -11,7 +11,9 @@ param(
     [ValidateRange(0, 9)][int]$CompressionLevel = 7,
     [ValidateRange(1, 128)][int]$CopyThreads = 16,
     [switch]$SkipRuntimeDependenciesInAppUpdate,
-    [switch]$IncludeCpuAsrSidecar = $true
+    [switch]$IncludeCpuAsrSidecar = $true,
+    [string]$MinimumUpgradableVersion = "1.3.11",
+    [switch]$RequiresFullInstall
 )
 
 $ErrorActionPreference = "Stop"
@@ -119,6 +121,9 @@ if ($sharedGuiPath) {
     } finally { Pop-Location }
 
     $builtApp = Join-Path $pyInstallerDist $appName
+    & $pythonExe -m PyInstaller (Join-Path $packagingDir "stream-translator-updater.spec") --noconfirm --clean --distpath $pyInstallerDist --workpath (Join-Path $scriptDir "build-updater")
+    if ($LASTEXITCODE -ne 0) { throw "Updater build failed" }
+    Copy-Item (Join-Path $pyInstallerDist "StreamTranslatorUpdater.exe") $builtApp -Force
     Get-ChildItem $builtApp -File -Filter "qtwebengine_devtools_resources.debug.pak" -Recurse -ErrorAction SilentlyContinue |
         Remove-Item -Force
 }
@@ -210,6 +215,8 @@ $appUpdateBuildInfo = [ordered]@{
     profile = $Profile
     version = $Version
     runtime_dependencies_included = (-not $SkipRuntimeDependenciesInAppUpdate)
+    minimum_upgradable_version = $MinimumUpgradableVersion
+    requires_full_install = [bool]$RequiresFullInstall
 }
 [IO.File]::WriteAllText(
     (Join-Path $updateRoot "app-update-build.json"),
@@ -256,7 +263,7 @@ foreach ($name in @("ffmpeg.exe", "ffprobe.exe")) {
 }
 
 # llama.cpp Runtime is installed on demand by the application and is intentionally
-# excluded from all v1.3.11 Full packages. This keeps the three profiles smaller
+# excluded from all v1.4.0 Full packages. This keeps the three profiles smaller
 # and prevents an obsolete bundled server from being used accidentally.
 if (Test-Path -LiteralPath (Join-Path $releaseRoot "llama")) {
     throw "Packaging guard failed: llama folder must not be included in v$Version package"

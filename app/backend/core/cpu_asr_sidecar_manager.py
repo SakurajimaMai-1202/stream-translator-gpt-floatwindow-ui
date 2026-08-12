@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import threading
 import urllib.request
+import urllib.error
 import zipfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -33,6 +34,8 @@ class SidecarInstallState:
     bytes_total: int = 0
     asset_url: str = ""
     restart_required: bool = False
+    healthy: bool = False
+    health_error: str = ""
 
 
 class CpuAsrSidecarManager:
@@ -40,13 +43,19 @@ class CpuAsrSidecarManager:
         self._lock = threading.Lock()
         self._state = SidecarInstallState()
         self._worker: threading.Thread | None = None
+        self._cancel = threading.Event()
+        self._health_fingerprint: tuple[object, ...] | None = None
+        self._health_result: tuple[bool, str] = (False, "CPU ASR runtime is not installed")
 
     def status(self) -> dict[str, Any]:
         with self._lock:
             state = asdict(self._state)
         runtime = get_cpu_asr_runtime_path()
+        healthy, health_error = self._runtime_health(runtime)
         state.update({
             "installed": (runtime / "python.exe").is_file(),
+            "healthy": healthy,
+            "health_error": health_error,
             "runtime_path": str(runtime),
             "version": self._version(),
             "asset_name": self._asset_name(),
@@ -59,6 +68,7 @@ class CpuAsrSidecarManager:
                 return asdict(self._state)
             resolved_asset = asset_url or self._default_asset_url()
             resolved_sha = sha256_url or f"{resolved_asset}.sha256"
+            self._cancel.clear()
             self._state = SidecarInstallState(
                 status="starting", message="Preparing CPU ASR sidecar download", asset_url=resolved_asset
             )
@@ -69,6 +79,13 @@ class CpuAsrSidecarManager:
                 name="cpu-asr-sidecar-installer",
             )
             self._worker.start()
+        return self.status()
+
+    def cancel(self) -> dict[str, Any]:
+        with self._lock:
+            if self._worker is not None and self._worker.is_alive() and self._state.status != "installing":
+                self._cancel.set()
+                self._state.message = "Cancelling CPU ASR runtime download"
         return self.status()
 
     def _set(self, **changes: Any) -> None:
@@ -95,29 +112,55 @@ class CpuAsrSidecarManager:
         return f"https://github.com/{REPOSITORY}/releases/download/v{version}/{self._asset_name()}"
 
     @staticmethod
-    def _open_url(url: str):
+    def _open_url(url: str, *, headers: dict[str, str] | None = None):
         local = Path(os.path.expandvars(os.path.expanduser(url)))
         if local.is_file():
             return local.open("rb")
-        request = urllib.request.Request(url, headers={"User-Agent": "StreamTranslator-CPU-ASR-Installer"})
+        request_headers = {"User-Agent": "StreamTranslator-CPU-ASR-Installer"}
+        request_headers.update(headers or {})
+        request = urllib.request.Request(url, headers=request_headers)
         return urllib.request.urlopen(request, timeout=60)
 
     def _download(self, url: str, destination: Path) -> None:
         self._set(status="downloading", message="Downloading CPU ASR runtime")
-        with self._open_url(url) as response, destination.open("wb") as output:
-            total = int(getattr(response, "headers", {}).get("Content-Length", 0) or 0)
-            downloaded = 0
-            while True:
-                block = response.read(1024 * 1024)
-                if not block:
-                    break
-                output.write(block)
-                downloaded += len(block)
-                self._set(
-                    bytes_downloaded=downloaded,
-                    bytes_total=total,
-                    progress=(downloaded / total * 0.75) if total else 0.25,
-                )
+        existing = destination.stat().st_size if destination.is_file() else 0
+        local = Path(os.path.expandvars(os.path.expanduser(url)))
+        request_headers = {"Range": f"bytes={existing}-"} if existing and not local.is_file() else None
+        try:
+            response = self._open_url(url, headers=request_headers)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 416 and existing:
+                self._set(bytes_downloaded=existing, bytes_total=existing, progress=0.75)
+                return
+            raise
+        with response:
+            response_status = getattr(response, "status", None)
+            resumed = existing > 0 and (local.is_file() or response_status == 206)
+            if resumed and local.is_file():
+                source_size = local.stat().st_size
+                if existing > source_size:
+                    resumed = False
+                else:
+                    response.seek(existing)
+            downloaded = existing if resumed else 0
+            content_length = int(getattr(response, "headers", {}).get("Content-Length", 0) or 0)
+            total = downloaded + content_length if content_length else 0
+            mode = "ab" if resumed else "wb"
+            if resumed:
+                self._set(message="Resuming CPU ASR runtime download")
+            with destination.open(mode) as output:
+                while True:
+                    self._raise_if_cancelled()
+                    block = response.read(1024 * 1024)
+                    if not block:
+                        break
+                    output.write(block)
+                    downloaded += len(block)
+                    self._set(
+                        bytes_downloaded=downloaded,
+                        bytes_total=total,
+                        progress=(downloaded / total * 0.75) if total else 0.25,
+                    )
 
     def _expected_sha256(self, url: str) -> str:
         with self._open_url(url) as response:
@@ -128,10 +171,47 @@ class CpuAsrSidecarManager:
         return digest
 
     @staticmethod
-    def _sha256(path: Path) -> str:
+    def _runtime_fingerprint(runtime: Path) -> tuple[object, ...]:
+        result: list[object] = [str(runtime)]
+        for path in (runtime / "python.exe", runtime / "runtime-version.json"):
+            try:
+                stat = path.stat()
+                result.extend((stat.st_size, stat.st_mtime_ns))
+            except OSError:
+                result.extend((None, None))
+        return tuple(result)
+
+    def _runtime_health(self, runtime: Path) -> tuple[bool, str]:
+        fingerprint = self._runtime_fingerprint(runtime)
+        with self._lock:
+            if fingerprint == self._health_fingerprint:
+                return self._health_result
+        try:
+            self._validate_runtime(runtime)
+            result = (True, "")
+        except Exception as exc:
+            result = (False, str(exc))
+        with self._lock:
+            self._health_fingerprint = fingerprint
+            self._health_result = result
+        return result
+
+    def _invalidate_health(self) -> None:
+        with self._lock:
+            self._health_fingerprint = None
+
+    def _raise_if_cancelled(self) -> None:
+        if self._cancel.is_set():
+            raise InterruptedError("CPU ASR sidecar installation cancelled")
+
+    def _sha256(self, path: Path) -> str:
         digest = hashlib.sha256()
         with path.open("rb") as stream:
-            for block in iter(lambda: stream.read(1024 * 1024), b""):
+            while True:
+                self._raise_if_cancelled()
+                block = stream.read(1024 * 1024)
+                if not block:
+                    break
                 digest.update(block)
         return digest.hexdigest()
 
@@ -186,6 +266,7 @@ class CpuAsrSidecarManager:
         staging = target.with_name(f"{target.name}.staging")
         if backup.exists():
             shutil.rmtree(backup)
+        self._invalidate_health()
         if staging.exists():
             shutil.rmtree(staging)
         shutil.copytree(runtime, staging)
@@ -205,27 +286,36 @@ class CpuAsrSidecarManager:
             raise
         if backup.exists():
             shutil.rmtree(backup)
+        self._invalidate_health()
 
     def _run(self, *, asset_url: str, sha256_url: str) -> None:
         try:
+            download_dir = get_cpu_asr_runtime_path().parent / ".downloads"
+            download_dir.mkdir(parents=True, exist_ok=True)
+            archive = download_dir / f"{self._asset_name()}.part"
             with tempfile.TemporaryDirectory(prefix="stream-translator-cpu-asr-") as temporary:
                 temp = Path(temporary)
-                archive = temp / self._asset_name()
                 self._download(asset_url, archive)
+                self._raise_if_cancelled()
                 self._set(status="verifying", message="Verifying SHA-256", progress=0.78)
                 expected = self._expected_sha256(sha256_url)
                 actual = self._sha256(archive)
                 if actual != expected:
+                    archive.unlink(missing_ok=True)
                     raise RuntimeError(f"CPU ASR sidecar SHA-256 mismatch: expected {expected}, got {actual}")
                 extracted = temp / "extracted"
                 extracted.mkdir()
+                self._raise_if_cancelled()
                 self._set(status="installing", message="Installing isolated CPU ASR runtime", progress=0.82)
                 self._safe_extract(archive, extracted)
                 self._install(extracted)
+            archive.unlink(missing_ok=True)
             self._set(
                 status="completed", progress=1.0, message="CPU ASR runtime installed",
                 error="", restart_required=True,
             )
+        except InterruptedError:
+            self._set(status="cancelled", message="CPU ASR runtime installation cancelled", error="")
         except Exception as exc:
             self._set(status="error", message="CPU ASR runtime installation failed", error=str(exc))
 

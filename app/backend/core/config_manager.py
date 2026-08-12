@@ -126,7 +126,7 @@ class ConfigManager:
             'translation_history_size': 0,
             'translation_timeout': 10,
             'gpt_base_url': 'https://api.openai.com/v1',
-            'gemini_base_url': 'https://generativelanguage.googleapis.com',
+            'gemini_base_url': 'https://generativelanguage.googleapis.com/v1beta',
             'processing_proxy': '',
             'use_json_result': False,
             'retry_if_translation_fails': True,
@@ -394,9 +394,12 @@ class ConfigManager:
         # 實際使用的預設 URL，同時保留所有非空白的自訂端點。
         endpoint_defaults = {
             'gpt_base_url': 'https://api.openai.com/v1',
-            'gemini_base_url': 'https://generativelanguage.googleapis.com',
+            'gemini_base_url': 'https://generativelanguage.googleapis.com/v1beta',
         }
         for key, default_url in endpoint_defaults.items():
+            if key == 'gemini_base_url' and translation.get(key) == 'https://generativelanguage.googleapis.com':
+                translation[key] = default_url
+                changed = True
             if not str(translation.get(key, '') or '').strip():
                 translation[key] = default_url
                 changed = True

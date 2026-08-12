@@ -1,6 +1,6 @@
 ﻿#!/usr/bin/env pwsh
 param(
-    [string]$Version = "1.3.11",
+    [string]$Version = "1.4.0",
     [string]$Destination = "",
     [ValidateRange(1, 128)][int]$CopyThreads = 16
 )
@@ -63,7 +63,11 @@ try {
     Pop-Location
 }
 
+& $pythonExe -m PyInstaller (Join-Path $packagingDir "stream-translator-updater.spec") --noconfirm --clean --distpath $pyInstallerDist --workpath (Join-Path $scriptDir "build-updater")
+if ($LASTEXITCODE -ne 0) { throw "Updater build failed" }
+
 $builtApp = Join-Path $pyInstallerDist "Stream Translator"
+Copy-Item (Join-Path $pyInstallerDist "StreamTranslatorUpdater.exe") $builtApp -Force
 Get-ChildItem $builtApp -File -Filter "qtwebengine_devtools_resources.debug.pak" -Recurse -ErrorAction SilentlyContinue |
     Remove-Item -Force
 

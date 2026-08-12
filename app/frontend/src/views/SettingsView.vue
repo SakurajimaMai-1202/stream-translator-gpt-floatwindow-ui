@@ -8,7 +8,7 @@ import { useLlamaStore } from '../stores/llama';
 import UiSelect, { type UiSelectOption } from '../components/UiSelect.vue';
 import { useTranscriptionMutex } from '../composables/useTranscriptionMutex';
 import { useAppSyncEvents } from '../composables/useAppSyncEvents';
-import { runtimeApi, serverApi, type CpuAsrSidecarInstallStatus, type ModelComputeBackend, type ModelEngine } from '../services/api';
+import { runtimeApi, serverApi, type AppUpdateStatus, type CpuAsrSidecarInstallStatus, type ModelComputeBackend, type ModelEngine } from '../services/api';
 import {
   ASR_LANGUAGE_OPTIONS,
   coerceLanguageForModel,
@@ -26,6 +26,9 @@ const autoSaveStatus = ref<'idle' | 'saving' | 'saved' | 'error'>('idle');
 const settingsReady = ref(false);
 const sharingLanAddresses = ref<string[]>([]);
 const copiedSharingUrl = ref('');
+const appUpdateStatus = ref<AppUpdateStatus | null>(null);
+const appUpdateBusy = computed(() => ['starting', 'downloading', 'verifying', 'staging'].includes(appUpdateStatus.value?.status || ''));
+let appUpdatePollTimer: ReturnType<typeof setInterval> | null = null;
 let autoSaveStatusTimeout: ReturnType<typeof setTimeout> | null = null;
 
 
@@ -33,6 +36,49 @@ const router = useRouter();
 const route = useRoute();
 const store = useTranslationStore();
 const modelDownloadStore = useModelDownloadStore();
+
+function stopAppUpdatePolling() {
+  if (appUpdatePollTimer) clearInterval(appUpdatePollTimer);
+  appUpdatePollTimer = null;
+}
+
+async function refreshAppUpdateStatus() {
+  appUpdateStatus.value = await runtimeApi.getAppUpdateStatus();
+  if (!appUpdateBusy.value) stopAppUpdatePolling();
+}
+
+async function checkAppUpdate() {
+  try {
+    appUpdateStatus.value = await runtimeApi.checkAppUpdate();
+  } catch (error: any) {
+    appUpdateStatus.value = { ...(appUpdateStatus.value || {} as AppUpdateStatus), status: 'error', error: error?.message || '檢查更新失敗' };
+  }
+}
+
+async function downloadAppUpdate() {
+  try {
+    appUpdateStatus.value = await runtimeApi.downloadAppUpdate();
+    stopAppUpdatePolling();
+    appUpdatePollTimer = setInterval(() => void refreshAppUpdateStatus(), 1000);
+  } catch (error: any) {
+    appUpdateStatus.value = { ...(appUpdateStatus.value || {} as AppUpdateStatus), status: 'error', error: error?.response?.data?.detail || error?.message || '下載更新失敗' };
+  }
+}
+
+async function cancelAppUpdate() {
+  appUpdateStatus.value = await runtimeApi.cancelAppUpdate();
+}
+
+async function applyAppUpdate() {
+  try {
+    const handoff = await runtimeApi.prepareAppUpdateApply();
+    const bridge = (window as any).pyqt;
+    if (!bridge?.applyAppUpdate) throw new Error('只有 Windows 桌面版可以套用更新');
+    bridge.applyAppUpdate(handoff.plan_path, handoff.updater_path);
+  } catch (error: any) {
+    appUpdateStatus.value = { ...(appUpdateStatus.value || {} as AppUpdateStatus), status: 'error', error: error?.response?.data?.detail || error?.message || '無法啟動更新器' };
+  }
+}
 const llamaStore = useLlamaStore();
 
 const sharingHost = computed(() => {
@@ -286,7 +332,7 @@ const localConfig = ref<any>({
     gpt_model: 'gpt-4o-mini',
     gemini_model: 'gemini-2.0-flash-exp',
     gpt_base_url: 'https://api.openai.com/v1',
-    gemini_base_url: 'https://generativelanguage.googleapis.com',
+    gemini_base_url: 'https://generativelanguage.googleapis.com/v1beta',
     translation_history_size: 0,
     translation_timeout: 10,
     processing_proxy: '',
@@ -700,8 +746,10 @@ const cpuAsrSidecarBusy = computed(() =>
 );
 const canInstallCpuAsrSidecar = computed(() =>
   ['cuda', 'rocm'].includes(runtimeStatus.value?.profile || '')
-  && !cpuAsrSidecarStatus.value?.installed
   && !cpuAsrSidecarBusy.value
+);
+const canCancelCpuAsrSidecar = computed(() =>
+  cpuAsrSidecarBusy.value && cpuAsrSidecarStatus.value?.status !== 'installing'
 );
 let cpuAsrSidecarPollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -717,6 +765,7 @@ async function refreshCpuAsrSidecarStatus() {
     cpuAsrSidecarStatus.value = {
       status: 'error', progress: 0, message: '', installed: false, restart_required: false,
       bytes_downloaded: 0, bytes_total: 0, version: '', asset_name: '',
+      healthy: false, health_error: '',
       error: error?.response?.data?.detail || error?.message || '無法取得 sidecar 狀態',
     };
   }
@@ -733,12 +782,27 @@ async function installCpuAsrSidecar() {
     cpuAsrSidecarStatus.value = {
       status: 'error', progress: 0, message: '', installed: false, restart_required: false,
       bytes_downloaded: 0, bytes_total: 0, version: '', asset_name: '',
+      healthy: false, health_error: '',
       error: error?.response?.data?.detail || error?.message || '無法啟動 sidecar 安裝',
     };
     return;
   }
   stopCpuAsrSidecarPolling();
   cpuAsrSidecarPollTimer = setInterval(() => void refreshCpuAsrSidecarStatus(), 1000);
+}
+
+async function cancelCpuAsrSidecarInstall() {
+  try {
+    cpuAsrSidecarStatus.value = await runtimeApi.cancelCpuAsrSidecarInstall();
+  } catch (error: any) {
+    cpuAsrSidecarStatus.value = {
+      ...(cpuAsrSidecarStatus.value || {
+        status: 'error', progress: 0, message: '', installed: false, restart_required: false,
+        bytes_downloaded: 0, bytes_total: 0, version: '', asset_name: '', healthy: false, health_error: '',
+      }),
+      status: 'error', error: error?.response?.data?.detail || error?.message || '無法取消 sidecar 安裝',
+    };
+  }
 }
 const selectedSettingsAsrModelId = computed<string>(() => {
   const transcription = localConfig.value.transcription;
@@ -1167,6 +1231,7 @@ onMounted(async () => {
       store.loadConfig(),
       store.loadRuntimeStatus(),
       serverApi.getInfo().catch(() => null),
+      refreshAppUpdateStatus().catch(() => null),
     ]);
     if (serverInfo?.lan_addresses) sharingLanAddresses.value = serverInfo.lan_addresses;
     await applyStoreConfigToLocalConfig(store.config, true);
@@ -1220,6 +1285,7 @@ onUnmounted(() => {
   sectionSaveTimers.clear();
   modelDownloadStore.stopPolling();
   stopCpuAsrSidecarPolling();
+  stopAppUpdatePolling();
 });
 
 async function applyModelStoragePath() {
@@ -1730,6 +1796,45 @@ async function handleFileChange(event: Event) {
           <!-- General Settings -->
           <div v-if="activeTab === 'general'" class="settings-paint-section space-y-6">
             <h2 class="text-xl font-bold text-white mb-4">一般設定</h2>
+
+            <div class="rounded-xl border border-blue-500/25 bg-blue-500/10 p-5 space-y-4">
+              <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div>
+                  <h3 class="text-lg font-semibold text-blue-200">程式更新</h3>
+                  <p class="text-sm text-white/55 mt-1">
+                    目前 {{ appUpdateStatus?.current_version || '—' }} · {{ appUpdateStatus?.profile?.toUpperCase() || '開發版' }}
+                    <template v-if="appUpdateStatus?.latest_version"> → 最新 {{ appUpdateStatus.latest_version }}</template>
+                  </p>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                  <button v-if="!appUpdateStatus?.ready_to_apply" @click="checkAppUpdate" :disabled="appUpdateBusy"
+                    class="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 font-semibold">
+                    {{ appUpdateStatus?.status === 'checking' ? '檢查中…' : '檢查更新' }}
+                  </button>
+                  <button v-if="appUpdateStatus?.available && !appUpdateStatus?.ready_to_apply" @click="downloadAppUpdate" :disabled="appUpdateBusy"
+                    class="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 font-semibold">
+                    下載並準備更新
+                  </button>
+                  <button v-if="appUpdateBusy" @click="cancelAppUpdate"
+                    class="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 font-semibold">取消</button>
+                  <button v-if="appUpdateStatus?.ready_to_apply" @click="applyAppUpdate"
+                    class="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 font-semibold">重新啟動並套用</button>
+                </div>
+              </div>
+              <div v-if="appUpdateBusy" class="space-y-2">
+                <div class="h-2 rounded-full bg-white/10 overflow-hidden"><div class="h-full bg-cyan-400" :style="{ width: `${Math.max(2, (appUpdateStatus?.progress || 0) * 100)}%` }"></div></div>
+                <p class="text-xs text-white/55">{{ appUpdateStatus?.message }} · {{ Math.round((appUpdateStatus?.progress || 0) * 100) }}%</p>
+              </div>
+              <p v-if="appUpdateStatus?.status === 'up_to_date'" class="text-sm text-emerald-300">目前已是最新版。</p>
+              <p v-if="appUpdateStatus?.status === 'unsupported'" class="text-sm text-yellow-200">開發模式不提供自動更新；正式 CPU／CUDA／ROCm 包才會啟用。</p>
+              <p v-if="appUpdateStatus?.status === 'cancelled'" class="text-sm text-white/55">下載已取消，下次會從暫存進度繼續。</p>
+              <p v-if="appUpdateStatus?.error" class="text-sm text-red-300 break-words">{{ appUpdateStatus.error }}</p>
+              <details v-if="appUpdateStatus?.available && appUpdateStatus?.release_notes" class="rounded-lg bg-black/15 p-3">
+                <summary class="cursor-pointer text-sm font-semibold text-blue-200">查看更新說明</summary>
+                <pre class="mt-3 whitespace-pre-wrap break-words text-xs leading-6 text-white/60 font-sans">{{ appUpdateStatus.release_notes }}</pre>
+              </details>
+              <p class="text-xs text-white/40">只會安裝相同 Profile 的 App Update；套用前會備份 config、術語、ASR 修正與 Cookies，模型、輸出與日誌不會被覆蓋。</p>
+            </div>
             
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div v-if="false">
@@ -2394,15 +2499,28 @@ async function handleFileChange(event: Event) {
                   <p class="text-white/60 text-sm mt-1">
                     安裝獨立 sherpa-onnx CPU runtime，讓目前的 {{ runtimeStatus?.profile?.toUpperCase() }} 包可切換 GPU ASR / CPU ASR。
                   </p>
-                  <p v-if="cpuAsrSidecarStatus?.installed" class="text-green-300 text-sm mt-2">已安裝 CPU ASR runtime。</p>
+                  <p v-if="cpuAsrSidecarStatus?.healthy" class="text-green-300 text-sm mt-2">CPU ASR runtime 已安裝且健康檢查通過。</p>
+                  <p v-else-if="cpuAsrSidecarStatus?.installed" class="text-yellow-200 text-sm mt-2 break-words">
+                    已偵測到 Runtime，但健康檢查失敗：{{ cpuAsrSidecarStatus.health_error }}
+                  </p>
                 </div>
-                <button
-                  @click="installCpuAsrSidecar"
-                  :disabled="!canInstallCpuAsrSidecar"
-                  class="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold transition"
-                >
-                  {{ cpuAsrSidecarBusy ? '安裝中…' : (cpuAsrSidecarStatus?.installed ? '已安裝' : '下載並安裝') }}
-                </button>
+                <div class="flex flex-wrap gap-2">
+                  <button
+                    @click="installCpuAsrSidecar"
+                    :disabled="!canInstallCpuAsrSidecar"
+                    class="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold transition"
+                  >
+                    {{ cpuAsrSidecarBusy ? '安裝中…' : (cpuAsrSidecarStatus?.healthy ? '重新安裝' : (cpuAsrSidecarStatus?.installed ? '修復安裝' : '下載並安裝')) }}
+                  </button>
+                  <button
+                    v-if="cpuAsrSidecarBusy"
+                    @click="cancelCpuAsrSidecarInstall"
+                    :disabled="!canCancelCpuAsrSidecar"
+                    class="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold transition"
+                  >
+                    {{ cpuAsrSidecarStatus?.status === 'installing' ? '正在套用，無法取消' : '取消下載' }}
+                  </button>
+                </div>
               </div>
               <div v-if="cpuAsrSidecarBusy" class="mt-4">
                 <div class="h-2 rounded-full bg-white/10 overflow-hidden">
@@ -2412,6 +2530,9 @@ async function handleFileChange(event: Event) {
               </div>
               <p v-if="cpuAsrSidecarStatus?.status === 'error'" class="text-red-300 text-sm mt-3 break-words">
                 安裝失敗：{{ cpuAsrSidecarStatus.error }}
+              </p>
+              <p v-if="cpuAsrSidecarStatus?.status === 'cancelled'" class="text-white/60 text-sm mt-3">
+                已取消下載；可以隨時重新開始，既有 Runtime 不受影響。
               </p>
               <p v-if="cpuAsrSidecarStatus?.restart_required" class="text-yellow-200 text-sm mt-3">
                 安裝完成，請重新啟動程式後再切換至 CPU / sherpa-onnx。
@@ -2781,10 +2902,10 @@ async function handleFileChange(event: Event) {
                   </div>
 
                   <div class="md:col-span-2">
-                    <label class="block text-white/70 font-semibold mb-2">API Base URL</label>
-                    <input v-model="localConfig.translation.gemini_base_url" type="text" placeholder="https://generativelanguage.googleapis.com"
+                    <label class="block text-white/70 font-semibold mb-2">API Base URL（通常不用修改）</label>
+                    <input v-model="localConfig.translation.gemini_base_url" type="text" placeholder="https://generativelanguage.googleapis.com/v1beta"
                       class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
-                    <p class="text-white/40 text-xs mt-1">Google Gemini 預設端點；使用代理端點時可自行修改。</p>
+                    <p class="text-white/40 text-xs mt-1">Gemini REST API 的版本端點；官方服務通常保留 /v1beta 即可。</p>
                   </div>
                 </div>
               </div>

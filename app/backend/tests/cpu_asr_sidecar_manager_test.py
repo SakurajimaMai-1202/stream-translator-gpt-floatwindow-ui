@@ -6,6 +6,7 @@ import types
 import unittest
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 
 APP_DIR = Path(__file__).resolve().parents[2]
@@ -31,6 +32,60 @@ class CpuAsrSidecarManagerTest(unittest.TestCase):
                 bundle.writestr("../escaped.txt", "unsafe")
             with self.assertRaisesRegex(RuntimeError, "Unsafe path"):
                 sidecar_module.CpuAsrSidecarManager._safe_extract(archive, root / "extract")
+
+    def test_runtime_health_is_cached_until_runtime_changes(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime = Path(temp_dir)
+            (runtime / "python.exe").write_bytes(b"python")
+            manifest = runtime / "runtime-version.json"
+            manifest.write_text("{}", encoding="utf-8")
+            manager = sidecar_module.CpuAsrSidecarManager()
+            with mock.patch.object(manager, "_validate_runtime") as validate:
+                self.assertEqual(manager._runtime_health(runtime), (True, ""))
+                self.assertEqual(manager._runtime_health(runtime), (True, ""))
+                self.assertEqual(validate.call_count, 1)
+                manifest.write_text('{"profile":"cpu"}', encoding="utf-8")
+                self.assertEqual(manager._runtime_health(runtime), (True, ""))
+                self.assertEqual(validate.call_count, 2)
+
+    def test_cancel_marks_active_download_for_cancellation(self):
+        manager = sidecar_module.CpuAsrSidecarManager()
+        manager._worker = mock.Mock()
+        manager._worker.is_alive.return_value = True
+        manager._state.status = "downloading"
+        manager.cancel()
+        self.assertTrue(manager._cancel.is_set())
+        self.assertEqual(manager._state.message, "Cancelling CPU ASR runtime download")
+
+    def test_installing_phase_is_not_cancelled(self):
+        manager = sidecar_module.CpuAsrSidecarManager()
+        manager._worker = mock.Mock()
+        manager._worker.is_alive.return_value = True
+        manager._state.status = "installing"
+        manager.cancel()
+        self.assertFalse(manager._cancel.is_set())
+
+    def test_download_stops_when_cancelled(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "source.zip"
+            source.write_bytes(b"sidecar")
+            manager = sidecar_module.CpuAsrSidecarManager()
+            manager._cancel.set()
+            with self.assertRaisesRegex(InterruptedError, "cancelled"):
+                manager._download(str(source), root / "download.zip")
+
+    def test_download_resumes_existing_partial_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "source.zip"
+            destination = root / "download.zip.part"
+            source.write_bytes(b"sidecar-runtime")
+            destination.write_bytes(b"side")
+            manager = sidecar_module.CpuAsrSidecarManager()
+            manager._download(str(source), destination)
+            self.assertEqual(destination.read_bytes(), source.read_bytes())
+            self.assertEqual(manager._state.message, "Resuming CPU ASR runtime download")
 
     @unittest.skipUnless(os.environ.get("CPU_ASR_SIDECAR_TEST_ASSET"), "real sidecar asset not provided")
     def test_real_sidecar_install(self):

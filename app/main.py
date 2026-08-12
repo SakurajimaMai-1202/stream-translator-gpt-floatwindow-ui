@@ -8,6 +8,7 @@ import sys
 import logging
 import socket
 import threading
+import subprocess
 from pathlib import Path
 from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtCore import QTimer, Qt
@@ -180,6 +181,7 @@ class UI2Application:
         from backend.core.config_manager import ConfigManager
         config_manager = ConfigManager()
         self.home_window = HomeWindow(base_url, config_manager=config_manager, on_open_subtitle=self.open_subtitle_window)
+        self.home_window.bridge.appUpdateRequested.connect(self._apply_app_update)
         
         # 連接視窗關閉信號到 cleanup
         self.home_window.destroyed.connect(self.cleanup)
@@ -192,6 +194,26 @@ class UI2Application:
         logger.info("=" * 60)
         logger.info("✅ UI2 應用程式啟動完成")
         logger.info("=" * 60)
+
+    def _apply_app_update(self, plan_path: str, updater_path: str):
+        """Launch the external updater, then leave the locked application files."""
+        try:
+            plan = Path(plan_path).resolve()
+            updater = Path(updater_path).resolve()
+            app_root = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else self.base_dir.resolve()
+            update_root = (app_root / ".app-update").resolve()
+            if update_root not in plan.parents or not plan.is_file() or not updater.is_file():
+                raise RuntimeError("更新交接路徑無效")
+            creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            subprocess.Popen(
+                [str(updater), "--plan", str(plan)],
+                cwd=str(app_root), creationflags=creationflags,
+            )
+            logger.info("已啟動外部更新器，主程式準備退出")
+            QTimer.singleShot(100, self.app.quit)
+        except Exception as exc:
+            logger.exception("啟動外部更新器失敗")
+            QMessageBox.critical(None, "更新失敗", f"無法啟動更新器：\n{exc}")
     
     def cleanup(self):
         """清理資源"""

@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router';
 import { useTranslationStore } from '../stores/translation';
 import { useLlamaStore } from '../stores/llama';
 import { useModelDownloadStore } from '../stores/modelDownload';
-import { translationApi, configApi, serverApi, systemApi, type AudioSource, type AudioDevice, type Config, type FfmpegCheckResult, type ModelComputeBackend, type ModelEngine } from '../services/api';
+import { translationApi, configApi, runtimeApi, serverApi, systemApi, type AppUpdateStatus, type AudioSource, type AudioDevice, type Config, type FfmpegCheckResult, type ModelComputeBackend, type ModelEngine } from '../services/api';
 import UiSelect, { type UiSelectOption } from '../components/UiSelect.vue';
 import { useAppSyncEvents } from '../composables/useAppSyncEvents';
 import {
@@ -25,10 +25,29 @@ const subtitleSharingEnabled = ref(true);
 const isUpdatingSubtitleSharing = ref(false);
 const ffmpegStatus = ref<FfmpegCheckResult | null>(null);
 const ffmpegWarningDismissed = ref(false);
+const availableAppUpdate = ref<AppUpdateStatus | null>(null);
+const appUpdateNoticeDismissed = ref(false);
+const APP_UPDATE_CHECKED_KEY = 'stream-translator-app-update-checked';
 
 const showFfmpegWarning = computed(() => {
   return !!ffmpegStatus.value && !ffmpegStatus.value.available && !ffmpegWarningDismissed.value;
 });
+
+async function checkAppUpdateOnceAfterStartup() {
+  if (sessionStorage.getItem(APP_UPDATE_CHECKED_KEY) === '1') return;
+  sessionStorage.setItem(APP_UPDATE_CHECKED_KEY, '1');
+  try {
+    const status = await runtimeApi.checkAppUpdate();
+    if (status.status === 'available' && status.available) availableAppUpdate.value = status;
+  } catch (error) {
+    // The startup check is informational; manual checking remains available.
+    console.warn('[HomeView] automatic update check failed:', error);
+  }
+}
+
+function openAppUpdateSettings() {
+  router.push({ path: '/settings', query: { tab: 'general' } });
+}
 
 interface PyQtClipboardBridge {
   copyToClipboard?: (text: string, callback?: (result: boolean) => void) => void;
@@ -974,6 +993,8 @@ function handleHomeVisibilityChange() {
 }
 
 onMounted(async () => {
+  // Check once per application/browser session. Never download or apply here.
+  void checkAppUpdateOnceAfterStartup();
   // 載入公開端口資訊
   await fetchPublicPort();
   await checkSystemDependencies();
@@ -1299,6 +1320,21 @@ function clearLogs() {
       </div>
 
       <!-- System notification blocks -->
+      <div v-if="availableAppUpdate && !appUpdateNoticeDismissed" class="mb-4 rounded-xl border border-cyan-400/30 bg-cyan-950/70 p-3.5 text-cyan-100 shadow-lg shadow-cyan-950/20">
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div class="min-w-0">
+            <div class="text-sm font-bold">✨ Stream Translator v{{ availableAppUpdate.latest_version }} 已可更新</div>
+            <p class="mt-1 text-xs leading-relaxed text-cyan-100/65">
+              目前版本 v{{ availableAppUpdate.current_version }}。程式只會通知，不會自動下載或安裝。
+            </p>
+          </div>
+          <div class="flex shrink-0 items-center gap-2">
+            <button type="button" class="rounded-lg bg-cyan-500 px-3 py-1.5 text-xs font-bold text-slate-950 transition hover:bg-cyan-400" @click="openAppUpdateSettings">查看更新</button>
+            <button type="button" class="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-white/65 transition hover:bg-white/10 hover:text-white" @click="appUpdateNoticeDismissed = true">稍後</button>
+          </div>
+        </div>
+      </div>
+
       <div v-if="showFfmpegWarning" class="mb-4 p-3.5 bg-yellow-950/70 border border-yellow-500/30 text-yellow-200 rounded-xl flex justify-between items-start gap-3">
         <div class="flex-1">
           <div class="font-bold text-sm">⚠️ 未偵測到 ffmpeg</div>

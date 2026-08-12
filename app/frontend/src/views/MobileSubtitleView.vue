@@ -68,58 +68,62 @@ const typingItemIds = ref<number[]>([]);
 const TYPING_SPEED_MS = 18;    // 每字 ms（預設速度）
 const MAX_DURATION_MS = 1800;  // 動畫最長時間上限
 
-function startTyping(itemId: number) {
-  // 先停舊 timer（更新情境下重啟）
-  const existing = typingTimers.get(itemId);
-  if (existing) clearInterval(existing);
-
-  const item = subtitles.value.find(s => s.id === itemId);
-  if (!item) return;
-
-  const origRemaining = item.original.length - item.displayOriginal.length;
-  const transRemaining = item.translated.length - item.displayTranslated.length;
-  const total = origRemaining + transRemaining;
-  if (total <= 0) return;
-
-  // 加入游標集合
-  if (!typingItemIds.value.includes(itemId)) {
-    typingItemIds.value.push(itemId);
-  }
-
-  // 動態計算速度，確保在 MAX_DURATION_MS 內打完
-  const speed = Math.max(1, Math.min(TYPING_SPEED_MS, Math.floor(MAX_DURATION_MS / total)));
-
-  const timer = setInterval(() => {
-    const target = subtitles.value.find(s => s.id === itemId);
-    if (!target) {
-      clearInterval(timer);
-      typingTimers.delete(itemId);
-      removeFromTyping(itemId);
-      return;
-    }
-
-    let done = true;
-    if (target.displayOriginal.length < target.original.length) {
-      target.displayOriginal = target.original.slice(0, target.displayOriginal.length + 1);
-      done = false;
-    }
-    if (target.displayTranslated.length < target.translated.length) {
-      target.displayTranslated = target.translated.slice(0, target.displayTranslated.length + 1);
-      done = false;
-    }
-    if (done) {
-      clearInterval(timer);
-      typingTimers.delete(itemId);
-      removeFromTyping(itemId);
-    }
-  }, speed);
-
-  typingTimers.set(itemId, timer);
-}
-
 function removeFromTyping(itemId: number) {
   const idx = typingItemIds.value.indexOf(itemId);
   if (idx !== -1) typingItemIds.value.splice(idx, 1);
+}
+
+function stopTyping(itemId: number) {
+  const timer = typingTimers.get(itemId);
+  if (timer) clearInterval(timer);
+  typingTimers.delete(itemId);
+  removeFromTyping(itemId);
+}
+
+function reconcileRenderedText(rendered: string, target: string): string {
+  const renderedChars = Array.from(rendered);
+  const targetChars = Array.from(target);
+  let commonLength = 0;
+  while (commonLength < renderedChars.length
+    && commonLength < targetChars.length
+    && renderedChars[commonLength] === targetChars[commonLength]) commonLength += 1;
+  return targetChars.slice(0, commonLength).join('');
+}
+
+function hasPendingText(rendered: string, target: string): boolean {
+  return Array.from(rendered).length < Array.from(target).length;
+}
+
+function startTyping(itemId: number) {
+  const item = subtitles.value.find(s => s.id === itemId);
+  if (!item) return;
+  stopTyping(itemId);
+  item.displayOriginal = reconcileRenderedText(item.displayOriginal, item.original);
+  item.displayTranslated = reconcileRenderedText(item.displayTranslated, item.translated);
+  const total = (Array.from(item.original).length - Array.from(item.displayOriginal).length)
+    + (Array.from(item.translated).length - Array.from(item.displayTranslated).length);
+  if (total <= 0) return;
+  typingItemIds.value.push(itemId);
+  const speed = Math.max(1, Math.min(TYPING_SPEED_MS, Math.floor(MAX_DURATION_MS / total)));
+  const timer = setInterval(() => {
+    const target = subtitles.value.find(s => s.id === itemId);
+    if (!target) { stopTyping(itemId); return; }
+    let changed = false;
+    const originalChars = Array.from(target.original);
+    const translatedChars = Array.from(target.translated);
+    const originalLength = Array.from(target.displayOriginal).length;
+    const translatedLength = Array.from(target.displayTranslated).length;
+    if (originalLength < originalChars.length) {
+      target.displayOriginal = originalChars.slice(0, originalLength + 1).join('');
+      changed = true;
+    }
+    if (translatedLength < translatedChars.length) {
+      target.displayTranslated = translatedChars.slice(0, translatedLength + 1).join('');
+      changed = true;
+    }
+    if (!changed) stopTyping(itemId);
+  }, speed);
+  typingTimers.set(itemId, timer);
 }
 
 function clearAllTypingTimers() {
@@ -399,7 +403,7 @@ onUnmounted(() => {
             class="sub-original"
             :style="{ fontSize: fontSize + 'px' }"
           >{{ sub.displayOriginal }}<span
-              v-if="typingItemIds.includes(sub.id) && sub.displayOriginal.length < sub.original.length"
+              v-if="typingItemIds.includes(sub.id) && hasPendingText(sub.displayOriginal, sub.original)"
               class="typing-cursor"
             >|</span></div>
           <!-- 翻譯：正在打字時顯示游標（原文已完成，翻譯未打完） -->
@@ -408,7 +412,7 @@ onUnmounted(() => {
             class="sub-translated"
             :style="{ fontSize: fontSize + 'px' }"
           >{{ sub.displayTranslated }}<span
-              v-if="typingItemIds.includes(sub.id) && sub.displayTranslated.length < sub.translated.length"
+              v-if="typingItemIds.includes(sub.id) && hasPendingText(sub.displayTranslated, sub.translated)"
               class="typing-cursor"
             >|</span></div>
           <div

@@ -4,7 +4,7 @@ import { useRouter, useRoute } from 'vue-router';
 
 const router = useRouter();
 const route = useRoute();
-const appVersion = import.meta.env.VITE_APP_VERSION || '1.3.11';
+const appVersion = import.meta.env.VITE_APP_VERSION || '1.4.0';
 const isMobileMenuOpen = ref(false);
 
 // Define navigation items

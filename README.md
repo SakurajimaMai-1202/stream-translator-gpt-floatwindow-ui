@@ -2,13 +2,13 @@
 
 Windows 即時語音辨識、翻譯與浮動字幕工具。它能擷取直播網址、系統聲音、麥克風或本機影音，先以本機／雲端 ASR 轉成文字，再交由 OpenAI、Google Gemini 或本機 LLM 翻譯，最後輸出成桌面字幕、區網字幕頁或字幕檔。
 
-[下載最新版](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest) · [v1.3.11 更新說明](app/docs/RELEASE_NOTES_v1.3.11_zh-TW.md) · [回報問題](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/issues)
+[下載最新版](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest) · [v1.4.0 更新說明](app/docs/RELEASE_NOTES_v1.4.0_zh-TW.md) · [回報問題](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/issues)
 
 ![Windows](https://img.shields.io/badge/platform-Windows-lightgrey)
 ![NVIDIA CUDA](https://img.shields.io/badge/GPU-NVIDIA%20CUDA-green)
 ![AMD ROCm](https://img.shields.io/badge/GPU-AMD%20ROCm%20Experimental-orange)
 ![CPU sherpa-onnx](https://img.shields.io/badge/CPU-sherpa--onnx-blueviolet)
-![Release](https://img.shields.io/badge/release-v1.3.11-blue)
+![Release](https://img.shields.io/badge/release-v1.4.0-blue)
 
 <img width="2381" height="1058" alt="Stream Translator FloatWindow" src="https://github.com/user-attachments/assets/0a663535-dd94-40a6-8444-3c00844bc563" />
 
@@ -46,12 +46,25 @@ Windows 即時語音辨識、翻譯與浮動字幕工具。它能擷取直播網
 | ASR 修正規則 | 在翻譯前修正辨識錯誤，適合人名、作品名與固定誤辨。格式為 `正確詞,誤辨詞1,誤辨詞2`。 |
 | 翻譯術語表 | 約束譯文中的固定譯名，格式為 `原文,譯文`。它作用於翻譯階段，與 ASR 修正規則不同。 |
 | 模型與 Runtime 管理 | 可在介面內檢查、下載與切換 ASR 模型、GGUF 模型及 llama.cpp Runtime；下載進度與格式會依 GPU／CPU 分流。 |
+| 內建更新器 | 支援啟動時檢查 GitHub Release、首頁新版通知、下載進度、SHA-256 驗證、同 Profile 套用與更新回復。 |
 
 > v1.3.11 起，術語表與 ASR 修正規則的 CSV／TSV 匯入支援引號、欄位內逗號、Tab、換行與 UTF-8 BOM；匯出使用 UTF-8 BOM 與 CRLF，方便 Excel 正確辨識繁體中文。
 
+## v1.4.0 更新重點
+
+v1.4.0 的重點包括：
+
+- 程式啟動後自動檢查一次；有新版時在首頁通知，但不自動下載或安裝。使用者確認後，才依 CUDA、CPU、ROCm Profile 下載相符的 App Update。
+- 更新前最多保留五份 `config.yaml`、翻譯術語表、ASR 修正規則與 Cookies 備份。
+- CPU ASR sidecar 支援健康檢查、修復／重新安裝、可取消下載與續傳。
+- 電腦版與手機版字幕採用接近浮動字幕的打字機式流式渲染，支援 ASR 修正版內容與 Unicode 字元。
+- 使用教學加入 Gemini API Key、`/v1beta` 端點、測試連線與金鑰安全說明。
+
+完整內容請見 [v1.4.0 更新說明](app/docs/RELEASE_NOTES_v1.4.0_zh-TW.md)。
+
 ## 下載：先選對執行版本
 
-請從 [GitHub Releases v1.3.11](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/tag/v1.3.11) 下載。GitHub 自動提供的 `Source code (zip)` 不是可直接執行的 Windows 完整包。
+請從 [GitHub Releases v1.4.0](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/tag/v1.4.0) 下載。GitHub 自動提供的 `Source code (zip)` 不是可直接執行的 Windows 完整包。
 
 | 版本 | 適用硬體 | 本機 ASR 路徑 | Full package |
 |---|---|---|---|
@@ -65,7 +78,7 @@ ROCm 版本仍屬實驗性支援，能否使用取決於顯示卡、驅動程式
 
 1. 下載同一 Profile 的全部 `.partXX`，並下載 `merge-full-package.bat`。
 2. 將檔案放在同一資料夾，雙擊 `merge-full-package.bat`。
-3. 以 `SHA256SUMS-v1.3.11.txt` 驗證合併後的 ZIP。
+3. 以 `SHA256SUMS-v1.4.0.txt` 驗證合併後的 ZIP。
 4. 解壓到一般可寫入路徑，例如 `D:\Apps\StreamTranslator`。
 5. 執行 `Stream Translator.exe`。
 
@@ -81,9 +94,11 @@ ROCm 版本仍屬實驗性支援，能否使用取決於顯示卡、驅動程式
 
 更新前請備份 `config.yaml`。App Update 只能覆蓋相同 Profile，不要以 CUDA 更新包覆蓋 CPU 或 ROCm 安裝。
 
-CUDA／ROCm 使用者若缺少 CPU ASR sidecar，可在「ASR 模型管理」內安裝，或下載 `StreamTranslator-CPU-ASR-Sidecar-v1.3.11.zip`。Sidecar 只含 CPU ASR Runtime，模型權重仍需另外下載。
+從 v1.4.0 起，上述流程已整合到「設定 → 一般設定」。從更舊版本首次升級到 v1.4.0 時，請完整解壓相同 Profile 的 App Update；更新包已包含 `StreamTranslatorUpdater.exe`，不需另外下載。
 
-v1.3.11 的 Full package 不包含 `llama` 資料夾。需要本機翻譯時，請在「LLM 模型管理」另外下載 GGUF 與相符的 llama.cpp Runtime。
+CUDA／ROCm 使用者若缺少 CPU ASR sidecar，可在「ASR 模型管理」內安裝，或下載 `StreamTranslator-CPU-ASR-Sidecar-v1.4.0.zip`。Sidecar 只含 CPU ASR Runtime，模型權重仍需另外下載。
+
+v1.4.0 的 Full package 不包含 `llama` 資料夾。需要本機翻譯時，請在「LLM 模型管理」另外下載 GGUF 與相符的 llama.cpp Runtime。
 
 ## 第一次使用教學
 
@@ -122,6 +137,16 @@ v1.3.11 的 Full package 不包含 `llama` 資料夾。需要本機翻譯時，�
 5. 回到首頁開啟翻譯。若只需要原文字幕，可關閉翻譯以降低延遲與費用。
 
 OpenAI ASR、OpenAI GPT 翻譯與 Gemini 翻譯的金鑰彼此獨立，不會互相代用。
+
+#### Gemini API Key 詳細流程
+
+1. 登入 [Google AI Studio API Keys](https://aistudio.google.com/app/apikey)，按「Create API key」；若畫面要求選專案，選擇或匯入要使用的 Google Cloud 專案。
+2. 複製新建立的 Gemini API Key。請把它當成密碼保管，不要放進 Git、公開截圖或貼文；長時間使用前也請確認 Google 帳戶的配額與計費設定。
+3. 回到「設定」→「翻譯選項」，將「翻譯後端」選為「Google Gemini」。
+4. 將金鑰貼到「Google Gemini」區塊的「API Key」，模型名稱保留預設值或改成 Google AI Studio 目前可用的 Gemini 模型；API Base URL 保留 `https://generativelanguage.googleapis.com/v1beta`。
+5. 按「測試連線」；測試成功後回到首頁，開啟「翻譯」並按「啟動即時轉譯」。
+
+如果測試失敗，先檢查金鑰是否完整、模型名稱是否可用、網路與 Google API 配額是否正常。Google 的金鑰管理與安全規則可能更新，請參考 [Gemini API 金鑰說明](https://ai.google.dev/gemini-api/docs/api-key)。
 
 ### 5. 開始轉譯
 
@@ -242,7 +267,7 @@ ASR 決定「聽到了什麼」。選型時依序考慮：硬體與 Runtime、�
 
 ## 媒體輸入注意事項
 
-- v1.3.11 Full package 內含 Node.js 22+，供 yt-dlp 處理需要 JavaScript Runtime 的來源。
+- v1.4.0 Full package 內含 Node.js 22+，供 yt-dlp 處理需要 JavaScript Runtime 的來源。
 - 部分 YouTube／Twitch 內容可能需要登入、地區權限或 cookies；請匯出 Netscape 格式 `cookies.txt`。
 - Chromium 的 App-Bound Encryption 可能阻止直接讀取瀏覽器 cookies，匯出檔通常較穩定。
 - 系統音訊請選擇實際播放裝置；無聲時先確認 Windows 音量混音器與輸出裝置。
@@ -307,11 +332,11 @@ python .\main.py
 cd .\app
 
 # 快速驗證
-.\build_all_profiles.ps1 -Version 1.3.11 -Mode Quick -ReuseRuntimeCache
+.\build_all_profiles.ps1 -Version 1.4.0 -Mode Quick -ReuseRuntimeCache
 
 # 正式發佈
 .\build_all_profiles.ps1 `
-  -Version 1.3.11 `
+  -Version 1.4.0 `
   -Mode Final `
   -ReuseRuntimeCache `
   -CompressionLevel 7 `
@@ -319,7 +344,7 @@ cd .\app
   -CopyThreads 16
 ```
 
-正式資產輸出至 `app/release-v1.3.11-assets/`，包含 App Update、Full package 分割檔、manifest 與 SHA-256 清單。
+正式資產輸出至 `app/release-v1.4.0-assets/`，包含 App Update、Full package 分割檔、manifest 與 SHA-256 清單。
 
 ## 專案來源
 

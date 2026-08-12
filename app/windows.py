@@ -43,6 +43,7 @@ class HomeBridge(QObject):
     subtitleUpdated = pyqtSignal(str)
     subtitleSettingsUpdated = pyqtSignal(str)
     recordingStateUpdated = pyqtSignal(bool)
+    appUpdateRequested = pyqtSignal(str, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -66,6 +67,11 @@ class HomeBridge(QObject):
     def updateNativeRecordingState(self, is_recording: bool):
         self.is_recording = bool(is_recording)
         self.recordingStateUpdated.emit(self.is_recording)
+
+    @pyqtSlot(str, str)
+    def applyAppUpdate(self, plan_path: str, updater_path: str):
+        """Hand a verified update plan to the native application lifecycle."""
+        self.appUpdateRequested.emit(plan_path, updater_path)
 
     @pyqtSlot(result=str)
     def chooseLocalFile(self) -> str:

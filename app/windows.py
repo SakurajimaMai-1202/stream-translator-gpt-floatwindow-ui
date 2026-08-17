@@ -40,7 +40,6 @@ class HomeBridge(QObject):
     """主頁橋接：開啟字幕視窗、檔案選擇、複製到剪貼簿"""
 
     openSubtitleWindowRequested = pyqtSignal()
-    subtitleUpdated = pyqtSignal(str)
     subtitleSettingsUpdated = pyqtSignal(str)
     recordingStateUpdated = pyqtSignal(bool)
     appUpdateRequested = pyqtSignal(str, str)
@@ -54,10 +53,6 @@ class HomeBridge(QObject):
         """從 JavaScript 呼叫以開啟字幕視窗"""
         logger.info("收到開啟字幕視窗請求")
         self.openSubtitleWindowRequested.emit()
-
-    @pyqtSlot(str)
-    def updateNativeSubtitle(self, payload: str):
-        self.subtitleUpdated.emit(payload)
 
     @pyqtSlot(str)
     def updateNativeSubtitleSettings(self, payload: str):

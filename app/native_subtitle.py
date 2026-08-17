@@ -10,6 +10,8 @@ from PyQt6.QtCore import QDateTime, QPoint, QRect, QTimer, Qt
 from PyQt6.QtGui import QColor, QFont, QFontMetrics, QMouseEvent, QPainter, QPainterPath
 from PyQt6.QtWidgets import QApplication, QWidget
 
+from subtitle_history import entries_fitting_height, find_subtitle_index
+
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +30,7 @@ class NativeSubtitleWindow(QWidget):
         self.on_open_settings = on_open_settings
         self.on_stop_translation = on_stop_translation
         self._lines: list[dict[str, Any]] = []
+        self._task_id: str | None = None
         self._history_offset = 0
         self._is_recording = False
         self._drag_offset: QPoint | None = None
@@ -74,6 +77,7 @@ class NativeSubtitleWindow(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setMouseTracking(True)
         self.setMinimumSize(240, 100)
 
@@ -96,10 +100,12 @@ class NativeSubtitleWindow(QWidget):
         except (TypeError, json.JSONDecodeError):
             logger.warning("原生字幕收到無效 JSON")
             return
-        key = data.get("backend_timestamp") or data.get("id")
-        index = next((i for i, line in enumerate(self._lines) if (line.get("backend_timestamp") or line.get("id")) == key), -1)
+        index = find_subtitle_index(self._lines, data)
         if index >= 0:
             previous = self._lines[index]
+            data["_received_at_ms"] = previous.get(
+                "_received_at_ms", QDateTime.currentMSecsSinceEpoch()
+            )
             data["_display_original"] = self._reconcile_display(
                 str(previous.get("_display_original", "")), str(data.get("original", ""))
             )
@@ -108,14 +114,27 @@ class NativeSubtitleWindow(QWidget):
             )
             self._lines[index] = data
         else:
+            data["_received_at_ms"] = QDateTime.currentMSecsSinceEpoch()
             data["_display_original"] = ""
             data["_display_translated"] = ""
             self._lines.append(data)
-        self._lines = self._lines[-50:]
+        history_limit = max(100, int(self.settings.get("maxDisplayCount", 5)) * 3)
+        self._lines = self._lines[-history_limit:]
         if self.settings.get("autoScroll", True):
             self._history_offset = 0
         if self._has_pending_typing():
             self._typing_timer.start()
+        self.update()
+
+    def begin_task(self, task_id: str) -> None:
+        """Clear history only when translation switches to a genuinely new task."""
+        task_id = str(task_id)
+        if self._task_id == task_id:
+            return
+        self._task_id = task_id
+        self._typing_timer.stop()
+        self._lines.clear()
+        self._history_offset = 0
         self.update()
 
     @staticmethod
@@ -198,8 +217,9 @@ class NativeSubtitleWindow(QWidget):
         entries = self._layout_entries(text_font, metadata_font, content_width)
         # entry.height 已包含每筆尾端間距；分隔線畫在該間距內，不可再次
         # 累加，否則會誤判溢出並造成頂部裁切、底部留白過多。
-        total_height = sum(entry["height"] for entry in entries)
         available_height = max(0, self.height() - margin * 2)
+        entries = entries_fitting_height(entries, available_height)
+        total_height = sum(entry["height"] for entry in entries)
         if total_height > available_height:
             # 內容超出視窗時由底部往上溢出，確保最新字幕永遠可見。
             y = self.height() - margin - total_height
@@ -264,9 +284,9 @@ class NativeSubtitleWindow(QWidget):
     def _metadata_text(self, line: dict[str, Any]) -> str:
         parts: list[str] = []
         if self.settings.get("showTimestamp", False):
-            timestamp = line.get("timestamp")
-            if isinstance(timestamp, (int, float)):
-                parts.append(QDateTime.fromMSecsSinceEpoch(int(timestamp)).toString("HH:mm"))
+            received_at = line.get("_received_at_ms")
+            if isinstance(received_at, (int, float)):
+                parts.append(QDateTime.fromMSecsSinceEpoch(int(received_at)).toString("HH:mm"))
         if self.settings.get("showLatency", False):
             latency_fields = (
                 ("ASR", "asr_latency_ms"),
@@ -320,7 +340,7 @@ class NativeSubtitleWindow(QWidget):
                 event.accept()
                 return
             if self._close_rect().contains(local_pos):
-                self.hide()
+                self.close()
                 event.accept()
                 return
             if self._stop_rect().contains(local_pos):

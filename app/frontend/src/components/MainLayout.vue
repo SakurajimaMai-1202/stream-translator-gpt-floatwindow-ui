@@ -4,7 +4,7 @@ import { useRouter, useRoute } from 'vue-router';
 
 const router = useRouter();
 const route = useRoute();
-const appVersion = import.meta.env.VITE_APP_VERSION || '1.4.0';
+const appVersion = import.meta.env.VITE_APP_VERSION || '1.4.1';
 const isMobileMenuOpen = ref(false);
 
 // Define navigation items
@@ -38,6 +38,7 @@ const settingsGroups: Array<{ groupName: string; items: SettingsNavItem[] }> = [
       { id: 'translation', name: '翻譯選項', icon: '🌐' },
       { id: 'llama', name: 'Llama 執行設定', icon: '🦙' },
       { id: 'llm-models', path: '/llm-models', name: 'LLM 模型管理', icon: '🧠' },
+      { id: 'translation-models', path: '/translation-models', name: '推薦翻譯模型', icon: '✨' },
       { id: 'terminology', name: '術語表', icon: '📖' }
     ]
   }
@@ -46,6 +47,7 @@ const settingsGroups: Array<{ groupName: string; items: SettingsNavItem[] }> = [
 // Check active status
 function isTabActive(tabId: string) {
   if (tabId === 'llm-models') return route.path === '/llm-models';
+  if (tabId === 'translation-models') return route.path === '/translation-models';
   if (route.path === '/settings') {
     return (route.query.tab || 'general') === tabId;
   }

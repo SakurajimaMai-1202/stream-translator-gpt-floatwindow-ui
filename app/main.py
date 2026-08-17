@@ -18,6 +18,7 @@ from backend.core.logging_setup import configure_logging
 from services import BackendProcess, FrontendServer
 from windows import HomeWindow, SettingsWindow, FloatingSubtitleWindow, SubtitleSettingsWindow
 from native_subtitle import NativeSubtitleWindow
+from native_subtitle_sse import NativeSubtitleSseClient
 
 # 設定日誌
 # 由 UI 啟動器統一在每次開啟時清掉 app/backend/translator stderr 舊檔，避免 log 無限累積。
@@ -107,6 +108,7 @@ class UI2Application:
         self.home_window = None
         self.settings_window = None
         self.subtitle_window = None
+        self.subtitle_sse_client = None
         self.subtitle_settings_window = None
         
         # 連接信號
@@ -218,6 +220,10 @@ class UI2Application:
     def cleanup(self):
         """清理資源"""
         logger.info("清理資源...")
+
+        if self.subtitle_sse_client is not None:
+            self.subtitle_sse_client.stop()
+            self.subtitle_sse_client = None
         
         # 停止 llama server
         try:
@@ -253,6 +259,9 @@ class UI2Application:
         # 清除舊引用（如果存在）
         if self.subtitle_window is not None:
             logger.info("關閉舊的字幕視窗")
+            if self.subtitle_sse_client is not None:
+                self.subtitle_sse_client.stop()
+                self.subtitle_sse_client = None
             try:
                 self.subtitle_window.close()
             except:
@@ -276,14 +285,38 @@ class UI2Application:
                 on_open_settings=self._open_native_subtitle_settings_window,
                 on_stop_translation=self._stop_translation_from_subtitle,
             )
-            self.home_window.bridge.subtitleUpdated.connect(self.subtitle_window.update_subtitle_json)
             self.home_window.bridge.subtitleSettingsUpdated.connect(self.subtitle_window.update_settings_json)
             self.home_window.bridge.recordingStateUpdated.connect(self.subtitle_window.update_recording_state)
             self.subtitle_window.update_recording_state(self.home_window.bridge.is_recording)
-        self.subtitle_window.destroyed.connect(lambda: setattr(self, 'subtitle_window', None))
+            # 原生字幕直接連 FastAPI，不繞過 Vite/WebView proxy。
+            backend_url = f"http://127.0.0.1:{self.backend_port}"
+            self.subtitle_sse_client = NativeSubtitleSseClient(backend_url, self.subtitle_window)
+            self.subtitle_sse_client.taskStarted.connect(self.subtitle_window.begin_task)
+            self.subtitle_sse_client.subtitleReceived.connect(self.subtitle_window.update_subtitle_json)
+        created_window = self.subtitle_window
+        created_client = self.subtitle_sse_client
+        self.subtitle_window.destroyed.connect(
+            lambda _obj=None, window=created_window, client=created_client:
+                self._subtitle_window_destroyed(window, client)
+        )
         self.subtitle_window.show()
+        if self.subtitle_sse_client is not None:
+            self.subtitle_sse_client.start()
         self.subtitle_window.raise_()
         self.subtitle_window.activateWindow()
+
+    def _subtitle_window_destroyed(self, window, client):
+        # 延遲送達的 destroyed 不得清掉剛重新建立的新字幕視窗。
+        if client is not None:
+            try:
+                client.stop()
+            except RuntimeError:
+                # client 以視窗為 QObject parent，可能已由 Qt 一併釋放。
+                pass
+        if self.subtitle_sse_client is client:
+            self.subtitle_sse_client = None
+        if self.subtitle_window is window:
+            self.subtitle_window = None
 
     def _open_native_subtitle_settings_window(self):
         """由原生字幕視窗開啟獨立的字幕外觀設定視窗。"""

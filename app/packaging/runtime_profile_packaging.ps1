@@ -33,7 +33,10 @@ function Set-RuntimeProfileInConfigText {
         [string]$RuntimeProfile
     )
 
-    $lines = $ConfigText -split "\r?\n", -1
+    # PowerShell treats a negative split limit as "do not split", unlike the
+    # common regex API convention where -1 means unlimited.  Keep every YAML
+    # line so the runtime block can be located and rewritten.
+    $lines = $ConfigText -split "\r?\n"
     $inRuntime = $false
     $profileUpdated = $false
     $devicePolicyUpdated = $false
@@ -81,7 +84,7 @@ function Get-RuntimeProfileDocText {
         [Parameter(Mandatory = $true)]
         [ValidateSet("cuda", "cpu", "rocm")]
         [string]$RuntimeProfile,
-        [string]$Version = "1.4.0",
+        [string]$Version = "1.4.1",
         [Parameter(Mandatory = $true)]
         [ValidateSet("portable_guide", "update_notes", "readme")]
         [string]$Document
@@ -282,7 +285,7 @@ function Write-RuntimeProfileDocs {
         [Parameter(Mandatory = $true)]
         [ValidateSet("cuda", "cpu", "rocm")]
         [string]$RuntimeProfile,
-        [string]$Version = "1.4.0"
+        [string]$Version = "1.4.1"
     )
 
     if (-not (Test-Path $Destination)) {

@@ -8,6 +8,7 @@ import DesktopSubtitleView from '../views/DesktopSubtitleView.vue';
 import MainLayout from '../components/MainLayout.vue';
 import LlamaModelsView from '../views/LlamaModelsView.vue';
 import GuideView from '../views/GuideView.vue';
+import TranslationModelsView from '../views/TranslationModelsView.vue';
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -35,6 +36,11 @@ const router = createRouter({
           path: 'llm-models',
           name: 'llm-models',
           component: LlamaModelsView
+        },
+        {
+          path: 'translation-models',
+          name: 'translation-models',
+          component: TranslationModelsView
         },
         {
           path: 'guide',

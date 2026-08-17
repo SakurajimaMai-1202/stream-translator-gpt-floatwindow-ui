@@ -308,7 +308,6 @@ export const useTranslationStore = defineStore('translation', () => {
           console.log('[Store] Updated existing subtitle:', backendTs);
           // 也廣播給其他視窗
           broadcastSubtitle(updated);
-          (window as any).pyqt?.updateNativeSubtitle?.(JSON.stringify(updated));
         } else {
           const newSubtitle: SubtitleLine = {
             id: `${Date.now()}-${Math.random()}`,
@@ -328,7 +327,6 @@ export const useTranslationStore = defineStore('translation', () => {
           // 廣播給其他視窗
           console.log('[BroadcastChannel] Posting subtitle:', newSubtitle);
           broadcastSubtitle(newSubtitle);
-          (window as any).pyqt?.updateNativeSubtitle?.(JSON.stringify(newSubtitle));
         }
 
         // 保持最多 100 筆字幕

@@ -129,7 +129,28 @@ export interface RuntimeInstallStatus {
   }> | null;
 }
 
+export interface TranslationModelRecommendationInfo {
+  selected_gpu: null | { name: string; vendor: string; backend: string; memory_mb: number | null; is_integrated: boolean };
+  detected_gpus: Array<{ name: string; vendor: string; backend: string; memory_mb: number | null; is_integrated: boolean }>;
+  vram_gb: number | null;
+  notice: string;
+  models: Array<{
+    id: string; name: string; repo: string; url: string; recommended_quant: string;
+    model_size_gb: number; minimum_quant: string; minimum_size_gb: number; min_vram_gb: number; comfortable_vram_gb: number; vram_basis: string; category: string; use_case?: string;
+    app_preferred?: boolean; app_preference_reason?: string;
+    summary: string; languages: string[];
+    deployment_config?: Partial<Pick<ServerConfig, 'temp' | 'top_p' | 'top_k' | 'repeat_penalty' | 'n_ctx' | 'n_predict'>>;
+    parameter_source?: string;
+    runtime_note?: string;
+    fit: 'recommended' | 'possible' | 'unknown' | 'not_recommended'; fit_reason: string;
+  }>;
+}
+
 export const llamaApi = {
+  async getModelRecommendations(refresh = false): Promise<TranslationModelRecommendationInfo> {
+    const response = await axios.get(`${API_BASE}/model-recommendations`, { params: { refresh } });
+    return response.data;
+  },
   async getRuntimeReleases(): Promise<RuntimeReleaseInfo> {
     const response = await axios.get(`${API_BASE}/runtime/releases`);
     return response.data;

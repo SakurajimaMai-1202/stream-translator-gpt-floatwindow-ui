@@ -3,6 +3,7 @@ from typing import Dict, Any, List
 from backend.core.config_manager import ConfigManager
 from fastapi.responses import Response
 from pydantic import BaseModel
+import asyncio
 import yaml
 import io
 from backend.core.app_sync import publish_app_event
@@ -72,7 +73,10 @@ async def update_section(section: str, data: Dict[str, Any], request: Request):
                 data['custom_presets'] = current_presets
                 logger.info(f"Preserved custom_presets: {list(current_presets.keys())}")
         
-        full_config = get_config_manager().update_config({section: data})
+        full_config = await asyncio.to_thread(
+            get_config_manager().update_config,
+            {section: data},
+        )
         await publish_app_event("config.updated", {
             "section": section,
             "config": full_config,

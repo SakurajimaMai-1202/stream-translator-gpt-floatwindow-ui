@@ -129,7 +129,7 @@ class AppUpdateManagerTest(unittest.TestCase):
             (root / "StreamTranslatorUpdater.exe").write_bytes(b"fake updater")
             with mock.patch.object(update_module, "get_app_root", return_value=root), mock.patch.object(
                 update_module, "get_packaged_runtime_profile", return_value="cuda"
-            ):
+            ), mock.patch.object(update_module.settings, "APP_VERSION", "1.4.0"):
                 manager = update_module.AppUpdateManager()
                 checked = manager.check(release_api=str(release))
                 self.assertTrue(checked["available"])
@@ -165,7 +165,7 @@ class AppUpdateManagerTest(unittest.TestCase):
             release_path.write_text(json.dumps(release), encoding="utf-8")
             with mock.patch.object(update_module, "get_app_root", return_value=root), mock.patch.object(
                 update_module, "get_packaged_runtime_profile", return_value="cuda"
-            ):
+            ), mock.patch.object(update_module.settings, "APP_VERSION", "1.4.0"):
                 manager = update_module.AppUpdateManager()
                 manager.check(release_api=str(release_path))
                 manager.start_download()
@@ -182,7 +182,7 @@ class AppUpdateManagerTest(unittest.TestCase):
             _, release = self._fixture(root, protected=True)
             with mock.patch.object(update_module, "get_app_root", return_value=root), mock.patch.object(
                 update_module, "get_packaged_runtime_profile", return_value="cuda"
-            ):
+            ), mock.patch.object(update_module.settings, "APP_VERSION", "1.4.0"):
                 manager = update_module.AppUpdateManager()
                 manager.check(release_api=str(release))
                 manager.start_download()
@@ -199,7 +199,7 @@ class AppUpdateManagerTest(unittest.TestCase):
             _, release = self._fixture(root, mode="runtime_replace", complete_runtime=False)
             with mock.patch.object(update_module, "get_app_root", return_value=root), mock.patch.object(
                 update_module, "get_packaged_runtime_profile", return_value="cuda"
-            ):
+            ), mock.patch.object(update_module.settings, "APP_VERSION", "1.4.0"):
                 manager = update_module.AppUpdateManager()
                 manager.check(release_api=str(release))
                 manager.start_download()

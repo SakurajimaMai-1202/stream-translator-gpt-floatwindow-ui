@@ -12,10 +12,12 @@ import subprocess
 import asyncio
 import logging
 import os
+import threading
 import time
 from functools import lru_cache
 from backend.config import settings
 from backend.core.llama_runtime_installer import active_runtime_executable, installer, list_latest_variants
+from backend.core.portable_paths import get_app_root
 
 logger = logging.getLogger(__name__)
 
@@ -181,6 +183,8 @@ class InferenceRequest(BaseModel):
     max_tokens: int = 512
     temperature: float = 0.8
     top_p: float = 0.95
+    top_k: int = 40
+    repeat_penalty: float = 1.1
     stop: Optional[List[str]] = None
 
 class TranslateRequest(BaseModel):
@@ -195,6 +199,22 @@ class RuntimeInstallRequest(BaseModel):
 
 # ==================== API 端點 ====================
 
+def _scan_gguf_models(dir_path: Path) -> List[ModelInfo]:
+    models = []
+    for file in dir_path.rglob("*.gguf"):
+        try:
+            stat = file.stat()
+            models.append(ModelInfo(
+                name=file.name,
+                path=str(file.absolute()),
+                size_mb=stat.st_size / (1024 * 1024),
+                modified_time=str(stat.st_mtime)
+            ))
+        except Exception as exc:
+            logger.warning("Failed to get info for %s: %s", file, exc)
+    models.sort(key=lambda model: model.name)
+    return models
+
 @router.get("/models")
 async def list_models(model_dir: Optional[str] = None):
     """
@@ -203,31 +223,17 @@ async def list_models(model_dir: Optional[str] = None):
     Args:
         model_dir: 模型目錄路徑，如果未提供則使用預設目錄
     """
-    if not model_dir:
-        model_dir = "."
-    
     try:
-        dir_path = Path(model_dir)
+        raw_model_dir = str(model_dir or "./models").strip() or "./models"
+        dir_path = Path(os.path.expandvars(os.path.expanduser(raw_model_dir)))
+        if not dir_path.is_absolute():
+            # Portable builds may be launched with Downloads, System32, or a
+            # shortcut directory as CWD. Relative model paths are app-relative.
+            dir_path = get_app_root() / dir_path
+        dir_path = dir_path.resolve()
         if not dir_path.exists():
             return []
-        
-        models = []
-        for file in dir_path.rglob("*.gguf"):
-            try:
-                stat = file.stat()
-                models.append(ModelInfo(
-                    name=file.name,
-                    path=str(file.absolute()),
-                    size_mb=stat.st_size / (1024 * 1024),
-                    modified_time=str(stat.st_mtime)
-                ))
-            except Exception as e:
-                logger.warning(f"Failed to get info for {file}: {e}")
-                continue
-        
-        # 按名稱排序
-        models.sort(key=lambda x: x.name)
-        return models
+        return await asyncio.to_thread(_scan_gguf_models, dir_path)
         
     except Exception as e:
         logger.error(f"Failed to list models: {e}")
@@ -407,6 +413,10 @@ async def stop_server():
 @router.get("/server/status", response_model=ServerStatus)
 async def get_server_status():
     """獲取伺服器狀態"""
+    resources, runtime = await asyncio.gather(
+        asyncio.to_thread(_collect_resource_status),
+        asyncio.to_thread(_get_llama_runtime_info),
+    )
     return ServerStatus(
         is_running=llama_state.is_running,
         is_ready=llama_state.is_ready,  # 返回就緒狀態
@@ -414,9 +424,9 @@ async def get_server_status():
         current_model=llama_state.current_model,
         last_error=llama_state.last_error,
         pid=llama_state.server_process.pid if llama_state.server_process else None,
-        resources=_collect_resource_status(),
+        resources=resources,
         performance=llama_state.last_inference,
-        runtime=_get_llama_runtime_info(),
+        runtime=runtime,
     )
 
 
@@ -430,6 +440,16 @@ async def get_runtime_releases():
         return await asyncio.to_thread(list_latest_variants, profile, devices)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"無法讀取 llama.cpp 官方版本：{exc}")
+
+
+@router.get("/model-recommendations")
+async def get_model_recommendations(refresh: bool = False):
+    """依獨立顯卡與 VRAM 回傳本機翻譯 GGUF 建議。"""
+    from backend.core.hardware_detector import detect_gpus
+    from backend.core.translation_model_recommender import build_translation_model_recommendations
+
+    devices = await asyncio.to_thread(detect_gpus, True, force_refresh=refresh)
+    return build_translation_model_recommendations(devices)
 
 
 @router.get("/runtime/install/status")
@@ -465,7 +485,19 @@ def _find_llama_server() -> Optional[Path]:
     return next((path.resolve() for path in candidates if path and path.exists()), None)
 
 
+_runtime_info_cache: Dict[str, Any] = {}
+_runtime_info_cache_at = 0.0
+_runtime_info_cache_lock = threading.Lock()
+_RUNTIME_INFO_CACHE_SECONDS = 10.0
+
+
 def _get_llama_runtime_info() -> Dict[str, Any]:
+    global _runtime_info_cache, _runtime_info_cache_at
+    now = time.monotonic()
+    with _runtime_info_cache_lock:
+        if _runtime_info_cache and now - _runtime_info_cache_at < _RUNTIME_INFO_CACHE_SECONDS:
+            return dict(_runtime_info_cache)
+
     executable = _find_llama_server()
     version = "未安裝"
     if executable:
@@ -479,15 +511,31 @@ def _get_llama_runtime_info() -> Dict[str, Any]:
             version = next((line.strip() for line in lines if line.strip().lower().startswith("version:")), lines[0] if lines else "未知版本")
         except Exception:
             version = "無法讀取版本"
-    return {
+    info = {
         "installed": executable is not None,
         "path": str(executable) if executable else "",
         "version": version,
         "download_url": "https://github.com/ggml-org/llama.cpp/releases/latest",
     }
+    with _runtime_info_cache_lock:
+        _runtime_info_cache = info
+        _runtime_info_cache_at = time.monotonic()
+    return dict(info)
+
+
+_resource_status_cache: Dict[str, Any] = {}
+_resource_status_cache_at = 0.0
+_resource_status_cache_lock = threading.Lock()
+_RESOURCE_STATUS_CACHE_SECONDS = 6.0
 
 
 def _collect_resource_status() -> Dict[str, Any]:
+    global _resource_status_cache, _resource_status_cache_at
+    now = time.monotonic()
+    with _resource_status_cache_lock:
+        if _resource_status_cache and now - _resource_status_cache_at < _RESOURCE_STATUS_CACHE_SECONDS:
+            return dict(_resource_status_cache)
+
     result: Dict[str, Any] = {}
     try:
         import psutil
@@ -524,7 +572,10 @@ def _collect_resource_status() -> Dict[str, Any]:
                 result["vram_total_mb"] = devices[0].memory_mb
         except Exception:
             pass
-    return result
+    with _resource_status_cache_lock:
+        _resource_status_cache = result
+        _resource_status_cache_at = time.monotonic()
+    return dict(result)
 
 
 @router.post("/inference")
@@ -550,6 +601,8 @@ async def inference(request: InferenceRequest):
                     "n_predict": request.max_tokens,
                     "temperature": request.temperature,
                     "top_p": request.top_p,
+                    "top_k": request.top_k,
+                    "repeat_penalty": request.repeat_penalty,
                     "stop": request.stop or []
                 },
                 timeout=60.0
@@ -598,10 +651,15 @@ Text to translate:
 Translation:"""
     
     try:
+        from backend.api.config import get_config_manager
+        llama_config = get_config_manager().get_config().get("llama", {})
         result = await inference(InferenceRequest(
             prompt=prompt,
-            max_tokens=512,
-            temperature=0.3,
+            max_tokens=int(llama_config.get("n_predict", 512)),
+            temperature=float(llama_config.get("temp", 0.8)),
+            top_p=float(llama_config.get("top_p", 0.95)),
+            top_k=int(llama_config.get("top_k", 40)),
+            repeat_penalty=float(llama_config.get("repeat_penalty", 1.1)),
             stop=["\n\n"]
         ))
         
@@ -730,7 +788,7 @@ async def save_custom_preset(name: str, config: ServerConfig):
     logger.info(f"Saved custom preset '{name}' with model: {config.model_path}")
     
     # 保存完整配置
-    config_manager.update_section('llama', full_config['llama'])
+    await asyncio.to_thread(config_manager.update_section, 'llama', full_config['llama'])
     
     return {"status": "saved", "name": name}
 
@@ -752,6 +810,6 @@ async def delete_custom_preset(name: str):
     full_config['llama']['custom_presets'] = custom_presets
     
     # 保存
-    config_manager.update_section('llama', full_config['llama'])
+    await asyncio.to_thread(config_manager.update_section, 'llama', full_config['llama'])
     
     return {"status": "deleted", "name": name}

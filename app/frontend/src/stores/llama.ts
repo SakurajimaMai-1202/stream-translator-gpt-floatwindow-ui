@@ -104,7 +104,10 @@ export const useLlamaStore = defineStore('llama', () => {
 
   async function refreshServerStatus() {
     try {
-      serverStatus.value = await llamaApi.getServerStatus();
+      const nextStatus = await llamaApi.getServerStatus();
+      if (JSON.stringify(nextStatus) !== JSON.stringify(serverStatus.value)) {
+        serverStatus.value = nextStatus;
+      }
     } catch (error: any) {
       console.error('獲取伺服器狀態失敗:', error);
     }
@@ -145,6 +148,14 @@ export const useLlamaStore = defineStore('llama', () => {
         throw new Error('伺服器啟動超時，請檢查日誌');
       }
 
+      // Starting from the execution-settings page has the same meaning as
+      // enabling the Home-page switch. Keep the persisted UI state aligned
+      // with the actual server state.
+      if (!localLlmEnabled.value) {
+        localLlmEnabled.value = true;
+        await saveConfig();
+      }
+
       successMessage.value = `伺服器已啟動 (PID: ${result.pid})`;
       setTimeout(() => successMessage.value = '', 3000);
 
@@ -160,12 +171,17 @@ export const useLlamaStore = defineStore('llama', () => {
     }
   }
 
-  async function stopServer() {
+  async function stopServer(updateEnabledState = true) {
     isLoading.value = true;
     errorMessage.value = '';
     try {
       await llamaApi.stopServer();
       await refreshServerStatus();
+
+      if (updateEnabledState && localLlmEnabled.value) {
+        localLlmEnabled.value = false;
+        await saveConfig();
+      }
 
       successMessage.value = '伺服器已停止';
       setTimeout(() => successMessage.value = '', 2000);
@@ -189,7 +205,7 @@ export const useLlamaStore = defineStore('llama', () => {
 
   async function applyAndRestart() {
     await saveConfig();
-    if (serverStatus.value.is_running) await stopServer();
+    if (serverStatus.value.is_running) await stopServer(false);
     return startServer();
   }
 
@@ -311,10 +327,8 @@ export const useLlamaStore = defineStore('llama', () => {
     }
   }
 
-  // 保存配置
-  async function saveConfig() {
-    try {
-      const llamaConfig = {
+  function buildLlamaConfig() {
+    return {
         local_llm_enabled: localLlmEnabled.value,
         model_dir: modelDirectory.value,
         model_path: selectedModelPath.value,
@@ -337,12 +351,36 @@ export const useLlamaStore = defineStore('llama', () => {
         no_mmap: serverConfig.value.no_mmap,
         custom_presets: customPresets.value, // Critical: Include custom presets!
         custom_model_series: customModelSeries.value // Save custom model series
-      };
+    };
+  }
 
-      await configApi.updateSection('llama', llamaConfig);
-    } catch (error: any) {
-      console.error('保存 Llama 配置失敗:', error);
-    }
+  // Coalesce rapid form edits into one serialized write. This also prevents
+  // stale, slower requests from overwriting a newer settings snapshot.
+  let saveInFlight: Promise<void> | null = null;
+  let saveRequested = false;
+  let lastSavedConfigFingerprint = '';
+
+  function saveConfig(): Promise<void> {
+    saveRequested = true;
+    if (saveInFlight) return saveInFlight;
+
+    saveInFlight = (async () => {
+      while (saveRequested) {
+        saveRequested = false;
+        const llamaConfig = buildLlamaConfig();
+        const fingerprint = JSON.stringify(llamaConfig);
+        if (fingerprint === lastSavedConfigFingerprint) continue;
+        try {
+          await configApi.updateSection('llama', llamaConfig);
+          lastSavedConfigFingerprint = fingerprint;
+        } catch (error: any) {
+          console.error('保存 Llama 配置失敗:', error);
+        }
+      }
+    })().finally(() => {
+      saveInFlight = null;
+    });
+    return saveInFlight;
   }
 
   // 載入自訂配置列表
@@ -384,7 +422,9 @@ export const useLlamaStore = defineStore('llama', () => {
       console.log('[LlamaStore] 配置中的 model_path:', presetConfig.model_path);
 
       await llamaApi.saveCustomPreset(name, presetConfig);
-      await loadCustomPresets();
+      // The POST already persisted this exact snapshot. Updating Pinia locally
+      // avoids an immediate second disk read and another full-page config sync.
+      customPresets.value = { ...customPresets.value, [name]: presetConfig };
 
       console.log('[LlamaStore] 保存後重新載入的配置:', customPresets.value[name]);
 
@@ -401,7 +441,9 @@ export const useLlamaStore = defineStore('llama', () => {
   async function deleteCustomPreset(name: string) {
     try {
       await llamaApi.deleteCustomPreset(name);
-      await loadCustomPresets();
+      const remaining = { ...customPresets.value };
+      delete remaining[name];
+      customPresets.value = remaining;
       successMessage.value = `配置已刪除: ${name}`;
       setTimeout(() => successMessage.value = '', 2000);
     } catch (error: any) {

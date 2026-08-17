@@ -1350,7 +1350,7 @@ watch(
       if (!pollTimer) {
         pollTimer = window.setInterval(async () => {
           await llamaStore.refreshServerStatus();
-        }, 2000);
+        }, 4000);
       }
     } else if (pollTimer) {
       clearInterval(pollTimer);
@@ -1516,8 +1516,9 @@ async function executePrimaryTest() {
 
 .llama-settings > :not(.workspace-grid),
 .workspace-grid > * {
-  /* Llama 頁面本身很長，按頂層面板切割 paint invalidation。 */
-  contain: layout paint style;
+  /* Long QWebEngine pages can recreate large tiles during fast scrolling
+     when paint containment is applied to every panel. */
+  contain: layout style;
   isolation: isolate;
 }
 

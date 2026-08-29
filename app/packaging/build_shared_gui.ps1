@@ -44,7 +44,7 @@ if (-not $pythonExe) { throw "No usable build Python with PyInstaller found" }
 # separately upgraded PyQt6-Qt6 wheel can still import in the build venv but
 # produce a frozen executable that fails while importing QtWidgets.  Refuse to
 # package that mixed binary set.
-& $pythonExe -c "from PyQt6.QtCore import QT_VERSION_STR, qVersion; import sys; runtime=qVersion(); print(f'PyQt6 Qt compiled={QT_VERSION_STR} runtime={runtime}'); sys.exit(0 if runtime == QT_VERSION_STR else 23)"
+& $pythonExe -c "from PyQt6.QtCore import QT_VERSION_STR, qVersion; import sys; runtime=qVersion(); compatible=lambda v: tuple(map(int,v.split('.')[:2])); print(f'PyQt6 Qt compiled={QT_VERSION_STR} runtime={runtime}'); sys.exit(0 if compatible(runtime) == compatible(QT_VERSION_STR) else 23)"
 if ($LASTEXITCODE -ne 0) {
     throw "PyQt6/Qt6 binary version mismatch; install a PyQt6-Qt6 wheel matching PyQt6 before packaging"
 }

@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pathlib import Path
+import asyncio
 import logging
 import mimetypes
 import threading
@@ -29,9 +30,25 @@ async def lifespan(app: FastAPI):
     # 2) 啟動公開字幕子伺服器（在背景執行緒）
     _start_public_server()
 
-    yield  # 應用程式執行中
+    try:
+        yield  # 應用程式執行中
+    finally:
+        # ── 關閉 ──────────────────────────────────────────
+        # 先讓翻譯任務自行停止，避免桌面程式在等待逾時後直接殺掉
+        # backend，留下 ffmpeg/yt-dlp 或讀取執行緒。
+        from backend.core.translator import active_translations
 
-    # ── 關閉（可放清理邏輯）──────────────────────────────
+        contexts = list(active_translations.values())
+        if contexts:
+            logger.info("正在停止 %d 個翻譯任務...", len(contexts))
+            results = await asyncio.gather(
+                *(context.stop() for context in contexts),
+                return_exceptions=True,
+            )
+            for result in results:
+                if isinstance(result, Exception):
+                    logger.warning("停止翻譯任務時發生錯誤: %s", result)
+            active_translations.clear()
 
 
 app = FastAPI(

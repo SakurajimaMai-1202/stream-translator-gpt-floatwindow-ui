@@ -577,7 +577,13 @@ class TranslationContext:
                     for line in self.process.stderr:
                         line = line.strip()
                         if line:
-                            logger.error(f"[STDERR] {line}")
+                            if self.stop_requested and (
+                                "exited with code" in line.lower()
+                                or "broken pipe" in line.lower()
+                            ):
+                                logger.info(f"[STDERR] {line}")
+                            else:
+                                logger.error(f"[STDERR] {line}")
                             try:
                                 with open(log_path, "a", encoding="utf-8") as f:
                                     f.write(line + "\n")

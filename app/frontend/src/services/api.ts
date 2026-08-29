@@ -192,7 +192,9 @@ export const configApi = {
   },
 
   async updateSection(section: string, data: any): Promise<any> {
-    const response = await axios.patch(`${API_BASE}/config/${section}`, data);
+    // A stalled config write must not leave Settings in a permanent saving
+    // state, especially after a large glossary or ASR bulk import.
+    const response = await axios.patch(`${API_BASE}/config/${section}`, data, { timeout: 30_000 });
     const updatedSection = response.data.data ?? data;
     if (cachedConfig) cachedConfig = { ...cachedConfig, [section]: updatedSection };
     return updatedSection;

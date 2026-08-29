@@ -23,6 +23,8 @@ const AsrModelGroup = defineAsyncComponent(() => import('../components/AsrModelG
 const WhisperFilterSettings = defineAsyncComponent(() => import('../components/WhisperFilterSettings.vue'));
 
 const autoSaveStatus = ref<'idle' | 'saving' | 'saved' | 'error'>('idle');
+const glossaryImporting = ref(false);
+const asrCorrectionsImporting = ref(false);
 const settingsReady = ref(false);
 const sharingLanAddresses = ref<string[]>([]);
 const copiedSharingUrl = ref('');
@@ -30,6 +32,7 @@ const appUpdateStatus = ref<AppUpdateStatus | null>(null);
 const appUpdateBusy = computed(() => ['starting', 'downloading', 'verifying', 'staging'].includes(appUpdateStatus.value?.status || ''));
 let appUpdatePollTimer: ReturnType<typeof setInterval> | null = null;
 let autoSaveStatusTimeout: ReturnType<typeof setTimeout> | null = null;
+const suspendedAutoSaveSections = new Set<string>();
 
 
 const router = useRouter();
@@ -556,6 +559,7 @@ async function saveSectionNow(section: string): Promise<void> {
 }
 
 function debouncedAutoSaveSection(section: string) {
+  if (suspendedAutoSaveSections.has(section)) return;
   autoSaveStatus.value = 'saving';
   const currentTimer = sectionSaveTimers.get(section);
   if (currentTimer) clearTimeout(currentTimer);
@@ -1263,7 +1267,7 @@ onMounted(async () => {
   await nextTick();
   for (const section of Object.keys(localConfig.value)) {
     watch(() => localConfig.value[section], () => {
-      if (isApplyingRemoteConfig.value) return;
+      if (isApplyingRemoteConfig.value || suspendedAutoSaveSections.has(section)) return;
       debouncedAutoSaveSection(section);
     }, { deep: true, flush: 'post' });
   }
@@ -1569,28 +1573,79 @@ async function downloadCsv(filename: string, rows: string[][], label: string): P
 }
 
 function importGlossary() {
+  if (glossaryImporting.value) return;
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = '.txt,.csv';
   input.onchange = async (e: any) => {
     const file = e.target.files[0];
     if (!file) return;
-    const rows = parseDelimitedRows(await file.text());
-    const newTerms: any[] = rows
-      .filter(row => row.length >= 2 && !isGlossaryHeader(row))
-      .map(row => ({ original: row[0].trim(), translated: row[1].trim() }))
-      .filter(term => term.original && term.translated);
-    localConfig.value.terminology.glossary_list = [
-      ...(localConfig.value.terminology.glossary_list || []),
-      ...newTerms
-    ];
-    store.statusMessage = `已匯入 ${newTerms.length} 個術語`;
+    glossaryImporting.value = true;
+    try {
+      const rows = parseDelimitedRows(await file.text());
+      const newTerms: any[] = rows
+        .filter(row => row.length >= 2 && !isGlossaryHeader(row))
+        .map(row => ({ original: row[0].trim(), translated: row[1].trim() }))
+        .filter(term => term.original && term.translated);
+      let mergedCount = localConfig.value.terminology.glossary_list?.length || 0;
+      await saveBulkImport('terminology', () => {
+        const merged = mergeGlossaryTerms(localConfig.value.terminology.glossary_list || [], newTerms);
+        mergedCount = merged.length;
+        localConfig.value.terminology.glossary_list = merged;
+      });
+      store.statusMessage = `詞語表匯入完成：讀取 ${newTerms.length} 筆，合併後共 ${mergedCount} 筆`;
+    } catch (error: any) {
+      store.errorMessage = `詞語表匯入失敗：${error?.message || '未知錯誤'}`;
+    } finally {
+      glossaryImporting.value = false;
+    }
   };
   input.click();
 }
 
 function exportGlossary() {
   void downloadCsv('glossary.csv', glossaryExportRows(), '術語');
+}
+
+async function saveBulkImport(section: 'terminology' | 'transcription', applyImport: () => void) {
+  const pendingTimer = sectionSaveTimers.get(section);
+  if (pendingTimer) clearTimeout(pendingTimer);
+  sectionSaveTimers.delete(section);
+  suspendedAutoSaveSections.add(section);
+  try {
+    applyImport();
+    // Deep watchers use flush: 'post'. Keep the section suspended until those
+    // callbacks have observed the single bulk replacement.
+    await nextTick();
+  } finally {
+    suspendedAutoSaveSections.delete(section);
+  }
+  await saveSectionNow(section);
+}
+
+function mergeGlossaryTerms(existing: any[], imported: any[]): any[] {
+  const merged = new Map<string, { original: string; translated: string }>();
+  for (const term of [...existing, ...imported]) {
+    const original = String(term?.original || '').trim();
+    const translated = String(term?.translated || '').trim();
+    if (original && translated) merged.set(original, { original, translated });
+  }
+  return [...merged.values()];
+}
+
+function mergeAsrCorrectionRules(existing: any[], imported: any[]): any[] {
+  const merged = new Map<string, Set<string>>();
+  for (const rule of [...existing, ...imported]) {
+    const canonical = String(rule?.canonical || '').trim();
+    if (!canonical) continue;
+    const aliases = merged.get(canonical) || new Set<string>();
+    for (const value of rule?.aliases || []) {
+      const alias = String(value || '').trim();
+      if (alias && alias !== canonical) aliases.add(alias);
+    }
+    if (aliases.size > 0) merged.set(canonical, aliases);
+  }
+  return [...merged.entries()].map(([canonical, aliases]) => ({ canonical, aliases: [...aliases] }));
 }
 
 function addAsrCorrection() {
@@ -1615,27 +1670,40 @@ function removeAsrCorrection(rule: any) {
 }
 
 function importAsrCorrections() {
+  if (asrCorrectionsImporting.value) return;
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = '.txt,.csv';
   input.onchange = async (event: any) => {
     const file = event.target.files[0];
     if (!file) return;
-    const imported = parseDelimitedRows(await file.text())
-      .filter(row => row.length >= 2 && !isAsrCorrectionHeader(row))
-      .map(row => {
-        const canonical = row[0].trim();
-        const aliases = row.slice(1)
-          .map(value => value.trim())
-          .filter((value, index, values) => value && value !== canonical && values.indexOf(value) === index);
-        return { canonical, aliases };
-      })
-      .filter(rule => rule.canonical && rule.aliases.length > 0);
-    localConfig.value.transcription.asr_correction_rules = [
-      ...(localConfig.value.transcription.asr_correction_rules || []),
-      ...imported,
-    ];
-    store.statusMessage = `已匯入 ${imported.length} 筆 ASR 修正規則`;
+    asrCorrectionsImporting.value = true;
+    try {
+      const imported = parseDelimitedRows(await file.text())
+        .filter(row => row.length >= 2 && !isAsrCorrectionHeader(row))
+        .map(row => {
+          const canonical = row[0].trim();
+          const aliases = row.slice(1)
+            .map(value => value.trim())
+            .filter((value, index, values) => value && value !== canonical && values.indexOf(value) === index);
+          return { canonical, aliases };
+        })
+        .filter(rule => rule.canonical && rule.aliases.length > 0);
+      let mergedCount = localConfig.value.transcription.asr_correction_rules?.length || 0;
+      await saveBulkImport('transcription', () => {
+        const merged = mergeAsrCorrectionRules(
+          localConfig.value.transcription.asr_correction_rules || [],
+          imported,
+        );
+        mergedCount = merged.length;
+        localConfig.value.transcription.asr_correction_rules = merged;
+      });
+      store.statusMessage = `ASR 校正表匯入完成：讀取 ${imported.length} 筆，合併後共 ${mergedCount} 筆`;
+    } catch (error: any) {
+      store.errorMessage = `ASR 校正表匯入失敗：${error?.message || '未知錯誤'}`;
+    } finally {
+      asrCorrectionsImporting.value = false;
+    }
   };
   input.click();
 }
@@ -3233,8 +3301,9 @@ async function handleFileChange(event: Event) {
               <div class="flex flex-wrap gap-3">
                 <input v-model="asrCorrectionSearchQuery" type="text" placeholder="搜尋標準名稱或誤辨文字..."
                   class="flex-1 min-w-[220px] px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-cyan-400" />
-                <button type="button" @click="importAsrCorrections" class="bg-white/10 hover:bg-white/20 text-white font-semibold py-2 px-4 rounded-lg transition border border-white/20">
-                  匯入 CSV
+                <button type="button" @click="importAsrCorrections" :disabled="asrCorrectionsImporting"
+                  class="bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-wait text-white font-semibold py-2 px-4 rounded-lg transition border border-white/20">
+                  {{ asrCorrectionsImporting ? '匯入並儲存中…' : '匯入 CSV' }}
                 </button>
                 <button type="button" @click="exportAsrCorrections" class="bg-white/10 hover:bg-white/20 text-white font-semibold py-2 px-4 rounded-lg transition border border-white/20">
                   匯出 CSV
@@ -3302,8 +3371,9 @@ async function handleFileChange(event: Event) {
             <div class="flex flex-wrap gap-3 mb-4">
               <input v-model="termSearchQuery" type="text" placeholder="搜尋術語..."
                 class="flex-1 min-w-[200px] px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
-              <button type="button" @click="importGlossary" class="bg-white/10 hover:bg-white/20 text-white font-semibold py-2 px-4 rounded-lg transition border border-white/20">
-                📂 匯入 CSV
+              <button type="button" @click="importGlossary" :disabled="glossaryImporting"
+                class="bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-wait text-white font-semibold py-2 px-4 rounded-lg transition border border-white/20">
+                {{ glossaryImporting ? '📂 匯入並儲存中…' : '📂 匯入 CSV' }}
               </button>
               <button type="button" @click="exportGlossary" class="bg-white/10 hover:bg-white/20 text-white font-semibold py-2 px-4 rounded-lg transition border border-white/20">
                 💾 匯出 CSV

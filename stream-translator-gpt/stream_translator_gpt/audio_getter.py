@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 import ffmpeg
 import numpy as np
 
-from .common import SAMPLE_RATE, SAMPLES_PER_FRAME, FRAME_DURATION, LoopWorkerBase, INFO, WARNING, ERROR
+from .common import AUDIO_STREAM_GAP, SAMPLE_RATE, SAMPLES_PER_FRAME, FRAME_DURATION, LoopWorkerBase, INFO, WARNING, ERROR
 
 
 def _is_twitter_url(url: str) -> bool:
@@ -35,6 +35,14 @@ def _is_twitter_url(url: str) -> bool:
         'mobile.x.com',
         'mobile.twitter.com',
     } or hostname.endswith('.x.com') or hostname.endswith('.twitter.com')
+
+
+def _is_youtube_url(url: str) -> bool:
+    try:
+        hostname = (urlparse(url).hostname or '').lower()
+    except ValueError:
+        return False
+    return hostname in {'youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be'} or hostname.endswith('.youtube.com')
 
 
 def _resolve_cookie_file(url: str, cookies: str | None) -> str | None:
@@ -68,6 +76,14 @@ def _append_site_specific_ytdlp_args(cmd: list[str], url: str) -> None:
         # X/Twitter 的 GraphQL / guest token 經常波動；
         # 官方 issue 建議改走 syndication endpoint 作為 workaround。
         cmd.extend(['--extractor-args', 'twitter:api=syndication'])
+    elif _is_youtube_url(url):
+        # Live manifests occasionally return a transient missing fragment.  Let
+        # yt-dlp keep following the manifest instead of silently ending after
+        # the small batch of fragments that was initially available.
+        cmd.extend([
+            '--fragment-retries', 'infinite',
+            '--retry-sleep', 'fragment:1',
+        ])
 
 
 def _build_ytdlp_command(url: str,
@@ -258,12 +274,21 @@ def _open_stream(url: str, format: str, cookies: str, proxy: str, cwd: str):
     except ffmpeg.Error as e:
         raise RuntimeError(f'Failed to load audio: {e.stderr.decode()}') from e
 
-    thread = threading.Thread(target=_transport, args=(ytdlp_process, ffmpeg_process))
+    thread = threading.Thread(
+        target=_transport,
+        args=(ytdlp_process, ffmpeg_process),
+        daemon=True,
+        name='stream-transport',
+    )
     thread.start()
+    ffmpeg_process._transport_thread = thread
     return ffmpeg_process, ytdlp_process
 
 
 class StreamAudioGetter(LoopWorkerBase):
+
+    STREAM_READ_TIMEOUT_SECONDS = 8.0
+    YOUTUBE_RECONNECT_DELAY_SECONDS = 1.0
 
     def __init__(self, url: str, format: str, cookies: str, proxy: str, realtime_throttle: bool = False) -> None:
         self.url = url
@@ -274,21 +299,74 @@ class StreamAudioGetter(LoopWorkerBase):
         self.temp_dir = tempfile.mkdtemp()
         self.ffmpeg_process = None
         self.ytdlp_process = None
+        self._reader_thread = None
+        self._stop_event = threading.Event()
         self.byte_size = round(SAMPLES_PER_FRAME * 4)  # Factor 4 comes from float32 (4 bytes per sample)
         self.running = True
 
+    @staticmethod
+    def _stop_process(process) -> None:
+        if not process or process.poll() is not None:
+            return
+        try:
+            process.terminate()
+            process.wait(timeout=2)
+        except Exception:
+            try:
+                process.kill()
+                process.wait(timeout=2)
+            except Exception:
+                pass
+
+    def _close_stream(self) -> None:
+        ffmpeg_process = self.ffmpeg_process
+        ytdlp_process = self.ytdlp_process
+        reader_thread = self._reader_thread
+        transport_thread = getattr(ffmpeg_process, '_transport_thread', None) if ffmpeg_process else None
+        self._stop_process(ffmpeg_process)
+        self._stop_process(ytdlp_process)
+        current_thread = threading.current_thread()
+        for thread in (reader_thread, transport_thread):
+            if thread and thread is not current_thread and thread.is_alive():
+                thread.join(timeout=2)
+        self.ffmpeg_process = None
+        self.ytdlp_process = None
+        self._reader_thread = None
+
+    def _read_stream_frames(self):
+        """Yield PCM frames without allowing a live pipe read to block forever."""
+        process = self.ffmpeg_process
+        read_queue = queue.SimpleQueue()
+        finished = object()
+
+        def reader():
+            try:
+                while self.running and process and process.poll() is None:
+                    chunk = process.stdout.read(self.byte_size)
+                    if not chunk:
+                        break
+                    read_queue.put(chunk)
+            finally:
+                read_queue.put(finished)
+
+        self._reader_thread = threading.Thread(target=reader, daemon=True, name='stream-audio-reader')
+        self._reader_thread.start()
+        while self.running:
+            try:
+                chunk = read_queue.get(timeout=self.STREAM_READ_TIMEOUT_SECONDS)
+            except queue.Empty as exc:
+                raise TimeoutError(
+                    f'串流已連續 {self.STREAM_READ_TIMEOUT_SECONDS:g} 秒沒有音訊資料'
+                ) from exc
+            if chunk is finished:
+                return
+            if len(chunk) == self.byte_size:
+                yield chunk
+
     def stop(self) -> None:
         self.running = False
-        if self.ffmpeg_process and self.ffmpeg_process.poll() is None:
-            try:
-                self.ffmpeg_process.terminate()
-            except Exception:
-                pass
-        if self.ytdlp_process and self.ytdlp_process.poll() is None:
-            try:
-                self.ytdlp_process.terminate()
-            except Exception:
-                pass
+        self._stop_event.set()
+        self._close_stream()
 
     def __del__(self):
         if hasattr(self, 'temp_dir') and os.path.exists(self.temp_dir):
@@ -304,40 +382,44 @@ class StreamAudioGetter(LoopWorkerBase):
         sys.exit(0)
 
     def loop(self, output_queue: queue.SimpleQueue[np.array]):
-        print(f'{INFO}Opening stream: {self.url}')
-        self.ffmpeg_process, self.ytdlp_process = _open_stream(self.url, self.format, self.cookies, self.proxy,
-                                                               self.temp_dir)
         frame_count = 0
         start_time = time.monotonic()
-        while self.running and self.ffmpeg_process.poll() is None:
-            in_bytes = self.ffmpeg_process.stdout.read(self.byte_size)
-            if not self.running or not in_bytes:
-                break
-            if len(in_bytes) != self.byte_size:
-                continue
-            audio = np.frombuffer(in_bytes, np.float32).flatten()
-            if self.realtime_throttle:
-                expected_time = frame_count * FRAME_DURATION
-                elapsed = time.monotonic() - start_time
-                sleep_time = expected_time - elapsed
-                if sleep_time > 0:
-                    time.sleep(sleep_time)
-            frame_count += 1
-            output_queue.put(audio)
-
-        if self.ffmpeg_process and self.ffmpeg_process.poll() is None:
-            self.ffmpeg_process.terminate()
+        reconnectable = _is_youtube_url(self.url)
+        while self.running:
+            print(f'{INFO}Opening stream: {self.url}')
+            self.ffmpeg_process, self.ytdlp_process = _open_stream(
+                self.url, self.format, self.cookies, self.proxy, self.temp_dir
+            )
+            stalled = False
             try:
-                self.ffmpeg_process.wait(timeout=2)
-            except Exception:
-                self.ffmpeg_process.kill()
-        if self.ytdlp_process:
-            if self.ytdlp_process.poll() is None:
-                self.ytdlp_process.terminate()
-                try:
-                    self.ytdlp_process.wait(timeout=2)
-                except Exception:
-                    self.ytdlp_process.kill()
+                for in_bytes in self._read_stream_frames():
+                    if not self.running:
+                        break
+                    audio = np.frombuffer(in_bytes, np.float32).flatten()
+                    if self.realtime_throttle:
+                        expected_time = frame_count * FRAME_DURATION
+                        elapsed = time.monotonic() - start_time
+                        sleep_time = expected_time - elapsed
+                        if sleep_time > 0:
+                            time.sleep(sleep_time)
+                    frame_count += 1
+                    output_queue.put(audio)
+            except TimeoutError as exc:
+                stalled = True
+                print(f'{WARNING}{exc}')
+                # Flush speech collected before the transport gap now. Without
+                # this marker AudioSlicer can only discover the boundary when
+                # the first post-reconnect frame arrives.
+                output_queue.put(AUDIO_STREAM_GAP)
+            finally:
+                self._close_stream()
+
+            if not self.running or not (reconnectable and stalled):
+                break
+            print(f'{WARNING}YouTube 音訊串流停滯，正在重新連線…')
+            if self._stop_event.wait(self.YOUTUBE_RECONNECT_DELAY_SECONDS):
+                break
+
         if hasattr(self, 'temp_dir') and os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir, ignore_errors=True)
         output_queue.put(None)

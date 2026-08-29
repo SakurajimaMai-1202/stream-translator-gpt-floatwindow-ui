@@ -15,6 +15,9 @@ import numpy as np
 SAMPLE_RATE = 16000
 SAMPLES_PER_FRAME = 512  # Requested by silero-vad >= v5
 FRAME_DURATION = SAMPLES_PER_FRAME / SAMPLE_RATE
+# In-band marker used between the stream reader and AudioSlicer. It is not an
+# end-of-stream marker: buffered speech must be flushed, then capture continues.
+AUDIO_STREAM_GAP = object()
 
 RED = '\033[91m'
 YELLOW = '\033[93m'

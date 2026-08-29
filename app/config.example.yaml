@@ -189,7 +189,7 @@ ui:
       x: 200
       y: 200
       width: 800
-      height: 200
+      height: 300
       visible: true
       transparency: 80
 llama:

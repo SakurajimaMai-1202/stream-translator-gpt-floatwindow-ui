@@ -7,7 +7,7 @@ import time
 
 import numpy as np
 
-from .common import LatencyTrace, TranslationTask, SAMPLE_RATE, FRAME_DURATION, LoopWorkerBase, WARNING
+from .common import AUDIO_STREAM_GAP, LatencyTrace, TranslationTask, SAMPLE_RATE, FRAME_DURATION, LoopWorkerBase, WARNING
 from .torch_setup import disable_nnpack
 
 try:
@@ -208,12 +208,13 @@ class AudioSlicer(LoopWorkerBase):
             self.last_speech_at = frame_received_at
         else:
             if self.speech_count == 0 and self.no_speech_count == 1:
+                # Keep the idle buffer bounded. This branch contains no speech,
+                # so advancing the source timestamp without emitting an ASR task
+                # is intentional.
                 self.slice()
             self.audio_buffer.append(audio)
             self.no_speech_count += 1
             self.continuous_no_speech_count += 1
-        if self.speech_count and self.no_speech_count / 5 > self.speech_count:
-            self.slice()
 
         if self.dynamic_vad_threshold:
             self.vad_prob_buffer.append(speech_prob)
@@ -271,11 +272,28 @@ class AudioSlicer(LoopWorkerBase):
 
     def loop(self, input_queue: queue.SimpleQueue[np.array], output_queue: queue.SimpleQueue[TranslationTask]):
         vad_reset_interval = round(60 * 5 / FRAME_DURATION)  # 5 minutes
+
+        def flush_buffer() -> None:
+            audio_length = len(self.audio_buffer) * FRAME_DURATION
+            if self.speech_count > 0 and audio_length >= self.min_audio_length:
+                sliced_audio, time_range = self.slice()
+                output_queue.put(TranslationTask(sliced_audio, time_range, latency_trace=self.last_latency_trace))
+            elif self.audio_buffer:
+                # Do not merge a short/noise-only tail across a transport gap.
+                self.slice()
+
         while True:
             audio = input_queue.get()
             if audio is None:
+                flush_buffer()
                 output_queue.put(None)
                 break
+            if audio is AUDIO_STREAM_GAP:
+                flush_buffer()
+                if not self.disable_vad:
+                    self.vad.reset_states()
+                    self._last_speech_prob = 0.0
+                continue
             self.put(audio)
             if self.should_slice():
                 sliced_audio, time_range = self.slice()

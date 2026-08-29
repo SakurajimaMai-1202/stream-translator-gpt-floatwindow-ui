@@ -79,19 +79,22 @@ class NativeSubtitleWindow(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setMouseTracking(True)
-        self.setMinimumSize(240, 100)
+        # 舊版可攜包的預設高度只有 200px；在同時顯示時間、延遲、原文與
+        # 譯文時，扣除邊距後通常只容得下一筆。提高最小高度可讓沿用舊
+        # config.yaml 的打包版也至少保留多筆字幕視口。
+        self.setMinimumSize(240, 240)
 
         self._load_config()
         self._geometry_ready = True
 
     def _load_config(self) -> None:
         if not self.config_manager:
-            self.resize(800, 200)
+            self.resize(800, 300)
             return
         config = self.config_manager.get_config()
         self.settings.update(config.get("subtitle_settings", {}))
         geometry = config.get("ui", {}).get("windows", {}).get("floating_subtitle", {})
-        self.resize(int(geometry.get("width", 800)), int(geometry.get("height", 200)))
+        self.resize(int(geometry.get("width", 800)), int(geometry.get("height", 300)))
         self.move(int(geometry.get("x", 100)), int(geometry.get("y", 100)))
 
     def update_subtitle_json(self, payload: str) -> None:

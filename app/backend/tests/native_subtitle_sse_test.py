@@ -1,5 +1,35 @@
+import json
+import os
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import QApplication
+
+from native_subtitle import NativeSubtitleWindow
 from sse_parser import SseEventParser
 from subtitle_history import entries_fitting_height, find_subtitle_index, subtitle_identity
+
+
+class _LegacySubtitleConfig:
+    def get_config(self):
+        return {
+            "subtitle_settings": {
+                "maxDisplayCount": 5,
+                "showTimestamp": False,
+                "showLatency": False,
+            },
+            "ui": {
+                "windows": {
+                    "floating_subtitle": {
+                        "x": 100,
+                        "y": 100,
+                        "width": 800,
+                        "height": 200,
+                    }
+                }
+            },
+        }
 
 
 def test_parser_handles_utf8_split_across_chunks():
@@ -49,6 +79,31 @@ def test_viewport_keeps_multiple_newest_entries_that_fit():
 
     assert entries_fitting_height(entries, 85) == entries[1:]
     assert entries_fitting_height(entries, 20) == entries[-1:]
+
+
+def test_native_subtitle_clamps_legacy_package_height_and_keeps_history():
+    app = QApplication.instance() or QApplication([])
+    window = NativeSubtitleWindow(_LegacySubtitleConfig())
+    try:
+        assert window.height() == 240
+        for segment_id in range(1, 4):
+            window.update_subtitle_json(json.dumps({
+                "segment_id": segment_id,
+                "original": f"original {segment_id}",
+                "translated": f"translated {segment_id}",
+            }))
+
+        assert len(window._lines) == 3
+        font = QFont("Microsoft JhengHei UI")
+        font.setPixelSize(24)
+        metadata_font = QFont(font)
+        metadata_font.setPixelSize(12)
+        entries = window._layout_entries(font, metadata_font, 726)
+        visible = entries_fitting_height(entries, window.height() - 32)
+        assert len(visible) >= 2
+    finally:
+        window.close()
+        app.processEvents()
 
 
 def test_final_segment_matches_earlier_timestamp_only_subtitle():

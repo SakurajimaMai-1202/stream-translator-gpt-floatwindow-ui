@@ -105,6 +105,8 @@ class LLMClient():
         self.max_output_tokens = max(16, int(max_output_tokens or 128))
         self.history_pairs = deque(maxlen=max(0, history_size))
         self._history_lock = threading.Lock()
+        self._openai_clients = {}
+        self._openai_clients_lock = threading.Lock()
         print(
             f"{INFO}Translation policy: provider={provider}, family={self.model_family}, "
             f"format={self.output_format}, max_tokens={self.max_output_tokens}"
@@ -141,7 +143,16 @@ class LLMClient():
         import httpx
 
         ApiKeyPool.use_openai_api()
-        client = OpenAI(http_client=httpx.Client(proxy=self.proxy))
+        api_key = os.environ.get("OPENAI_API_KEY")
+        client_key = api_key or ""
+        with self._openai_clients_lock:
+            client = self._openai_clients.get(client_key)
+            if client is None:
+                client = OpenAI(
+                    api_key=api_key,
+                    http_client=httpx.Client(proxy=self.proxy),
+                )
+                self._openai_clients[client_key] = client
         prepared = self._prepare_prompt(translation_task)
         messages = []
         if prepared.system_instruction:
@@ -295,6 +306,8 @@ class ParallelTranslator(LoopWorkerBase):
         self.retry_if_translation_fails = retry_if_translation_fails
         self.max_concurrency = max(1, int(max_concurrency))
         self.processing_queue = deque()
+        self._scheduler_events = queue.Queue()
+        self._timed_out_inflight = set()
 
     def _trigger(self, translation_task: TranslationTask):
         if translation_task._translation_inflight:
@@ -309,9 +322,15 @@ class ParallelTranslator(LoopWorkerBase):
         translation_task.llm_latency_ms = None
         translation_task._translation_attempts += 1
         translation_task._translation_inflight = True
-        thread = threading.Thread(target=self.llm_client.translate, args=(translation_task,))
+        thread = threading.Thread(target=self._translate_and_notify, args=(translation_task,))
         thread.daemon = True
         thread.start()
+
+    def _translate_and_notify(self, translation_task: TranslationTask):
+        try:
+            self.llm_client.translate(translation_task)
+        finally:
+            self._scheduler_events.put(("completed", translation_task))
 
     def _retrigger_failed_tasks(self):
         for task in self.processing_queue:
@@ -342,6 +361,11 @@ class ParallelTranslator(LoopWorkerBase):
                     )
                 )):
             task = self.processing_queue.popleft()
+            if _is_task_timeout(task, self.timeout) and task._translation_inflight:
+                # The Python thread cannot be force-cancelled. Keep counting it
+                # against concurrency until its provider call really returns;
+                # otherwise repeated timeouts can create unbounded requests.
+                self._timed_out_inflight.add(task)
             if not task.translation:
                 if _is_task_timeout(task, self.timeout):
                     self._mark_timeout_latency(task)
@@ -352,30 +376,68 @@ class ParallelTranslator(LoopWorkerBase):
         return results
 
     def loop(self, input_queue: queue.SimpleQueue[TranslationTask], output_queue: queue.SimpleQueue[TranslationTask]):
-        while True:
-            active_count = sum(task._translation_inflight for task in self.processing_queue)
-            if (
-                not input_queue.empty()
-                and len(self.processing_queue) < self.max_concurrency
-                and active_count < self.max_concurrency
-            ):
+        pending_input = deque()
+        input_complete = False
+
+        def forward_input():
+            while True:
                 task = input_queue.get()
+                self._scheduler_events.put(("input", task))
                 if task is None:
-                    while len(self.processing_queue) > 0:
-                        finished_tasks = self._get_results()
-                        for task in finished_tasks:
-                            output_queue.put(task)
-                        time.sleep(0.1)
-                    output_queue.put(None)
-                    break
-                self.processing_queue.append(task)
-                self._trigger(task)
+                    return
+
+        input_thread = threading.Thread(target=forward_input, daemon=True)
+        input_thread.start()
+
+        while True:
+            # Retire completed work before checking capacity.  Doing this after
+            # the scheduling block leaves processing_queue artificially full;
+            # with max_concurrency=1 the next pending subtitle then sleeps until
+            # an unrelated future input event wakes the scheduler.
             finished_tasks = self._get_results()
             for task in finished_tasks:
                 output_queue.put(task)
             if self.retry_if_translation_fails:
                 self._retrigger_failed_tasks()
-            time.sleep(0.1)
+
+            active_count = (
+                sum(task._translation_inflight for task in self.processing_queue)
+                + len(self._timed_out_inflight)
+            )
+            while (
+                pending_input
+                and len(self.processing_queue) < self.max_concurrency
+                and active_count < self.max_concurrency
+            ):
+                task = pending_input.popleft()
+                self.processing_queue.append(task)
+                self._trigger(task)
+                active_count += 1
+
+            if input_complete and not pending_input and not self.processing_queue:
+                output_queue.put(None)
+                break
+
+            wait_timeout = None
+            if self.timeout != 0.0 and self.processing_queue:
+                remaining = [
+                    self.timeout - (datetime.now(timezone.utc) - task.start_time).total_seconds()
+                    for task in self.processing_queue
+                    if task.start_time is not None
+                ]
+                if remaining:
+                    wait_timeout = max(0.0, min(remaining))
+            try:
+                event, task = self._scheduler_events.get(timeout=wait_timeout)
+            except queue.Empty:
+                continue
+            if event == "input":
+                if task is None:
+                    input_complete = True
+                else:
+                    pending_input.append(task)
+            elif event == "completed":
+                self._timed_out_inflight.discard(task)
 
 
 class SerialTranslator(LoopWorkerBase):

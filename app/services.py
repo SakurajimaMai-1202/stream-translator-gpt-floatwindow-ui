@@ -75,6 +75,7 @@ class BackendProcess(QObject):
         self._max_attempts = 3
         self._stdout_decoder = _Utf8LineDecoder()
         self._stderr_decoder = _Utf8LineDecoder()
+        self._stop_requested = False
         
     def start(self):
         """啟動後端程序"""
@@ -94,6 +95,7 @@ class BackendProcess(QObject):
         
         # 啟動新的後端程序
         self.process = QProcess()
+        self._stop_requested = False
         self._stdout_decoder = _Utf8LineDecoder()
         self._stderr_decoder = _Utf8LineDecoder()
         
@@ -136,13 +138,13 @@ class BackendProcess(QObject):
     def stop(self):
         """停止後端程序"""
         if self.process and self.process.state() == QProcess.ProcessState.Running:
+            self._stop_requested = True
             logger.info("停止後端程序...")
             self.process.terminate()
             if not self.process.waitForFinished(5000):
                 logger.warning("正常終止失敗，強制結束...")
                 self.process.kill()
                 self.process.waitForFinished(2000)
-            self.stopped.emit()
         
         # 確保程序對象被正確清理
         if self.process:
@@ -202,7 +204,10 @@ class BackendProcess(QObject):
             _log_subprocess_output("Backend", line, logging.INFO)
         for line in self._stderr_decoder.feed(b"", final=True):
             _log_subprocess_output("Backend", line, logging.WARNING)
-        logger.info(f"後端程序結束 (Exit Code: {exit_code}, Status: {exit_status})")
+        if self._stop_requested:
+            logger.info(f"後端程序已依要求停止 (Exit Code: {exit_code})")
+        else:
+            logger.info(f"後端程序結束 (Exit Code: {exit_code}, Status: {exit_status})")
         self.stopped.emit()
 
 

@@ -6,7 +6,7 @@ import time
 import numpy as np
 
 from stream_translator_gpt.common import TranslationTask
-from stream_translator_gpt.llm_translator import ParallelTranslator
+from stream_translator_gpt.llm_translator import LLMClient, ParallelTranslator
 from stream_translator_gpt.result_exporter import ResultExporter
 from stream_translator_gpt.subtitle_segmenter import SubtitleSegmenter, remove_text_overlap
 from stream_translator_gpt.translation_policy import (
@@ -91,6 +91,150 @@ def test_parallel_translator_commits_completed_tasks_in_segment_order():
     assert output_queue.get().segment_id == 1
     assert output_queue.get().segment_id == 2
     assert output_queue.get() is None
+
+
+def test_parallel_translator_delivers_without_100ms_polling_delay():
+    translator = ParallelTranslator(
+        llm_client=_DelayedClient(),
+        timeout=2,
+        retry_if_translation_fails=False,
+        max_concurrency=1,
+    )
+    input_queue = queue.SimpleQueue()
+    output_queue = queue.SimpleQueue()
+    input_queue.put(_task(2))
+    input_queue.put(None)
+
+    started_at = time.perf_counter()
+    translator.loop(input_queue, output_queue)
+    elapsed = time.perf_counter() - started_at
+
+    assert output_queue.get().segment_id == 2
+    assert output_queue.get() is None
+    assert elapsed < 0.08
+
+
+def test_single_worker_starts_pending_task_when_previous_task_completes():
+    first_started = threading.Event()
+    release_first = threading.Event()
+    second_started = threading.Event()
+
+    class _ControlledClient:
+        def translate(self, task):
+            if task.segment_id == 1:
+                first_started.set()
+                release_first.wait(timeout=2)
+            else:
+                second_started.set()
+            task.translation = f"translated-{task.segment_id}"
+            task.llm_latency_ms = 1.0
+            task._translation_inflight = False
+
+    translator = ParallelTranslator(
+        llm_client=_ControlledClient(),
+        timeout=2,
+        retry_if_translation_fails=False,
+        max_concurrency=1,
+    )
+    input_queue = queue.SimpleQueue()
+    output_queue = queue.SimpleQueue()
+    worker = threading.Thread(target=translator.loop, args=(input_queue, output_queue))
+    worker.start()
+
+    input_queue.put(_task(1))
+    assert first_started.wait(timeout=1)
+    input_queue.put(_task(2))
+    time.sleep(0.02)  # allow the second input event to become pending
+    release_first.set()
+
+    assert second_started.wait(timeout=1), "pending task waited for a third input event"
+    input_queue.put(None)
+    worker.join(timeout=2)
+    assert not worker.is_alive()
+    assert output_queue.get().segment_id == 1
+    assert output_queue.get().segment_id == 2
+    assert output_queue.get() is None
+
+
+def test_timed_out_worker_keeps_concurrency_slot_until_provider_returns():
+    first_started = threading.Event()
+    release_first = threading.Event()
+    second_started = threading.Event()
+
+    class _HangingClient:
+        def translate(self, task):
+            if task.segment_id == 1:
+                first_started.set()
+                release_first.wait(timeout=2)
+            else:
+                second_started.set()
+            task.translation = f"translated-{task.segment_id}"
+            task.llm_latency_ms = 1.0
+            task._translation_inflight = False
+
+    translator = ParallelTranslator(
+        llm_client=_HangingClient(),
+        timeout=0.05,
+        retry_if_translation_fails=False,
+        max_concurrency=1,
+    )
+    input_queue = queue.SimpleQueue()
+    output_queue = queue.SimpleQueue()
+    worker = threading.Thread(target=translator.loop, args=(input_queue, output_queue))
+    worker.start()
+    input_queue.put(_task(1))
+    assert first_started.wait(timeout=1)
+    input_queue.put(_task(2))
+
+    first_result = output_queue.get(timeout=1)
+    assert first_result.segment_id == 1
+    assert not second_started.wait(timeout=0.1)
+
+    release_first.set()
+    assert second_started.wait(timeout=1)
+    input_queue.put(None)
+    worker.join(timeout=2)
+    assert not worker.is_alive()
+    assert output_queue.get().segment_id == 2
+    assert output_queue.get() is None
+
+
+def test_llm_client_reuses_openai_client_for_same_api_key(monkeypatch):
+    created_clients = []
+
+    class _Completions:
+        @staticmethod
+        def create(**_kwargs):
+            message = type("Message", (), {"content": "譯文"})()
+            choice = type("Choice", (), {"message": message})()
+            return type("Completion", (), {"choices": [choice], "usage": None})()
+
+    class _FakeOpenAI:
+        def __init__(self, **kwargs):
+            created_clients.append(kwargs)
+            self.chat = type("Chat", (), {"completions": _Completions()})()
+
+    monkeypatch.setattr("openai.OpenAI", _FakeOpenAI)
+    monkeypatch.setattr("httpx.Client", lambda **kwargs: ("http-client", kwargs))
+    monkeypatch.setattr(
+        "stream_translator_gpt.llm_translator.ApiKeyPool.use_openai_api",
+        lambda: None,
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    client = LLMClient(
+        llm_type=LLMClient.LLM_TYPE.GPT,
+        model="hy-mt2-test",
+        prompt="翻譯成繁體中文",
+        history_size=0,
+        proxy="",
+        use_json_result=False,
+        provider="openai_compatible",
+    )
+
+    client.translate(_task(1))
+    client.translate(_task(2))
+
+    assert len(created_clients) == 1
 
 
 def test_paired_exporter_skips_original_only_task():

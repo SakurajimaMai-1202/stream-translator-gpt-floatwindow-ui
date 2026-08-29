@@ -14,6 +14,13 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QIcon
 
+# The updater invokes this mode only to prove that the frozen Python runtime
+# and the three core Qt modules can be loaded.  Exit before importing the
+# backend, WebEngine, audio and model stacks so the check is fast and cannot
+# be confused with an unrelated service startup delay.
+if "--update-health-check" in sys.argv:
+    sys.exit(0)
+
 from backend.core.logging_setup import configure_logging
 from services import BackendProcess, FrontendServer
 from windows import HomeWindow, SettingsWindow, FloatingSubtitleWindow, SubtitleSettingsWindow
@@ -442,23 +449,12 @@ def main():
         action='store_true',
         help='實驗性啟用 Windows DirectComposition；透明視窗可能閃爍'
     )
-    parser.add_argument(
-        '--update-health-check',
-        action='store_true',
-        help=argparse.SUPPRESS,
-    )
     args = parser.parse_args()
 
     if args.backend:
         run_backend_directly(args.port)
         return
 
-    # The external updater uses this after replacing the application files.
-    # Reaching here proves that the frozen Python runtime and the top-level Qt
-    # imports completed successfully, without opening the normal UI.
-    if args.update_health_check:
-        sys.exit(0)
-    
     try:
         is_frozen = getattr(sys, 'frozen', False)
         dev_mode = (not args.prod) and (not is_frozen)

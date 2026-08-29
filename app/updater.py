@@ -178,9 +178,25 @@ class Worker(QThread):
                     shutil.move(str(target), str(backup / item.name))
                     moved.append(item.name)
                 shutil.move(str(item), str(target))
-            self.step(80, "啟動新版並執行健康檢查")
+            self.step(72, "驗證新版 GUI 與 DLL")
             exe = app_root / plan["executable"]
             creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+            try:
+                preflight = subprocess.run(
+                    [str(exe), "--update-health-check"],
+                    cwd=app_root,
+                    creationflags=creationflags,
+                    timeout=30,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise RuntimeError("新版 GUI/DLL 健康檢查逾時") from exc
+            except OSError as exc:
+                raise RuntimeError(f"無法啟動新版 GUI/DLL 健康檢查：{exc}") from exc
+            if preflight.returncode != 0:
+                raise RuntimeError(f"新版 GUI/DLL 健康檢查失敗，退出碼 {preflight.returncode}")
+
+            self.step(82, "啟動新版並確認程序狀態")
             proc = subprocess.Popen([str(exe)], cwd=app_root, creationflags=creationflags)
             time.sleep(12)
             if proc.poll() is not None:

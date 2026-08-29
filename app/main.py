@@ -442,11 +442,22 @@ def main():
         action='store_true',
         help='實驗性啟用 Windows DirectComposition；透明視窗可能閃爍'
     )
+    parser.add_argument(
+        '--update-health-check',
+        action='store_true',
+        help=argparse.SUPPRESS,
+    )
     args = parser.parse_args()
 
     if args.backend:
         run_backend_directly(args.port)
         return
+
+    # The external updater uses this after replacing the application files.
+    # Reaching here proves that the frozen Python runtime and the top-level Qt
+    # imports completed successfully, without opening the normal UI.
+    if args.update_health_check:
+        sys.exit(0)
     
     try:
         is_frozen = getattr(sys, 'frozen', False)

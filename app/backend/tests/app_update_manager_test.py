@@ -268,6 +268,41 @@ class AppUpdateManagerTest(unittest.TestCase):
             self.assertIn("glossary_list",(app_root / "config.yaml").read_text(encoding="utf-8"))
             self.assertTrue(any((app_root/".app-update"/"user-backups").glob("before-1.4.1-*")))
 
+    def test_external_updater_rolls_back_when_gui_dll_preflight_fails(self):
+        with tempfile.TemporaryDirectory(dir=APP_DIR) as temp_dir:
+            root = Path(temp_dir)
+            app_root = root / "install"
+            staging = app_root / ".app-update" / "staging-1.4.2"
+            staging.mkdir(parents=True)
+            old_exe = app_root / "Stream Translator.exe"
+            old_exe.write_bytes(b"old executable")
+            (app_root / "config.yaml").write_text(
+                "terminology:\n  glossary_list: []\ntranscription:\n  asr_correction_rules: []\n",
+                encoding="utf-8",
+            )
+            (staging / old_exe.name).write_bytes(b"new executable")
+            (staging / "app-update-build.json").write_text(json.dumps({
+                "schema": 2, "profile": "cuda", "version": "1.4.2", "update_mode": "app_only",
+            }), encoding="utf-8")
+            plan = app_root / ".app-update" / "apply-plan.json"
+            plan.write_text(json.dumps({
+                "schema": 2, "app_root": str(app_root), "staging": str(staging),
+                "version": "1.4.2", "profile": "cuda", "update_mode": "app_only",
+                "executable": old_exe.name, "parent_pid": 99999999,
+            }), encoding="utf-8")
+
+            failed_preflight = mock.Mock(returncode=1)
+            errors = []
+            worker = Worker(plan)
+            worker.failed.connect(errors.append)
+            with mock.patch("updater.subprocess.run", return_value=failed_preflight), \
+                 mock.patch("updater.subprocess.Popen"):
+                worker.run()
+
+            self.assertTrue(errors)
+            self.assertIn("GUI/DLL", errors[0])
+            self.assertEqual(old_exe.read_bytes(), b"old executable")
+
 
 if __name__ == "__main__":
     unittest.main()

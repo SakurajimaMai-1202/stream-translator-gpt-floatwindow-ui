@@ -14,11 +14,13 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QIcon
 
-# The updater invokes this mode only to prove that the frozen Python runtime
-# and the three core Qt modules can be loaded.  Exit before importing the
-# backend, WebEngine, audio and model stacks so the check is fast and cannot
-# be confused with an unrelated service startup delay.
+# The updater and release build invoke this mode to prove that the frozen
+# Python runtime and every GUI DLL needed during startup can be loaded.  Keep
+# backend, audio and model stacks out of this fast check, but do import
+# WebEngine: QtWidgets alone does not detect a mixed Qt/WebEngine wheel set.
 if "--update-health-check" in sys.argv:
+    from PyQt6.QtWebEngineCore import QWebEngineProfile  # noqa: F401
+    from PyQt6.QtWebEngineWidgets import QWebEngineView  # noqa: F401
     sys.exit(0)
 
 from backend.core.logging_setup import configure_logging

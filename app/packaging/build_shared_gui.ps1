@@ -40,13 +40,17 @@ foreach ($candidate in $pythonCandidates) {
 }
 if (-not $pythonExe) { throw "No usable build Python with PyInstaller found" }
 
-# PyQt extension modules are compiled for an exact Qt minor/patch ABI.  A
-# separately upgraded PyQt6-Qt6 wheel can still import in the build venv but
-# produce a frozen executable that fails while importing QtWidgets.  Refuse to
-# package that mixed binary set.
+# PyQt extension modules are compiled for a Qt ABI.  Independently upgraded
+# Qt or WebEngine wheels can install successfully but fail only after the app
+# is shipped.  Refuse to package a build environment that cannot import both
+# the core widgets and WebEngine against the same Qt minor version.
 & $pythonExe -c "from PyQt6.QtCore import QT_VERSION_STR, qVersion; import sys; runtime=qVersion(); compatible=lambda v: tuple(map(int,v.split('.')[:2])); print(f'PyQt6 Qt compiled={QT_VERSION_STR} runtime={runtime}'); sys.exit(0 if compatible(runtime) == compatible(QT_VERSION_STR) else 23)"
 if ($LASTEXITCODE -ne 0) {
     throw "PyQt6/Qt6 binary version mismatch; install a PyQt6-Qt6 wheel matching PyQt6 before packaging"
+}
+& $pythonExe -c "from PyQt6.QtWebEngineCore import PYQT_WEBENGINE_VERSION_STR; from PyQt6.QtWebEngineWidgets import QWebEngineView; import importlib.metadata as m; print('PyQt6-WebEngine binding=', PYQT_WEBENGINE_VERSION_STR, 'Qt wheel=', m.version('PyQt6-WebEngine-Qt6'), 'import=ok')"
+if ($LASTEXITCODE -ne 0) {
+    throw "PyQt6 WebEngine DLL import failed; install PyQt6-WebEngine and PyQt6-WebEngine-Qt6 matching the PyQt6 Qt minor version before packaging"
 }
 
 $stopwatch = [Diagnostics.Stopwatch]::StartNew()
@@ -79,6 +83,18 @@ $builtApp = Join-Path $pyInstallerDist "Stream Translator"
 Copy-Item (Join-Path $pyInstallerDist "StreamTranslatorUpdater.exe") $builtApp -Force
 Get-ChildItem $builtApp -File -Filter "qtwebengine_devtools_resources.debug.pak" -Recurse -ErrorAction SilentlyContinue |
     Remove-Item -Force
+
+$builtExe = Join-Path $builtApp "Stream Translator.exe"
+if (-not (Test-Path -LiteralPath $builtExe)) {
+    $builtExe = Get-ChildItem $builtApp -Filter "*.exe" -File |
+        Where-Object Name -NE "StreamTranslatorUpdater.exe" |
+        Select-Object -First 1 -ExpandProperty FullName
+}
+if (-not $builtExe) { throw "Built GUI executable was not found" }
+& $builtExe --update-health-check
+if ($LASTEXITCODE -ne 0) {
+    throw "Frozen GUI health check failed while loading Qt WebEngine (exit $LASTEXITCODE)"
+}
 
 if (Test-Path -LiteralPath $destinationPath) {
     Remove-BuildDirectoryFast -Path $destinationPath -AllowedRoot $scriptDir

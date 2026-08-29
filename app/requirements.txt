@@ -18,8 +18,14 @@
 -r ../stream-translator-gpt/requirements.txt
 
 # ── GUI / API 層 ───────────────────────────────────────────
-PyQt6>=6.6.0
-PyQt6-WebEngine>=6.6.0
+# Keep the Qt and WebEngine binary wheels on the same Qt minor version.
+# Unbounded upgrades can mix (for example) Qt 6.9 with WebEngine Qt 6.11;
+# that installs successfully but the frozen app then cannot load
+# QtWebEngineWidgets.dll on a clean machine.
+PyQt6==6.9.1
+PyQt6-Qt6==6.9.1
+PyQt6-WebEngine==6.9.0
+PyQt6-WebEngine-Qt6==6.9.1
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 python-multipart>=0.0.6

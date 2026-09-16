@@ -12,6 +12,30 @@ $packagingDir = $PSScriptRoot
 $scriptDir = Split-Path -Parent $packagingDir
 . (Join-Path $packagingDir "runtime_profile_packaging.ps1")
 
+function Test-YtDlpRuntimeResolution {
+    param(
+        [Parameter(Mandatory = $true)][string]$PythonExe,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+
+    $probe = @"
+import importlib.metadata
+from pathlib import Path
+import sys
+from stream_translator_gpt.audio_getter import _resolve_ytdlp_command
+
+command = _resolve_ytdlp_command()
+actual = str(Path(command[0]).resolve()).casefold()
+expected = str(Path(sys.executable).resolve()).casefold()
+assert actual == expected and command[1:] == ['-m', 'yt_dlp'], command
+print(importlib.metadata.version('yt-dlp'))
+"@
+    & $PythonExe -I -c $probe
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Label may resolve yt-dlp from PATH instead of its packaged runtime: $PythonExe"
+    }
+}
+
 $packageInfo = Get-RuntimeProfilePackageInfo -RuntimeProfile $Profile
 $distDir = Join-Path $scriptDir $packageInfo.DistDirName
 $packageDir = Join-Path $distDir $packageInfo.PackageName
@@ -78,6 +102,7 @@ if ($Profile -eq "cpu" -and -not $manifest.sherpa_onnx) {
 if ($LASTEXITCODE -ne 0) {
     throw "Runtime is missing OpenCC ASR script normalization support: $runtimePath"
 }
+Test-YtDlpRuntimeResolution -PythonExe $runtimePython -Label "$Profile runtime"
 if ((& $nodeRuntimePath --version) -notmatch '^v(2[2-9]|[3-9][0-9])\.') {
     throw "Packaged Node.js runtime must be version 22 or newer: $nodeRuntimePath"
 }
@@ -102,6 +127,7 @@ if ($Profile -ne "cpu") {
         }
         & $cpuAsrPython -I -c "import glob, pathlib, importlib.util, opencc, sherpa_onnx, stream_translator_gpt.main, sys; from pathlib import Path; root=Path(sys.executable).resolve().parent; paths=[Path(pathlib.__file__).resolve(), Path(glob.__file__).resolve()]; assert all(root == p.parent or root in p.parents for p in paths), paths; assert importlib.util.find_spec('torch') is None, 'CPU ASR sidecar must not include torch'; print(sherpa_onnx.__version__)"
         if ($LASTEXITCODE -ne 0) { throw "CPU ASR sidecar runtime validation failed: $cpuAsrRuntimePath" }
+        Test-YtDlpRuntimeResolution -PythonExe $cpuAsrPython -Label "CPU ASR sidecar runtime"
         $cpuAsrSidecar = $cpuAsrManifest.sherpa_onnx
     }
 }

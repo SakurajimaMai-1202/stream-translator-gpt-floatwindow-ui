@@ -8,6 +8,40 @@ from stream_translator_gpt import audio_getter
 from stream_translator_gpt.common import AUDIO_STREAM_GAP
 
 
+def test_ytdlp_command_prefers_current_python_module_over_old_path_executable(monkeypatch, tmp_path):
+    runtime_python = tmp_path / "_runtime" / "python.exe"
+    runtime_python.parent.mkdir()
+    runtime_python.write_bytes(b"")
+    old_global_ytdlp = tmp_path / "global" / "yt-dlp.exe"
+    old_global_ytdlp.parent.mkdir()
+    old_global_ytdlp.write_bytes(b"")
+
+    monkeypatch.setattr(audio_getter.sys, "executable", str(runtime_python))
+    monkeypatch.setattr(audio_getter.importlib.util, "find_spec", lambda name: object() if name == "yt_dlp" else None)
+    monkeypatch.setattr(audio_getter.shutil, "which", lambda _name: str(old_global_ytdlp))
+
+    assert audio_getter._resolve_ytdlp_command() == [
+        str(runtime_python),
+        "-m",
+        "yt_dlp",
+    ]
+
+
+def test_ytdlp_command_uses_runtime_scripts_before_system_path(monkeypatch, tmp_path):
+    runtime_python = tmp_path / "_runtime" / "python.exe"
+    runtime_python.parent.mkdir()
+    runtime_python.write_bytes(b"")
+    runtime_ytdlp = runtime_python.parent / "Scripts" / "yt-dlp.exe"
+    runtime_ytdlp.parent.mkdir()
+    runtime_ytdlp.write_bytes(b"")
+
+    monkeypatch.setattr(audio_getter.sys, "executable", str(runtime_python))
+    monkeypatch.setattr(audio_getter.importlib.util, "find_spec", lambda _name: None)
+    monkeypatch.setattr(audio_getter.shutil, "which", lambda _name: str(tmp_path / "global" / "yt-dlp.exe"))
+
+    assert audio_getter._resolve_ytdlp_command() == [str(runtime_ytdlp)]
+
+
 def test_resolve_js_runtime_finds_standard_windows_node(monkeypatch, tmp_path):
     runtime_python = tmp_path / "runtime-without-node" / "python.exe"
     runtime_python.parent.mkdir()

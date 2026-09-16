@@ -1,8 +1,8 @@
-﻿#!/usr/bin/env pwsh
+#!/usr/bin/env pwsh
 param(
     [ValidateSet("cuda", "cpu", "rocm")]
     [string]$Profile = "cuda",
-    [string]$Version = "1.4.3",
+    [string]$Version = "1.4.4",
     [switch]$ForceRuntime,
     [switch]$ReuseRuntimeCache,
     [switch]$SkipFullZip,
@@ -270,7 +270,7 @@ foreach ($name in @("ffmpeg.exe", "ffprobe.exe")) {
 }
 
 # llama.cpp Runtime is installed on demand by the application and is intentionally
-# excluded from all v1.4.3 Full packages. This keeps the three profiles smaller
+# excluded from all v1.4.4 Full packages. This keeps the three profiles smaller
 # and prevents an obsolete bundled server from being used accidentally.
 if (Test-Path -LiteralPath (Join-Path $releaseRoot "llama")) {
     throw "Packaging guard failed: llama folder must not be included in v$Version package"

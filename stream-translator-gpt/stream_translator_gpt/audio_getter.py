@@ -1,3 +1,4 @@
+import importlib.util
 import os
 import queue
 import shutil
@@ -117,20 +118,29 @@ def _resolve_ytdlp_command() -> list[str]:
     """解析可用的 yt-dlp 呼叫方式。
 
     優先順序：
-    1) PATH 中的 yt-dlp / yt-dlp.exe
-    2) 與目前 Python 同目錄下的 yt-dlp.exe（常見於 venv\\Scripts）
-    3) 退回 `python -m yt_dlp`
+    1) 目前 Python 環境中已安裝的 yt_dlp 模組
+    2) 目前 Python 環境旁的 yt-dlp.exe
+    3) PATH 中的 yt-dlp / yt-dlp.exe
+
+    打包版必須優先使用 runtime 內已驗證的版本，避免被使用者電腦
+    PATH 中較舊的全域 yt-dlp.exe 覆蓋。
     """
+    if importlib.util.find_spec('yt_dlp') is not None:
+        return [sys.executable, '-m', 'yt_dlp']
+
+    py_dir = os.path.dirname(sys.executable)
+    local_candidates = (
+        os.path.join(py_dir, 'yt-dlp.exe'),
+        os.path.join(py_dir, 'Scripts', 'yt-dlp.exe'),
+    )
+    for local_ytdlp_exe in local_candidates:
+        if os.path.exists(local_ytdlp_exe):
+            return [local_ytdlp_exe]
+
     ytdlp_exe = shutil.which('yt-dlp') or shutil.which('yt-dlp.exe')
     if ytdlp_exe:
         return [ytdlp_exe]
 
-    py_dir = os.path.dirname(sys.executable)
-    local_ytdlp_exe = os.path.join(py_dir, 'yt-dlp.exe')
-    if os.path.exists(local_ytdlp_exe):
-        return [local_ytdlp_exe]
-
-    # fallback：即使 PATH 沒有 yt-dlp.exe，也可透過已安裝的 yt_dlp 模組執行
     return [sys.executable, '-m', 'yt_dlp']
 
 

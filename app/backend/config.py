@@ -6,7 +6,7 @@ import sys
 class Settings(BaseSettings):
     """應用程式設定"""
     APP_NAME: str = "YouTube 直播翻譯器 API"
-    APP_VERSION: str = "1.4.3"
+    APP_VERSION: str = "1.4.4"
     API_PREFIX: str = "/api"
     
     # 路徑設定

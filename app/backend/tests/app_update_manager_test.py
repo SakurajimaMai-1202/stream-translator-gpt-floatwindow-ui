@@ -145,6 +145,60 @@ class AppUpdateManagerTest(unittest.TestCase):
                 self.assertTrue(Path(plan["plan_path"]).is_file())
                 self.assertTrue(Path(plan["updater_path"]).is_file())
 
+    def test_download_ignores_stale_partial_from_previous_release(self):
+        with tempfile.TemporaryDirectory(dir=APP_DIR) as temp_dir:
+            root = Path(temp_dir)
+            archive, release = self._fixture(root)
+            release_data = json.loads(release.read_text(encoding="utf-8"))
+            asset = release_data["assets"][0]
+            downloads = root / ".app-update" / "downloads"
+            downloads.mkdir(parents=True)
+            legacy_partial = downloads / f"{asset['name']}.part"
+            legacy_partial.write_bytes(b"older release" * 1024)
+
+            with mock.patch.object(update_module, "get_app_root", return_value=root), mock.patch.object(
+                update_module, "get_packaged_runtime_profile", return_value="cuda"
+            ), mock.patch.object(update_module.settings, "APP_VERSION", "1.4.0"):
+                manager = update_module.AppUpdateManager()
+                manager.check(release_api=str(release))
+                manager.start_download()
+                deadline = time.monotonic() + 30
+                while manager.status()["status"] in {"starting", "downloading", "verifying", "staging"}:
+                    self.assertLess(time.monotonic(), deadline)
+                    time.sleep(0.05)
+
+                self.assertEqual(manager.status()["status"], "ready", manager.status())
+                self.assertFalse(legacy_partial.exists())
+                digest = str(asset["digest"]).removeprefix("sha256:")
+                partial = downloads / f"{asset['name']}.{digest[:16]}.part"
+                self.assertEqual(partial.read_bytes(), archive.read_bytes())
+
+    def test_download_retries_corrupt_matching_release_partial_in_same_request(self):
+        with tempfile.TemporaryDirectory(dir=APP_DIR) as temp_dir:
+            root = Path(temp_dir)
+            archive, release = self._fixture(root)
+            release_data = json.loads(release.read_text(encoding="utf-8"))
+            asset = release_data["assets"][0]
+            digest = str(asset["digest"]).removeprefix("sha256:")
+            downloads = root / ".app-update" / "downloads"
+            downloads.mkdir(parents=True)
+            partial = downloads / f"{asset['name']}.{digest[:16]}.part"
+            partial.write_bytes(b"corrupt same-release partial")
+
+            with mock.patch.object(update_module, "get_app_root", return_value=root), mock.patch.object(
+                update_module, "get_packaged_runtime_profile", return_value="cuda"
+            ), mock.patch.object(update_module.settings, "APP_VERSION", "1.4.0"):
+                manager = update_module.AppUpdateManager()
+                manager.check(release_api=str(release))
+                manager.start_download()
+                deadline = time.monotonic() + 30
+                while manager.status()["status"] in {"starting", "downloading", "verifying", "staging"}:
+                    self.assertLess(time.monotonic(), deadline)
+                    time.sleep(0.05)
+
+                self.assertEqual(manager.status()["status"], "ready", manager.status())
+                self.assertEqual(partial.read_bytes(), archive.read_bytes())
+
     def test_downloads_verifies_and_reassembles_multipart_update(self):
         with tempfile.TemporaryDirectory(dir=APP_DIR) as temp_dir:
             root = Path(temp_dir)

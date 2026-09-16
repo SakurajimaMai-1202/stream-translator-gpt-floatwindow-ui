@@ -296,14 +296,28 @@ class AppUpdateManager:
             total_size = sum(int(item.get("size") or 0) for item in assets)
             completed_size = 0
             for index, asset in enumerate(assets):
-                part = downloads / f"{asset['name']}.part"
-                self._set(asset_url=str(asset.get("browser_download_url") or ""), asset_size=total_size)
-                self._download(str(asset.get("browser_download_url") or ""), part)
-                actual_part = self._sha256(part)
                 expected_part = str(asset.get("digest") or "").removeprefix("sha256:").lower()
-                if not expected_part or actual_part != expected_part:
+                # App Update asset names are reused across releases.  Include
+                # the expected digest in the partial filename so a complete or
+                # interrupted download from an older release can never be
+                # resumed as the new asset.
+                part = downloads / f"{asset['name']}.{expected_part[:16]}.part"
+                (downloads / f"{asset['name']}.part").unlink(missing_ok=True)
+                self._set(asset_url=str(asset.get("browser_download_url") or ""), asset_size=total_size)
+                for attempt in range(2):
+                    self._download(str(asset.get("browser_download_url") or ""), part)
+                    actual_part = self._sha256(part)
+                    if expected_part and actual_part == expected_part:
+                        break
                     part.unlink(missing_ok=True)
-                    raise RuntimeError(f"Update part SHA-256 mismatch: {asset.get('name')}")
+                    if attempt == 0:
+                        self._set(
+                            status="downloading",
+                            message="Downloaded update was invalid; retrying from the beginning",
+                            bytes_downloaded=completed_size,
+                        )
+                        continue
+                    raise RuntimeError(f"Update part SHA-256 mismatch after retry: {asset.get('name')}")
                 downloaded_parts.append(part)
                 completed_size += part.stat().st_size
                 self._set(bytes_downloaded=completed_size, bytes_total=total_size, progress=(completed_size / total_size * 0.75) if total_size else 0.25)

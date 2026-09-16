@@ -1,17 +1,18 @@
-Stream Translator v1.4.4 更新說明
+Stream Translator v1.4.5 更新說明
 =================================
 
 主要修正
 --------
-- 修正部分 Windows 電腦會誤用系統 PATH 中舊版 yt-dlp.exe 的問題。
-- 串流擷取現在固定優先使用目前套件 runtime 內的 yt-dlp 模組。
-- 打包前仍會更新三端 runtime 與 CPU ASR Sidecar 內的 yt-dlp。
-- 新增正式套件路徑驗證，若 yt-dlp 指向套件外部會停止發布。
+- 修正 App Update 第一次下載可能出現 SHA-256 mismatch、第二次才成功的問題。
+- 更新暫存檔會依資產 SHA-256 分開保存，不再誤用上一版同名檔案。
+- 同一版本中斷下載仍可正常續傳。
+- 自動移除舊版更新器留下的未分版暫存檔。
+- SHA-256 校驗失敗時會自動刪除損壞檔並完整重抓一次，不必再次按下載。
 
 更新方式
 --------
-- 使用 App Update 時請先完全關閉舊版程式，再覆蓋程式檔案。
+- v1.4.5 的更新資產使用新的分卷名稱，避免 v1.4.3／v1.4.4 留下的同名暫存檔。
+- 更新至 v1.4.5 後，校驗失敗會在同一次操作內自動重抓。
 - config.yaml、models、output、srt、logs 及已下載模型可以保留。
-- CUDA、CPU、ROCm 使用者請下載與目前安裝版本相同的 App Update。
 
-完整異動內容請參閱 RELEASE_NOTES_v1.4.4_zh-TW.md。
+完整異動內容請參閱 RELEASE_NOTES_v1.4.5_zh-TW.md。

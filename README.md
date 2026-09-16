@@ -2,13 +2,13 @@
 
 Windows 即時語音辨識、翻譯與浮動字幕工具。它能擷取直播網址、系統聲音、麥克風或本機影音，先以本機／雲端 ASR 轉成文字，再交由 OpenAI、Google Gemini 或本機 LLM 翻譯，最後輸出成桌面字幕、區網字幕頁或字幕檔。
 
-[下載最新版](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest) · [v1.4.4 更新說明](app/docs/RELEASE_NOTES_v1.4.4_zh-TW.md) · [回報問題](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/issues)
+[下載最新版](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest) · [v1.4.5 更新說明](app/docs/RELEASE_NOTES_v1.4.5_zh-TW.md) · [回報問題](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/issues)
 
 ![Windows](https://img.shields.io/badge/platform-Windows-lightgrey)
 ![NVIDIA CUDA](https://img.shields.io/badge/GPU-NVIDIA%20CUDA-green)
 ![AMD ROCm](https://img.shields.io/badge/GPU-AMD%20ROCm%20Experimental-orange)
 ![CPU sherpa-onnx](https://img.shields.io/badge/CPU-sherpa--onnx-blueviolet)
-![Release](https://img.shields.io/badge/release-v1.4.4-blue)
+![Release](https://img.shields.io/badge/release-v1.4.5-blue)
 
 <img width="2381" height="1058" alt="Stream Translator FloatWindow" src="https://github.com/user-attachments/assets/0a663535-dd94-40a6-8444-3c00844bc563" />
 
@@ -50,9 +50,9 @@ Windows 即時語音辨識、翻譯與浮動字幕工具。它能擷取直播網
 
 > v1.3.11 起，術語表與 ASR 修正規則的 CSV／TSV 匯入支援引號、欄位內逗號、Tab、換行與 UTF-8 BOM；匯出使用 UTF-8 BOM 與 CRLF，方便 Excel 正確辨識繁體中文。
 
-## v1.4.4 更新重點
+## v1.4.5 更新重點
 
-v1.4.4 的重點包括：
+v1.4.5 的重點包括：
 
 - 全面統一首頁、設定、模型、術語表、教學與字幕相關頁面的商業化介面。
 - 浮動字幕新增平滑捲動與邊緣淡出，並統一頂部、底部顯示時的上下留白。
@@ -61,11 +61,11 @@ v1.4.4 的重點包括：
 - 修正 ASR 引擎選擇、Parakeet TDT 低精度 CUDA 解碼及背景管線錯誤處理。
 - 打包前會強制更新並驗證 yt-dlp，並更新 vue-tsc 以支援 Node.js 24。
 
-完整內容請見 [v1.4.4 更新說明](app/docs/RELEASE_NOTES_v1.4.4_zh-TW.md)。
+完整內容請見 [v1.4.5 更新說明](app/docs/RELEASE_NOTES_v1.4.5_zh-TW.md)。
 
 ## 下載：先選對執行版本
 
-請從 [GitHub Releases v1.4.4](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/tag/v1.4.4) 下載。GitHub 自動提供的 `Source code (zip)` 不是可直接執行的 Windows 完整包。
+請從 [GitHub Releases v1.4.5](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/tag/v1.4.5) 下載。GitHub 自動提供的 `Source code (zip)` 不是可直接執行的 Windows 完整包。
 
 | 版本 | 適用硬體 | 本機 ASR 路徑 | Full package |
 |---|---|---|---|
@@ -79,7 +79,7 @@ ROCm 版本仍屬實驗性支援，能否使用取決於顯示卡、驅動程式
 
 1. 下載同一 Profile 的全部 `.partXX`，並下載 `merge-full-package.bat`。
 2. 將檔案放在同一資料夾，雙擊 `merge-full-package.bat`。
-3. 以 `SHA256SUMS-v1.4.4.txt` 驗證合併後的 ZIP。
+3. 以 `SHA256SUMS-v1.4.5.txt` 驗證合併後的 ZIP。
 4. 解壓到一般可寫入路徑，例如 `D:\Apps\StreamTranslator`。
 5. 執行 `Stream Translator.exe`。
 
@@ -99,9 +99,9 @@ ROCm 版本仍屬實驗性支援，能否使用取決於顯示卡、驅動程式
 
 從 v1.4.0 起，上述流程已整合到「設定 → 一般設定」。從更舊版本首次升級到 v1.4.0 時，請完整解壓相同 Profile 的 App Update；更新包已包含 `StreamTranslatorUpdater.exe`，不需另外下載。
 
-CUDA／ROCm 使用者若缺少 CPU ASR sidecar，可在「ASR 模型管理」內安裝，或下載 `StreamTranslator-CPU-ASR-Sidecar-v1.4.4.zip`。Sidecar 只含 CPU ASR Runtime，模型權重仍需另外下載。
+CUDA／ROCm 使用者若缺少 CPU ASR sidecar，可在「ASR 模型管理」內安裝，或下載 `StreamTranslator-CPU-ASR-Sidecar-v1.4.5.zip`。Sidecar 只含 CPU ASR Runtime，模型權重仍需另外下載。
 
-v1.4.4 的 Full package 不包含 `llama` 資料夾。需要本機翻譯時，請在「LLM 模型管理」另外下載 GGUF 與相符的 llama.cpp Runtime。
+v1.4.5 的 Full package 不包含 `llama` 資料夾。需要本機翻譯時，請在「LLM 模型管理」另外下載 GGUF 與相符的 llama.cpp Runtime。
 
 ## 第一次使用教學
 
@@ -270,7 +270,7 @@ ASR 決定「聽到了什麼」。選型時依序考慮：硬體與 Runtime、�
 
 ## 媒體輸入注意事項
 
-- v1.4.4 Full package 內含 Node.js 22+，供 yt-dlp 處理需要 JavaScript Runtime 的來源。
+- v1.4.5 Full package 內含 Node.js 22+，供 yt-dlp 處理需要 JavaScript Runtime 的來源。
 - 部分 YouTube／Twitch 內容可能需要登入、地區權限或 cookies；請匯出 Netscape 格式 `cookies.txt`。
 - Chromium 的 App-Bound Encryption 可能阻止直接讀取瀏覽器 cookies，匯出檔通常較穩定。
 - 系統音訊請選擇實際播放裝置；無聲時先確認 Windows 音量混音器與輸出裝置。
@@ -335,11 +335,11 @@ python .\main.py
 cd .\app
 
 # 快速驗證
-.\build_all_profiles.ps1 -Version 1.4.4 -Mode Quick -ReuseRuntimeCache
+.\build_all_profiles.ps1 -Version 1.4.5 -Mode Quick -ReuseRuntimeCache
 
 # 正式發佈
 .\build_all_profiles.ps1 `
-  -Version 1.4.4 `
+  -Version 1.4.5 `
   -Mode Final `
   -ReuseRuntimeCache `
   -CompressionLevel 7 `
@@ -347,7 +347,7 @@ cd .\app
   -CopyThreads 16
 ```
 
-正式資產輸出至 `app/release-v1.4.4-assets/`，包含 App Update、Full package 分割檔、manifest 與 SHA-256 清單。
+正式資產輸出至 `app/release-v1.4.5-assets/`，包含 App Update、Full package 分割檔、manifest 與 SHA-256 清單。
 
 ## 專案來源
 

@@ -1,6 +1,6 @@
 ﻿#!/usr/bin/env pwsh
 param(
-    [string]$Version = "1.4.2",
+    [string]$Version = "1.4.3",
     [ValidateSet("Quick", "Final")][string]$Mode = "Quick",
     [switch]$ReuseRuntimeCache,
     [switch]$ReuseSharedGui,
@@ -33,8 +33,26 @@ if (-not $ReuseRuntimeCache) {
 $overallTimer = [Diagnostics.Stopwatch]::StartNew()
 $stepTimings = [ordered]@{}
 
-& (Join-Path $packagingDir "build_profile_runtime.ps1") -Profile cpu
-if (-not $?) { throw "CPU ASR runtime cache build failed" }
+if ($ReuseSharedGui) {
+    throw "ReuseSharedGui is disabled for release packaging because yt-dlp must be updated and frozen into every new GUI build"
+}
+
+$cpuRuntimeRoot = Join-Path $appDir "build-runtime-cache\cpu-runtime"
+$cpuRuntimePython = Join-Path $cpuRuntimeRoot "python.exe"
+$cpuRuntimeManifest = Join-Path $cpuRuntimeRoot "runtime-version.json"
+if ($ReuseRuntimeCache) {
+    if (-not (Test-Path -LiteralPath $cpuRuntimePython -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $cpuRuntimeManifest -PathType Leaf)) {
+        throw "Reusable CPU runtime cache is incomplete: $cpuRuntimeRoot"
+    }
+    & $cpuRuntimePython -c "import sherpa_onnx, stream_translator_gpt.main; print('Reusable CPU runtime cache OK')"
+    if ($LASTEXITCODE -ne 0) { throw "Reusable CPU runtime cache validation failed" }
+} else {
+    & (Join-Path $packagingDir "build_profile_runtime.ps1") -Profile cpu
+    if (-not $?) { throw "CPU ASR runtime cache build failed" }
+}
+
+Update-YtDlpPackage -PythonExe $cpuRuntimePython -Label "CPU ASR sidecar runtime"
 
 & (Join-Path $packagingDir "build_cpu_asr_sidecar.ps1") `
     -Version $Version `
@@ -49,18 +67,11 @@ Write-Host "Stream Translator three-profile build" -ForegroundColor Cyan
 Write-Host "Version=$Version Mode=$Mode Compression=$effectiveCompressionLevel Split=${SplitSizeMiB}MiB Threads=$CopyThreads"
 
 $timer = [Diagnostics.Stopwatch]::StartNew()
-if ($ReuseSharedGui) {
-    if (-not (Test-Path -LiteralPath $sharedGuiDir -PathType Container)) {
-        throw "Reusable shared GUI was not found: $sharedGuiDir"
-    }
-    Write-Host "Reusing shared GUI: $sharedGuiDir" -ForegroundColor Green
-} else {
-    & (Join-Path $packagingDir "build_shared_gui.ps1") `
-        -Version $Version `
-        -Destination $sharedGuiDir `
-        -CopyThreads $CopyThreads
-    if (-not $?) { throw "Shared GUI build failed" }
-}
+& (Join-Path $packagingDir "build_shared_gui.ps1") `
+    -Version $Version `
+    -Destination $sharedGuiDir `
+    -CopyThreads $CopyThreads
+if (-not $?) { throw "Shared GUI build failed" }
 $timer.Stop()
 $stepTimings.shared_gui_seconds = [Math]::Round($timer.Elapsed.TotalSeconds, 2)
 

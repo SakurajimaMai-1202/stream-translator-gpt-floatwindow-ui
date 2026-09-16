@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Any, Callable
 
-from PyQt6.QtCore import QDateTime, QPoint, QRect, QTimer, Qt
+from PyQt6.QtCore import QDateTime, QEasingCurve, QElapsedTimer, QPoint, QRect, QTimer, Qt
 from PyQt6.QtGui import QColor, QFont, QFontMetrics, QMouseEvent, QPainter, QPainterPath
 from PyQt6.QtWidgets import QApplication, QWidget
 
@@ -14,6 +14,16 @@ from subtitle_history import entries_fitting_height, find_subtitle_index
 
 
 logger = logging.getLogger(__name__)
+
+CONTENT_MARGIN = 16
+ENTRY_TRAILING_GAP = 6
+
+
+def visible_entries_height(entries: list[dict[str, Any]]) -> int:
+    """Height actually painted; the final row has no following-row gap."""
+    if not entries:
+        return 0
+    return max(0, sum(int(entry["height"]) for entry in entries) - ENTRY_TRAILING_GAP)
 
 
 class NativeSubtitleWindow(QWidget):
@@ -46,6 +56,12 @@ class NativeSubtitleWindow(QWidget):
         self._typing_timer = QTimer(self)
         self._typing_timer.setInterval(32)
         self._typing_timer.timeout.connect(self._advance_typing)
+        self._flow_timer = QTimer(self)
+        self._flow_timer.setInterval(16)
+        self._flow_timer.timeout.connect(self._advance_flow_animation)
+        self._flow_clock = QElapsedTimer()
+        self._flow_duration_ms = 280
+        self._flow_active = False
 
         self.settings: dict[str, Any] = {
             "fontSize": 24,
@@ -121,12 +137,31 @@ class NativeSubtitleWindow(QWidget):
             data["_display_original"] = ""
             data["_display_translated"] = ""
             self._lines.append(data)
+            self._start_flow_animation()
         history_limit = max(100, int(self.settings.get("maxDisplayCount", 5)) * 3)
         self._lines = self._lines[-history_limit:]
         if self.settings.get("autoScroll", True):
             self._history_offset = 0
         if self._has_pending_typing():
             self._typing_timer.start()
+        self.update()
+
+    def _start_flow_animation(self) -> None:
+        """Animate only when a distinct subtitle row enters the viewport."""
+        self._flow_active = True
+        self._flow_clock.restart()
+        self._flow_timer.start()
+
+    def _flow_progress(self) -> float:
+        if not self._flow_active or not self._flow_clock.isValid():
+            return 1.0
+        linear = min(1.0, self._flow_clock.elapsed() / self._flow_duration_ms)
+        return float(QEasingCurve(QEasingCurve.Type.OutCubic).valueForProgress(linear))
+
+    def _advance_flow_animation(self) -> None:
+        if self._flow_progress() >= 1.0:
+            self._flow_active = False
+            self._flow_timer.stop()
         self.update()
 
     def begin_task(self, task_id: str) -> None:
@@ -136,6 +171,8 @@ class NativeSubtitleWindow(QWidget):
             return
         self._task_id = task_id
         self._typing_timer.stop()
+        self._flow_timer.stop()
+        self._flow_active = False
         self._lines.clear()
         self._history_offset = 0
         self.update()
@@ -215,14 +252,16 @@ class NativeSubtitleWindow(QWidget):
         metadata_font = QFont(text_font)
         metadata_font.setPixelSize(max(10, round(font_size * 0.48)))
 
-        margin = 16
+        margin = CONTENT_MARGIN
         content_width = max(80, self.width() - margin * 2 - 42)
         entries = self._layout_entries(text_font, metadata_font, content_width)
         # entry.height 已包含每筆尾端間距；分隔線畫在該間距內，不可再次
         # 累加，否則會誤判溢出並造成頂部裁切、底部留白過多。
         available_height = max(0, self.height() - margin * 2)
-        entries = entries_fitting_height(entries, available_height)
-        total_height = sum(entry["height"] for entry in entries)
+        # Each entry reserves a following-row gap. Give the final entry that
+        # gap while fitting, then remove it from the visible edge calculation.
+        entries = entries_fitting_height(entries, available_height + ENTRY_TRAILING_GAP)
+        total_height = visible_entries_height(entries)
         if total_height > available_height:
             # 內容超出視窗時由底部往上溢出，確保最新字幕永遠可見。
             y = self.height() - margin - total_height
@@ -231,58 +270,99 @@ class NativeSubtitleWindow(QWidget):
         else:
             y = self.height() - margin - total_height
 
+        flow_progress = self._flow_progress()
+        flow_offset = 0
+        outgoing_entry = None
+        if self._flow_active and entries:
+            # At progress 0 the existing rows retain their old positions. The
+            # incoming row starts below the content edge; all rows then travel
+            # together while the preceding row fades through the top edge.
+            flow_offset = round(entries[-1]["height"] * (1.0 - flow_progress))
+            first_line_index = entries[0].get("line_index", 0)
+            if first_line_index > 0:
+                outgoing_entry = self._layout_line(
+                    self._lines[first_line_index - 1],
+                    text_font,
+                    metadata_font,
+                    content_width,
+                    first_line_index - 1,
+                )
+
+        painter.save()
+        painter.setClipRect(QRect(margin, margin, self.width() - margin * 2, available_height))
+        y += flow_offset
+        if outgoing_entry is not None:
+            painter.save()
+            painter.setOpacity(max(0.0, 1.0 - flow_progress))
+            self._paint_entry(painter, outgoing_entry, y - outgoing_entry["height"], margin, content_width, text_font, metadata_font, False)
+            painter.restore()
+
         for index, entry in enumerate(entries):
-            if index:
-                painter.setPen(QColor(255, 255, 255, 28))
-                painter.drawLine(margin, y - 5, self.width() - margin, y - 5)
-            metadata = entry["metadata"]
-            if metadata:
-                painter.setFont(metadata_font)
-                painter.setPen(QColor(str(self.settings.get("latencyColor", "#7DD3FC"))))
-                painter.drawText(QRect(margin, y, content_width, entry["metadata_height"]), Qt.TextFlag.TextWordWrap, metadata)
-                y += entry["metadata_height"] + 4
-            for text, color, height in entry["rows"]:
-                bar_rect = QRect(margin, y + 2, 4, max(8, height - 4))
-                painter.fillRect(bar_rect, color)
-                text_rect = QRect(margin + 10, y, content_width - 10, height)
-                painter.setFont(text_font)
-                painter.setPen(QColor(0, 0, 0, 220))
-                painter.drawText(text_rect.translated(2, 2), Qt.TextFlag.TextWordWrap, text)
-                painter.setPen(color)
-                painter.drawText(text_rect, Qt.TextFlag.TextWordWrap, text)
-                y += height + 4
-            y += 6
+            if self._flow_active and index == len(entries) - 1:
+                painter.save()
+                painter.setOpacity(max(0.15, flow_progress))
+                y = self._paint_entry(painter, entry, y, margin, content_width, text_font, metadata_font, index > 0)
+                painter.restore()
+            else:
+                y = self._paint_entry(painter, entry, y, margin, content_width, text_font, metadata_font, index > 0)
+
+        painter.restore()
 
         self._paint_controls(painter)
 
-    def _layout_entries(self, text_font: QFont, metadata_font: QFont, width: int) -> list[dict[str, Any]]:
+    def _paint_entry(self, painter: QPainter, entry: dict[str, Any], y: int, margin: int, content_width: int, text_font: QFont, metadata_font: QFont, separator: bool) -> int:
+        if separator:
+            painter.setPen(QColor(255, 255, 255, 28))
+            painter.drawLine(margin, y - 5, self.width() - margin, y - 5)
+        metadata = entry["metadata"]
+        if metadata:
+            painter.setFont(metadata_font)
+            painter.setPen(QColor(str(self.settings.get("latencyColor", "#7DD3FC"))))
+            painter.drawText(QRect(margin, y, content_width, entry["metadata_height"]), Qt.TextFlag.TextWordWrap, metadata)
+            y += entry["metadata_height"] + 4
+        for text, color, height in entry["rows"]:
+            painter.fillRect(QRect(margin, y + 2, 4, max(8, height - 4)), color)
+            text_rect = QRect(margin + 10, y, content_width - 10, height)
+            painter.setFont(text_font)
+            painter.setPen(QColor(0, 0, 0, 220))
+            painter.drawText(text_rect.translated(2, 2), Qt.TextFlag.TextWordWrap, text)
+            painter.setPen(color)
+            painter.drawText(text_rect, Qt.TextFlag.TextWordWrap, text)
+            y += height + 4
+        return y + 6
+
+    def _layout_line(self, line: dict[str, Any], text_font: QFont, metadata_font: QFont, width: int, line_index: int) -> dict[str, Any]:
         text_metrics = QFontMetrics(text_font)
         metadata_metrics = QFontMetrics(metadata_font)
-        entries: list[dict[str, Any]] = []
+        metadata = self._metadata_text(line)
+        metadata_height = metadata_metrics.boundingRect(
+            QRect(0, 0, width, 1000), Qt.TextFlag.TextWordWrap, metadata
+        ).height() if metadata else 0
+        rows: list[tuple[str, QColor, int]] = []
+        if self.settings.get("showOriginal", True) and line.get("original"):
+            text = str(line.get("_display_original", line["original"]))
+            height = max(text_metrics.height(), text_metrics.boundingRect(QRect(0, 0, width - 10, 4000), Qt.TextFlag.TextWordWrap, text).height())
+            rows.append((text, QColor(str(self.settings.get("textColor", "#FFFFFF"))), height))
+        if self.settings.get("showTranslated", True) and line.get("translated"):
+            text = str(line.get("_display_translated", line["translated"]))
+            height = max(text_metrics.height(), text_metrics.boundingRect(QRect(0, 0, width - 10, 4000), Qt.TextFlag.TextWordWrap, text).height())
+            rows.append((text, QColor(str(self.settings.get("translatedColor", "#FFDD00"))), height))
+        return {
+            "metadata": metadata,
+            "metadata_height": metadata_height,
+            "rows": rows,
+            "height": metadata_height + (4 if metadata else 0) + sum(row[2] + 4 for row in rows) + ENTRY_TRAILING_GAP,
+            "line_index": line_index,
+        }
+
+    def _layout_entries(self, text_font: QFont, metadata_font: QFont, width: int) -> list[dict[str, Any]]:
         limit = max(1, int(self.settings.get("maxDisplayCount", 5)))
         end = max(0, len(self._lines) - self._history_offset)
         start = max(0, end - limit)
-        for line in self._lines[start:end]:
-            metadata = self._metadata_text(line)
-            metadata_height = metadata_metrics.boundingRect(
-                QRect(0, 0, width, 1000), Qt.TextFlag.TextWordWrap, metadata
-            ).height() if metadata else 0
-            rows: list[tuple[str, QColor, int]] = []
-            if self.settings.get("showOriginal", True) and line.get("original"):
-                text = str(line.get("_display_original", line["original"]))
-                height = max(text_metrics.height(), text_metrics.boundingRect(QRect(0, 0, width - 10, 4000), Qt.TextFlag.TextWordWrap, text).height())
-                rows.append((text, QColor(str(self.settings.get("textColor", "#FFFFFF"))), height))
-            if self.settings.get("showTranslated", True) and line.get("translated"):
-                text = str(line.get("_display_translated", line["translated"]))
-                height = max(text_metrics.height(), text_metrics.boundingRect(QRect(0, 0, width - 10, 4000), Qt.TextFlag.TextWordWrap, text).height())
-                rows.append((text, QColor(str(self.settings.get("translatedColor", "#FFDD00"))), height))
-            entries.append({
-                "metadata": metadata,
-                "metadata_height": metadata_height,
-                "rows": rows,
-                "height": metadata_height + (4 if metadata else 0) + sum(row[2] + 4 for row in rows) + 6,
-            })
-        return entries
+        return [
+            self._layout_line(line, text_font, metadata_font, width, line_index)
+            for line_index, line in enumerate(self._lines[start:end], start=start)
+        ]
 
     def _metadata_text(self, line: dict[str, Any]) -> str:
         parts: list[str] = []
@@ -353,6 +433,8 @@ class NativeSubtitleWindow(QWidget):
                 return
             if self._clear_rect().contains(local_pos):
                 self._typing_timer.stop()
+                self._flow_timer.stop()
+                self._flow_active = False
                 self._lines.clear()
                 self._history_offset = 0
                 self.update()

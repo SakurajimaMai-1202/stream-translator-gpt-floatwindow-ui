@@ -1,6 +1,6 @@
 ﻿#!/usr/bin/env pwsh
 param(
-    [string]$Version = "1.4.2",
+    [string]$Version = "1.4.3",
     [string]$Destination = "",
     [ValidateRange(1, 128)][int]$CopyThreads = 16
 )
@@ -39,6 +39,8 @@ foreach ($candidate in $pythonCandidates) {
     }
 }
 if (-not $pythonExe) { throw "No usable build Python with PyInstaller found" }
+
+Update-YtDlpPackage -PythonExe $pythonExe -Label "shared GUI build environment"
 
 # PyQt extension modules are compiled for a Qt ABI.  Independently upgraded
 # Qt or WebEngine wheels can install successfully but fail only after the app

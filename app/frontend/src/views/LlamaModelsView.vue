@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useLlamaStore } from '../stores/llama';
+import AppIcon from '../components/AppIcon.vue';
 
 const store = useLlamaStore();
 const router = useRouter();
@@ -28,9 +29,9 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="p-5 max-w-7xl mx-auto space-y-5">
+  <div class="commercial-page commercial-models p-5 max-w-7xl mx-auto space-y-5">
     <header class="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-white/10 pb-4">
-      <div><h1 class="text-xl font-bold">🧠 LLM 模型管理</h1><p class="text-white/50 text-sm mt-1">掃描及選擇 GGUF；模型不會在選取瞬間中斷目前服務。</p></div>
+      <div><h1 class="flex items-center gap-2 text-xl font-bold"><AppIcon name="llm-models" class="h-5 w-5 text-blue-300" />LLM 模型管理</h1><p class="text-white/50 text-sm mt-1">掃描及選擇 GGUF；模型不會在選取瞬間中斷目前服務。</p></div>
       <button @click="router.push({ path: '/settings', query: { tab: 'llama' } })" class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 font-semibold">前往執行設定</button>
     </header>
     <div v-if="store.errorMessage" class="p-3 rounded-lg bg-red-500/15 border border-red-500/30 text-red-200">{{ store.errorMessage }}</div>

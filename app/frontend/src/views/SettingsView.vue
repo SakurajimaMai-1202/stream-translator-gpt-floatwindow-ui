@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch, nextTick, toRaw, defineAsyncComponent } from 'vue';
-import { useRouter, useRoute } from 'vue-router';
+import { useRoute } from 'vue-router';
 import axios from 'axios';
 import { useTranslationStore } from '../stores/translation';
 import { useModelDownloadStore } from '../stores/modelDownload';
@@ -35,7 +35,6 @@ let autoSaveStatusTimeout: ReturnType<typeof setTimeout> | null = null;
 const suspendedAutoSaveSections = new Set<string>();
 
 
-const router = useRouter();
 const route = useRoute();
 const store = useTranslationStore();
 const modelDownloadStore = useModelDownloadStore();
@@ -381,7 +380,6 @@ const localConfig = ref<any>({
     theme: 'dark'
   }
 });
-const isSaving = ref(false);
 const cookiePlatform = ref('youtube');
 const cookieBrowser = ref('chrome');
 const cookieBrowserProfile = ref('');
@@ -569,14 +567,6 @@ function debouncedAutoSaveSection(section: string) {
   }, 1000));
 }
 
-async function flushPendingSectionSaves() {
-  const pendingSections = [...sectionSaveTimers.keys()];
-  for (const timer of sectionSaveTimers.values()) clearTimeout(timer);
-  sectionSaveTimers.clear();
-  await Promise.all(pendingSections.map((section) => saveSectionNow(section)));
-  await Promise.all(sectionSaveInFlight.values());
-}
-
 async function testConnection(backend: 'gpt' | 'gemini') {
   const isGpt = backend === 'gpt';
   if (isGpt) {
@@ -641,34 +631,6 @@ const customModelForm = ref({
   api_key: '',
   model_name: ''
 });
-
-const categorizedTabs = [
-  {
-    groupName: '系統與輸入',
-    items: [
-      { id: 'general', name: '一般設定', icon: '⚙️' },
-      { id: 'input', name: '輸入選項', icon: '📥' },
-      { id: 'output', name: '輸出與通知', icon: '📤' }
-    ]
-  },
-  {
-    groupName: '語音辨識與切片',
-    items: [
-      { id: 'audio_vad', name: '音訊切片/VAD', icon: '🔊' },
-      { id: 'transcription', name: '轉錄選項', icon: '🎤' },
-      { id: 'model_management', name: 'ASR模型管理', icon: '📦' }
-    ]
-  },
-  {
-    groupName: '翻譯與術語',
-    items: [
-      { id: 'translation', name: '翻譯選項', icon: '🌐' },
-      { id: 'llama', name: 'Llama 設定', icon: '🦙' },
-      { id: 'terminology', name: '術語表', icon: '📖' }
-    ]
-  }
-];
-
 
 // 過濾後的術語表
 const filteredGlossary = computed(() => {
@@ -899,6 +861,41 @@ const funAsrModelList = computed(() =>
 const parakeetModelList = computed(() =>
   allParakeetModels.filter(modelId => allowedParakeetModels.value.includes(modelId))
 );
+
+function getModelTask(engine: ModelEngine, modelId: string) {
+  return modelDownloadStore.getTask(engine, modelId);
+}
+
+function canStartDownload(engine: ModelEngine, modelId: string): boolean {
+  const task = getModelTask(engine, modelId);
+  return !modelDownloadStore.isDownloaded(engine, modelId)
+    && task?.status !== 'pending'
+    && task?.status !== 'downloading';
+}
+
+async function startModelDownload(engine: ModelEngine, modelId: string) {
+  await modelDownloadStore.startDownload(engine, modelId);
+}
+
+function getModelStatusText(engine: ModelEngine, modelId: string): string {
+  if (modelDownloadStore.isDownloaded(engine, modelId)) return '已下載';
+  const task = getModelTask(engine, modelId);
+  if (!task) return '尚未下載';
+  if (task.status === 'pending') return '等待下載';
+  if (task.status === 'downloading') return task.message || '下載中';
+  if (task.status === 'completed') return '下載完成';
+  if (task.status === 'failed') return task.error || task.message || '下載失敗';
+  return task.message || task.status;
+}
+
+function getModelStatusClass(engine: ModelEngine, modelId: string): string {
+  if (modelDownloadStore.isDownloaded(engine, modelId)) return 'text-emerald-300';
+  const status = getModelTask(engine, modelId)?.status;
+  if (status === 'failed') return 'text-red-300';
+  if (status === 'pending' || status === 'downloading') return 'text-blue-300';
+  return 'text-white/50';
+}
+
 const runtimeSelection = computed(() => runtimeStatus.value?.selection || null);
 const selectedRuntimeDevice = computed(() => runtimeSelection.value?.device || null);
 const ignoredRuntimeDevices = computed(() => runtimeSelection.value?.ignored_devices || []);
@@ -1307,25 +1304,6 @@ async function applyModelStoragePath() {
 async function deleteDownloadedModel(engine: ModelEngine, modelId: string, computeBackend: ModelComputeBackend) {
   if (!confirm(`確定要刪除模型「${modelId}」嗎？之後使用時需要重新下載。`)) return;
   await modelDownloadStore.deleteModel(engine, modelId, computeBackend);
-}
-
-async function handleSave() {
-  isSaving.value = true;
-  try {
-    await store.saveConfig(localConfig.value);
-  } finally {
-    isSaving.value = false;
-  }
-}
-
-async function handleCancel() {
-  // 離開前確保待處理的 debounce 變更都被儲存
-  try {
-    await flushPendingSectionSaves();
-  } catch (e) {
-    console.warn('[SettingsView] 離開保存失敗:', e);
-  }
-  router.push('/');
 }
 
 async function resetToDefault() {
@@ -1802,12 +1780,12 @@ async function handleFileChange(event: Event) {
 </script>
 
 <template>
-  <div class="p-4 sm:p-5 max-w-7xl mx-auto">
+  <div class="commercial-page commercial-settings p-4 sm:p-5 max-w-7xl mx-auto">
     <!-- Header -->
     <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-5 gap-3 border-b border-white/5 pb-2.5">
       <div>
         <div class="flex items-center gap-3">
-          <h1 class="text-base font-bold text-white tracking-wide">⚙️ 系統設定</h1>
+          <h1 class="text-base font-bold text-white tracking-wide">系統設定</h1>
           <!-- Auto-save Status Badge -->
           <div class="flex items-center gap-2 transition-all duration-300 bg-white/5 border border-white/10 px-2.5 py-0.5 rounded-full">
             <span v-if="autoSaveStatus === 'saving'" class="text-blue-300 flex items-center gap-1 text-[10px] font-semibold">
@@ -1821,7 +1799,7 @@ async function handleFileChange(event: Event) {
               ⚠️ 儲存失敗
             </span>
             <span v-else class="text-white/40 text-[10px] font-semibold">
-              ✓ 已儲存
+              {{ store.errorMessage ? '狀態未同步' : '尚未變更' }}
             </span>
           </div>
         </div>
@@ -1830,13 +1808,13 @@ async function handleFileChange(event: Event) {
       <!-- Import/Export & Reset Buttons -->
       <div class="flex flex-wrap gap-2">
         <button @click="handleImportClick" class="bg-blue-600/85 hover:bg-blue-600 text-white font-semibold py-1.5 px-3 rounded-lg transition text-xs flex items-center gap-1.5 shadow-sm">
-          📥 匯入
+          匯入設定
         </button>
         <button @click="handleExportClick" class="bg-emerald-600/85 hover:bg-emerald-600 text-white font-semibold py-1.5 px-3 rounded-lg transition text-xs flex items-center gap-1.5 shadow-sm">
-          📤 匯出
+          匯出設定
         </button>
         <button @click="resetToDefault" class="bg-yellow-600/20 hover:bg-yellow-600/30 text-yellow-300 border border-yellow-500/20 font-semibold py-1.5 px-3 rounded-lg transition text-xs flex items-center gap-1.5">
-          🔄 重置預設值
+          重置預設值
         </button>
       </div>
     </div>
@@ -1858,7 +1836,7 @@ async function handleFileChange(event: Event) {
     <!-- Content Container (Card Layout) -->
     <!-- 長捲動內容不使用 backdrop-filter：Qt WebEngine/Chromium 在 Windows
          重新合成大型毛玻璃 layer 時可能短暫露出底層視窗。 -->
-    <div v-if="!settingsReady" class="bg-gradient-to-br from-slate-950/95 via-slate-950/85 to-indigo-950/65 rounded-2xl border border-white/10 shadow-2xl p-6 sm:p-8 min-h-[550px]" aria-busy="true">
+    <div v-if="!settingsReady" class="commercial-panel min-h-[550px] p-6 sm:p-8" aria-busy="true">
       <div class="animate-pulse space-y-6">
         <div class="h-7 w-40 rounded bg-white/10"></div>
         <div class="h-4 w-72 max-w-full rounded bg-white/5"></div>
@@ -1867,7 +1845,7 @@ async function handleFileChange(event: Event) {
       </div>
       <p class="mt-6 text-sm text-white/45">正在讀取設定…</p>
     </div>
-    <div v-else class="bg-gradient-to-br from-slate-950/95 via-slate-950/85 to-indigo-950/65 rounded-2xl border border-white/10 shadow-2xl p-6 sm:p-8 min-h-[550px]">
+    <div v-else class="commercial-panel min-h-[550px] p-6 sm:p-8">
           <!-- General Settings -->
           <div v-if="activeTab === 'general'" class="settings-paint-section space-y-6">
             <h2 class="text-xl font-bold text-white mb-4">一般設定</h2>
@@ -2131,7 +2109,7 @@ async function handleFileChange(event: Event) {
             
             <!-- 音訊切片 -->
             <div class="bg-white/5 rounded-xl p-4 border border-white/10">
-              <h3 class="text-lg font-semibold text-blue-300 mb-4">🔊 音訊切片</h3>
+              <h3 class="commercial-section-title">音訊切片</h3>
               <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 <div>
                   <label class="block text-white/70 text-sm mb-1">最小音訊長度 (秒)</label>
@@ -2177,7 +2155,7 @@ async function handleFileChange(event: Event) {
             <!-- VAD 設定 -->
             <div class="bg-white/5 rounded-xl p-4 border border-white/10">
               <div class="flex items-center justify-between mb-4">
-                <h3 class="text-lg font-semibold text-blue-300">🎙️ VAD (Voice Activity Detection)</h3>
+                <h3 class="commercial-section-title mb-0">VAD（語音活動偵測）</h3>
                 <label class="flex items-center gap-2 cursor-pointer">
                   <input v-model="localConfig.audio_slicing_vad.vad_enabled" type="checkbox" class="w-5 h-5 accent-blue-500" />
                   <span class="text-white">啟用 VAD</span>
@@ -2385,7 +2363,7 @@ async function handleFileChange(event: Event) {
                     <span class="text-white font-medium">使用 OpenAI Transcription API</span>
                     <p class="text-white/50 text-sm mt-1">
                       使用 OpenAI 官方雲端轉錄 API,無需本地模型但需要 API 額度。
-                      <br />⚠️ 此選項與上述兩項互斥
+                      <br /><strong>注意：</strong>此選項與上述兩項互斥
                     </p>
                   </div>
                 </label>
@@ -2516,7 +2494,7 @@ async function handleFileChange(event: Event) {
                             <span class="text-yellow-300 font-medium">{{ localConfig.transcription.qwen3_asr_model === 'Qwen/Qwen3-ASR-1.7B' ? '~3.5 GB' : '~1.2 GB' }}</span>
                             　啟用後可降至 {{ localConfig.transcription.qwen3_asr_model === 'Qwen/Qwen3-ASR-1.7B' ? '~1.5 GB' : '~0.5 GB' }}
                           </template>
-                          <br/>📦 CUDA 可攜版已內建量化支援
+                          <br/>CUDA 可攜版已內建量化支援
                         </p>
                       </div>
                     </label>
@@ -2624,8 +2602,8 @@ async function handleFileChange(event: Event) {
 
             <div class="bg-cyan-500/10 rounded-xl p-4 border border-cyan-500/20">
               <p class="text-cyan-200 text-sm">
-                <template v-if="modelManagementBackend === 'cpu'">📦 此分頁下載 Sherpa-ONNX 專用 INT8 ONNX bundle，不能與同名的 PyTorch／NeMo GPU 模型互換。</template>
-                <template v-else>📦 此分頁管理 GPU 原生模型；模型格式與 Sherpa-ONNX CPU bundle 分開。</template>
+                <template v-if="modelManagementBackend === 'cpu'">此分頁下載 Sherpa-ONNX 專用 INT8 ONNX bundle，不能與同名的 PyTorch／NeMo GPU 模型互換。</template>
+                <template v-else>此分頁管理 GPU 原生模型；模型格式與 Sherpa-ONNX CPU bundle 分開。</template>
               </p>
               <p class="text-white/50 text-xs mt-2">
                 <template v-if="modelManagementBackend === 'cpu'">模型儲存在 models\\sherpa-onnx，使用 CPU 離線推論，不需要 CUDA、ROCm 或 PyTorch；只列出目前已支援的 bundle。</template>
@@ -2901,7 +2879,7 @@ async function handleFileChange(event: Event) {
             
             <!-- 基本翻譯設定 -->
             <div class="bg-white/5 rounded-xl p-5 border border-white/10">
-              <h3 class="text-lg font-semibold text-blue-300 mb-4">🌐 基本設定</h3>
+              <h3 class="commercial-section-title">基本設定</h3>
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label class="block text-white/70 font-semibold mb-2">翻譯後端</label>
@@ -2991,14 +2969,14 @@ async function handleFileChange(event: Event) {
 
             <!-- 自訂模型設定 -->
             <div v-if="localConfig.translation.backend.startsWith('custom:')" class="bg-gradient-to-br from-orange-500/10 to-yellow-500/10 rounded-xl p-5 border border-orange-500/20">
-              <h3 class="text-lg font-semibold text-orange-300 mb-4">⚙️ 自訂模型設定</h3>
+              <h3 class="commercial-section-title">自訂模型設定</h3>
               <div class="space-y-3">
                 <div class="p-4 bg-white/5 rounded-lg border border-white/10">
                   <p class="text-white/60 text-sm">
                     已選擇自訂模型: <span class="text-orange-300 font-semibold">{{ localConfig.translation.backend.replace('custom:', '') }}</span>
                   </p>
                   <p class="text-white/40 text-xs mt-2">
-                    💡 自訂模型的 API 端點和金鑰設定在下方「自訂模型管理」區塊中管理
+                    自訂模型的 API 端點和金鑰設定在下方「自訂模型管理」區塊中管理
                   </p>
                 </div>
               </div>
@@ -3031,17 +3009,17 @@ async function handleFileChange(event: Event) {
                       </div>
                     </div>
                     <div class="flex gap-2 ml-4">
-                      <button @click="openCustomModelDialog(idx)" class="px-3 py-1.5 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded transition">
+                      <button @click="openCustomModelDialog(Number(idx))" class="px-3 py-1.5 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded transition">
                         編輯
                       </button>
-                      <button @click="deleteCustomModel(idx)" class="px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded transition">
+                      <button @click="deleteCustomModel(Number(idx))" class="px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded transition">
                         刪除
                       </button>
                     </div>
                   </div>
                 </div>
                 <div v-else class="text-center py-6 text-white/40">
-                  <div class="text-3xl mb-2">📦</div>
+                  <div class="text-xs font-bold uppercase tracking-wider text-white/40 mb-2">Empty</div>
                   <div class="text-sm">尚未新增自訂模型</div>
                   <div class="text-xs mt-1">點擊上方按鈕新增第一個模型</div>
                 </div>
@@ -3076,17 +3054,17 @@ async function handleFileChange(event: Event) {
                     </div>
                   </div>
                   <div class="flex gap-2 ml-4">
-                    <button @click="openCustomModelDialog(idx)" class="px-3 py-1.5 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded transition">
+                    <button @click="openCustomModelDialog(Number(idx))" class="px-3 py-1.5 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded transition">
                       編輯
                     </button>
-                    <button @click="deleteCustomModel(idx)" class="px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded transition">
+                    <button @click="deleteCustomModel(Number(idx))" class="px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded transition">
                       刪除
                     </button>
                   </div>
                 </div>
               </div>
               <div v-else class="text-center py-6 text-white/40">
-                <div class="text-3xl mb-2">📦</div>
+                <div class="text-xs font-bold uppercase tracking-wider text-white/40 mb-2">Empty</div>
                 <div class="text-sm">尚未新增自訂模型</div>
                 <div class="text-xs mt-1">點擊上方按鈕新增第一個模型</div>
               </div>
@@ -3238,7 +3216,7 @@ async function handleFileChange(event: Event) {
                   <label class="block text-white/70 font-semibold mb-2">自訂翻譯提示詞</label>
                   <textarea v-model="localConfig.translation.translation_prompt" placeholder='例如: "Translate from Japanese to Traditional Chinese"' rows="5"
                     class="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400 font-mono text-sm"></textarea>
-                  <p class="text-white/40 text-sm mt-2">💡 當關閉智能提示詞時，將使用此提示詞進行翻譯</p>
+                  <p class="text-white/40 text-sm mt-2">關閉智能提示詞時，將使用此提示詞進行翻譯。</p>
                 </div>
               </div>
             </div>
@@ -3246,9 +3224,9 @@ async function handleFileChange(event: Event) {
 
           <!-- Llama Settings -->
           <div v-if="activeTab === 'llama'" class="settings-paint-section space-y-6">
-            <h2 class="text-xl font-bold text-white mb-4">🦙 Llama 設定</h2>
+            <h2 class="mb-4 text-xl font-bold text-white">Llama 設定</h2>
             <div class="bg-gradient-to-br from-yellow-500/10 to-orange-500/10 rounded-xl p-5 border border-yellow-500/20 mb-4">
-              <p class="text-yellow-200 mb-2">💡 使用本地 llama.cpp 進行翻譯</p>
+              <p class="text-yellow-200 mb-2">使用本地 llama.cpp 進行翻譯</p>
               <p class="text-white/60 text-sm">無需網路連線，支援 GPU 加速，保護資料隱私</p>
             </div>
             <LlamaSettings />
@@ -3522,8 +3500,8 @@ async function handleFileChange(event: Event) {
 
     <!-- Custom Model Dialog -->
     <div v-if="showCustomModelDialog" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
-      <div class="bg-gray-900 rounded-2xl border border-white/20 shadow-2xl p-6 w-full max-w-md mx-4">
-        <h3 class="text-xl font-bold text-white mb-4">{{ editingModelIndex >= 0 ? '編輯' : '新增' }}自訂模型</h3>
+      <div class="bg-gray-900 rounded-2xl border border-white/20 shadow-2xl p-6 w-full max-w-md mx-4" role="dialog" aria-modal="true" aria-labelledby="custom-model-dialog-title">
+        <h3 id="custom-model-dialog-title" class="text-xl font-bold text-white mb-4">{{ editingModelIndex >= 0 ? '編輯' : '新增' }}自訂模型</h3>
         
         <div class="space-y-4">
           <div>

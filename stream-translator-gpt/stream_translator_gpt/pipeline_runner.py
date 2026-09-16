@@ -5,7 +5,7 @@ import time
 
 from .audio_getter import StreamAudioGetter, LocalFileAudioGetter, DeviceAudioGetter
 from .audio_slicer import AudioSlicer
-from .common import ClientPool, INFO, is_url, start_daemon_thread
+from .common import ClientPool, INFO, is_url, PipelineWorkers
 from .result_exporter import ResultExporter
 from .subtitle_segmenter import SubtitleSegmenter
 
@@ -209,25 +209,36 @@ def run_inprocess_pipeline(url: str,
     segmenter = create_subtitle_segmenter(options)
     exporter = create_exporter(options, subtitle_share_push_url, subtitle_share_token)
 
+    workers = PipelineWorkers()
     print(f"{INFO}Initialization complete, starting up...")
-    start_daemon_thread(audio_getter.loop, output_queue=getter_to_slicer_queue)
-    start_daemon_thread(slicer.loop, input_queue=getter_to_slicer_queue, output_queue=slicer_to_transcriber_queue)
-    start_daemon_thread(transcriber.loop,
+    workers.start(audio_getter.loop, output_queue=getter_to_slicer_queue)
+    workers.start(slicer.loop, input_queue=getter_to_slicer_queue, output_queue=slicer_to_transcriber_queue)
+    workers.start(transcriber.loop,
                         input_queue=slicer_to_transcriber_queue,
                         output_queue=transcriber_to_segmenter_queue)
-    start_daemon_thread(segmenter.loop,
+    workers.start(segmenter.loop,
                         input_queue=transcriber_to_segmenter_queue,
                         output_queue=segmenter_to_translator_queue)
     if translator:
-        start_daemon_thread(translator.loop,
+        workers.start(translator.loop,
                             input_queue=segmenter_to_translator_queue,
                             output_queue=translator_to_exporter_queue)
-    exporter_thread = start_daemon_thread(exporter.loop, input_queue=translator_to_exporter_queue)
+    exporter_thread = workers.start(exporter.loop, input_queue=translator_to_exporter_queue)
 
-    while exporter_thread.is_alive():
-        if controller is not None and controller.stop_event.is_set():
-            if hasattr(audio_getter, "stop"):
-                audio_getter.stop()
-        time.sleep(0.2)
+    try:
+        while exporter_thread.is_alive():
+            if controller is not None and controller.stop_event.is_set():
+                if hasattr(audio_getter, "stop"):
+                    audio_getter.stop()
+            workers.raise_if_failed()
+            time.sleep(0.2)
+        workers.raise_if_failed()
+    finally:
+        if hasattr(audio_getter, "stop"):
+            audio_getter.stop()
+        for pending in (getter_to_slicer_queue, slicer_to_transcriber_queue,
+                        transcriber_to_segmenter_queue, segmenter_to_translator_queue,
+                        translator_to_exporter_queue):
+            pending.put(None)
     print(f"{INFO}All processing completed, program exits.")
     return 0

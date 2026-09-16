@@ -37,8 +37,8 @@
             class="btn-start-quick"
             :title="!llamaStore.selectedModelPath ? '請先在「模型管理」選擇一個模型' : ''"
           >
-            <span v-if="llamaStore.isLoading">⏳ 啟動中...</span>
-            <span v-else>🚀 啟動伺服器</span>
+            <span v-if="llamaStore.isLoading">啟動中…</span>
+            <span v-else>啟動伺服器</span>
           </button>
           <button
             v-if="llamaStore.isServerRunning"
@@ -47,7 +47,7 @@
             :disabled="!llamaStore.selectedModelPath || llamaStore.isLoading"
             class="btn-start-quick"
           >
-            ♻️ 套用並重啟
+            套用並重啟
           </button>
           <button
             v-if="llamaStore.isServerRunning"
@@ -56,7 +56,7 @@
             :disabled="llamaStore.isLoading"
             class="btn-stop"
           >
-            🛑 停止伺服器
+            停止伺服器
           </button>
         </div>
       </div>
@@ -86,7 +86,7 @@
       <div v-if="!llamaStore.isServerRunning" class="status-target">
         <span class="target-label">目標位址</span>
         <span class="target-value">{{ llamaStore.serverConfig.host }}:{{ llamaStore.serverConfig.port }}</span>
-        <span v-if="!llamaStore.selectedModelPath" class="target-warn">⚠ 尚未選擇模型</span>
+        <span v-if="!llamaStore.selectedModelPath" class="target-warn">尚未選擇模型</span>
         <span v-else class="target-model">{{ getModelName(llamaStore.selectedModelPath) }}</span>
       </div>
 
@@ -166,8 +166,8 @@
           <span>最新版：<strong>{{ runtimeRelease.tag }}</strong></span>
           <span v-if="runtimeRelease.installed_tag">目前安裝：<strong>{{ runtimeRelease.installed_tag }}<template v-if="runtimeRelease.installed_variant"> / {{ runtimeRelease.installed_variant }}</template></strong></span>
         </div>
-        <div v-if="runtimeRelease.is_latest" class="alert alert-success">✅ 已安裝官方最新版本，無需重複下載。</div>
-        <div v-if="runtimeInstallNotice" class="alert alert-success">✅ {{ runtimeInstallNotice }}</div>
+        <div v-if="runtimeRelease.is_latest" class="alert alert-success">已安裝官方最新版本，無需重複下載。</div>
+        <div v-if="runtimeInstallNotice" class="alert alert-success">{{ runtimeInstallNotice }}</div>
         <div v-if="runtimeRelease.detected_gpus?.length" class="runtime-hardware-summary">
           <span v-for="gpu in runtimeRelease.detected_gpus" :key="`${gpu.name}-${gpu.backend}`">
             {{ gpu.name }}<small>{{ gpu.is_integrated ? '內顯' : '獨立 GPU' }}<template v-if="gpu.memory_mb"> · {{ Math.round(gpu.memory_mb / 1024) }} GB</template></small>
@@ -208,8 +208,8 @@
       </template>
     </section>
 
-    <div v-if="llamaStore.errorMessage" class="alert alert-error">❌ {{ llamaStore.errorMessage }}</div>
-    <div v-if="llamaStore.successMessage" class="alert alert-success">✅ {{ llamaStore.successMessage }}</div>
+    <div v-if="llamaStore.errorMessage" class="alert alert-error">{{ llamaStore.errorMessage }}</div>
+    <div v-if="llamaStore.successMessage" class="alert alert-success">{{ llamaStore.successMessage }}</div>
 
     <div class="workspace-grid">
       <section class="panel panel-emphasis">
@@ -375,7 +375,7 @@
     <section v-if="false" class="panel">
       <div class="panel-header">
         <div>
-          <h3>📁 模型管理</h3>
+          <h3>模型管理</h3>
           <p class="panel-subtitle">先掃描模型，再用搜尋 / 系列 / 卡片選取快速鎖定要啟動的 GGUF 模型。</p>
         </div>
       </div>
@@ -390,7 +390,7 @@
             class="form-input"
           />
           <button type="button" @click="handleLoadModels" :disabled="llamaStore.isLoading" class="btn-primary compact">
-            🔄 掃描模型
+            掃描模型
           </button>
         </div>
         <p class="hint">輸入包含 `.gguf` 模型的目錄路徑。掃描成功後會保留在設定裡，下次不用再找一次。</p>
@@ -414,7 +414,7 @@
               <UiSelect v-model="modelSeriesFilter" :options="modelSeriesOptions" placeholder="所有系列" />
             </div>
             <button type="button" @click="showSeriesManager = true" class="btn-manage-series" title="管理模型系列">
-              ⚙️ 管理系列
+              管理系列
             </button>
             <div class="control-block grow">
               <label class="control-label">搜尋模型</label>
@@ -459,7 +459,7 @@
     <section class="panel">
       <div class="panel-header">
         <div>
-          <h3>⚙️ 參數編輯器</h3>
+          <h3>參數編輯器</h3>
           <p class="panel-subtitle">常用設定先排前面，搭配快捷建議值，改參數不用像在解鎖 BIOS。</p>
         </div>
         <div class="panel-header-actions">
@@ -598,7 +598,7 @@
 
         <div class="param-card full-width">
           <div class="param-card-header">
-            <h4>🎛️ 生成參數</h4>
+            <h4>生成參數</h4>
             <p>控制翻譯時的穩定度、採樣範圍與單次輸出長度。</p>
           </div>
 
@@ -691,8 +691,8 @@
     </section>
 
     <div v-if="showSaveDialog" class="modal-overlay" @click.self="showSaveDialog = false">
-      <div class="modal-content">
-        <h3>💾 保存配置預設</h3>
+      <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="save-preset-title">
+        <h3 id="save-preset-title">保存配置預設</h3>
         <p class="modal-description">把目前模型、伺服器參數與生成參數一起保存。下次可直接一鍵套用。</p>
 
         <div class="form-group">
@@ -728,8 +728,8 @@
     </div>
 
     <div v-if="showSeriesManager" class="modal-overlay" @click.self="showSeriesManager = false">
-      <div class="modal-content series-manager">
-        <h3>🏷️ 模型系列管理</h3>
+      <div class="modal-content series-manager" role="dialog" aria-modal="true" aria-labelledby="series-manager-title">
+        <h3 id="series-manager-title">模型系列管理</h3>
 
         <div class="series-list">
           <div v-if="llamaStore.customModelSeries.length === 0" class="empty-state">
@@ -758,8 +758,8 @@
     </div>
 
     <div v-if="showAddSeriesDialog" class="modal-overlay" @click.self="cancelEditSeries">
-      <div class="modal-content">
-        <h3>{{ editingSeriesIndex >= 0 ? '✏️ 編輯' : '➕ 新增' }}模型系列</h3>
+      <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="edit-series-title">
+        <h3 id="edit-series-title">{{ editingSeriesIndex >= 0 ? '編輯' : '新增' }}模型系列</h3>
 
         <div class="form-group">
           <label>系列名稱</label>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick } from 'vue';
 import type { LatencyWindowSnapshot, SubtitleLatencyTrace } from '../services/api';
+import BrandIcon from '../components/BrandIcon.vue';
 
 // ─── 狀態 ───────────────────────────────────────────────
 type DesktopSubtitle = {
@@ -291,7 +292,7 @@ function latencyLabel(sub: DesktopSubtitle): string {
     <!-- 頂部控制欄 -->
     <header class="top-bar">
       <div class="brand">
-        <span class="brand-icon">◈</span>
+        <span class="brand-icon"><BrandIcon /></span>
         <span class="brand-name">字幕顯示</span>
       </div>
 
@@ -603,7 +604,8 @@ function latencyLabel(sub: DesktopSubtitle): string {
 }
 
 .brand { display: flex; align-items: center; gap: 8px; }
-.brand-icon { font-size: 18px; color: var(--brand-icon); }
+.brand-icon { display: inline-flex; width: 20px; height: 20px; color: var(--brand-icon); }
+.brand-icon svg { width: 100%; height: 100%; }
 .brand-name { font-size: 14px; font-weight: 600; color: var(--brand-name); }
 
 .status-indicator {

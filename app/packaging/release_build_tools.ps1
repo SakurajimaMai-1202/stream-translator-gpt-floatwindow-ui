@@ -1,3 +1,30 @@
+function Update-YtDlpPackage {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PythonExe,
+        [string]$Label = "Python environment"
+    )
+
+    if (-not (Test-Path -LiteralPath $PythonExe -PathType Leaf)) {
+        throw "Cannot update yt-dlp; Python executable not found: $PythonExe"
+    }
+
+    $before = & $PythonExe -c "import importlib.metadata as m; print(m.version('yt-dlp'))" 2>$null
+    if ($LASTEXITCODE -ne 0) { $before = "not installed" }
+    Write-Host "Updating yt-dlp in $Label (current: $before)..." -ForegroundColor Yellow
+
+    & $PythonExe -m pip install --upgrade --disable-pip-version-check yt-dlp
+    if ($LASTEXITCODE -ne 0) {
+        throw "yt-dlp update failed in $Label; packaging stopped to avoid shipping an outdated version"
+    }
+
+    $after = & $PythonExe -c "import importlib.metadata as m; print(m.version('yt-dlp'))"
+    if ($LASTEXITCODE -ne 0 -or -not $after) {
+        throw "yt-dlp version verification failed in $Label"
+    }
+    Write-Host "yt-dlp ready in $Label`: $after" -ForegroundColor Green
+}
+
 function Resolve-SevenZipPath {
     param([string]$RequestedPath = "")
 

@@ -23,6 +23,20 @@ from backend.core.runtime_profiles import (
 from backend.core.asr_model_capabilities import coerce_model_language
 from backend.core.portable_paths import get_packaged_runtime_profile
 
+
+def normalize_transcription_engine_flags(transcription: Dict[str, Any]) -> None:
+    """Make the selected engine authoritative over legacy saved booleans."""
+    selected_engine = transcription.get('backend', 'faster-whisper')
+    transcription.update({
+        'use_faster_whisper': selected_engine in {'faster-whisper', 'faster-whisper-simul'},
+        'use_simul_streaming': selected_engine in {'simul-streaming', 'faster-whisper-simul'},
+        'use_openai_transcription_api': selected_engine == 'openai-api',
+        'use_qwen3_asr': selected_engine == 'qwen3-asr',
+        'use_sensevoice_asr': selected_engine == 'sensevoice',
+        'use_fun_asr': selected_engine == 'fun-asr-nano',
+        'use_nemo_asr': selected_engine == 'parakeet-ctc-ja',
+    })
+
 class ConfigManager:
     """配置管理器 - 處理所有配置相關操作"""
     

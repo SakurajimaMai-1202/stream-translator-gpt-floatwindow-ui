@@ -13,7 +13,7 @@ function goToHome() {
 </script>
 
 <template>
-  <div class="mx-auto max-w-6xl p-5 pb-12 sm:p-8">
+  <div class="commercial-page commercial-guide mx-auto max-w-6xl p-5 pb-12 sm:p-8">
     <div class="mb-7 flex flex-wrap items-end justify-between gap-4">
       <div>
         <p class="mb-2 text-[10px] font-bold uppercase tracking-[0.25em] text-cyan-300">Stream Translator</p>

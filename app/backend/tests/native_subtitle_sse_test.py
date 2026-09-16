@@ -4,9 +4,10 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtGui import QFont
+from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
-from native_subtitle import NativeSubtitleWindow
+from native_subtitle import CONTENT_MARGIN, NativeSubtitleWindow, visible_entries_height
 from sse_parser import SseEventParser
 from subtitle_history import entries_fitting_height, find_subtitle_index, subtitle_identity
 
@@ -81,6 +82,24 @@ def test_viewport_keeps_multiple_newest_entries_that_fit():
     assert entries_fitting_height(entries, 20) == entries[-1:]
 
 
+def test_visible_height_excludes_only_the_final_following_row_gap():
+    entries = [{"height": 40}, {"height": 50}]
+
+    assert visible_entries_height(entries) == 84
+    assert visible_entries_height([]) == 0
+
+
+def test_top_and_bottom_alignment_use_the_same_visible_edge_margin():
+    window_height = 240
+    entries = [{"height": 40}, {"height": 50}]
+    visible_height = visible_entries_height(entries)
+    top_origin = CONTENT_MARGIN
+    bottom_origin = window_height - CONTENT_MARGIN - visible_height
+
+    assert top_origin == CONTENT_MARGIN
+    assert window_height - (bottom_origin + visible_height) == CONTENT_MARGIN
+
+
 def test_native_subtitle_clamps_legacy_package_height_and_keeps_history():
     app = QApplication.instance() or QApplication([])
     window = NativeSubtitleWindow(_LegacySubtitleConfig())
@@ -101,6 +120,63 @@ def test_native_subtitle_clamps_legacy_package_height_and_keeps_history():
         entries = window._layout_entries(font, metadata_font, 726)
         visible = entries_fitting_height(entries, window.height() - 32)
         assert len(visible) >= 2
+        assert window._flow_active is True
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_native_subtitle_flow_only_restarts_for_a_new_row():
+    app = QApplication.instance() or QApplication([])
+    window = NativeSubtitleWindow(_LegacySubtitleConfig())
+    try:
+        window.update_subtitle_json(json.dumps({
+            "segment_id": 1,
+            "original": "first",
+            "translated": "第一句",
+        }))
+        assert window._flow_active is True
+        window._flow_timer.stop()
+        window._flow_active = False
+
+        window.update_subtitle_json(json.dumps({
+            "segment_id": 1,
+            "original": "first updated",
+            "translated": "第一句更新",
+        }))
+        assert window._flow_active is False
+
+        window.update_subtitle_json(json.dumps({
+            "segment_id": 2,
+            "original": "second",
+            "translated": "第二句",
+        }))
+        assert window._flow_active is True
+        assert window._flow_timer.isActive()
+        assert 0.0 <= window._flow_progress() <= 1.0
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_native_subtitle_flow_progresses_and_finishes():
+    app = QApplication.instance() or QApplication([])
+    window = NativeSubtitleWindow(_LegacySubtitleConfig())
+    window.settings["maxDisplayCount"] = 3
+    try:
+        for segment_id in range(1, 4):
+            window.update_subtitle_json(json.dumps({
+                "segment_id": segment_id,
+                "original": f"original {segment_id}",
+                "translated": f"translated {segment_id}",
+            }))
+        start_progress = window._flow_progress()
+        QTest.qWait(110)
+        middle_progress = window._flow_progress()
+        QTest.qWait(240)
+
+        assert 0.0 <= start_progress < middle_progress < 1.0
+        assert window._flow_active is False
     finally:
         window.close()
         app.processEvents()

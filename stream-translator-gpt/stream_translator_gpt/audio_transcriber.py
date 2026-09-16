@@ -579,7 +579,19 @@ class NemoASRTranscriber(AudioTranscriber):
         if not callable(change_decoding_strategy):
             raise RuntimeError(f'{self.model_id} does not expose NeMo hybrid decoder selection.')
         decoder_type = 'rnnt' if self.decoding == 'tdt' else 'ctc'
-        self._quiet_call(change_decoding_strategy, decoder_type=decoder_type, verbose=False)
+        kwargs = {"decoder_type": decoder_type, "verbose": False}
+        if self.decoding == 'tdt' and self.torch_dtype is not None:
+            from copy import deepcopy
+            from omegaconf import OmegaConf, open_dict
+
+            decoding_cfg = deepcopy(self.model.cfg.decoding)
+            # NeMo's CUDA graph path disables autocast, but transcription can
+            # supply FP32 encoder output to our BF16/FP16 joint weights.
+            # Keep low-precision weights and use the autocast-aware torch path.
+            with open_dict(decoding_cfg):
+                OmegaConf.update(decoding_cfg, 'greedy.use_cuda_graph_decoder', False, force_add=True)
+            kwargs['decoding_cfg'] = decoding_cfg
+        self._quiet_call(change_decoding_strategy, **kwargs)
 
     @staticmethod
     def _resolve_device(torch_module: Any, device: str | None) -> str:

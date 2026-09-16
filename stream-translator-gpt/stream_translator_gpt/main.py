@@ -14,7 +14,7 @@ if __name__ == '__main__':
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     __package__ = "stream_translator_gpt"
 
-from .common import ApiKeyPool, configure_utf8_stdio, start_daemon_thread, is_url, WARNING, ERROR, INFO
+from .common import ApiKeyPool, configure_utf8_stdio, PipelineWorkers, is_url, WARNING, ERROR, INFO
 from .audio_getter import (
     StreamAudioGetter,
     LocalFileAudioGetter,
@@ -479,41 +479,50 @@ def main(url, **kwargs):
 
     print(f'{INFO}Initialization complete, starting up...')
 
+    workers = PipelineWorkers()
     # Start working
-    start_daemon_thread(audio_getter.loop, output_queue=getter_to_slicer_queue)
-    start_daemon_thread(
+    workers.start(audio_getter.loop, output_queue=getter_to_slicer_queue)
+    workers.start(
         slicer.loop,
         input_queue=getter_to_slicer_queue,
         output_queue=slicer_to_transcriber_queue,
     )
-    start_daemon_thread(
+    workers.start(
         transcriber.loop,
         input_queue=slicer_to_transcriber_queue,
         output_queue=transcriber_to_segmenter_queue,
     )
-    start_daemon_thread(
+    workers.start(
         segmenter.loop,
         input_queue=transcriber_to_segmenter_queue,
         output_queue=segmenter_to_translator_queue,
     )
     if translator:
-        start_daemon_thread(
+        workers.start(
             translator.loop,
             input_queue=segmenter_to_translator_queue,
             output_queue=translator_to_exporter_queue,
         )
-    exporter_thread = start_daemon_thread(
+    exporter_thread = workers.start(
         exporter.loop,
         input_queue=translator_to_exporter_queue,
     )
 
+    pipeline_exit_code = 0
     try:
         while exporter_thread.is_alive():
-            time.sleep(1)
+            workers.raise_if_failed()
+            time.sleep(0.2)
+        workers.raise_if_failed()
+    except BaseException:
+        pipeline_exit_code = 1
+        raise
     finally:
+        if hasattr(audio_getter, "stop"):
+            audio_getter.stop()
         if managed_subtitle_share_server:
             if managed_subtitle_share_task_id:
-                managed_subtitle_share_server.finish_task(managed_subtitle_share_task_id, 0)
+                managed_subtitle_share_server.finish_task(managed_subtitle_share_task_id, pipeline_exit_code)
                 time.sleep(0.2)
             managed_subtitle_share_server.stop()
     print(f'{INFO}All processing completed, program exits.')

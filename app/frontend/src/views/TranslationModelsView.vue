@@ -38,11 +38,11 @@ onMounted(() => load(false));
 </script>
 
 <template>
-  <div class="mx-auto max-w-7xl space-y-5 p-5">
+  <div class="commercial-page commercial-models mx-auto max-w-7xl space-y-5 p-5">
     <header class="flex flex-col gap-3 border-b border-white/10 pb-4 lg:flex-row lg:items-end lg:justify-between">
       <div>
         <p class="text-xs font-bold uppercase tracking-[0.18em] text-cyan-300">Local translation model finder</p>
-        <h1 class="mt-1 text-2xl font-bold">✨ 推薦翻譯模型下載</h1>
+        <h1 class="mt-1 text-2xl font-bold">推薦翻譯模型下載</h1>
         <p class="mt-1 text-sm text-white/50">依顯卡型號與 VRAM 自動排序 GGUF 建議，下載後放入模型目錄再到 LLM 模型管理掃描。</p>
       </div>
       <button class="rounded-lg border border-cyan-400/30 bg-cyan-500/10 px-4 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-500/20 disabled:opacity-50" :disabled="loading" @click="load(true)">
@@ -53,7 +53,7 @@ onMounted(() => load(false));
     <div v-if="error" class="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-red-200">{{ error }}</div>
 
     <section class="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
-      <div class="rounded-2xl border border-cyan-400/20 bg-gradient-to-br from-cyan-500/10 to-indigo-500/10 p-5">
+      <div class="commercial-panel commercial-panel-accent p-5">
         <p class="text-xs font-semibold text-white/45">目前建議依據</p>
         <template v-if="data?.selected_gpu">
           <h2 class="mt-1 text-xl font-bold">{{ data.selected_gpu.name }}</h2>
@@ -83,7 +83,7 @@ onMounted(() => load(false));
     </div>
 
     <section class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-      <article v-for="model in visibleModels" :key="model.id" class="flex min-h-[290px] flex-col rounded-2xl border border-white/10 bg-slate-950/65 p-5 shadow-lg shadow-black/10">
+      <article v-for="model in visibleModels" :key="model.id" class="commercial-panel flex min-h-[290px] flex-col p-5">
         <div class="flex items-start justify-between gap-3">
           <div>
             <div v-if="model.app_preferred" class="mb-1 w-fit rounded-full bg-emerald-500/15 px-2.5 py-1 text-[11px] font-bold text-emerald-300">★ 本程式首選</div>
@@ -116,12 +116,12 @@ onMounted(() => load(false));
             <template v-if="model.deployment_config.n_predict"> · Max={{ model.deployment_config.n_predict }}</template>
           </p>
           <p class="mt-1 text-white/35">{{ model.parameter_source }}</p>
-          <p v-if="model.runtime_note" class="mt-2 leading-5 text-amber-200/80">⚠ {{ model.runtime_note }}</p>
+          <p v-if="model.runtime_note" class="mt-2 leading-5 text-amber-200/80"><span class="font-semibold">注意：</span>{{ model.runtime_note }}</p>
         </div>
         <p class="mt-3 text-xs leading-5 text-white/45">{{ model.fit_reason }}</p>
         <div class="mt-auto grid gap-2 pt-4">
           <button v-if="model.deployment_config" type="button" class="rounded-lg border border-cyan-400/30 bg-cyan-500/10 px-4 py-2.5 text-sm font-bold text-cyan-100 hover:bg-cyan-500/20" @click="applyDeployment(model)">套用部署參數</button>
-          <a :href="model.url" target="_blank" rel="noopener noreferrer" class="rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-2.5 text-center text-sm font-bold hover:from-blue-500 hover:to-indigo-500">開啟 GGUF 下載頁 ↗</a>
+          <a :href="model.url" target="_blank" rel="noopener noreferrer" class="commercial-primary-action px-4 py-2.5 text-center text-sm font-bold">開啟 GGUF 下載頁 ↗</a>
         </div>
       </article>
     </section>

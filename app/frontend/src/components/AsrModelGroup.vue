@@ -53,10 +53,10 @@ function description(modelId: string) {
 </script>
 
 <template>
-  <div v-if="visibleModels.length > 0" class="asr-model-group bg-white/5 rounded-xl p-5 border border-white/10">
-    <h3 class="text-lg font-semibold text-blue-300 mb-4">{{ title }}</h3>
+  <div v-if="visibleModels.length > 0" class="asr-model-group commercial-panel p-5">
+    <h3 class="commercial-section-title">{{ title }}</h3>
     <div class="space-y-3">
-      <div v-for="modelId in visibleModels" :key="`${engine}-${modelId}`" class="p-4 rounded-lg bg-white/5 border border-white/10">
+      <div v-for="modelId in visibleModels" :key="`${engine}-${modelId}`" class="rounded-lg border border-white/10 bg-white/5 p-4">
         <div class="flex items-center justify-between gap-4">
           <div>
             <div class="text-white font-semibold">{{ modelId }}</div>
@@ -66,7 +66,7 @@ function description(modelId: string) {
           <button
             @click="modelDownloadStore.startDownload(engine, modelId, computeBackend)"
             :disabled="!canStart(modelId)"
-            class="px-4 py-2 rounded-lg font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed bg-blue-600 hover:bg-blue-700 text-white"
+            class="commercial-primary-action px-4 py-2 font-semibold disabled:cursor-not-allowed disabled:opacity-50"
           >
             {{ modelDownloadStore.isDownloaded(engine, modelId, computeBackend) ? '已下載' : '下載' }}
           </button>

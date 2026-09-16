@@ -2,7 +2,7 @@
 param(
     [ValidateSet("cuda", "cpu", "rocm")]
     [string]$Profile = "cuda",
-    [string]$Version = "1.4.2",
+    [string]$Version = "1.4.3",
     [switch]$ForceRuntime,
     [switch]$ReuseRuntimeCache,
     [switch]$SkipFullZip,
@@ -65,6 +65,7 @@ if (-not $sharedGuiPath) {
         }
     }
     if (-not $pythonExe) { throw "No usable build Python with PyInstaller found" }
+    Update-YtDlpPackage -PythonExe $pythonExe -Label "$profileLabel GUI build environment"
 } elseif (-not (Test-Path -LiteralPath $sharedGuiPath -PathType Container)) {
     throw "Shared GUI directory not found: $sharedGuiPath"
 }
@@ -171,11 +172,15 @@ if ($ReuseRuntimeCache) {
     if ($LASTEXITCODE -ne 0) { throw "Runtime build failed" }
 }
 
+$runtimePython = Join-Path $runtimeCache "python.exe"
+Update-YtDlpPackage -PythonExe $runtimePython -Label "$profileLabel runtime"
+
 if ($IncludeCpuAsrSidecar -and $Profile -ne "cpu") {
     $cpuSidecarPython = Join-Path $cpuAsrRuntimeCache "python.exe"
     if (-not (Test-Path -LiteralPath $cpuSidecarPython)) {
         throw "CPU ASR sidecar cache is missing: $cpuAsrRuntimeCache"
     }
+    Update-YtDlpPackage -PythonExe $cpuSidecarPython -Label "CPU ASR sidecar runtime"
     $cpuSidecarPackage = Join-Path $cpuAsrRuntimeCache "Lib\site-packages\stream_translator_gpt"
     if (Test-Path -LiteralPath $cpuSidecarPackage) { Remove-Item -LiteralPath $cpuSidecarPackage -Recurse -Force }
     Copy-Item (Join-Path $projectRoot "stream-translator-gpt\stream_translator_gpt") $cpuSidecarPackage -Recurse -Force
@@ -265,7 +270,7 @@ foreach ($name in @("ffmpeg.exe", "ffprobe.exe")) {
 }
 
 # llama.cpp Runtime is installed on demand by the application and is intentionally
-# excluded from all v1.4.2 Full packages. This keeps the three profiles smaller
+# excluded from all v1.4.3 Full packages. This keeps the three profiles smaller
 # and prevents an obsolete bundled server from being used accidentally.
 if (Test-Path -LiteralPath (Join-Path $releaseRoot "llama")) {
     throw "Packaging guard failed: llama folder must not be included in v$Version package"

@@ -279,7 +279,7 @@ function initQtWebChannel(): Promise<boolean> {
   }
   if (webChannelInitPromise) return webChannelInitPromise;
 
-  webChannelInitPromise = new Promise((resolve) => {
+  const initPromise = new Promise<boolean>((resolve) => {
     try {
       new window.QWebChannel(window.qt!.webChannelTransport, (channel: any) => {
         window.bridge = channel.objects.bridge;
@@ -295,7 +295,8 @@ function initQtWebChannel(): Promise<boolean> {
     webChannelInitPromise = null;
   });
 
-  return webChannelInitPromise;
+  webChannelInitPromise = initPromise;
+  return initPromise;
 }
 
 function applySettings(settings: any, external = false) {
@@ -668,8 +669,8 @@ async function stopTranslation() {
         position === 'top' ? 'justify-start' : 'justify-end'
       ]"
     >
-      <div v-if="displaySubtitles.length > 0" class="subtitle-list space-y-3" :class="autoScroll ? 'scroll-smooth' : ''">
-        <div v-for="sub in displaySubtitles" :key="sub.id" class="text-left leading-relaxed">
+      <TransitionGroup v-if="displaySubtitles.length > 0" name="subtitle-flow" tag="div" class="subtitle-list space-y-3" :class="autoScroll ? 'scroll-smooth' : ''">
+        <div v-for="sub in displaySubtitles" :key="sub.id" class="subtitle-flow-item text-left leading-relaxed">
           <!-- 時間戳 -->
           <div
             v-if="showTimestamp || (showLatency && latencyParts(sub).length)"
@@ -734,7 +735,7 @@ async function stopTranslation() {
             >|</span></span>
           </div>
         </div>
-      </div>
+      </TransitionGroup>
       <!-- 調試資訊 -->
       <div v-else class="text-white/50 text-sm text-center py-4">
         <p>等待字幕...</p>
@@ -964,6 +965,41 @@ async function stopTranslation() {
   margin-left: 1px;
   font-weight: 300;
   animation: typing-cursor-blink 0.7s ease-in-out infinite;
+}
+
+.subtitle-flow-item {
+  transform-origin: center bottom;
+  will-change: transform, opacity;
+}
+
+.subtitle-flow-move,
+.subtitle-flow-enter-active,
+.subtitle-flow-leave-active {
+  transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1), opacity 220ms ease;
+}
+
+.subtitle-flow-enter-from {
+  transform: translateY(18px);
+  opacity: 0;
+}
+
+.subtitle-flow-leave-to {
+  transform: translateY(-18px);
+  opacity: 0;
+}
+
+.subtitle-flow-leave-active {
+  position: absolute;
+  left: 0;
+  right: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .subtitle-flow-move,
+  .subtitle-flow-enter-active,
+  .subtitle-flow-leave-active {
+    transition-duration: 1ms;
+  }
 }
 
 @keyframes typing-cursor-blink {

@@ -2,7 +2,38 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
+
+
+TIMESTAMP_DRIFT_TOLERANCE_MS = 50
+_TIMESTAMP_RANGE_RE = re.compile(
+    r"(?P<start>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*(?:-->|->|→)\s*"
+    r"(?P<end>\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})"
+)
+
+
+def _clock_to_ms(value: str) -> int | None:
+    match = re.fullmatch(r"(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})", value.strip())
+    if not match:
+        return None
+    hours, minutes, seconds, milliseconds = match.groups()
+    milliseconds = milliseconds.ljust(3, "0")
+    return (((int(hours) * 60 + int(minutes)) * 60) + int(seconds)) * 1000 + int(milliseconds)
+
+
+def _timestamp_range_ms(data: dict[str, Any]) -> tuple[int, int] | None:
+    timestamp = data.get("backend_timestamp") or data.get("timestamp")
+    if timestamp is None:
+        return None
+    match = _TIMESTAMP_RANGE_RE.search(str(timestamp))
+    if not match:
+        return None
+    start = _clock_to_ms(match.group("start"))
+    end = _clock_to_ms(match.group("end"))
+    if start is None or end is None:
+        return None
+    return start, end
 
 
 def subtitle_identity(data: dict[str, Any]) -> tuple[str, str] | None:
@@ -38,6 +69,26 @@ def find_subtitle_index(lines: list[dict[str, Any]], incoming: dict[str, Any]) -
             existing = line.get("backend_timestamp") or line.get("timestamp")
             if existing is not None and existing != "" and str(existing) == timestamp_value:
                 return index
+
+        # ASR emits a timestamp-only event first, then a translated event with
+        # segment_id. Container rounding can shift one boundary by 1 ms. Treat
+        # it as the same row only when the text and both time boundaries agree
+        # within a small tolerance.
+        incoming_range = _timestamp_range_ms(incoming)
+        incoming_original = str(incoming.get("original") or "").strip()
+        if incoming_range is not None and incoming_original:
+            for index in range(len(lines) - 1, -1, -1):
+                line = lines[index]
+                if str(line.get("original") or "").strip() != incoming_original:
+                    continue
+                existing_range = _timestamp_range_ms(line)
+                if existing_range is None:
+                    continue
+                if (
+                    abs(existing_range[0] - incoming_range[0]) <= TIMESTAMP_DRIFT_TOLERANCE_MS
+                    and abs(existing_range[1] - incoming_range[1]) <= TIMESTAMP_DRIFT_TOLERANCE_MS
+                ):
+                    return index
 
     item_id = incoming.get("id")
     if item_id is not None and item_id != "":

@@ -15,6 +15,8 @@ from pathlib import Path
 from threading import Lock
 from typing import Dict, List, Literal, Optional
 
+from backend.core.http_downloader import HttpDownloader
+from backend.core.hf_parallel_download import prefetch_large_files
 from backend.models.model_download import ModelDownloadTask, DownloadedModelInfo, ModelComputeBackend
 from backend.core.portable_paths import (
     ensure_model_storage,
@@ -277,7 +279,7 @@ class ModelDownloadManager:
         archive = (model_root / f"{bundle}.tar.bz2").resolve()
 
         if model_id in SHERPA_HF_REPOS:
-            state = {"total": 0}
+            state = {"total": 0, "blob_dir": None}
 
             def blocking_hf_download() -> None:
                 if target.exists() and all((target / name).exists() for name in required_paths):
@@ -293,11 +295,17 @@ class ModelDownloadManager:
                     if any(fnmatch.fnmatch(sibling.rfilename, pattern) for pattern in allow_patterns)
                 )
 
-                snapshot_download(
+                cache_dir = get_huggingface_hub_cache()
+                state["blob_dir"] = cache_dir / f"models--{repo_id.replace('/', '--')}" / "blobs"
+                prefetch_large_files(repo_id, info, cache_dir,
+                                     lambda name: any(fnmatch.fnmatch(name, p) for p in allow_patterns))
+                snapshot = snapshot_download(
                     repo_id=repo_id,
-                    local_dir=str(target),
+                    cache_dir=str(cache_dir),
                     allow_patterns=allow_patterns,
+                    max_workers=4,
                 )
+                shutil.copytree(snapshot, target, dirs_exist_ok=True)
                 missing = [name for name in required_paths if not (target / name).exists()]
                 if missing:
                     raise RuntimeError(f"Incomplete sherpa model download; missing: {', '.join(missing)}")
@@ -307,7 +315,7 @@ class ModelDownloadManager:
             while not download.done():
                 total = state["total"]
                 if total > 0:
-                    downloaded = min(total, await asyncio.to_thread(self._directory_size, target))
+                    downloaded = min(total, await asyncio.to_thread(self._directory_size, state["blob_dir"] or target))
                     self._update_byte_progress(task_id, downloaded, total, "下載中")
                 await asyncio.sleep(0.5)
             await download
@@ -317,23 +325,11 @@ class ModelDownloadManager:
         def blocking_download() -> None:
             if target.exists() and all((target / name).exists() for name in required_paths):
                 return
-            last_update = {"time": 0.0, "progress": -1.0}
-
-            def reporthook(block_count: int, block_size: int, total_size: int) -> None:
-                if total_size <= 0:
-                    return
-                downloaded = min(total_size, block_count * block_size)
-                ratio = downloaded / total_size
-                now = time.monotonic()
-                if ratio >= 1.0 or ratio - last_update["progress"] >= 0.002 or now - last_update["time"] >= 0.5:
-                    last_update.update(time=now, progress=ratio)
-                    self._update_byte_progress(task_id, downloaded, total_size, "下載中")
-
-            urllib.request.urlretrieve(
-                f"{SHERPA_RELEASE_ROOT}/{archive.name}",
-                archive,
-                reporthook=reporthook,
-            )
+            partial = archive.with_name(archive.name + '.part')
+            HttpDownloader(
+                progress=lambda done, total: self._update_byte_progress(task_id, done, total, "下載中（4 連線）")
+            ).download(f"{SHERPA_RELEASE_ROOT}/{archive.name}", partial)
+            partial.replace(archive)
             with tarfile.open(archive, "r:bz2") as model_archive:
                 for member in model_archive.getmembers():
                     extracted = (model_root / member.name).resolve()
@@ -367,8 +363,10 @@ class ModelDownloadManager:
             state["blob_dir"] = repo_cache / "blobs"
             info = HfApi().model_info(repo_id, files_metadata=True)
             state["total"] = sum(int(sibling.size or 0) for sibling in info.siblings)
+            prefetch_large_files(repo_id, info, cache_dir)
             return snapshot_download(
                 repo_id=repo_id,
+                max_workers=4,
                 cache_dir=str(cache_dir),
                 resume_download=True,
                 local_files_only=False,
@@ -398,6 +396,9 @@ class ModelDownloadManager:
             )
             env = dict(os.environ)
             env["MODELSCOPE_CACHE"] = str(cache_dir)
+            env["MODELSCOPE_DOWNLOAD_PARALLEL_WORKERS"] = "4"
+            env["MODELSCOPE_DOWNLOAD_PARALLELS"] = "4"
+            env["MODELSCOPE_DOWNLOAD_PARALLEL_THRESHOLD_MB"] = "16"
             result = subprocess.run(
                 [python_exe, "-c", script],
                 cwd=str(get_app_root()),

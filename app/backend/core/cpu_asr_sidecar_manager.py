@@ -9,21 +9,18 @@ import shutil
 import subprocess
 import tempfile
 import threading
-import urllib.request
-import urllib.error
 import zipfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from backend.core.http_downloader import HttpDownloader
 from backend.config import settings
 from backend.core.portable_paths import get_app_root, get_cpu_asr_runtime_path
 
 
 REPOSITORY = "SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui"
 ASSET_TEMPLATE = "StreamTranslator-CPU-ASR-Sidecar-v{version}.zip"
-
-
 @dataclass
 class SidecarInstallState:
     status: str = "idle"
@@ -38,7 +35,7 @@ class SidecarInstallState:
     health_error: str = ""
 
 
-class CpuAsrSidecarManager:
+class CpuAsrSidecarManager(HttpDownloader):
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._state = SidecarInstallState()
@@ -110,57 +107,6 @@ class CpuAsrSidecarManager:
             return override
         version = self._version()
         return f"https://github.com/{REPOSITORY}/releases/download/v{version}/{self._asset_name()}"
-
-    @staticmethod
-    def _open_url(url: str, *, headers: dict[str, str] | None = None):
-        local = Path(os.path.expandvars(os.path.expanduser(url)))
-        if local.is_file():
-            return local.open("rb")
-        request_headers = {"User-Agent": "StreamTranslator-CPU-ASR-Installer"}
-        request_headers.update(headers or {})
-        request = urllib.request.Request(url, headers=request_headers)
-        return urllib.request.urlopen(request, timeout=60)
-
-    def _download(self, url: str, destination: Path) -> None:
-        self._set(status="downloading", message="Downloading CPU ASR runtime")
-        existing = destination.stat().st_size if destination.is_file() else 0
-        local = Path(os.path.expandvars(os.path.expanduser(url)))
-        request_headers = {"Range": f"bytes={existing}-"} if existing and not local.is_file() else None
-        try:
-            response = self._open_url(url, headers=request_headers)
-        except urllib.error.HTTPError as exc:
-            if exc.code == 416 and existing:
-                self._set(bytes_downloaded=existing, bytes_total=existing, progress=0.75)
-                return
-            raise
-        with response:
-            response_status = getattr(response, "status", None)
-            resumed = existing > 0 and (local.is_file() or response_status == 206)
-            if resumed and local.is_file():
-                source_size = local.stat().st_size
-                if existing > source_size:
-                    resumed = False
-                else:
-                    response.seek(existing)
-            downloaded = existing if resumed else 0
-            content_length = int(getattr(response, "headers", {}).get("Content-Length", 0) or 0)
-            total = downloaded + content_length if content_length else 0
-            mode = "ab" if resumed else "wb"
-            if resumed:
-                self._set(message="Resuming CPU ASR runtime download")
-            with destination.open(mode) as output:
-                while True:
-                    self._raise_if_cancelled()
-                    block = response.read(1024 * 1024)
-                    if not block:
-                        break
-                    output.write(block)
-                    downloaded += len(block)
-                    self._set(
-                        bytes_downloaded=downloaded,
-                        bytes_total=total,
-                        progress=(downloaded / total * 0.75) if total else 0.25,
-                    )
 
     def _expected_sha256(self, url: str) -> str:
         with self._open_url(url) as response:

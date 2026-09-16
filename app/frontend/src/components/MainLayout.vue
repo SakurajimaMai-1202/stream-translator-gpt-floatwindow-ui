@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
+import BrandIcon from './BrandIcon.vue';
+import AppIcon from './AppIcon.vue';
 
 const router = useRouter();
 const route = useRoute();
@@ -9,37 +11,37 @@ const isMobileMenuOpen = ref(false);
 
 // Define navigation items
 const primaryNavigation = [
-  { path: '/', name: '即時轉譯', icon: '🎙️', id: 'home' },
-  { path: '/subtitle-style', name: '字幕外觀', icon: '🎨', id: 'subtitle-style' },
-  { path: '/guide', name: '使用教學', icon: '📖', id: 'guide' }
+  { path: '/', name: '即時轉譯', id: 'home' },
+  { path: '/subtitle-style', name: '字幕外觀', id: 'subtitle-style' },
+  { path: '/guide', name: '使用教學', id: 'guide' }
 ];
 
-type SettingsNavItem = { id: string; name: string; icon: string; path?: string };
+type SettingsNavItem = { id: string; name: string; path?: string };
 const settingsGroups: Array<{ groupName: string; items: SettingsNavItem[] }> = [
   {
     groupName: '系統與輸入',
     items: [
-      { id: 'general', name: '一般設定', icon: '⚙️' },
-      { id: 'input', name: '輸入選項', icon: '📥' },
-      { id: 'output', name: '輸出與通知', icon: '📤' }
+      { id: 'general', name: '一般設定' },
+      { id: 'input', name: '輸入選項' },
+      { id: 'output', name: '輸出與通知' }
     ]
   },
   {
     groupName: '語音辨識與切片',
     items: [
-      { id: 'audio_vad', name: '音訊切片/VAD', icon: '🔊' },
-      { id: 'transcription', name: '轉錄選項', icon: '🎤' },
-      { id: 'model_management', name: 'ASR模型管理', icon: '📦' }
+      { id: 'audio_vad', name: '音訊切片/VAD' },
+      { id: 'transcription', name: '轉錄選項' },
+      { id: 'model_management', name: 'ASR模型管理' }
     ]
   },
   {
     groupName: '翻譯與術語',
     items: [
-      { id: 'translation', name: '翻譯選項', icon: '🌐' },
-      { id: 'llama', name: 'Llama 執行設定', icon: '🦙' },
-      { id: 'llm-models', path: '/llm-models', name: 'LLM 模型管理', icon: '🧠' },
-      { id: 'translation-models', path: '/translation-models', name: '推薦翻譯模型', icon: '✨' },
-      { id: 'terminology', name: '術語表', icon: '📖' }
+      { id: 'translation', name: '翻譯選項' },
+      { id: 'llama', name: 'Llama 執行設定' },
+      { id: 'llm-models', path: '/llm-models', name: 'LLM 模型管理' },
+      { id: 'translation-models', path: '/translation-models', name: '推薦翻譯模型' },
+      { id: 'terminology', name: '術語表' }
     ]
   }
 ];
@@ -71,14 +73,14 @@ watch(() => route.fullPath, () => {
 </script>
 
 <template>
-  <div class="flex h-screen w-screen flex-col overflow-hidden bg-slate-950 text-white font-sans md:flex-row">
+  <div class="commercial-shell flex h-screen w-screen flex-col overflow-hidden bg-slate-950 text-white font-sans md:flex-row">
     <!-- Mobile Header -->
-    <header class="relative z-40 flex h-14 flex-shrink-0 items-center justify-between border-b border-white/10 bg-slate-950/95 px-4 backdrop-blur md:hidden">
+    <header class="commercial-mobile-header relative z-40 flex h-14 flex-shrink-0 items-center justify-between border-b border-white/10 bg-slate-950/95 px-4 backdrop-blur md:hidden">
       <div class="flex min-w-0 items-center gap-2.5">
-        <span class="text-xl">🎙️</span>
+        <BrandIcon />
         <div class="min-w-0">
           <h1 class="truncate text-[11px] font-bold uppercase tracking-[0.16em] text-white">Stream Translator</h1>
-          <p class="mt-0.5 text-[9px] font-semibold tracking-wider text-indigo-300/60">即時字幕翻譯系統</p>
+          <p class="mt-0.5 text-[11px] font-semibold tracking-wide text-indigo-300/60">即時字幕翻譯系統</p>
         </div>
       </div>
       <button
@@ -105,17 +107,18 @@ watch(() => route.fullPath, () => {
     <!-- Left Sidebar -->
     <aside
       :class="[
+        'commercial-sidebar',
         'fixed inset-y-0 right-0 z-50 flex w-[min(19rem,86vw)] flex-shrink-0 flex-col justify-between border-l border-white/10 bg-slate-950/98 shadow-2xl transition-transform duration-200 md:static md:z-auto md:w-60 md:translate-x-0 md:border-l-0 md:border-r md:bg-slate-950/95 md:shadow-none',
         isMobileMenuOpen ? 'translate-x-0' : 'translate-x-full'
       ]"
     >
       <div>
         <!-- App Header / Logo -->
-        <div class="p-5 border-b border-white/5 flex items-center gap-3">
-          <span class="text-2xl">🎙️</span>
+        <div class="commercial-brand p-5 border-b border-white/5 flex items-center gap-3">
+          <BrandIcon />
           <div>
             <h1 class="text-xs font-bold text-white tracking-widest uppercase">Stream Translator</h1>
-            <p class="text-[9px] text-indigo-300/60 font-semibold tracking-wider mt-0.5">即時字幕翻譯系統</p>
+            <p class="mt-0.5 text-[11px] font-semibold tracking-wide text-indigo-300/60">即時字幕翻譯系統</p>
           </div>
           <button
             type="button"
@@ -128,10 +131,10 @@ watch(() => route.fullPath, () => {
         </div>
 
         <!-- Navigation Links -->
-        <div class="py-4 px-3 space-y-5 overflow-y-auto max-h-[calc(100vh-120px)] custom-scrollbar">
+        <div class="commercial-navigation py-4 px-3 space-y-5 overflow-y-auto max-h-[calc(100vh-120px)] custom-scrollbar">
           <!-- Core Control Section -->
           <div>
-            <div class="text-white/30 text-[9px] font-bold tracking-wider mb-2 px-2 uppercase">核心功能</div>
+            <div class="mb-2 px-2 text-[11px] font-bold uppercase tracking-wider text-white/30">核心功能</div>
             <div class="space-y-0.5">
               <button
                 v-for="item in primaryNavigation"
@@ -144,7 +147,7 @@ watch(() => route.fullPath, () => {
                     : 'text-white/60 hover:bg-white/5 hover:text-white'
                 ]"
               >
-                <span class="mr-2 text-sm">{{ item.icon }}</span>
+                <AppIcon :name="item.id" />
                 {{ item.name }}
               </button>
             </div>
@@ -152,7 +155,7 @@ watch(() => route.fullPath, () => {
 
           <!-- Settings Groups -->
           <div v-for="group in settingsGroups" :key="group.groupName">
-            <div class="text-white/30 text-[9px] font-bold tracking-wider mb-2 px-2 uppercase">{{ group.groupName }}</div>
+            <div class="mb-2 px-2 text-[11px] font-bold uppercase tracking-wider text-white/30">{{ group.groupName }}</div>
             <div class="space-y-0.5">
               <button
                 v-for="tab in group.items"
@@ -165,7 +168,7 @@ watch(() => route.fullPath, () => {
                     : 'text-white/60 hover:bg-white/5 hover:text-white'
                 ]"
               >
-                <span class="mr-2 text-sm">{{ tab.icon }}</span>
+                <AppIcon :name="tab.id" />
                 {{ tab.name }}
               </button>
             </div>
@@ -180,7 +183,7 @@ watch(() => route.fullPath, () => {
     </aside>
 
     <!-- Right Content Panel -->
-    <main class="app-scroll-surface relative min-h-0 min-w-0 flex-1 overflow-y-auto bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950/40">
+    <main class="commercial-main app-scroll-surface relative min-h-0 min-w-0 flex-1 overflow-y-auto bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950/40">
       <router-view />
     </main>
   </div>

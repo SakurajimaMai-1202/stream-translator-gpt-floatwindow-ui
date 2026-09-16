@@ -17,6 +17,7 @@ export interface HomeInputState {
 
 export interface SubtitleLine {
   id: string;
+  segment_id?: number | string;
   original: string;
   translated: string;
   timestamp: number; // 前端接收時間
@@ -27,6 +28,31 @@ export interface SubtitleLine {
   total_latency_ms?: number | null;
   latency_trace?: SubtitleLatencyTrace;
   latency_window?: LatencyWindowSnapshot;
+}
+
+const SUBTITLE_TIMESTAMP_DRIFT_MS = 50;
+
+function parseSubtitleClock(value: string): number | null {
+  const match = value.trim().match(/^(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})$/);
+  if (!match) return null;
+  const milliseconds = Number(match[4].padEnd(3, '0'));
+  return (((Number(match[1]) * 60 + Number(match[2])) * 60) + Number(match[3])) * 1000 + milliseconds;
+}
+
+function parseSubtitleRange(value: string): [number, number] | null {
+  const match = value.match(/(\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*(?:-->|->|→)\s*(\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})/);
+  if (!match) return null;
+  const start = parseSubtitleClock(match[1]);
+  const end = parseSubtitleClock(match[2]);
+  return start == null || end == null ? null : [start, end];
+}
+
+function subtitleTimesNearlyMatch(left: string, right: string): boolean {
+  const leftRange = parseSubtitleRange(left);
+  const rightRange = parseSubtitleRange(right);
+  return !!leftRange && !!rightRange
+    && Math.abs(leftRange[0] - rightRange[0]) <= SUBTITLE_TIMESTAMP_DRIFT_MS
+    && Math.abs(leftRange[1] - rightRange[1]) <= SUBTITLE_TIMESTAMP_DRIFT_MS;
 }
 
 export const useTranslationStore = defineStore('translation', () => {
@@ -284,18 +310,36 @@ export const useTranslationStore = defineStore('translation', () => {
         console.log('[SSE] Parsed subtitle data:', data);
         const backendTs = data.timestamp || '';
 
-        // 如果有後端 timestamp，先尋找是否已存在該筆
+        // Prefer stable segment ids, then exact timestamps. Some containers
+        // round the preliminary and translated event one millisecond apart,
+        // so use a narrow text + timestamp tolerance as the final fallback.
         let existingIdx = -1;
-        if (backendTs) {
+        if (data.segment_id !== undefined && data.segment_id !== null && data.segment_id !== '') {
           existingIdx = subtitles.value.findIndex(
-            (s: any) => s.backend_timestamp === backendTs
+            (s: SubtitleLine) => s.segment_id !== undefined && String(s.segment_id) === String(data.segment_id)
           );
+        }
+        if (backendTs) {
+          if (existingIdx === -1) {
+            existingIdx = subtitles.value.findIndex(
+              (s: SubtitleLine) => s.backend_timestamp === backendTs
+            );
+          }
+          if (existingIdx === -1 && String(data.original || '').trim()) {
+            existingIdx = subtitles.value.findIndex(
+              (s: SubtitleLine) => s.original.trim() === String(data.original).trim()
+                && !!s.backend_timestamp
+                && subtitleTimesNearlyMatch(s.backend_timestamp, backendTs)
+            );
+          }
         }
 
         if (existingIdx !== -1) {
           // 直接更新該筆（原文或翻譯擴充）
           (subtitles.value[existingIdx] as any).original = data.original || '';
           (subtitles.value[existingIdx] as any).translated = data.translated || '';
+          (subtitles.value[existingIdx] as any).segment_id = data.segment_id ?? (subtitles.value[existingIdx] as any).segment_id;
+          (subtitles.value[existingIdx] as any).backend_timestamp = backendTs || (subtitles.value[existingIdx] as any).backend_timestamp;
           (subtitles.value[existingIdx] as any).asr_latency_ms = data.asr_latency_ms ?? null;
           (subtitles.value[existingIdx] as any).llm_latency_ms = data.llm_latency_ms ?? null;
           (subtitles.value[existingIdx] as any).translation_queue_latency_ms = data.translation_queue_latency_ms ?? null;
@@ -311,6 +355,7 @@ export const useTranslationStore = defineStore('translation', () => {
         } else {
           const newSubtitle: SubtitleLine = {
             id: `${Date.now()}-${Math.random()}`,
+            segment_id: data.segment_id,
             original: data.original || '',
             translated: data.translated || '',
             timestamp: Date.now(),

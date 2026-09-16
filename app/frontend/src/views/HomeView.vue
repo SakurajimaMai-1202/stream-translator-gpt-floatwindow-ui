@@ -6,6 +6,7 @@ import { useLlamaStore } from '../stores/llama';
 import { useModelDownloadStore } from '../stores/modelDownload';
 import { translationApi, configApi, runtimeApi, serverApi, systemApi, type AppUpdateStatus, type AudioSource, type AudioDevice, type Config, type FfmpegCheckResult, type ModelComputeBackend, type ModelEngine } from '../services/api';
 import UiSelect, { type UiSelectOption } from '../components/UiSelect.vue';
+import AppIcon from '../components/AppIcon.vue';
 import { useAppSyncEvents } from '../composables/useAppSyncEvents';
 import {
   coerceLanguageForModel,
@@ -22,6 +23,7 @@ const modelDownloadStore = useModelDownloadStore();
 const publicPort = ref(8765);
 const activeCopyPath = ref<string | null>(null);
 const subtitleSharingEnabled = ref(true);
+const subtitleSharingStatusKnown = ref(false);
 const isUpdatingSubtitleSharing = ref(false);
 const ffmpegStatus = ref<FfmpegCheckResult | null>(null);
 const ffmpegWarningDismissed = ref(false);
@@ -62,11 +64,14 @@ type WindowWithPyQt = Window & {
 async function fetchPublicPort() {
   try {
     const data = await serverApi.getInfo();
+    subtitleSharingStatusKnown.value = true;
     if (data.public_port) publicPort.value = data.public_port;
     if (typeof data.enable_subtitle_sharing === 'boolean') {
       subtitleSharingEnabled.value = data.enable_subtitle_sharing;
     }
-  } catch {}
+  } catch {
+    subtitleSharingStatusKnown.value = false;
+  }
 }
 
 async function checkSystemDependencies() {
@@ -407,24 +412,6 @@ const backendOptions = computed<UiSelectOption[]>(() => {
     }));
 
   return [...base, ...custom];
-});
-
-const llamaPresetOptions = computed<UiSelectOption[]>(() => {
-  const options: UiSelectOption[] = [{ value: '', label: '-- 自訂參數 (未保存) --' }];
-
-  const system = Object.keys(llamaStore.systemPresets || {}).map((name) => ({
-    value: name,
-    label: name,
-    group: '系統預設'
-  }));
-
-  const custom = Object.keys(llamaStore.customPresets || {}).map((name) => ({
-    value: `custom:${name}`,
-    label: `📦 ${name}`,
-    group: '我的配置'
-  }));
-
-  return [...options, ...system, ...custom];
 });
 
 // 選擇的值
@@ -1245,10 +1232,6 @@ async function handleStop() {
   }
 }
 
-function goToSettings() {
-  router.push('/settings');
-}
-
 function openSubtitleWindow() {
   // 通知主進程開啟字幕視窗
   if ((window as any).pyqt) {
@@ -1271,22 +1254,22 @@ function goToWarningPage(page?: string) {
   router.push(`/settings?tab=${page}`);
 }
 
-function getFileName(path: string): string {
-  if (!path) return '';
-  return path.split(/[\\/]/).pop() || path;
-}
-
 function clearLogs() {
   logs.value = [];
 }
 </script>
 
 <template>
-  <div class="mx-auto flex min-h-full max-w-7xl flex-col justify-between p-3 sm:p-5">
+  <div class="commercial-page commercial-home mx-auto flex min-h-full max-w-7xl flex-col justify-between p-3 sm:p-5">
     <div>
       <!-- Header Status Bar -->
-      <div class="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-white/5 pb-2.5 sm:gap-3">
-        <div class="flex flex-wrap items-center gap-2 sm:gap-3">
+      <div class="commercial-page-header mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-white/5 pb-2.5 sm:gap-3">
+        <div class="min-w-0">
+          <div class="mb-2 flex flex-wrap items-center gap-2 sm:gap-3">
+            <h1 class="text-xl font-bold text-white sm:text-2xl">即時轉譯</h1>
+            <span class="text-xs text-white/40">選擇音訊來源，讓翻譯隨畫面同行。</span>
+          </div>
+          <div class="flex flex-wrap items-center gap-2 sm:gap-3">
           <!-- Status dot -->
           <div class="flex items-center gap-1.5 bg-white/5 px-2.5 py-0.5 rounded-full border border-white/10 text-[10px]">
             <div :class="[
@@ -1308,6 +1291,7 @@ function clearLogs() {
               {{ hasErrors ? '配置錯誤' : (configWarnings.length > 0 ? '配置警告' : '配置正常') }}
             </span>
           </div>
+        </div>
         </div>
         <div class="flex min-w-0 items-center gap-2 max-md:w-full max-md:justify-between">
           <div v-if="store.currentUrl" class="text-white/40 text-[10px] truncate max-w-xs sm:max-w-md font-mono bg-white/5 px-2.5 py-0.5 rounded-lg border border-white/5">
@@ -1390,7 +1374,7 @@ function clearLogs() {
             
             <!-- 音訊來源選擇 -->
             <div class="mb-5">
-              <label class="block text-white/80 font-bold mb-2.5 text-xs tracking-wider uppercase">🎵 音訊來源</label>
+              <label class="commercial-field-label">音訊來源</label>
               <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <button
                   @click="audioSource = 'url'; onAudioSourceChange()"
@@ -1404,7 +1388,7 @@ function clearLogs() {
                     store.isRunning ? 'opacity-50 cursor-not-allowed' : 'hover:scale-[1.02] active:scale-[0.98]'
                   ]"
                 >
-                  <span class="text-2xl mb-1.5 transition-transform group-hover:scale-110 duration-200">🌐</span>
+                  <AppIcon name="url" class="source-card-icon" />
                   <span class="font-bold text-xs">URL 串流</span>
                   <span class="text-[9px] text-white/40 mt-1 hidden sm:inline-block leading-tight">播放網路直播流</span>
                 </button>
@@ -1420,7 +1404,7 @@ function clearLogs() {
                     store.isRunning ? 'opacity-50 cursor-not-allowed' : 'hover:scale-[1.02] active:scale-[0.98]'
                   ]"
                 >
-                  <span class="text-2xl mb-1.5 transition-transform group-hover:scale-110 duration-200">📁</span>
+                  <AppIcon name="file" class="source-card-icon" />
                   <span class="font-bold text-xs"><span class="md:hidden">電腦</span>本地檔案</span>
                   <span class="text-[9px] text-white/40 mt-1 hidden sm:inline-block leading-tight">轉譯本機影音檔</span>
                 </button>
@@ -1436,7 +1420,7 @@ function clearLogs() {
                     store.isRunning ? 'opacity-50 cursor-not-allowed' : 'hover:scale-[1.02] active:scale-[0.98]'
                   ]"
                 >
-                  <span class="text-2xl mb-1.5 transition-transform group-hover:scale-110 duration-200">🎤</span>
+                  <AppIcon name="microphone" class="source-card-icon" />
                   <span class="font-bold text-xs"><span class="md:hidden">電腦</span>麥克風</span>
                   <span class="text-[9px] text-white/40 mt-1 hidden sm:inline-block leading-tight">錄製麥克風輸入</span>
                 </button>
@@ -1452,7 +1436,7 @@ function clearLogs() {
                     store.isRunning ? 'opacity-50 cursor-not-allowed' : 'hover:scale-[1.02] active:scale-[0.98]'
                   ]"
                 >
-                  <span class="text-2xl mb-1.5 transition-transform group-hover:scale-110 duration-200">🔊</span>
+                  <AppIcon name="system-audio" class="source-card-icon" />
                   <span class="font-bold text-xs"><span class="md:hidden">電腦</span>系統音訊</span>
                   <span class="text-[9px] text-white/40 mt-1 hidden sm:inline-block leading-tight">捕獲系統播放音</span>
                 </button>
@@ -1462,7 +1446,7 @@ function clearLogs() {
             <!-- URL/檔案輸入 -->
             <div v-if="audioSource === 'url' || audioSource === 'file'" class="mb-5">
               <label class="block text-white/80 font-bold mb-1.5 text-xs tracking-wider uppercase">
-                {{ audioSource === 'url' ? '🔗 直播網址（YouTube Live／Twitch／X／TikTok 等）' : '📁 本地檔案' }}
+                {{ audioSource === 'url' ? '直播網址（YouTube Live／Twitch／X／TikTok 等）' : '本地檔案' }}
               </label>
               <div class="flex flex-col gap-2 sm:flex-row">
                 <input
@@ -1482,7 +1466,7 @@ function clearLogs() {
                   class="shrink-0 px-4 py-2.5 bg-blue-600/90 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl transition border border-blue-400/40 text-sm font-semibold whitespace-nowrap"
                   title="開啟檔案選擇器"
                 >
-                  📂 選擇檔案
+                  選擇檔案
                 </button>
               </div>
               <input
@@ -1501,7 +1485,7 @@ function clearLogs() {
             <!-- 設備選擇 -->
             <div v-if="audioSource === 'microphone' || audioSource === 'system_audio'" class="mb-5">
               <label class="block text-white/80 font-bold mb-1.5 text-xs tracking-wider uppercase">
-                {{ audioSource === 'microphone' ? '🎤 麥克風設備' : '🔊 系統音訊設備' }}
+                {{ audioSource === 'microphone' ? '麥克風設備' : '系統音訊設備' }}
               </label>
               <div class="flex gap-2">
                 <UiSelect
@@ -1517,7 +1501,7 @@ function clearLogs() {
                   class="px-4 py-2.5 bg-white/5 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl transition border border-white/15 text-sm flex items-center justify-center min-w-[46px]"
                   title="重新整理設備列表"
                 >
-                  {{ isLoadingDevices ? '⏳' : '🔄' }}
+                  <AppIcon name="refresh" :class="['h-4 w-4', isLoadingDevices ? 'animate-spin' : '']" />
                 </button>
               </div>
               <p v-if="availableDevices.length > 0" class="text-white/40 text-[10px] mt-1.5 tracking-wide">
@@ -1529,7 +1513,7 @@ function clearLogs() {
             <div class="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
               <!-- 輸入語言 -->
               <div class="flex flex-col">
-                <label class="text-white/60 text-[10px] font-bold tracking-wider uppercase mb-1.5">🎙️ 輸入語言</label>
+                <label class="commercial-field-label">輸入語言</label>
                 <UiSelect
                   v-model="selectedInputLanguage"
                   :options="inputLanguageOptions"
@@ -1544,7 +1528,7 @@ function clearLogs() {
               <!-- 啟用翻譯與目標語言 -->
               <div class="flex flex-col">
                 <div class="flex items-center justify-between mb-1.5">
-                  <label class="text-white/60 text-[10px] font-bold tracking-wider uppercase">🌐 目標語言</label>
+                  <label class="commercial-field-label">目標語言</label>
                   <label class="flex items-center gap-1 cursor-pointer text-[10px] text-white/45 hover:text-white/80 transition">
                     <input type="checkbox" v-model="translationEnabled" :disabled="store.isRunning" class="w-3 h-3 accent-blue-500 rounded bg-white/5 border-white/15" />
                     <span>翻譯</span>
@@ -1638,7 +1622,7 @@ function clearLogs() {
 
                   <!-- 翻譯模型／後端 -->
                   <div class="flex flex-col md:col-span-3">
-                    <label class="text-white/70 text-[10px] font-bold tracking-wider mb-1">🧠 翻譯模型／後端</label>
+                    <label class="commercial-field-label">翻譯模型／後端</label>
                     <UiSelect
                       v-model="selectedBackend"
                       :options="backendOptions"
@@ -1659,7 +1643,8 @@ function clearLogs() {
               <div class="flex items-center justify-between gap-3">
                 <div class="min-w-0">
                   <div class="flex items-center gap-2 text-[10px] font-bold text-cyan-200">
-                    <span>{{ selectedAsrDownloadTask && ['pending', 'downloading'].includes(selectedAsrDownloadTask.status) ? '⬇️ ASR 模型下載中' : '📦 尚未下載 ASR 模型' }}</span>
+                    <AppIcon :name="selectedAsrDownloadTask && ['pending', 'downloading'].includes(selectedAsrDownloadTask.status) ? 'download' : 'model_management'" class="h-4 w-4" />
+                    <span>{{ selectedAsrDownloadTask && ['pending', 'downloading'].includes(selectedAsrDownloadTask.status) ? 'ASR 模型下載中' : '尚未下載 ASR 模型' }}</span>
                     <span v-if="selectedAsrDownloadTask && ['pending', 'downloading'].includes(selectedAsrDownloadTask.status)" class="rounded-full bg-cyan-400/10 px-2 py-0.5 text-cyan-300">
                       {{ (modelDownloadStore.displayProgress(selectedAsrDownloadTask) * 100).toFixed(1) }}%
                     </span>
@@ -1696,7 +1681,8 @@ function clearLogs() {
                 :disabled="isLoading || isPreparingAsrModel || !isConfigReady"
                 class="flex-1 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:via-indigo-500 hover:to-purple-500 disabled:from-slate-800 disabled:to-slate-900 disabled:text-white/40 disabled:border-white/5 disabled:shadow-none text-white font-bold py-3.5 px-5 rounded-xl transition-all duration-200 active:scale-[0.98] shadow-lg shadow-indigo-600/20 flex items-center justify-center gap-2"
               >
-                <span class="text-sm font-semibold">{{ isPreparingAsrModel ? '⬇️ 正在下載 ASR 模型...' : isLoading ? '⏳ 啟動中...' : '▶️ 啟動即時轉譯' }}</span>
+                <AppIcon :name="isPreparingAsrModel ? 'download' : 'play'" class="h-4 w-4" />
+                <span class="text-sm font-semibold">{{ isPreparingAsrModel ? '正在下載 ASR 模型…' : isLoading ? '啟動中…' : '啟動即時轉譯' }}</span>
               </button>
 
               <button
@@ -1705,13 +1691,14 @@ function clearLogs() {
                 :disabled="isLoading"
                 class="flex-1 bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 disabled:from-slate-800 disabled:to-slate-900 disabled:text-white/40 disabled:border-white/5 disabled:shadow-none text-white font-bold py-3.5 px-5 rounded-xl transition-all duration-200 active:scale-[0.98] shadow-lg shadow-red-600/20 flex items-center justify-center gap-2"
               >
-                <span class="text-sm font-semibold">{{ isLoading ? '⏳ 停止中...' : '⏹️ 停止即時轉譯' }}</span>
+                <AppIcon name="stop" class="h-4 w-4" />
+                <span class="text-sm font-semibold">{{ isLoading ? '停止中…' : '停止即時轉譯' }}</span>
               </button>
 
               <!-- 字幕視窗按鈕 -->
               <button
                 @click="openSubtitleWindow"
-                class="px-5 py-3.5 bg-gradient-to-r from-cyan-600/90 to-teal-600/90 hover:from-cyan-500 hover:to-teal-500 text-white font-semibold rounded-xl transition-all shadow-md shadow-cyan-600/10 flex items-center justify-center gap-1.5 text-sm"
+                class="home-inline-subtitle-button px-5 py-3.5 bg-gradient-to-r from-cyan-600/90 to-teal-600/90 hover:from-cyan-500 hover:to-teal-500 text-white font-semibold rounded-xl transition-all shadow-md shadow-cyan-600/10 flex items-center justify-center gap-1.5 text-sm"
                 title="開啟字幕懸浮視窗"
               >
                 🪟 <span class="hidden sm:inline">字幕視窗</span>
@@ -1734,7 +1721,7 @@ function clearLogs() {
                   class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl border text-lg transition-colors"
                   :class="llamaStore.localLlmEnabled ? 'border-emerald-400/20 bg-emerald-400/10' : 'border-white/5 bg-white/[0.03]'"
                 >
-                  🧠
+                  <AppIcon name="brain" class="h-5 w-5" />
                 </div>
                 <div class="min-w-0">
                   <div class="mb-1 flex flex-wrap items-center gap-2">
@@ -1789,20 +1776,47 @@ function clearLogs() {
         </div>
 
         <!-- Right Column: Monitoring & Sharing (col-span-5 or 4) -->
-        <div class="flex min-w-0 flex-col gap-6 lg:col-span-5 xl:col-span-4">
+        <div class="home-monitoring flex min-w-0 flex-col gap-6 lg:col-span-5 xl:col-span-4">
+
+          <!-- Floating subtitle window control -->
+          <div class="home-subtitle-control rounded-2xl border border-white/10 bg-slate-950/90 p-4">
+            <div class="mb-3 flex items-start justify-between gap-3">
+              <div>
+                <h2 class="text-sm font-bold text-white">浮動字幕窗</h2>
+                <p class="mt-1 text-xs leading-relaxed text-white/45">字幕顯示於獨立桌面視窗，主視窗專注於轉譯控制。</p>
+              </div>
+              <span class="rounded-md border border-cyan-400/20 bg-cyan-400/10 px-2 py-1 text-[10px] font-semibold text-cyan-200">獨立視窗</span>
+            </div>
+            <button
+              type="button"
+              class="w-full border border-blue-400/30 bg-blue-500/15 px-4 py-2.5 text-sm font-semibold text-blue-100 transition hover:bg-blue-500/25"
+              title="開啟字幕懸浮視窗"
+              @click="openSubtitleWindow"
+            >
+              開啟字幕視窗
+            </button>
+            <button
+              type="button"
+              class="mt-3 flex w-full items-center justify-between border-t border-white/10 bg-transparent px-0 pt-3 text-left text-xs text-white/60 hover:text-white"
+              @click="router.push('/subtitle-style')"
+            >
+              <span>字體、配色、透明度與顯示方式</span>
+              <span class="text-blue-300">字幕外觀 →</span>
+            </button>
+          </div>
           
           <!-- 執行日誌 -->
-          <div class="flex h-[420px] min-h-0 flex-col rounded-2xl border border-white/10 bg-slate-950/90 p-4 shadow-2xl lg:h-[500px]">
+          <div class="home-log-panel flex h-[240px] min-h-0 flex-col rounded-2xl border border-white/10 bg-slate-950/90 p-4 shadow-2xl">
             <div class="flex items-center justify-between mb-2.5">
               <h2 class="text-xs font-bold text-white tracking-widest uppercase flex items-center gap-1.5">
                 <span class="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
-                📋 系統執行日誌
+                <AppIcon name="log" class="h-4 w-4" /> 系統執行日誌
               </h2>
               <button 
                 @click="clearLogs"
                 class="text-[10px] text-white/40 hover:text-white/80 transition-colors flex items-center gap-1 px-2.5 py-1 bg-white/5 hover:bg-white/10 rounded-lg border border-white/5"
               >
-                🗑️ 清除
+                <AppIcon name="trash" class="h-4 w-4" /> 清除
               </button>
             </div>
             <div ref="logContainer" class="min-h-0 flex-1 overflow-y-auto bg-black/40 rounded-xl p-3 font-mono text-[11px] leading-relaxed custom-scrollbar border border-white/5">
@@ -1812,28 +1826,32 @@ function clearLogs() {
           </div>
 
           <!-- 🌐 公開分享連結 -->
-          <div class="bg-slate-950/90 rounded-2xl border border-indigo-500/20 shadow-2xl p-4">
+          <div class="home-sharing-panel bg-slate-950/90 rounded-2xl border border-indigo-500/20 shadow-2xl p-4">
             <div class="flex items-center justify-between mb-2.5">
               <h2 class="text-xs font-bold text-white tracking-widest uppercase flex items-center gap-1.5">
                 <span class="w-1.5 h-1.5 rounded-full bg-indigo-400"></span>
-                🌐 字幕分享服務
+                <AppIcon name="url" class="h-4 w-4" /> 字幕分享服務
               </h2>
-              <button @click="toggleSubtitleSharing" :disabled="isUpdatingSubtitleSharing"
+              <button @click="toggleSubtitleSharing" :disabled="isUpdatingSubtitleSharing || !subtitleSharingStatusKnown"
                 class="px-2 py-1 text-[10px] rounded-lg transition duration-200 border"
                 :class="subtitleSharingEnabled
                   ? 'bg-emerald-600/80 hover:bg-emerald-600 border-emerald-500/30 text-white'
                   : 'bg-rose-600/80 hover:bg-rose-600 border-rose-500/30 text-white'">
-                {{ isUpdatingSubtitleSharing ? '同步中...' : (subtitleSharingEnabled ? '分享啟用' : '分享關閉') }}
+                {{ isUpdatingSubtitleSharing ? '同步中...' : (!subtitleSharingStatusKnown ? '狀態未知' : (subtitleSharingEnabled ? '分享啟用' : '分享關閉')) }}
               </button>
             </div>
-            
-            <div v-if="subtitleSharingEnabled" class="space-y-2.5">
+
+            <div v-if="!subtitleSharingStatusKnown" class="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs leading-relaxed text-amber-200">
+              尚未連接字幕分享服務，連線恢復後會顯示實際狀態與分享連結。
+            </div>
+
+            <div v-else-if="subtitleSharingEnabled" class="space-y-2.5">
               <p class="text-white/40 text-[9px] leading-tight">廣播服務已運行於連接埠 {{ publicPort }}。此連結僅顯示字幕，無設定權限。</p>
               
               <div class="space-y-2">
                 <!-- 電腦版 -->
                 <div class="flex items-center gap-2.5 bg-white/5 rounded-xl p-2.5 border border-white/5 group hover:bg-white/10 transition duration-200">
-                  <span class="text-lg">🖥️</span>
+                  <AppIcon name="desktop" class="h-5 w-5 text-blue-300" />
                   <div class="flex-1 min-w-0">
                     <div class="text-white/60 text-[10px] font-bold">電腦端字幕</div>
                     <div class="text-white/35 text-[9px] truncate font-mono mt-0.5">{{ getPublicBase() }}/desktop</div>
@@ -1846,7 +1864,7 @@ function clearLogs() {
                 
                 <!-- 手機版 -->
                 <div class="flex items-center gap-2.5 bg-white/5 rounded-xl p-2.5 border border-white/5 group hover:bg-white/10 transition duration-200">
-                  <span class="text-lg">📱</span>
+                  <AppIcon name="mobile" class="h-5 w-5 text-blue-300" />
                   <div class="flex-1 min-w-0">
                     <div class="text-white/60 text-[10px] font-bold">行動端字幕</div>
                     <div class="text-white/35 text-[9px] truncate font-mono mt-0.5">{{ getPublicBase() }}/mobile</div>
@@ -1857,7 +1875,7 @@ function clearLogs() {
                   </button>
                 </div>
               </div>
-              <p class="text-white/30 text-[9px] text-center tracking-wide mt-1">💡 請確保本機防火牆允許對外存取此連接埠</p>
+              <p class="text-white/30 text-[9px] text-center tracking-wide mt-1">請確保本機防火牆允許對外存取此連接埠</p>
             </div>
             
             <div v-else class="p-3 rounded-xl border border-rose-500/20 bg-rose-500/5 text-rose-300 text-[10px] leading-relaxed text-center">

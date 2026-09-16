@@ -6,7 +6,7 @@ import copy
 from backend.models.translation import StartTranslationRequest, TranslationTaskResponse, DeviceListResponse, AudioDevice
 from backend.core.translator import active_translations, create_task, get_task, remove_task
 from backend.core.runtime_profiles import get_runtime_capabilities
-from backend.core.config_manager import ConfigManager
+from backend.core.config_manager import ConfigManager, normalize_transcription_engine_flags
 from backend.core.app_sync import publish_app_event
 
 router = APIRouter(prefix="/translation", tags=["translation"])
@@ -19,6 +19,7 @@ PARAKEET_CTC_JA_MODEL_IDS = {
     "nvidia/parakeet-tdt_ctc-1.1b",
     "grider-transwithai/parakeet-ctc-1.1b-ja",
 }
+
 
 @router.post("/start", response_model=TranslationTaskResponse)
 async def start_translation(request: StartTranslationRequest, http_request: Request):
@@ -80,6 +81,11 @@ async def start_translation(request: StartTranslationRequest, http_request: Requ
             current_config['transcription']['backend'] = 'parakeet-ctc-ja'
         if request.nemo_asr_dtype:
             current_config['transcription']['nemo_asr_dtype'] = request.nemo_asr_dtype
+
+        # The home screen sends the selected engine explicitly. Keep legacy
+        # boolean flags mutually exclusive so a stale saved flag cannot
+        # silently override the engine/model chosen for this task.
+        normalize_transcription_engine_flags(current_config['transcription'])
         # 🔧 新增: 覆蓋輸入語言
         if request.input_language:
             current_config['transcription']['language'] = request.input_language

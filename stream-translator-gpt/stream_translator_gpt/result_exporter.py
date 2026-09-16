@@ -304,14 +304,18 @@ class ResultExporter(LoopWorkerBase):
                     text_to_print = timestamp_text + ' ' + text_to_print
                 text_to_print += latency_log
                 text_to_print = text_to_print.strip()
-                print(f'{BOLD}{text_to_print}{ENDC}', flush=True)
+                # JSON is the authoritative subtitle on the subprocess pipe.
+                # A second human-readable copy can be parsed as another subtitle
+                # (rounded timestamps, disabled timestamps, or multiline text).
+                if not self.emit_json_events:
+                    print(f'{BOLD}{text_to_print}{ENDC}', flush=True)
                 text_to_send += task.translation
-            elif latency_log:
+            elif latency_log and not self.emit_json_events:
                 text_to_print = latency_log.strip()
                 if self.output_timestamps:
                     text_to_print = timestamp_text + ' ' + text_to_print
                 print(text_to_print, flush=True)
-            elif task.transcript:
+            elif task.transcript and not self.emit_json_events:
                 # 如果有轉錄但沒有翻譯，輸出警告或除錯訊息
                 text_to_print = task.transcript
                 if self.output_timestamps:

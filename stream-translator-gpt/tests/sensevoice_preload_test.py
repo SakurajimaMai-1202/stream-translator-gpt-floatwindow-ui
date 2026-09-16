@@ -150,6 +150,7 @@ def test_parakeet_decoder_selects_tdt_or_ctc_head():
     transcriber.model_id = "nvidia/parakeet-tdt_ctc-0.6b-ja"
     transcriber.model = _Model()
     transcriber.decoding = "tdt"
+    transcriber.torch_dtype = None
     transcriber._configure_decoder()
     transcriber.decoding = "ctc"
     transcriber._configure_decoder()
@@ -164,6 +165,36 @@ def test_legacy_parakeet_is_forced_to_ctc():
     assert NemoASRTranscriber._normalize_decoding(
         "tdt", NemoASRTranscriber.LEGACY_MODEL
     ) == "ctc"
+
+
+def test_parakeet_low_precision_disables_graphs_without_mutating_model_config():
+    from omegaconf import OmegaConf
+    from types import SimpleNamespace
+
+    calls = []
+    config = OmegaConf.create({
+        'strategy': 'greedy_batch',
+        'greedy': {'use_cuda_graph_decoder': True, 'max_symbols': 10},
+    })
+    transcriber = NemoASRTranscriber.__new__(NemoASRTranscriber)
+    transcriber.model_id = NemoASRTranscriber.DEFAULT_MODEL
+    transcriber.decoding = 'tdt'
+    transcriber.model = SimpleNamespace(
+        cfg=SimpleNamespace(decoding=config),
+        change_decoding_strategy=lambda **kwargs: calls.append(kwargs),
+    )
+    for dtype in ('bf16', 'fp16'):
+        transcriber.torch_dtype = dtype
+        transcriber._configure_decoder()
+        actual = calls[-1]['decoding_cfg']
+        assert actual.greedy.use_cuda_graph_decoder is False
+        assert actual.greedy.max_symbols == 10
+        assert actual.strategy == 'greedy_batch'
+        assert config.greedy.use_cuda_graph_decoder is True
+
+    transcriber.decoding = 'ctc'
+    transcriber._configure_decoder()
+    assert calls[-1] == {'decoder_type': 'ctc', 'verbose': False}
 
 
 def test_legacy_parakeet_skips_hybrid_decoder_selection():

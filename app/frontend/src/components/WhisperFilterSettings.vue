@@ -28,7 +28,7 @@ function toggleFilter(filterName: string, checked: boolean) {
 
 <template>
   <div class="mt-6 pt-6 border-t border-white/10">
-    <h3 class="text-lg font-semibold text-blue-300 mb-4">🔍 Whisper 結果濾鏡</h3>
+    <h3 class="commercial-section-title">Whisper 結果濾鏡</h3>
     <p class="text-white/60 text-sm mb-4">選擇要套用在 Whisper 辨識結果上的後處理濾鏡。</p>
     <div class="space-y-3">
       <label

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { LatencyWindowSnapshot, SubtitleLatencyTrace } from '../services/api';
 import { ref, onMounted, onUnmounted, nextTick } from 'vue';
+import AppIcon from '../components/AppIcon.vue';
 
 // ─── 類型 ───────────────────────────────────────────────
 interface SubtitleItem {
@@ -206,6 +207,8 @@ function addOrUpdateSubtitle(data: {
   asr_latency_ms?: number | null;
   llm_latency_ms?: number | null;
   total_latency_ms?: number | null;
+  latency_trace?: SubtitleLatencyTrace;
+  latency_window?: LatencyWindowSnapshot;
 }) {
   if (!data.original && !data.translated) return;
 
@@ -326,7 +329,7 @@ onUnmounted(() => {
     <div class="status-bar" :class="status">
       <span class="status-dot"></span>
       <span class="status-text">{{ statusText }}</span>
-      <button class="settings-btn" @click="showPanel = !showPanel" title="設定">⚙</button>
+      <button class="settings-btn" @click="showPanel = !showPanel" title="設定" aria-label="設定"><AppIcon name="general" /></button>
     </div>
 
     <!-- 設定面板 -->
@@ -578,6 +581,7 @@ onUnmounted(() => {
   transition: color 0.2s;
 }
 .settings-btn:hover { color: var(--text); }
+.settings-btn .app-icon { width: 22px; height: 22px; }
 
 /* ─── 設定面板 ─── */
 .settings-panel {

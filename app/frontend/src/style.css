@@ -5,6 +5,24 @@
 /* Native form controls compatibility (QWebEngine / Chromium popup rendering) */
 :root {
   color-scheme: dark;
+  --fw-bg: #080d17;
+  --fw-sidebar: #0c1220;
+  --fw-surface: #101a2a;
+  --fw-surface-raised: #152033;
+  --fw-surface-subtle: #0c1524;
+  --fw-border: #273249;
+  --fw-border-strong: #34415a;
+  --fw-text: #e9edf5;
+  --fw-text-secondary: #a5b4cb;
+  --fw-text-muted: #7f8ca4;
+  --fw-primary: #7297f5;
+  --fw-primary-soft: #1d3154;
+  --fw-success: #7ad6b2;
+  --fw-warning: #f1c878;
+  --fw-danger: #f08a91;
+  --fw-radius-sm: 0.375rem;
+  --fw-radius-md: 0.5rem;
+  --fw-radius-lg: 0.75rem;
 }
 
 :root:not(.transparent-page) {
@@ -27,6 +45,7 @@ html.transparent-page #app {
 body {
   overflow: hidden;
   text-rendering: optimizeLegibility;
+  font-family: "Segoe UI", "Microsoft JhengHei UI", "Microsoft JhengHei", sans-serif;
 }
 
 #app {
@@ -34,6 +53,343 @@ body {
   /* 不要在整個長頁面上使用 paint containment。Qt WebEngine 在 GPU
      合成下快速捲動大型 backdrop-filter 區域時，可能短暫漏畫 tile。 */
   contain: layout style;
+}
+
+/* Commercial UI refresh ---------------------------------------------------
+   Keep these rules scoped to MainLayout. Transparent subtitle pages live
+   outside .commercial-shell and retain their user-configured appearance. */
+.commercial-shell {
+  background: var(--fw-bg) !important;
+  color: var(--fw-text);
+}
+
+.commercial-sidebar {
+  background: var(--fw-sidebar) !important;
+  border-color: var(--fw-border) !important;
+  box-shadow: none !important;
+}
+
+.commercial-mobile-header,
+.commercial-brand {
+  background: var(--fw-sidebar) !important;
+  border-color: var(--fw-border) !important;
+}
+
+.commercial-brand-mark {
+  display: inline-flex;
+  width: 2rem;
+  height: 2rem;
+  flex: 0 0 2rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(114, 151, 245, 0.45);
+  border-radius: var(--fw-radius-md);
+  background: var(--fw-primary-soft);
+  color: #cbdcff;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.commercial-brand-mark svg {
+  width: 1.5rem;
+  height: 1.5rem;
+  overflow: visible;
+}
+
+.commercial-brand-mark .brand-bubble {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.commercial-brand-mark .brand-wave,
+.commercial-brand-mark .brand-spark {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.commercial-navigation > div > div:first-child {
+  color: var(--fw-text-muted) !important;
+  font-size: 0.65rem !important;
+  letter-spacing: 0.12em !important;
+}
+
+.commercial-navigation button {
+  min-height: 2.35rem;
+  border: 0 !important;
+  border-left: 3px solid transparent !important;
+  border-radius: var(--fw-radius-md) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--fw-text-secondary) !important;
+  font-size: 0.78rem !important;
+  font-weight: 500 !important;
+}
+
+.commercial-navigation button:hover {
+  background: rgba(255, 255, 255, 0.035) !important;
+  color: var(--fw-text) !important;
+}
+
+.commercial-navigation button[class*="border-blue-500"] {
+  border-left-color: var(--fw-primary) !important;
+  background: var(--fw-primary-soft) !important;
+  color: #dbe6ff !important;
+}
+
+.commercial-navigation .app-icon {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 1rem;
+  margin-right: 0.65rem;
+  color: var(--fw-text-muted);
+}
+
+.commercial-navigation button:hover .app-icon,
+.commercial-navigation button[class*="border-blue-500"] .app-icon {
+  color: var(--fw-primary);
+}
+
+.commercial-main,
+.app-scroll-surface {
+  background: var(--fw-bg) !important;
+}
+
+.commercial-main :is(h1, h2, h3) {
+  letter-spacing: -0.01em;
+}
+
+.commercial-page {
+  width: 100%;
+}
+
+.commercial-panel {
+  border: 1px solid var(--fw-border);
+  border-radius: var(--fw-radius-lg);
+  background: var(--fw-surface);
+  box-shadow: none;
+}
+
+.commercial-panel-accent {
+  border-color: rgba(114, 151, 245, 0.38);
+  background: linear-gradient(135deg, rgba(29, 49, 84, 0.72), var(--fw-surface));
+}
+
+.commercial-primary-action {
+  border: 1px solid var(--fw-primary);
+  border-radius: var(--fw-radius-md);
+  background: var(--fw-primary);
+  color: #07142f;
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.commercial-primary-action:hover {
+  border-color: #8caaf8;
+  background: #8caaf8;
+}
+
+.commercial-section-title {
+  margin-bottom: 1rem;
+  color: var(--fw-text);
+  font-size: 1rem;
+  font-weight: 650;
+}
+
+.commercial-field-label {
+  display: block;
+  margin-bottom: 0.625rem;
+  color: var(--fw-text-secondary);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.source-card-icon {
+  width: 1.5rem;
+  height: 1.5rem;
+  margin-bottom: 0.375rem;
+  color: var(--fw-primary);
+  transition: transform 180ms ease;
+}
+
+button:hover .source-card-icon { transform: translateY(-1px); }
+
+.commercial-main :is(button, a, input, textarea, select) {
+  overflow-wrap: anywhere;
+}
+
+.commercial-main :is(button, a)[class*="px-"] {
+  min-height: 2.5rem;
+}
+
+@media (max-width: 640px) {
+  .commercial-page { padding: 1rem !important; }
+  .commercial-page-header { min-height: 0; margin-bottom: 1rem !important; }
+  .commercial-main [class*="grid-cols-"] { min-width: 0; }
+  .commercial-main :is(input, textarea, select, button) { min-width: 0; }
+  .commercial-main [class*="break-all"] { overflow-wrap: anywhere; word-break: break-word; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .commercial-main *, .commercial-navigation * {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+.commercial-page-header {
+  min-height: 4.5rem;
+  margin-bottom: 1.5rem !important;
+  padding-bottom: 1rem !important;
+  border-color: var(--fw-border) !important;
+}
+
+.commercial-page > :first-child:is(.flex),
+.commercial-settings > :first-child,
+.commercial-models > :first-child,
+.commercial-guide > :first-child {
+  border-color: var(--fw-border) !important;
+}
+
+.commercial-main table {
+  border-color: var(--fw-border) !important;
+}
+
+.commercial-main :is(th, td) {
+  border-color: var(--fw-border) !important;
+}
+
+.commercial-main th {
+  background: var(--fw-surface-raised) !important;
+  color: var(--fw-text-secondary) !important;
+  font-weight: 600;
+}
+
+.commercial-main dialog,
+.commercial-main [class*="fixed"][class*="inset-0"] > [class*="rounded"] {
+  border-color: var(--fw-border-strong) !important;
+  background: var(--fw-surface) !important;
+}
+
+.commercial-main [class*="fixed"][class*="inset-0"] {
+  backdrop-filter: none !important;
+}
+
+.commercial-settings > :is([class*="from-slate-950"], [class*="bg-slate-950/95"]),
+.commercial-subtitle-settings > :is([class*="from-slate-950"], [class*="bg-slate-950/95"]) {
+  border-color: var(--fw-border) !important;
+  background: var(--fw-surface) !important;
+  box-shadow: none !important;
+}
+
+.commercial-subtitle-settings:is(.min-h-screen) {
+  background: var(--fw-bg) !important;
+  color: var(--fw-text);
+}
+
+.commercial-main :is(input:not([type="checkbox"]):not([type="range"]):not([type="color"]), textarea, select) {
+  border-color: var(--fw-border-strong) !important;
+  border-radius: var(--fw-radius-md) !important;
+  background: var(--fw-surface-subtle) !important;
+  color: var(--fw-text) !important;
+  box-shadow: none !important;
+}
+
+.commercial-main :is(input, textarea, select, button):focus-visible {
+  outline: 2px solid rgba(143, 170, 255, 0.9) !important;
+  outline-offset: 2px;
+}
+
+.commercial-main :is(input, textarea)::placeholder {
+  color: #66758e !important;
+  opacity: 1;
+}
+
+.commercial-main button {
+  border-radius: var(--fw-radius-md) !important;
+  box-shadow: none !important;
+}
+
+.commercial-main [class*="rounded-2xl"] {
+  border-radius: var(--fw-radius-lg) !important;
+}
+
+.commercial-main :is([class*="bg-slate-950/90"], [class*="bg-slate-950/95"], [class*="bg-slate-950/65"], [class*="from-slate-950/95"]) {
+  background: var(--fw-surface) !important;
+}
+
+.commercial-main :is([class*="bg-white/5"], [class*="bg-black/20"], [class*="bg-black/15"]) {
+  background: var(--fw-surface-raised) !important;
+}
+
+.commercial-main :is([class*="border-white/5"], [class*="border-white/10"], [class*="border-white/15"]) {
+  border-color: var(--fw-border) !important;
+}
+
+.commercial-main :is([class*="shadow-2xl"], [class*="shadow-lg"], [class*="shadow-md"]) {
+  box-shadow: none !important;
+}
+
+.commercial-main :is([class*="text-white/30"], [class*="text-white/35"], [class*="text-white/40"], [class*="text-white/45"]) {
+  color: var(--fw-text-muted) !important;
+}
+
+.commercial-main :is([class*="text-white/50"], [class*="text-white/55"], [class*="text-white/60"], [class*="text-white/70"]) {
+  color: var(--fw-text-secondary) !important;
+}
+
+.commercial-main :is([class*="text-[9px]"], [class*="text-[10px]"]) {
+  font-size: 0.75rem !important;
+  line-height: 1.45 !important;
+}
+
+.commercial-main .bg-gradient-to-r:not([class*="progress"]),
+.commercial-main .bg-gradient-to-br,
+.commercial-main .bg-gradient-to-b {
+  background-image: none !important;
+}
+
+.commercial-main button[class*="from-blue-600"],
+.commercial-main button[class*="bg-blue-600"],
+.commercial-main a[class*="from-blue-600"] {
+  border-color: var(--fw-primary) !important;
+  background: var(--fw-primary) !important;
+  color: #07142f !important;
+}
+
+.commercial-main button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.commercial-home .home-inline-subtitle-button {
+  display: none !important;
+}
+
+.commercial-home .home-subtitle-control {
+  order: 1;
+}
+
+.commercial-home .home-sharing-panel {
+  order: 2;
+}
+
+.commercial-home .home-log-panel {
+  order: 3;
+}
+
+@media (min-width: 768px) {
+  .commercial-sidebar {
+    width: 13.75rem !important;
+  }
 }
 
 select {

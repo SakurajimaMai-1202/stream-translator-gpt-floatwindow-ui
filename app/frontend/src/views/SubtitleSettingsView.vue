@@ -55,16 +55,18 @@ async function saveSettings() {
   localStorage.setItem('subtitleSettings', JSON.stringify(settings));
 
   try {
-    await fetch('/api/config/subtitle_settings', {
+    const response = await fetch('/api/config/subtitle_settings', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(settings)
     });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    console.log('字幕外觀已同步到後端');
   } catch (e) {
     console.error('儲存字幕設定到後端失敗:', e);
   }
-  
-  console.log('設定已儲存');
 }
 
 function scheduleSaveSettings() {
@@ -97,6 +99,9 @@ function hexToRgb(hex: string): string {
 async function loadSettingsFromBackend() {
   try {
     const response = await fetch('/api/config');
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
     const data = await response.json();
     const config = data?.data ?? data;
     const settings = config?.subtitle_settings;
@@ -185,19 +190,20 @@ const activeTab = ref<'display' | 'color'>('display');
 
 <template>
   <div :class="[
-    isStandalone ? 'min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950/80 p-4 sm:p-6 overflow-y-auto' : 'p-4 sm:p-5 max-w-3xl mx-auto'
+    'commercial-page commercial-subtitle-settings',
+    isStandalone ? 'min-h-screen bg-slate-950 p-4 sm:p-6 overflow-y-auto' : 'p-4 sm:p-5 max-w-3xl mx-auto'
   ]">
     <!-- Header -->
     <div class="flex items-center justify-between mb-5 border-b border-white/5 pb-2.5">
-      <h1 class="text-base font-bold text-white tracking-wide">🎨 字幕外觀設定</h1>
+      <h1 class="text-base font-bold text-white tracking-wide">字幕外觀設定</h1>
     </div>
 
     <!-- Content Card -->
-    <div v-if="!settingsReady" class="bg-gradient-to-br from-slate-950/95 via-slate-950/85 to-indigo-950/65 rounded-2xl border border-white/10 shadow-2xl p-6 min-h-[460px]" aria-busy="true">
+    <div v-if="!settingsReady" class="commercial-panel p-6 min-h-[460px]" aria-busy="true">
       <div class="animate-pulse space-y-6"><div class="h-9 rounded-lg bg-white/10"></div><div class="h-4 w-40 rounded bg-white/10"></div><div class="h-12 rounded-lg bg-white/5"></div><div class="h-40 rounded-xl bg-white/5"></div></div>
       <p class="text-white/40 text-sm mt-6">正在讀取字幕外觀…</p>
     </div>
-    <div v-else class="bg-gradient-to-br from-slate-950/95 via-slate-950/85 to-indigo-950/65 rounded-2xl border border-white/10 shadow-2xl p-6">
+    <div v-else class="commercial-panel p-6">
       <!-- 分頁標籤 -->
       <div class="flex border-b border-white/10 mb-6">
         <button

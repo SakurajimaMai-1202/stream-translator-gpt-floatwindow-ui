@@ -181,6 +181,31 @@ def start_daemon_thread(func, *args, **kwargs):
     return thread
 
 
+class PipelineWorkers:
+    """Propagate worker failures to the pipeline owner instead of hanging."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._failure = None
+
+    def start(self, func, *args, **kwargs):
+        def run():
+            try:
+                func(*args, **kwargs)
+            except BaseException as exc:
+                with self._lock:
+                    if self._failure is None:
+                        self._failure = (func.__qualname__, exc)
+        return start_daemon_thread(run)
+
+    def raise_if_failed(self):
+        with self._lock:
+            failure = self._failure
+        if failure is not None:
+            name, exc = failure
+            raise RuntimeError(f'Pipeline worker {name} failed: {exc}') from exc
+
+
 def sec2str(second: float):
     dt = datetime.fromtimestamp(second, tz=timezone.utc)
     result = dt.strftime('%H:%M:%S')

@@ -72,7 +72,8 @@ class BackendProcess(QObject):
         self.port = port
         self.process = None
         self._start_attempts = 0
-        self._max_attempts = 3
+        self._startup_timeout_seconds = 60
+        self._startup_started_at = 0.0
         self._stdout_decoder = _Utf8LineDecoder()
         self._stderr_decoder = _Utf8LineDecoder()
         self._stop_requested = False
@@ -95,6 +96,8 @@ class BackendProcess(QObject):
         
         # 啟動新的後端程序
         self.process = QProcess()
+        self._start_attempts = 0
+        self._startup_started_at = time.monotonic()
         self._stop_requested = False
         self._stdout_decoder = _Utf8LineDecoder()
         self._stderr_decoder = _Utf8LineDecoder()
@@ -158,11 +161,21 @@ class BackendProcess(QObject):
             self.started.emit()
         else:
             self._start_attempts += 1
-            if self._start_attempts < self._max_attempts:
-                logger.warning(f"後端啟動檢查失敗，重試 {self._start_attempts}/{self._max_attempts}")
+            elapsed = time.monotonic() - self._startup_started_at
+            if self.process and self.process.state() == QProcess.ProcessState.NotRunning:
+                error_msg = f"後端程序在啟動期間結束（Exit Code: {self.process.exitCode()}）"
+                logger.error(error_msg)
+                self.error.emit(error_msg)
+            elif elapsed < self._startup_timeout_seconds:
+                logger.warning(
+                    "後端尚未就緒，將繼續等待（%.0f/%d 秒，第 %d 次檢查）",
+                    elapsed,
+                    self._startup_timeout_seconds,
+                    self._start_attempts,
+                )
                 QTimer.singleShot(2000, self._check_startup)
             else:
-                error_msg = "後端啟動失敗，請檢查日誌"
+                error_msg = f"後端在 {self._startup_timeout_seconds} 秒內未完成啟動，請檢查日誌"
                 logger.error(error_msg)
                 self.error.emit(error_msg)
     

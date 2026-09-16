@@ -60,6 +60,7 @@ v1.4.5 的重點包括：
 - 大型 ASR 模型改用四連線下載並即時回報進度，保留續傳與失敗回退。
 - 修正 ASR 引擎選擇、Parakeet TDT 低精度 CUDA 解碼及背景管線錯誤處理。
 - 打包前會強制更新並驗證 yt-dlp，並更新 vue-tsc 以支援 Node.js 24。
+- 修正 App Update 後首次啟動時，較慢的後端初始化被過早判定失敗並強制結束的問題。
 
 完整內容請見 [v1.4.5 更新說明](app/docs/RELEASE_NOTES_v1.4.5_zh-TW.md)。
 

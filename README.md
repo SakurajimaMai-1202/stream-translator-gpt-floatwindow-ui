@@ -2,15 +2,21 @@
 
 Windows 即時語音辨識、翻譯與浮動字幕工具。它能擷取直播網址、系統聲音、麥克風或本機影音，先以本機／雲端 ASR 轉成文字，再交由 OpenAI、Google Gemini 或本機 LLM 翻譯，最後輸出成桌面字幕、區網字幕頁或字幕檔。
 
-[下載最新版](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest) · [v1.4.5 更新說明](app/docs/RELEASE_NOTES_v1.4.5_zh-TW.md) · [回報問題](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/issues)
+[下載最新版](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest) · [v1.4.6 更新說明](app/docs/RELEASE_NOTES_v1.4.6_zh-TW.md) · [回報問題](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/issues)
 
 ![Windows](https://img.shields.io/badge/platform-Windows-lightgrey)
 ![NVIDIA CUDA](https://img.shields.io/badge/GPU-NVIDIA%20CUDA-green)
 ![AMD ROCm](https://img.shields.io/badge/GPU-AMD%20ROCm%20Experimental-orange)
 ![CPU sherpa-onnx](https://img.shields.io/badge/CPU-sherpa--onnx-blueviolet)
-![Release](https://img.shields.io/badge/release-v1.4.5-blue)
+![Release](https://img.shields.io/badge/release-v1.4.6-blue)
 
 <img width="2381" height="1058" alt="Stream Translator FloatWindow" src="https://github.com/user-attachments/assets/0a663535-dd94-40a6-8444-3c00844bc563" />
+
+## 新手最簡單的安裝方式
+
+> **直接下載 `StreamTranslator-win64-CPU-Full.zip`，使用內建 CPU ASR，再接 OpenAI、Gemini 或 OpenAI-compatible API 翻譯。**
+
+這個組合不需要 NVIDIA／AMD 獨立顯示卡，也不必另外安裝 CPU ASR sidecar 或本機翻譯模型。解壓 CPU Full 包、執行 `Stream Translator.exe`、首次選擇「簡單模式」，再於首頁選擇 API 翻譯後端並填入 API Key 即可。程式會預先準備中文 SenseVoice、日文 Parakeet 與多語 Parakeet v3；已下載的模型會略過。
 
 ## 演示影片
 
@@ -50,41 +56,39 @@ Windows 即時語音辨識、翻譯與浮動字幕工具。它能擷取直播網
 
 > v1.3.11 起，術語表與 ASR 修正規則的 CSV／TSV 匯入支援引號、欄位內逗號、Tab、換行與 UTF-8 BOM；匯出使用 UTF-8 BOM 與 CRLF，方便 Excel 正確辨識繁體中文。
 
-## v1.4.5 更新重點
+## v1.4.6 更新重點
 
-v1.4.5 的重點包括：
+v1.4.6 的重點包括：
 
-- 全面統一首頁、設定、模型、術語表、教學與字幕相關頁面的商業化介面。
-- 浮動字幕新增平滑捲動與邊緣淡出，並統一頂部、底部顯示時的上下留白。
-- 修正預覽字幕與最終翻譯因數毫秒時間差而重複顯示的問題。
-- 大型 ASR 模型改用四連線下載並即時回報進度，保留續傳與失敗回退。
-- 修正 ASR 引擎選擇、Parakeet TDT 低精度 CUDA 解碼及背景管線錯誤處理。
-- 打包前會強制更新並驗證 yt-dlp，並更新 vue-tsc 以支援 Node.js 24。
-- 修正 App Update 後首次啟動時，較慢的後端初始化被過早判定失敗並強制結束的問題。
+- 首次啟動新增簡單／進階模式，會記住選擇並能隨時切換。
+- 簡單模式將翻譯後端放到首頁，並依語言自動選擇 CPU ASR 模型。
+- 首次選擇模式時檢查 CPU ASR 環境，預先下載 SenseVoice、日文 Parakeet 與 Parakeet v3。
+- 小視窗的側欄可獨立捲動，模式切換器固定可見。
+- 修正深色模式選單白底及短選單向上展開距離過遠。
 
-完整內容請見 [v1.4.5 更新說明](app/docs/RELEASE_NOTES_v1.4.5_zh-TW.md)。
+完整內容請見 [v1.4.6 更新說明](app/docs/RELEASE_NOTES_v1.4.6_zh-TW.md)。
 
 ## 下載：先選對執行版本
 
-請從 [GitHub Releases v1.4.5](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/tag/v1.4.5) 下載。GitHub 自動提供的 `Source code (zip)` 不是可直接執行的 Windows 完整包。
+請從 [GitHub Releases v1.4.6](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/tag/v1.4.6) 下載。GitHub 自動提供的 `Source code (zip)` 不是可直接執行的 Windows 完整包。
 
 | 版本 | 適用硬體 | 本機 ASR 路徑 | Full package |
 |---|---|---|---|
 | CUDA | NVIDIA CUDA 相容獨立顯示卡 | CUDA 原生 ASR；亦含 sherpa-onnx CPU sidecar | `StreamTranslator-win64-CUDA-Full.zip.part01`～`.part03` |
-| CPU | 無獨立顯示卡、相容性優先 | sherpa-onnx／ONNX Runtime，不包含 PyTorch | `StreamTranslator-win64-CPU-Full.zip.part01` |
-| ROCm Experimental | 支援 Windows ROCm／HIP 的 AMD 獨立顯示卡 | ROCm 原生 ASR；亦含 sherpa-onnx CPU sidecar | `StreamTranslator-win64-ROCm-Experimental-Full.zip.part01`～`.part02` |
+| CPU | 無獨立顯示卡、相容性優先 | sherpa-onnx／ONNX Runtime，不包含 PyTorch | `StreamTranslator-win64-CPU-Full.zip`（可直接解壓） |
+| ROCm Experimental | 支援 Windows ROCm／HIP 的 AMD 獨立顯示卡 | ROCm 原生 ASR；亦含 sherpa-onnx CPU sidecar | `StreamTranslator-win64-ROCm-Experimental-Full.zip.part01` |
 
 ROCm 版本仍屬實驗性支援，能否使用取決於顯示卡、驅動程式與 Windows ROCm Runtime 相容性。若不確定，先使用 CPU 版。
 
 ### 合併與安裝 Full package
 
-1. 下載同一 Profile 的全部 `.partXX`，並下載 `merge-full-package.bat`。
+1. CPU 使用者可直接下載並解壓 `StreamTranslator-win64-CPU-Full.zip`；CUDA／ROCm 使用者請下載同一 Profile 的全部 `.partXX` 與 `merge-full-package.bat`。
 2. 將檔案放在同一資料夾，雙擊 `merge-full-package.bat`。
-3. 以 `SHA256SUMS-v1.4.5.txt` 驗證合併後的 ZIP。
+3. 以 `SHA256SUMS-v1.4.6.txt` 驗證合併後的 ZIP。
 4. 解壓到一般可寫入路徑，例如 `D:\Apps\StreamTranslator`。
 5. 執行 `Stream Translator.exe`。
 
-不要只解壓 `.part01`；CUDA 與 ROCm 完整包必須先合併所有分割檔。
+不要直接解壓 `.part01`；CUDA 與 ROCm 完整包必須先透過 `merge-full-package.bat` 產生 ZIP。
 
 ### 更新既有安裝
 
@@ -100,9 +104,9 @@ ROCm 版本仍屬實驗性支援，能否使用取決於顯示卡、驅動程式
 
 從 v1.4.0 起，上述流程已整合到「設定 → 一般設定」。從更舊版本首次升級到 v1.4.0 時，請完整解壓相同 Profile 的 App Update；更新包已包含 `StreamTranslatorUpdater.exe`，不需另外下載。
 
-CUDA／ROCm 使用者若缺少 CPU ASR sidecar，可在「ASR 模型管理」內安裝，或下載 `StreamTranslator-CPU-ASR-Sidecar-v1.4.5.zip`。Sidecar 只含 CPU ASR Runtime，模型權重仍需另外下載。
+CUDA／ROCm 使用者若缺少 CPU ASR sidecar，可在首次模式準備流程自動安裝，或下載 `StreamTranslator-CPU-ASR-Sidecar-v1.4.6.zip`。Sidecar 只含 CPU ASR Runtime；首次模式準備流程會再下載三個推薦模型。
 
-v1.4.5 的 Full package 不包含 `llama` 資料夾。需要本機翻譯時，請在「LLM 模型管理」另外下載 GGUF 與相符的 llama.cpp Runtime。
+v1.4.6 的 Full package 不包含 `llama` 資料夾。若使用 API 翻譯，不需要本機 LLM；需要離線本機翻譯時，再到「LLM 模型管理」下載 GGUF 與相符的 llama.cpp Runtime。
 
 ## 第一次使用教學
 
@@ -271,7 +275,7 @@ ASR 決定「聽到了什麼」。選型時依序考慮：硬體與 Runtime、�
 
 ## 媒體輸入注意事項
 
-- v1.4.5 Full package 內含 Node.js 22+，供 yt-dlp 處理需要 JavaScript Runtime 的來源。
+- v1.4.6 Full package 內含 Node.js 22+，供 yt-dlp 處理需要 JavaScript Runtime 的來源。
 - 部分 YouTube／Twitch 內容可能需要登入、地區權限或 cookies；請匯出 Netscape 格式 `cookies.txt`。
 - Chromium 的 App-Bound Encryption 可能阻止直接讀取瀏覽器 cookies，匯出檔通常較穩定。
 - 系統音訊請選擇實際播放裝置；無聲時先確認 Windows 音量混音器與輸出裝置。
@@ -336,11 +340,11 @@ python .\main.py
 cd .\app
 
 # 快速驗證
-.\build_all_profiles.ps1 -Version 1.4.5 -Mode Quick -ReuseRuntimeCache
+.\build_all_profiles.ps1 -Version 1.4.6 -Mode Quick -ReuseRuntimeCache
 
 # 正式發佈
 .\build_all_profiles.ps1 `
-  -Version 1.4.5 `
+  -Version 1.4.6 `
   -Mode Final `
   -ReuseRuntimeCache `
   -CompressionLevel 7 `
@@ -348,7 +352,7 @@ cd .\app
   -CopyThreads 16
 ```
 
-正式資產輸出至 `app/release-v1.4.5-assets/`，包含 App Update、Full package 分割檔、manifest 與 SHA-256 清單。
+正式資產輸出至 `app/release-v1.4.6-assets/`，包含 App Update、Full package 分割檔、manifest 與 SHA-256 清單。
 
 ## 專案來源
 

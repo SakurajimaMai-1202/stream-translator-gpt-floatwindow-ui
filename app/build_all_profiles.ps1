@@ -1,6 +1,6 @@
 #!/usr/bin/env pwsh
 param(
-    [string]$Version = "1.4.5",
+    [string]$Version = "1.4.6",
     [ValidateSet("Quick", "Final")][string]$Mode = "Quick",
     [switch]$ReuseRuntimeCache,
     [switch]$ReuseSharedGui,
@@ -213,6 +213,11 @@ foreach ($result in $profileResults) {
                 sha256 = $partHash
             }
         })
+        if ($parts.Count -eq 1) {
+            # Single-part archives are already below the GitHub asset limit.
+            # Publish the ordinary ZIP too so CPU-first users can extract it directly.
+            Copy-Item -LiteralPath $fullZipPath -Destination $assetDir -Force
+        }
         $checksumEntries += [pscustomobject]@{ hash = $fullZipHash; name = $packageInfo.FullZip }
     }
 }

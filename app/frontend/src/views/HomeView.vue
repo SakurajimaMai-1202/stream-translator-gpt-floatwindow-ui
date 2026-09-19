@@ -3,6 +3,8 @@ import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router';
 import { useTranslationStore } from '../stores/translation';
 import { useLlamaStore } from '../stores/llama';
+import { useInterfaceModeStore } from '../stores/interfaceMode';
+import { simpleAsrModel, simpleAsrLanguages } from '../utils/simpleAsr';
 import { useModelDownloadStore } from '../stores/modelDownload';
 import { translationApi, configApi, runtimeApi, serverApi, systemApi, type AppUpdateStatus, type AudioSource, type AudioDevice, type Config, type FfmpegCheckResult, type ModelComputeBackend, type ModelEngine } from '../services/api';
 import UiSelect, { type UiSelectOption } from '../components/UiSelect.vue';
@@ -15,6 +17,7 @@ import {
 } from '../utils/asrCapabilities';
 
 const router = useRouter();
+const interfaceMode = useInterfaceModeStore();
 const store = useTranslationStore();
 const llamaStore = useLlamaStore();
 const modelDownloadStore = useModelDownloadStore();
@@ -383,12 +386,12 @@ const selectedAsrCapability = computed(() =>
   )
 );
 const inputLanguageOptions = computed<UiSelectOption[]>(() =>
-  languageOptionsForModel(
+  interfaceMode.isSimple ? simpleAsrLanguages : languageOptionsForModel(
     runtimeCapabilities.value?.asr_model_capabilities,
     selectedAsrModelId.value,
   )
 );
-const isInputLanguageLocked = computed(() => selectedAsrCapability.value?.language_mode === 'fixed');
+const isInputLanguageLocked = computed(() => !interfaceMode.isSimple && selectedAsrCapability.value?.language_mode === 'fixed');
 
 const outputLanguageOptions = computed<UiSelectOption[]>(() =>
   outputLanguages.map((lang) => ({ value: lang.value, label: lang.label }))
@@ -516,6 +519,10 @@ const allowedParakeetModels = computed<string[]>(() =>
 );
 
 function coerceRuntimeLimitedSelections() {
+  if (interfaceMode.isSimple) {
+    applySimpleAsr();
+    return;
+  }
   if (!allowedTranscriptionEngines.value.includes(selectedTranscriptionEngine.value)) {
     selectedTranscriptionEngine.value = allowedTranscriptionEngines.value.includes('qwen3-asr')
       ? 'qwen3-asr'
@@ -610,7 +617,7 @@ function buildHomeConfigSnapshotFromRefs(): string {
 }
 
 /** 將 HomeView UI ref 的值逆向映射並批次寫回 config.yaml */
-async function saveHomeConfigToBackend() {
+async function saveHomeConfigToBackend(requireSuccess = false) {
   try {
     const engine = selectedTranscriptionEngine.value;
     const computeBackendChanged = store.config.transcription?.asr_compute_backend !== selectedAsrComputeBackend.value;
@@ -623,7 +630,7 @@ async function saveHomeConfigToBackend() {
       fun_asr_model: selectedFunAsrModel.value,
       nemo_asr_model: selectedParakeetModel.value,
       nemo_asr_dtype: store.config.transcription?.nemo_asr_dtype || 'bfloat16',
-      language: engine === 'parakeet-ctc-ja'
+      language: !interfaceMode.isSimple && engine === 'parakeet-ctc-ja'
         ? parakeetLanguageForModel(selectedParakeetModel.value)
         : selectedInputLanguage.value,
       backend: engine,
@@ -664,6 +671,7 @@ async function saveHomeConfigToBackend() {
     lastAppliedHomeConfigSnapshot.value = buildHomeConfigSnapshotFromConfig(store.config);
   } catch (e) {
     console.warn('[HomeView] 自動保存 config 失敗:', e);
+    if (requireSuccess) throw e;
   }
 }
 
@@ -932,9 +940,25 @@ watch(runtimeCapabilities, () => {
   coerceRuntimeLimitedSelections();
 });
 
+function applySimpleAsr() {
+  if (!interfaceMode.isSimple || store.isRunning) return;
+  selectedAsrComputeBackend.value = 'cpu';
+  const model = simpleAsrModel(selectedInputLanguage.value);
+  if (model === 'iic/SenseVoiceSmall') {
+    selectedTranscriptionEngine.value = 'sensevoice';
+    selectedSenseVoiceModel.value = model;
+  } else {
+    selectedTranscriptionEngine.value = 'parakeet-ctc-ja';
+    selectedParakeetModel.value = model || 'nvidia/parakeet-tdt-0.6b-v3';
+  }
+}
+
+watch([() => interfaceMode.isSimple, selectedInputLanguage, () => store.isRunning], applySimpleAsr);
+
 watch(
   [selectedAsrModelId, () => runtimeCapabilities.value?.asr_model_capabilities],
   () => {
+    if (interfaceMode.isSimple) return;
     selectedInputLanguage.value = coerceLanguageForModel(
       runtimeCapabilities.value?.asr_model_capabilities,
       selectedAsrModelId.value,
@@ -1002,6 +1026,7 @@ onMounted(async () => {
   }
 
   await store.syncRunningState();
+  applySimpleAsr();
   (window as WindowWithPyQt).pyqt?.updateNativeRecordingState?.(store.isRunning);
 
   // 初始化完成後，延後建立 watch 避免初始化誤觸發自動保存
@@ -1059,6 +1084,19 @@ onBeforeUnmount(() => {
 });
 
 async function handleStart() {
+  if (interfaceMode.isSimple) {
+    if (!simpleAsrModel(selectedInputLanguage.value)) {
+      store.errorMessage = '請選擇簡單模式支援的輸入語言；韓文等未列出的語言請使用進階模式。';
+      return;
+    }
+    applySimpleAsr();
+    try {
+      await saveHomeConfigToBackend(true);
+    } catch {
+      store.errorMessage = 'CPU ASR 設定儲存失敗，請重試。';
+      return;
+    }
+  }
   // 驗證輸入
   if (audioSource.value === 'url' || audioSource.value === 'file') {
     if (!urlInput.value.trim()) {
@@ -1151,7 +1189,7 @@ async function handleStart() {
         ? store.config.transcription?.qwen3_flash_attention : undefined,
       qwen3_dtype: selectedTranscriptionEngine.value === 'qwen3-asr' 
         ? store.config.transcription?.qwen3_dtype : undefined,
-      input_language: selectedTranscriptionEngine.value === 'parakeet-ctc-ja'
+      input_language: !interfaceMode.isSimple && selectedTranscriptionEngine.value === 'parakeet-ctc-ja'
         ? parakeetLanguageForModel(selectedParakeetModel.value)
         : selectedInputLanguage.value,
       target_language: translationEnabled.value ? selectedOutputLanguage.value : undefined,
@@ -1510,6 +1548,10 @@ function clearLogs() {
             </div>
 
             <!-- 快速設定 (輸入語言, 啟用翻譯, 目標語言) -->
+            <p v-if="interfaceMode.isSimple" class="mb-3 text-xs text-indigo-200" role="status">
+              {{ simpleAsrModel(selectedInputLanguage) === 'iic/SenseVoiceSmall' ? 'CPU ASR · SenseVoice Small' : simpleAsrModel(selectedInputLanguage) ? (selectedInputLanguage === 'ja' ? 'CPU ASR · Parakeet 日文 0.6B' : 'CPU ASR · Parakeet v3 多語言 0.6B') : '請選擇輸入語言，以自動配置 CPU ASR 模型。' }}
+              <span class="block mt-1 text-white/50">中文使用 SenseVoice，日文使用 Parakeet 日文模型，其餘 25 種支援語言使用 Parakeet v3。其他語言請切換進階模式。</span>
+            </p>
             <div class="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
               <!-- 輸入語言 -->
               <div class="flex flex-col">
@@ -1544,7 +1586,20 @@ function clearLogs() {
             </div>
 
             <!-- 進階配置摺疊區 (轉錄引擎、模型選擇、翻譯後端) -->
-            <div class="mb-5">
+            <div v-if="interfaceMode.isSimple" class="mb-5">
+              <div class="mb-1 flex items-center justify-between gap-3">
+                <label class="commercial-field-label">翻譯模型／後端</label>
+                <button type="button" class="text-xs text-indigo-300 hover:text-indigo-200" @click="router.push({ path: '/settings', query: { tab: 'translation' } })">翻譯詳細設定</button>
+              </div>
+              <UiSelect
+                v-model="selectedBackend"
+                :options="backendOptions"
+                :disabled="store.isRunning || !translationEnabled"
+                button-class="bg-white/5 border border-white/15 text-xs rounded-xl disabled:opacity-40"
+              />
+              <p class="mt-1 text-xs text-white/50">選擇翻譯服務或模型；API 金鑰等選項可在翻譯詳細設定中調整。</p>
+            </div>
+            <div v-if="!interfaceMode.isSimple" class="mb-5">
               <button
                 @click="showAdvancedConfig = !showAdvancedConfig"
                 type="button"
@@ -1709,6 +1764,7 @@ function clearLogs() {
 
           <!-- 本地 LLM 快速控制 -->
           <div
+            v-if="!interfaceMode.isSimple || llamaStore.localLlmEnabled"
             class="relative overflow-hidden rounded-2xl border p-4 transition-all duration-300"
             :class="llamaStore.localLlmEnabled
               ? 'border-emerald-400/25 bg-gradient-to-r from-emerald-950/35 via-slate-950/95 to-cyan-950/25 shadow-lg shadow-emerald-950/20'
@@ -1806,7 +1862,7 @@ function clearLogs() {
           </div>
           
           <!-- 執行日誌 -->
-          <div class="home-log-panel flex h-[240px] min-h-0 flex-col rounded-2xl border border-white/10 bg-slate-950/90 p-4 shadow-2xl">
+          <div v-if="!interfaceMode.isSimple" class="home-log-panel flex h-[240px] min-h-0 flex-col rounded-2xl border border-white/10 bg-slate-950/90 p-4 shadow-2xl">
             <div class="flex items-center justify-between mb-2.5">
               <h2 class="text-xs font-bold text-white tracking-widest uppercase flex items-center gap-1.5">
                 <span class="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
@@ -1826,7 +1882,7 @@ function clearLogs() {
           </div>
 
           <!-- 🌐 公開分享連結 -->
-          <div class="home-sharing-panel bg-slate-950/90 rounded-2xl border border-indigo-500/20 shadow-2xl p-4">
+          <div v-if="!interfaceMode.isSimple" class="home-sharing-panel bg-slate-950/90 rounded-2xl border border-indigo-500/20 shadow-2xl p-4">
             <div class="flex items-center justify-between mb-2.5">
               <h2 class="text-xs font-bold text-white tracking-widest uppercase flex items-center gap-1.5">
                 <span class="w-1.5 h-1.5 rounded-full bg-indigo-400"></span>

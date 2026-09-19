@@ -1,6 +1,6 @@
 #!/usr/bin/env pwsh
 param(
-    [string]$Version = "1.4.5",
+    [string]$Version = "1.4.6",
     [string]$Destination = "",
     [ValidateRange(1, 128)][int]$CopyThreads = 16
 )
@@ -93,9 +93,18 @@ if (-not (Test-Path -LiteralPath $builtExe)) {
         Select-Object -First 1 -ExpandProperty FullName
 }
 if (-not $builtExe) { throw "Built GUI executable was not found" }
-& $builtExe --update-health-check
-if ($LASTEXITCODE -ne 0) {
-    throw "Frozen GUI health check failed while loading Qt WebEngine (exit $LASTEXITCODE)"
+$healthProcess = Start-Process -FilePath $builtExe `
+    -ArgumentList "--update-health-check" `
+    -WorkingDirectory (Split-Path -Parent $builtExe) `
+    -WindowStyle Hidden `
+    -PassThru
+$healthExited = $healthProcess.WaitForExit(120000)
+if (-not $healthExited) {
+    Stop-Process -Id $healthProcess.Id -Force -ErrorAction SilentlyContinue
+    throw "Shared GUI update health check timed out after 120 seconds: $builtExe"
+}
+if ($healthProcess.ExitCode -ne 0) {
+    throw "Frozen GUI health check failed while loading Qt WebEngine (exit $($healthProcess.ExitCode))"
 }
 
 if (Test-Path -LiteralPath $destinationPath) {

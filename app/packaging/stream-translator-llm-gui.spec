@@ -79,7 +79,7 @@ a = Analysis(
     ],
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=[str(app_dir / 'packaging' / 'pyi_rth_prefer_bundled_qt.py')],
     excludes=[
         # Exclude ML stack (handled by external _runtime subprocess environment)
         'torch', 'torchvision', 'torchaudio',

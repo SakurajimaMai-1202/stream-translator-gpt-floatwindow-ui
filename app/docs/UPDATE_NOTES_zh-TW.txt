@@ -1,18 +1,18 @@
-Stream Translator v1.4.5 更新說明
+Stream Translator v1.4.6 更新說明
 =================================
 
-主要修正
+主要更新
 --------
-- 修正 App Update 第一次下載可能出現 SHA-256 mismatch、第二次才成功的問題。
-- 修正 App Update 後第一次啟動時，後端初始化較慢而被過早判定失敗的問題。
-- 後端啟動等待時間延長為最多 60 秒，就緒後會立即開啟主介面。
-- 後端程序若真的提前結束，會立即顯示實際退出碼。
-- 啟動日誌新增已等待秒數與檢查次數，方便排查問題。
+- 首次啟動可選簡單或進階模式，選擇會保存並可隨時切換。
+- 簡單模式依輸入語言自動選擇 CPU ASR：中文 SenseVoice、日文 Parakeet、其他支援語言 Parakeet v3。
+- 翻譯後端放到簡單模式首頁，直接接 OpenAI、Gemini 或 OpenAI-compatible API。
+- 首次選擇模式時會檢查 CPU ASR Runtime，並預先準備三個推薦 ASR 模型。
+- 修正小視窗無法切回簡單模式，以及下拉選單距離過遠的問題。
 
 更新方式
 --------
-- v1.4.5 的更新資產使用新的分卷名稱，避免 v1.4.3／v1.4.4 留下的同名暫存檔。
-- 更新至 v1.4.5 後，校驗失敗會在同一次操作內自動重抓。
+- 新手最簡單的方式是下載 CPU Full 包，使用 CPU ASR，再設定 API 翻譯。
+- CUDA、CPU 與 ROCm App Update 只能套用到相同 Profile。
 - config.yaml、models、output、srt、logs 及已下載模型可以保留。
 
-完整異動內容請參閱 RELEASE_NOTES_v1.4.5_zh-TW.md。
+完整異動內容請參閱 RELEASE_NOTES_v1.4.6_zh-TW.md。

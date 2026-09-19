@@ -10,6 +10,20 @@ import socket
 import threading
 import subprocess
 from pathlib import Path
+
+# A frozen Qt application can be launched from terminals that already expose
+# another product's Qt DLLs on PATH (Poppler, GIS tools, IDEs, and so on).
+# Pin our private Qt directory before importing PyQt so Windows cannot satisfy
+# QtWidgets dependencies with an incompatible external Qt installation.
+_packaged_dll_directories = []
+if getattr(sys, "frozen", False):
+    _bundle_root = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+    _qt_bin = _bundle_root / "PyQt6" / "Qt6" / "bin"
+    if _qt_bin.is_dir():
+        os.environ["PATH"] = str(_qt_bin) + os.pathsep + os.environ.get("PATH", "")
+        if hasattr(os, "add_dll_directory"):
+            _packaged_dll_directories.append(os.add_dll_directory(str(_qt_bin)))
+
 from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QIcon

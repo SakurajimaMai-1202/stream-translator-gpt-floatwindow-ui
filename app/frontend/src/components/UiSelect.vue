@@ -123,8 +123,15 @@ function updateMenuPosition() {
   const menuWidth = Math.min(rect.width, maxMenuWidth);
   const maxLeft = Math.max(viewportPadding, window.innerWidth - menuWidth - viewportPadding);
   const left = Math.max(viewportPadding, Math.min(rect.left, maxLeft));
-  const rawTop = openUp ? rect.top - maxHeight - gap : rect.bottom + gap;
-  const maxTop = Math.max(viewportPadding, window.innerHeight - viewportPadding - maxHeight);
+  // Position using the rendered height, not the scrolling height limit.
+  // Set width first so wrapped option labels are measured at their final width.
+  if (menuRef.value) {
+    menuRef.value.style.width = `${menuWidth}px`;
+    menuRef.value.style.maxHeight = `${maxHeight}px`;
+  }
+  const actualHeight = menuRef.value?.getBoundingClientRect().height || Math.min(desiredHeight, maxHeight);
+  const rawTop = openUp ? rect.top - actualHeight - gap : rect.bottom + gap;
+  const maxTop = Math.max(viewportPadding, window.innerHeight - viewportPadding - actualHeight);
   const top = Math.max(viewportPadding, Math.min(rawTop, maxTop));
 
   menuStyle.left = `${left}px`;

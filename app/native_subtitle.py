@@ -91,6 +91,11 @@ class NativeSubtitleWindow(QWidget):
         self._flow_clock = QElapsedTimer()
         self._flow_duration_ms = 280
         self._flow_active = False
+        self._controls_visible = False
+        self._controls_hide_timer = QTimer(self)
+        self._controls_hide_timer.setSingleShot(True)
+        self._controls_hide_timer.setInterval(2500)
+        self._controls_hide_timer.timeout.connect(lambda: self._set_controls_visible(False))
 
         self.settings: dict[str, Any] = {
             "fontSize": 24,
@@ -469,6 +474,8 @@ class NativeSubtitleWindow(QWidget):
         return timestamp, " · ".join(latency_parts)
 
     def _paint_controls(self, painter: QPainter) -> None:
+        if not self._controls_visible:
+            return
         painter.setPen(QColor(255, 255, 255, 185))
         control_font = QFont("Segoe UI Symbol")
         control_font.setPixelSize(18)
@@ -498,24 +505,35 @@ class NativeSubtitleWindow(QWidget):
     def _clear_rect(self) -> QRect:
         return QRect(self.width() - 42, 100, 32, 32)
 
+    def _set_controls_visible(self, visible: bool) -> None:
+        visible = bool(visible)
+        if self._controls_visible == visible:
+            return
+        self._controls_visible = visible
+        self.update()
+
+    def _show_controls_temporarily(self) -> None:
+        self._set_controls_visible(True)
+        self._controls_hide_timer.start()
+
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
             local_pos = event.position().toPoint()
-            if self._settings_rect().contains(local_pos):
+            if self._controls_visible and self._settings_rect().contains(local_pos):
                 if callable(self.on_open_settings):
                     self.on_open_settings()
                 event.accept()
                 return
-            if self._close_rect().contains(local_pos):
+            if self._controls_visible and self._close_rect().contains(local_pos):
                 self.close()
                 event.accept()
                 return
-            if self._stop_rect().contains(local_pos):
+            if self._controls_visible and self._stop_rect().contains(local_pos):
                 if callable(self.on_stop_translation):
                     self.on_stop_translation()
                 event.accept()
                 return
-            if self._clear_rect().contains(local_pos):
+            if self._controls_visible and self._clear_rect().contains(local_pos):
                 self._typing_timer.stop()
                 self._flow_timer.stop()
                 self._flow_active = False
@@ -537,6 +555,7 @@ class NativeSubtitleWindow(QWidget):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        self._show_controls_temporarily()
         if self._resize_edge and self._resize_start_global is not None and self._resize_start_geometry is not None:
             self._resize_to(event.globalPosition().toPoint())
             event.accept()
@@ -547,6 +566,16 @@ class NativeSubtitleWindow(QWidget):
             return
         self._update_resize_cursor(self._edge_at(event.position().toPoint()))
         super().mouseMoveEvent(event)
+
+    def enterEvent(self, event) -> None:
+        self._show_controls_temporarily()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        if not self._resize_edge and self._drag_offset is None:
+            self._controls_hide_timer.stop()
+            self._set_controls_visible(False)
+        super().leaveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         self._drag_offset = None

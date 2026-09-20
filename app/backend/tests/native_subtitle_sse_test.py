@@ -11,6 +11,7 @@ from native_subtitle import (
     CONTENT_MARGIN,
     MIN_WINDOW_HEIGHT,
     NativeSubtitleWindow,
+    complete_partial_entry_height,
     entries_filling_viewport,
     subtitle_content_origin,
     visible_entries_height,
@@ -122,30 +123,42 @@ def test_unfilled_history_starts_after_the_top_gap():
 
 def test_viewport_uses_spare_height_for_the_previous_subtitle_top():
     entries = [
-        {"id": 1, "height": 90},
-        {"id": 2, "height": 90},
-        {"id": 3, "height": 90},
+        {"id": 1, "height": 90, "metadata": "01:32", "metadata_height": 12, "rows": [("original", None, 30), ("translated", None, 30)]},
+        {"id": 2, "height": 90, "metadata": "01:33", "metadata_height": 12, "rows": [("original", None, 30), ("translated", None, 30)]},
+        {"id": 3, "height": 90, "metadata": "01:33", "metadata_height": 12, "rows": [("original", None, 30), ("translated", None, 30)]},
     ]
 
-    visible, overflowed = entries_filling_viewport(entries, available_height=220, minimum_partial_height=30)
+    visible, overflowed = entries_filling_viewport(entries, available_height=230, minimum_partial_height=30)
 
     assert overflowed is True
     assert [entry["id"] for entry in visible] == [1, 2, 3]
-    assert visible[0]["partial_height"] == 46
+    assert visible[0]["partial_height"] == 50
+    assert visible[0]["partial_slot_height"] == 56
     assert "partial_height" not in visible[1]
 
 
 def test_viewport_does_not_show_an_unreadable_partial_sliver():
     entries = [
-        {"id": 1, "height": 90},
-        {"id": 2, "height": 90},
-        {"id": 3, "height": 90},
+        {"id": 1, "height": 90, "metadata": "01:32", "metadata_height": 12, "rows": [("original", None, 30), ("translated", None, 30)]},
+        {"id": 2, "height": 90, "metadata": "01:33", "metadata_height": 12, "rows": [("original", None, 30), ("translated", None, 30)]},
+        {"id": 3, "height": 90, "metadata": "01:33", "metadata_height": 12, "rows": [("original", None, 30), ("translated", None, 30)]},
     ]
 
     visible, overflowed = entries_filling_viewport(entries, available_height=190, minimum_partial_height=30)
 
     assert overflowed is True
     assert [entry["id"] for entry in visible] == [2, 3]
+
+
+def test_partial_preview_never_clips_through_a_translation_row():
+    entry = {
+        "metadata": "01:32 · ASR 61ms",
+        "metadata_height": 12,
+        "rows": [("original", None, 30), ("translated", None, 30)],
+    }
+
+    assert complete_partial_entry_height(entry, available_height=65) == 50
+    assert complete_partial_entry_height(entry, available_height=84) == 84
 
 
 def test_native_subtitle_clamps_legacy_package_height_and_keeps_history():
@@ -237,24 +250,6 @@ def test_native_subtitle_keeps_timestamp_and_latency_as_separate_color_runs():
         assert entry["metadata_timestamp"] == timestamp
         assert entry["metadata_latency"] == latency
         assert entry["metadata_timestamp_width"] > 0
-    finally:
-        window.close()
-        app.processEvents()
-
-
-def test_native_subtitle_controls_are_hidden_until_pointer_activity():
-    app = QApplication.instance() or QApplication([])
-    window = NativeSubtitleWindow(_LegacySubtitleConfig())
-    try:
-        assert window._controls_visible is False
-
-        window._show_controls_temporarily()
-        assert window._controls_visible is True
-        assert window._controls_hide_timer.isActive()
-
-        window._controls_hide_timer.stop()
-        window._set_controls_visible(False)
-        assert window._controls_visible is False
     finally:
         window.close()
         app.processEvents()

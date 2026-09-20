@@ -50,9 +50,35 @@ def entries_filling_viewport(
     first_complete_index = len(entries) - len(complete)
     if first_complete_index > 0 and remaining >= minimum_partial_height:
         partial = dict(entries[first_complete_index - 1])
-        partial["partial_height"] = remaining
-        return [partial, *complete], True
+        safe_height = complete_partial_entry_height(partial, remaining)
+        if safe_height >= minimum_partial_height:
+            partial["partial_height"] = safe_height
+            partial["partial_slot_height"] = remaining
+            return [partial, *complete], True
     return complete, True
+
+
+def complete_partial_entry_height(entry: dict[str, Any], available_height: int) -> int:
+    """Return a clip height ending after a complete metadata or text row."""
+    used = 0
+    metadata_height = int(entry.get("metadata_height", 0))
+    if entry.get("metadata") and metadata_height > 0:
+        section_height = metadata_height + 4
+        if section_height > available_height:
+            return 0
+        used += section_height
+
+    complete_text_rows = 0
+    for row in entry.get("rows", []):
+        row_height = int(row[2]) + 4
+        if used + row_height > available_height:
+            break
+        used += row_height
+        complete_text_rows += 1
+
+    # A partial history preview must contain at least one complete sentence,
+    # not only metadata and never half of a translated glyph row.
+    return used if complete_text_rows > 0 else 0
 
 
 class NativeSubtitleWindow(QWidget):
@@ -91,11 +117,6 @@ class NativeSubtitleWindow(QWidget):
         self._flow_clock = QElapsedTimer()
         self._flow_duration_ms = 280
         self._flow_active = False
-        self._controls_visible = False
-        self._controls_hide_timer = QTimer(self)
-        self._controls_hide_timer.setSingleShot(True)
-        self._controls_hide_timer.setInterval(2500)
-        self._controls_hide_timer.timeout.connect(lambda: self._set_controls_visible(False))
 
         self.settings: dict[str, Any] = {
             "fontSize": 24,
@@ -348,7 +369,7 @@ class NativeSubtitleWindow(QWidget):
                     False,
                 )
                 painter.restore()
-                y += partial_height
+                y += int(entry.get("partial_slot_height", partial_height))
                 continue
             if self._flow_active and index == len(entries) - 1:
                 painter.save()
@@ -474,8 +495,6 @@ class NativeSubtitleWindow(QWidget):
         return timestamp, " · ".join(latency_parts)
 
     def _paint_controls(self, painter: QPainter) -> None:
-        if not self._controls_visible:
-            return
         painter.setPen(QColor(255, 255, 255, 185))
         control_font = QFont("Segoe UI Symbol")
         control_font.setPixelSize(18)
@@ -505,35 +524,24 @@ class NativeSubtitleWindow(QWidget):
     def _clear_rect(self) -> QRect:
         return QRect(self.width() - 42, 100, 32, 32)
 
-    def _set_controls_visible(self, visible: bool) -> None:
-        visible = bool(visible)
-        if self._controls_visible == visible:
-            return
-        self._controls_visible = visible
-        self.update()
-
-    def _show_controls_temporarily(self) -> None:
-        self._set_controls_visible(True)
-        self._controls_hide_timer.start()
-
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
             local_pos = event.position().toPoint()
-            if self._controls_visible and self._settings_rect().contains(local_pos):
+            if self._settings_rect().contains(local_pos):
                 if callable(self.on_open_settings):
                     self.on_open_settings()
                 event.accept()
                 return
-            if self._controls_visible and self._close_rect().contains(local_pos):
+            if self._close_rect().contains(local_pos):
                 self.close()
                 event.accept()
                 return
-            if self._controls_visible and self._stop_rect().contains(local_pos):
+            if self._stop_rect().contains(local_pos):
                 if callable(self.on_stop_translation):
                     self.on_stop_translation()
                 event.accept()
                 return
-            if self._controls_visible and self._clear_rect().contains(local_pos):
+            if self._clear_rect().contains(local_pos):
                 self._typing_timer.stop()
                 self._flow_timer.stop()
                 self._flow_active = False
@@ -555,7 +563,6 @@ class NativeSubtitleWindow(QWidget):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        self._show_controls_temporarily()
         if self._resize_edge and self._resize_start_global is not None and self._resize_start_geometry is not None:
             self._resize_to(event.globalPosition().toPoint())
             event.accept()
@@ -566,16 +573,6 @@ class NativeSubtitleWindow(QWidget):
             return
         self._update_resize_cursor(self._edge_at(event.position().toPoint()))
         super().mouseMoveEvent(event)
-
-    def enterEvent(self, event) -> None:
-        self._show_controls_temporarily()
-        super().enterEvent(event)
-
-    def leaveEvent(self, event) -> None:
-        if not self._resize_edge and self._drag_offset is None:
-            self._controls_hide_timer.stop()
-            self._set_controls_visible(False)
-        super().leaveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         self._drag_offset = None

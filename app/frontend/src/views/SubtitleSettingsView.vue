@@ -191,7 +191,7 @@ const activeTab = ref<'display' | 'color'>('display');
 <template>
   <div :class="[
     'commercial-page commercial-subtitle-settings',
-    isStandalone ? 'min-h-screen bg-slate-950 p-4 sm:p-6 overflow-y-auto' : 'p-4 sm:p-5 max-w-3xl mx-auto'
+    isStandalone ? 'h-screen bg-slate-950 p-4 sm:p-6 overflow-y-auto' : 'p-4 sm:p-5 max-w-3xl mx-auto'
   ]">
     <!-- Header -->
     <div class="flex items-center justify-between mb-5 border-b border-white/5 pb-2.5">
@@ -214,6 +214,28 @@ const activeTab = ref<'display' | 'color'>('display');
           @click="activeTab = 'color'"
           :class="['flex-1 py-2 text-xs font-semibold transition', activeTab === 'color' ? 'text-blue-400 border-b-2 border-blue-400 font-bold' : 'text-white/60 hover:text-white']"
         >色彩與預覽</button>
+      </div>
+
+      <!-- 預覽固定在分頁內容上方，彈窗再矮也能先看到目前效果 -->
+      <div class="mb-6 pb-6 border-b border-white/20">
+        <p class="text-white/90 text-sm mb-3 font-medium">即時預覽</p>
+        <div
+          :style="{
+            fontSize: Math.min(fontSize * 0.5, 20) + 'px',
+            fontWeight: fontWeight,
+            backgroundColor: `rgba(${hexToRgb(backgroundColor)}, ${backgroundOpacity / 100})`
+          }"
+          class="p-4 rounded-lg text-center"
+        >
+          <div v-if="showTimestamp || showLatency" class="mb-1 font-mono" style="font-size: 10px; opacity: 0.78">
+            <span v-if="showTimestamp" :style="{ color: timestampColor }">00:00:10</span>
+            <span v-if="showLatency" :style="{ color: latencyColor }">
+              <span v-if="showTimestamp"> · </span>ASR 420ms · 排隊 35ms · 翻譯 1.21s · 總計 2.08s
+            </span>
+          </div>
+          <div v-if="showOriginal" :style="{ color: textColor, textShadow: '1px 1px 3px rgba(0,0,0,0.8)' }">こんにちは</div>
+          <div v-if="showTranslated" :style="{ color: translatedColor, textShadow: '1px 1px 3px rgba(0,0,0,0.8)' }" class="font-bold mt-1">你好</div>
+        </div>
       </div>
 
       <!-- 顯示設定 -->
@@ -312,27 +334,6 @@ const activeTab = ref<'display' | 'color'>('display');
           <input v-model.number="backgroundOpacity" type="range" min="0" max="100" class="w-full accent-blue-500 h-2" />
         </div>
 
-        <!-- 預覽 -->
-        <div class="pt-6 border-t border-white/20">
-          <p class="text-white/90 text-sm mb-3 font-medium">預覽</p>
-          <div
-            :style="{
-              fontSize: Math.min(fontSize * 0.5, 20) + 'px',
-              fontWeight: fontWeight,
-              backgroundColor: `rgba(${hexToRgb(backgroundColor)}, ${backgroundOpacity / 100})`
-            }"
-            class="p-4 rounded-lg text-center"
-          >
-            <div v-if="showTimestamp || showLatency" class="mb-1 font-mono" style="font-size: 10px; opacity: 0.78">
-              <span v-if="showTimestamp" :style="{ color: timestampColor }">00:00:10</span>
-              <span v-if="showLatency" :style="{ color: latencyColor }">
-                <span v-if="showTimestamp"> · </span>ASR 420ms · 排隊 35ms · 翻譯 1.21s · 總計 2.08s
-              </span>
-            </div>
-            <div v-if="showOriginal" :style="{ color: textColor, textShadow: '1px 1px 3px rgba(0,0,0,0.8)' }">こんにちは</div>
-            <div v-if="showTranslated" :style="{ color: translatedColor, textShadow: '1px 1px 3px rgba(0,0,0,0.8)' }" class="font-bold mt-1">你好</div>
-          </div>
-        </div>
       </div>
 
     </div>

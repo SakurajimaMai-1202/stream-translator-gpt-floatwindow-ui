@@ -126,6 +126,39 @@ def test_native_subtitle_clamps_legacy_package_height_and_keeps_history():
         app.processEvents()
 
 
+def test_native_subtitle_keeps_timestamp_and_latency_as_separate_color_runs():
+    app = QApplication.instance() or QApplication([])
+    window = NativeSubtitleWindow(_LegacySubtitleConfig())
+    try:
+        window.settings.update({"showTimestamp": True, "showLatency": True})
+        line = {
+            "_received_at_ms": 1_700_000_000_000,
+            "asr_latency_ms": 63,
+            "translation_queue_latency_ms": 1,
+            "llm_latency_ms": 483,
+            "total_latency_ms": 762,
+            "original": "日本語",
+            "translated": "中文",
+        }
+
+        timestamp, latency = window._metadata_parts(line)
+
+        assert timestamp
+        assert latency == "ASR 63ms · 排隊 1ms · 翻譯 483ms · 總計 762ms"
+
+        font = QFont("Microsoft JhengHei UI")
+        font.setPixelSize(24)
+        metadata_font = QFont(font)
+        metadata_font.setPixelSize(12)
+        entry = window._layout_line(line, font, metadata_font, 726, 0)
+        assert entry["metadata_timestamp"] == timestamp
+        assert entry["metadata_latency"] == latency
+        assert entry["metadata_timestamp_width"] > 0
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_native_subtitle_flow_only_restarts_for_a_new_row():
     app = QApplication.instance() or QApplication([])
     window = NativeSubtitleWindow(_LegacySubtitleConfig())

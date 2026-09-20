@@ -262,13 +262,10 @@ class NativeSubtitleWindow(QWidget):
         # gap while fitting, then remove it from the visible edge calculation.
         entries = entries_fitting_height(entries, available_height + ENTRY_TRAILING_GAP)
         total_height = visible_entries_height(entries)
-        if total_height > available_height:
-            # 內容超出視窗時由底部往上溢出，確保最新字幕永遠可見。
-            y = self.height() - margin - total_height
-        elif self.settings.get("position") == "top":
-            y = margin
-        else:
-            y = self.height() - margin - total_height
+        # 字幕一律由可視區頂端連續排列。當內容超過高度時，
+        # entries_fitting_height 已保留最新且放得下的字幕，因此舊字幕會
+        # 自然往上離開，不會因靠底對齊在上方留下大片空白。
+        y = margin
 
         flow_progress = self._flow_progress()
         flow_offset = 0
@@ -317,8 +314,26 @@ class NativeSubtitleWindow(QWidget):
         metadata = entry["metadata"]
         if metadata:
             painter.setFont(metadata_font)
-            painter.setPen(QColor(str(self.settings.get("latencyColor", "#7DD3FC"))))
-            painter.drawText(QRect(margin, y, content_width, entry["metadata_height"]), Qt.TextFlag.TextWordWrap, metadata)
+            timestamp = entry["metadata_timestamp"]
+            latency = entry["metadata_latency"]
+            metadata_x = margin
+            if timestamp:
+                timestamp_width = entry["metadata_timestamp_width"]
+                painter.setPen(QColor(str(self.settings.get("timestampColor", "#888888"))))
+                painter.drawText(
+                    QRect(metadata_x, y, timestamp_width, entry["metadata_height"]),
+                    Qt.TextFlag.TextWordWrap,
+                    timestamp,
+                )
+                metadata_x += timestamp_width
+            if latency:
+                latency_text = f" · {latency}" if timestamp else latency
+                painter.setPen(QColor(str(self.settings.get("latencyColor", "#7DD3FC"))))
+                painter.drawText(
+                    QRect(metadata_x, y, max(1, content_width - (metadata_x - margin)), entry["metadata_height"]),
+                    Qt.TextFlag.TextWordWrap,
+                    latency_text,
+                )
             y += entry["metadata_height"] + 4
         for text, color, height in entry["rows"]:
             painter.fillRect(QRect(margin, y + 2, 4, max(8, height - 4)), color)
@@ -334,10 +349,21 @@ class NativeSubtitleWindow(QWidget):
     def _layout_line(self, line: dict[str, Any], text_font: QFont, metadata_font: QFont, width: int, line_index: int) -> dict[str, Any]:
         text_metrics = QFontMetrics(text_font)
         metadata_metrics = QFontMetrics(metadata_font)
-        metadata = self._metadata_text(line)
-        metadata_height = metadata_metrics.boundingRect(
-            QRect(0, 0, width, 1000), Qt.TextFlag.TextWordWrap, metadata
-        ).height() if metadata else 0
+        metadata_timestamp, metadata_latency = self._metadata_parts(line)
+        metadata = " · ".join(part for part in (metadata_timestamp, metadata_latency) if part)
+        metadata_timestamp_width = 0
+        metadata_height = 0
+        if metadata:
+            if metadata_timestamp:
+                metadata_timestamp_width = min(width, metadata_metrics.horizontalAdvance(metadata_timestamp) + 2)
+            latency_text = f" · {metadata_latency}" if metadata_timestamp and metadata_latency else metadata_latency
+            latency_width = max(1, width - metadata_timestamp_width)
+            metadata_height = max(
+                metadata_metrics.height() if metadata_timestamp else 0,
+                metadata_metrics.boundingRect(
+                    QRect(0, 0, latency_width, 1000), Qt.TextFlag.TextWordWrap, latency_text
+                ).height() if latency_text else 0,
+            )
         rows: list[tuple[str, QColor, int]] = []
         if self.settings.get("showOriginal", True) and line.get("original"):
             text = str(line.get("_display_original", line["original"]))
@@ -349,6 +375,9 @@ class NativeSubtitleWindow(QWidget):
             rows.append((text, QColor(str(self.settings.get("translatedColor", "#FFDD00"))), height))
         return {
             "metadata": metadata,
+            "metadata_timestamp": metadata_timestamp,
+            "metadata_timestamp_width": metadata_timestamp_width,
+            "metadata_latency": metadata_latency,
             "metadata_height": metadata_height,
             "rows": rows,
             "height": metadata_height + (4 if metadata else 0) + sum(row[2] + 4 for row in rows) + ENTRY_TRAILING_GAP,
@@ -365,11 +394,16 @@ class NativeSubtitleWindow(QWidget):
         ]
 
     def _metadata_text(self, line: dict[str, Any]) -> str:
-        parts: list[str] = []
+        timestamp, latency = self._metadata_parts(line)
+        return " · ".join(part for part in (timestamp, latency) if part)
+
+    def _metadata_parts(self, line: dict[str, Any]) -> tuple[str, str]:
+        timestamp = ""
         if self.settings.get("showTimestamp", False):
             received_at = line.get("_received_at_ms")
             if isinstance(received_at, (int, float)):
-                parts.append(QDateTime.fromMSecsSinceEpoch(int(received_at)).toString("HH:mm"))
+                timestamp = QDateTime.fromMSecsSinceEpoch(int(received_at)).toString("HH:mm")
+        latency_parts: list[str] = []
         if self.settings.get("showLatency", False):
             latency_fields = (
                 ("ASR", "asr_latency_ms"),
@@ -381,8 +415,8 @@ class NativeSubtitleWindow(QWidget):
                 value = line.get(field)
                 if isinstance(value, (int, float)):
                     formatted = f"{value / 1000:.2f}s" if value >= 1000 else f"{round(value)}ms"
-                    parts.append(f"{label} {formatted}")
-        return " · ".join(parts)
+                    latency_parts.append(f"{label} {formatted}")
+        return timestamp, " · ".join(latency_parts)
 
     def _paint_controls(self, painter: QPainter) -> None:
         painter.setPen(QColor(255, 255, 255, 185))

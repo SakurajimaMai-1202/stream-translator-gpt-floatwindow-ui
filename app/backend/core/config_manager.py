@@ -426,6 +426,13 @@ class ConfigManager:
             subtitle_settings['_visibility_defaults_v2'] = True
             changed = True
 
+        # 本地 LLM 的啟用開關是程序工作階段狀態，不可跨程式啟動保留。
+        # 模型路徑與生成參數仍照常保存；舊版留下的 true 在載入時清除。
+        llama = config.setdefault('llama', {})
+        if llama.get('local_llm_enabled') is not False:
+            llama['local_llm_enabled'] = False
+            changed = True
+
         return config, changed
     
     def save(self):

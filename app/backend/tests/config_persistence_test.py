@@ -285,6 +285,22 @@ def test_subtitle_latency_style_has_independent_color():
     assert defaults["latencyColor"] == "#7DD3FC"
 
 
+def test_local_llm_enabled_resets_on_new_application_session(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    manager = ConfigManager(config_path)
+    manager.update_section("llama", {
+        "local_llm_enabled": True,
+        "model_path": "D:/models/translation.gguf",
+        "port": 8081,
+    })
+
+    reloaded = ConfigManager(config_path).get_config()
+
+    assert reloaded["llama"]["local_llm_enabled"] is False
+    assert reloaded["llama"]["model_path"] == "D:/models/translation.gguf"
+    assert reloaded["llama"]["port"] == 8081
+
+
 def test_subtitle_visibility_defaults_are_enabled_once_then_respect_user_choice(tmp_path):
     manager = ConfigManager(tmp_path / "config.yaml")
     legacy = manager.get_config()

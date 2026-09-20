@@ -7,6 +7,16 @@ import { ref, computed, watch, nextTick } from 'vue';
 import { llamaApi, type ModelInfo, type ServerConfig, type ServerStatus } from '../services/llamaApi';
 import { configApi } from '../services/api';
 
+const LOCAL_LLM_SESSION_KEY = 'stream-translator:local-llm-enabled';
+
+function readSessionEnabled(): boolean {
+  try {
+    return sessionStorage.getItem(LOCAL_LLM_SESSION_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
 // 模型系列介面
 export interface ModelSeries {
   name: string;           // 系列名稱
@@ -32,7 +42,8 @@ export const useLlamaStore = defineStore('llama', () => {
   const modelDirectory = ref<string>('');
   const recentModelPaths = ref<string[]>([]);
   const favoriteModelPaths = ref<string[]>([]);
-  const localLlmEnabled = ref(false);
+  // 啟用開關只屬於本次應用程式執行。關閉程式後，新工作階段一律關閉。
+  const localLlmEnabled = ref(readSessionEnabled());
   const isLoading = ref(false);
   const errorMessage = ref('');
   const successMessage = ref('');
@@ -78,6 +89,16 @@ export const useLlamaStore = defineStore('llama', () => {
   const isServerReady = computed(() => serverStatus.value?.is_ready ?? false);
   const currentModel = computed(() => serverStatus.value?.current_model ?? null);
   const hasModels = computed(() => (models.value || []).length > 0);
+
+  function setSessionEnabled(enabled: boolean) {
+    localLlmEnabled.value = enabled;
+    try {
+      if (enabled) sessionStorage.setItem(LOCAL_LLM_SESSION_KEY, 'true');
+      else sessionStorage.removeItem(LOCAL_LLM_SESSION_KEY);
+    } catch {
+      // 部分受限 WebView 可能停用 sessionStorage；Pinia 狀態仍可正常使用。
+    }
+  }
 
   // Actions
   async function loadModels(directory?: string) {
@@ -152,7 +173,7 @@ export const useLlamaStore = defineStore('llama', () => {
       // enabling the Home-page switch. Keep the persisted UI state aligned
       // with the actual server state.
       if (!localLlmEnabled.value) {
-        localLlmEnabled.value = true;
+        setSessionEnabled(true);
         await saveConfig();
       }
 
@@ -179,7 +200,7 @@ export const useLlamaStore = defineStore('llama', () => {
       await refreshServerStatus();
 
       if (updateEnabledState && localLlmEnabled.value) {
-        localLlmEnabled.value = false;
+        setSessionEnabled(false);
         await saveConfig();
       }
 
@@ -194,7 +215,7 @@ export const useLlamaStore = defineStore('llama', () => {
   }
 
   async function setLocalLlmEnabled(enabled: boolean) {
-    localLlmEnabled.value = enabled;
+    setSessionEnabled(enabled);
     await saveConfig();
     if (enabled) {
       if (!isServerReady.value) await startServer();
@@ -270,7 +291,6 @@ export const useLlamaStore = defineStore('llama', () => {
       if (config.llama) {
         // 更新伺服器配置
         const llamaConfig = config.llama;
-        localLlmEnabled.value = llamaConfig.local_llm_enabled === true;
         serverConfig.value = {
           model_path: llamaConfig.model_path || '',
           host: llamaConfig.host || '127.0.0.1',
@@ -321,6 +341,15 @@ export const useLlamaStore = defineStore('llama', () => {
         if (llamaConfig.default_preset) {
           defaultPreset.value = llamaConfig.default_preset;
         }
+
+        // 舊版曾把「開啟」保存到磁碟。啟用狀態現在只存在本次工作階段，
+        // 首次讀到舊 true 時立即清除，避免下次啟動再次顯示為開啟。
+        if (llamaConfig.local_llm_enabled === true) {
+          await configApi.updateSection('llama', {
+            ...llamaConfig,
+            local_llm_enabled: false,
+          });
+        }
       }
     } catch (error: any) {
       console.error('載入 Llama 配置失敗:', error);
@@ -333,7 +362,8 @@ export const useLlamaStore = defineStore('llama', () => {
 
   function buildLlamaConfig() {
     return {
-        local_llm_enabled: localLlmEnabled.value,
+        // 模型路徑與參數可持久化，但啟用開關每次啟動必須為關閉。
+        local_llm_enabled: false,
         model_dir: modelDirectory.value,
         model_path: selectedModelPath.value,
         recent_model_paths: recentModelPaths.value,

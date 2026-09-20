@@ -208,6 +208,12 @@ $noteLines
     }
 
     if ($Document -eq "update_notes") {
+        $sharedNotesPath = Join-Path (Split-Path -Parent $PSScriptRoot) "docs\UPDATE_NOTES_zh-TW.txt"
+        $sharedNotes = if (Test-Path -LiteralPath $sharedNotesPath -PathType Leaf) {
+            (Get-Content -LiteralPath $sharedNotesPath -Raw -Encoding utf8).Trim()
+        } else {
+            "找不到本版本共用更新說明。"
+        }
         return @"
 $name v$Version 更新說明
 ====================================
@@ -223,18 +229,7 @@ $name v$Version 更新說明
 
 本次更新重點
 ------------
-- 翻譯管線會依 Hy-MT2、一般聊天模型與結構化線上 API 選擇不同 prompt、取樣參數與輸出解析策略。
-- Hy-MT2 使用專用純文字提示格式；Gemma 等一般模型使用聊天提示；OpenAI / Gemini 可使用結構化輸出。
-- 原文與譯文維持成對提交，翻譯工作可平行執行，但字幕會依 segment_id 保持原始順序。
-- 新增 ASR 重疊文字去重與短句組句器，降低重複字幕並改善過短片段的翻譯語境。
-- 新增直播低延遲音訊參數：擷取間隔、最短／目標／最長片段、句尾靜音、前綴保留與動態 VAD。
-- UI、config.yaml 與實際音訊管線使用相同欄位，移除未接入管線的舊設定混淆。
-- 浮動與桌面字幕視窗可顯示每句 ASR、排隊、翻譯及總處理延遲。
-- 延遲狀態會顯示在時間後方，並可獨立調整文字顏色。
-- 浮動字幕視窗會在移動、縮放與關閉時保存位置及尺寸，重新開啟後可正確還原。
-- 新增機器可讀字幕事件；舊 runtime 仍可透過 latency log 相容顯示 ASR／翻譯延遲。
-- 保留 v1.3.5 的配置快取、原子寫入、跨程序鎖與外部 config.yaml 修改偵測。
-- CUDA / CPU / ROCm 繼續共用同一份功能程式碼，依 runtime profile 提供不同 torch 與 ASR 能力。
+$sharedNotes
 
 本版本支援範圍
 --------------

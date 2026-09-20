@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
+import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue';
 import { useTranslationStore } from '../stores/translation';
 import type { LatencyWindowSnapshot, SubtitleLatencyTrace } from '../services/api';
 
@@ -154,6 +154,8 @@ function startTyping(itemId: number) {
 const scrollContainer = ref<HTMLElement | null>(null);
 const isUserScrolling = ref(false);
 let scrollTimeout: number | null = null;
+let scrollFrame: number | null = null;
+let subtitleResizeObserver: ResizeObserver | null = null;
 
 // 計算樣式
 const containerStyle = computed(() => {
@@ -329,13 +331,19 @@ function applySettings(settings: any, external = false) {
 
 // 滾動到底部
 function scrollToBottom() {
-  if (scrollContainer.value) {
-    setTimeout(() => {
-      if (scrollContainer.value) {
-        scrollContainer.value.scrollTop = scrollContainer.value.scrollHeight;
-      }
-    }, 50);
-  }
+  if (scrollFrame !== null) cancelAnimationFrame(scrollFrame);
+  void nextTick(() => {
+    scrollFrame = requestAnimationFrame(() => {
+      scrollFrame = null;
+      const container = scrollContainer.value;
+      if (!container) return;
+      container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+    });
+  });
+}
+
+function keepLatestSubtitleVisible() {
+  if (autoScroll.value && !isUserScrolling.value) scrollToBottom();
 }
 
 // 檢查是否在底部
@@ -532,6 +540,15 @@ onMounted(async () => {
   initSubtitleChannel();
   initSettingsChannel();
 
+  // 視窗高度或字幕內容高度改變時，仍然貼住最新一筆字幕。
+  // 這讓使用者拖曳字幕視窗到任何高度時，舊字幕都會自然往上捲。
+  if (scrollContainer.value && typeof ResizeObserver !== 'undefined') {
+    subtitleResizeObserver = new ResizeObserver(keepLatestSubtitleVisible);
+    subtitleResizeObserver.observe(scrollContainer.value);
+    const subtitleList = scrollContainer.value.querySelector<HTMLElement>('.subtitle-list');
+    if (subtitleList) subtitleResizeObserver.observe(subtitleList);
+  }
+
   // 監聯 storage 事件作為備用
   window.addEventListener('storage', handleStorageChange);
   
@@ -557,6 +574,12 @@ onUnmounted(() => {
     settingsChannel.close();
   }
   clearAllTypingTimers();
+  subtitleResizeObserver?.disconnect();
+  subtitleResizeObserver = null;
+  if (scrollFrame !== null) {
+    cancelAnimationFrame(scrollFrame);
+    scrollFrame = null;
+  }
 });
 
 // 處理 storage 變更事件（備用方案）
@@ -664,12 +687,9 @@ async function stopTranslation() {
       ref="scrollContainer"
       @scroll="handleScroll"
       :style="containerStyle"
-      :class="[
-        'subtitle-scroll-shell absolute left-0 right-0 top-0 bottom-0 px-4 py-2 transition-all duration-300 flex flex-col rounded-lg overflow-y-auto',
-        position === 'top' ? 'justify-start' : 'justify-end'
-      ]"
+      class="subtitle-scroll-shell absolute left-0 right-0 top-0 bottom-0 px-4 py-2 transition-all duration-300 rounded-lg overflow-y-auto"
     >
-      <TransitionGroup v-if="displaySubtitles.length > 0" name="subtitle-flow" tag="div" class="subtitle-list space-y-3" :class="autoScroll ? 'scroll-smooth' : ''">
+      <TransitionGroup name="subtitle-flow" tag="div" class="subtitle-list space-y-3" :class="autoScroll ? 'scroll-smooth' : ''">
         <div v-for="sub in displaySubtitles" :key="sub.id" class="subtitle-flow-item text-left leading-relaxed">
           <!-- 時間戳 -->
           <div
@@ -737,7 +757,7 @@ async function stopTranslation() {
         </div>
       </TransitionGroup>
       <!-- 調試資訊 -->
-      <div v-else class="text-white/50 text-sm text-center py-4">
+      <div v-if="displaySubtitles.length === 0" class="text-white/50 text-sm text-center py-4">
         <p>等待字幕...</p>
         <p class="text-xs mt-2">Store subtitles: {{ store.subtitles.length }}</p>
         <p class="text-xs">History: {{ subtitleHistory.length }}</p>

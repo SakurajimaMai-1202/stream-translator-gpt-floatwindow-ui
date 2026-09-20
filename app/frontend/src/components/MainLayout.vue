@@ -269,7 +269,7 @@ watch(() => route.fullPath, () => {
           button-class="w-full rounded-lg border border-white/20 bg-slate-900 p-2 text-white"
           @update:model-value="interfaceMode.select($event as 'simple' | 'advanced')" />
         <p v-if="interfaceMode.error" role="alert" class="text-red-300">{{ interfaceMode.error }}</p>
-        <span>v{{ appVersion }}</span>
+        <div class="pt-2">v{{ appVersion }}</div>
       </div>
     </aside>
 

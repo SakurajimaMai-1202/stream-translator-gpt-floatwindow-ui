@@ -255,6 +255,24 @@ def test_native_subtitle_keeps_timestamp_and_latency_as_separate_color_runs():
         app.processEvents()
 
 
+def test_native_subtitle_controls_are_hidden_until_pointer_activity():
+    app = QApplication.instance() or QApplication([])
+    window = NativeSubtitleWindow(_LegacySubtitleConfig())
+    try:
+        assert window._controls_visible is False
+
+        window._show_controls_temporarily()
+        assert window._controls_visible is True
+        assert window._controls_hide_timer.isActive()
+
+        window._controls_hide_timer.stop()
+        window._set_controls_visible(False)
+        assert window._controls_visible is False
+    finally:
+        window.close()
+        app.processEvents()
+
+
 def test_native_subtitle_flow_only_restarts_for_a_new_row():
     app = QApplication.instance() or QApplication([])
     window = NativeSubtitleWindow(_LegacySubtitleConfig())

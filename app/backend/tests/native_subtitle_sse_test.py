@@ -11,6 +11,7 @@ from native_subtitle import (
     CONTENT_MARGIN,
     MIN_WINDOW_HEIGHT,
     NativeSubtitleWindow,
+    entries_filling_viewport,
     subtitle_content_origin,
     visible_entries_height,
 )
@@ -117,6 +118,34 @@ def test_unfilled_history_starts_after_the_top_gap():
     entries = [{"height": 70}, {"height": 70}]
 
     assert subtitle_content_origin(MIN_WINDOW_HEIGHT, entries, overflowed=False) == CONTENT_MARGIN
+
+
+def test_viewport_uses_spare_height_for_the_previous_subtitle_top():
+    entries = [
+        {"id": 1, "height": 90},
+        {"id": 2, "height": 90},
+        {"id": 3, "height": 90},
+    ]
+
+    visible, overflowed = entries_filling_viewport(entries, available_height=220, minimum_partial_height=30)
+
+    assert overflowed is True
+    assert [entry["id"] for entry in visible] == [1, 2, 3]
+    assert visible[0]["partial_height"] == 46
+    assert "partial_height" not in visible[1]
+
+
+def test_viewport_does_not_show_an_unreadable_partial_sliver():
+    entries = [
+        {"id": 1, "height": 90},
+        {"id": 2, "height": 90},
+        {"id": 3, "height": 90},
+    ]
+
+    visible, overflowed = entries_filling_viewport(entries, available_height=190, minimum_partial_height=30)
+
+    assert overflowed is True
+    assert [entry["id"] for entry in visible] == [2, 3]
 
 
 def test_native_subtitle_clamps_legacy_package_height_and_keeps_history():

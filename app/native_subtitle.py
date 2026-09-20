@@ -35,6 +35,26 @@ def subtitle_content_origin(window_height: int, entries: list[dict[str, Any]], o
     return max(CONTENT_MARGIN, window_height - CONTENT_MARGIN - total_height)
 
 
+def entries_filling_viewport(
+    entries: list[dict[str, Any]],
+    available_height: int,
+    minimum_partial_height: int,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Keep newest complete entries and use spare space for the previous row's top."""
+    complete = entries_fitting_height(entries, available_height + ENTRY_TRAILING_GAP)
+    overflowed = len(complete) < len(entries)
+    if not overflowed:
+        return complete, False
+
+    remaining = max(0, available_height - visible_entries_height(complete))
+    first_complete_index = len(entries) - len(complete)
+    if first_complete_index > 0 and remaining >= minimum_partial_height:
+        partial = dict(entries[first_complete_index - 1])
+        partial["partial_height"] = remaining
+        return [partial, *complete], True
+    return complete, True
+
+
 class NativeSubtitleWindow(QWidget):
     """以 QPainter 繪製字幕，避開透明 QWebEngineView 的合成路徑。"""
 
@@ -269,16 +289,21 @@ class NativeSubtitleWindow(QWidget):
         available_height = max(0, self.height() - margin * 2)
         # Each entry reserves a following-row gap. Give the final entry that
         # gap while fitting, then remove it from the visible edge calculation.
-        entries = entries_fitting_height(all_entries, available_height + ENTRY_TRAILING_GAP)
-        overflowed = len(entries) < len(all_entries)
+        minimum_partial_height = metadata_font.pixelSize() + max(10, text_font.pixelSize() // 2) + 4
+        entries, overflowed = entries_filling_viewport(
+            all_entries,
+            available_height,
+            minimum_partial_height,
+        )
+        has_partial_entry = bool(entries and entries[0].get("partial_height"))
         # 尚未填滿時由頂端的小間隙開始；開始淘汰舊字幕後，最新內容貼住
         # 底部的小間隙，避免第三筆進來時在下方留下大片空白。
-        y = subtitle_content_origin(self.height(), entries, overflowed)
+        y = margin if has_partial_entry else subtitle_content_origin(self.height(), entries, overflowed)
 
         flow_progress = self._flow_progress()
         flow_offset = 0
         outgoing_entry = None
-        if self._flow_active and entries and overflowed:
+        if self._flow_active and entries and overflowed and not has_partial_entry:
             # At progress 0 the existing rows retain their old positions. The
             # incoming row starts below the content edge; all rows then travel
             # together while the preceding row fades through the top edge.
@@ -303,6 +328,23 @@ class NativeSubtitleWindow(QWidget):
             painter.restore()
 
         for index, entry in enumerate(entries):
+            partial_height = int(entry.get("partial_height", 0))
+            if partial_height > 0:
+                painter.save()
+                painter.setClipRect(QRect(margin, y, content_width, partial_height))
+                self._paint_entry(
+                    painter,
+                    entry,
+                    y,
+                    margin,
+                    content_width,
+                    text_font,
+                    metadata_font,
+                    False,
+                )
+                painter.restore()
+                y += partial_height
+                continue
             if self._flow_active and index == len(entries) - 1:
                 painter.save()
                 painter.setOpacity(max(0.15, flow_progress))

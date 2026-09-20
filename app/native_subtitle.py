@@ -53,32 +53,28 @@ def entries_filling_viewport(
         safe_height = complete_partial_entry_height(partial, remaining)
         if safe_height >= minimum_partial_height:
             partial["partial_height"] = safe_height
-            partial["partial_slot_height"] = remaining
+            partial["partial_slot_height"] = safe_height
+            partial["partial_crop_top"] = max(0, int(partial["height"]) - safe_height)
             return [partial, *complete], True
     return complete, True
 
 
 def complete_partial_entry_height(entry: dict[str, Any], available_height: int) -> int:
-    """Return a clip height ending after a complete metadata or text row."""
-    used = 0
-    metadata_height = int(entry.get("metadata_height", 0))
-    if entry.get("metadata") and metadata_height > 0:
-        section_height = metadata_height + 4
-        if section_height > available_height:
-            return 0
-        used += section_height
+    """Keep the entry tail only when its final text row remains complete.
 
-    complete_text_rows = 0
-    for row in entry.get("rows", []):
-        row_height = int(row[2]) + 4
-        if used + row_height > available_height:
-            break
-        used += row_height
-        complete_text_rows += 1
-
-    # A partial history preview must contain at least one complete sentence,
-    # not only metadata and never half of a translated glyph row.
-    return used if complete_text_rows > 0 else 0
+    The final row is normally the translation.  Cropping from the entry tail
+    makes the older original sentence leave through the top edge first, which
+    matches the direction of natural upward scrolling.
+    """
+    rows = entry.get("rows", [])
+    if not rows:
+        return 0
+    final_row_height = int(rows[-1][2]) + 4
+    # _paint_entry adds a small trailing gap after the final text row.
+    required_tail_height = final_row_height + ENTRY_TRAILING_GAP
+    if available_height < required_tail_height:
+        return 0
+    return min(int(entry.get("height", available_height)), available_height)
 
 
 class NativeSubtitleWindow(QWidget):
@@ -334,13 +330,13 @@ class NativeSubtitleWindow(QWidget):
         flow_progress = self._flow_progress()
         flow_offset = 0
         outgoing_entry = None
-        if self._flow_active and entries and overflowed and not has_partial_entry:
+        if self._flow_active and entries and overflowed:
             # At progress 0 the existing rows retain their old positions. The
             # incoming row starts below the content edge; all rows then travel
             # together while the preceding row fades through the top edge.
             flow_offset = round(entries[-1]["height"] * (1.0 - flow_progress))
             first_line_index = entries[0].get("line_index", 0)
-            if first_line_index > 0:
+            if not has_partial_entry and first_line_index > 0:
                 outgoing_entry = self._layout_line(
                     self._lines[first_line_index - 1],
                     text_font,
@@ -361,12 +357,13 @@ class NativeSubtitleWindow(QWidget):
         for index, entry in enumerate(entries):
             partial_height = int(entry.get("partial_height", 0))
             if partial_height > 0:
+                crop_top = int(entry.get("partial_crop_top", 0))
                 painter.save()
                 painter.setClipRect(QRect(margin, y, content_width, partial_height))
                 self._paint_entry(
                     painter,
                     entry,
-                    y,
+                    y - crop_top,
                     margin,
                     content_width,
                     text_font,

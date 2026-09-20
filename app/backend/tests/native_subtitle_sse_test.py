@@ -132,8 +132,9 @@ def test_viewport_uses_spare_height_for_the_previous_subtitle_top():
 
     assert overflowed is True
     assert [entry["id"] for entry in visible] == [1, 2, 3]
-    assert visible[0]["partial_height"] == 50
+    assert visible[0]["partial_height"] == 56
     assert visible[0]["partial_slot_height"] == 56
+    assert visible[0]["partial_crop_top"] == 34
     assert "partial_height" not in visible[1]
 
 
@@ -150,15 +151,26 @@ def test_viewport_does_not_show_an_unreadable_partial_sliver():
     assert [entry["id"] for entry in visible] == [2, 3]
 
 
-def test_partial_preview_never_clips_through_a_translation_row():
+def test_partial_preview_keeps_translation_complete_and_crops_original_first():
     entry = {
         "metadata": "01:32 · ASR 61ms",
         "metadata_height": 12,
         "rows": [("original", None, 30), ("translated", None, 30)],
     }
 
-    assert complete_partial_entry_height(entry, available_height=65) == 50
+    assert complete_partial_entry_height(entry, available_height=35) == 0
+    assert complete_partial_entry_height(entry, available_height=50) == 50
     assert complete_partial_entry_height(entry, available_height=84) == 84
+
+    visible, overflowed = entries_filling_viewport(
+        [{**entry, "height": 84, "id": 1}, {**entry, "height": 84, "id": 2}],
+        available_height=134,
+        minimum_partial_height=30,
+    )
+
+    assert overflowed is True
+    assert visible[0]["partial_height"] == 56
+    assert visible[0]["partial_crop_top"] == 28
 
 
 def test_native_subtitle_clamps_legacy_package_height_and_keeps_history():

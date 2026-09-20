@@ -7,7 +7,13 @@ from PyQt6.QtGui import QFont
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
-from native_subtitle import CONTENT_MARGIN, NativeSubtitleWindow, visible_entries_height
+from native_subtitle import (
+    CONTENT_MARGIN,
+    MIN_WINDOW_HEIGHT,
+    NativeSubtitleWindow,
+    subtitle_content_origin,
+    visible_entries_height,
+)
 from sse_parser import SseEventParser
 from subtitle_history import entries_fitting_height, find_subtitle_index, subtitle_identity
 
@@ -100,6 +106,19 @@ def test_top_and_bottom_alignment_use_the_same_visible_edge_margin():
     assert window_height - (bottom_origin + visible_height) == CONTENT_MARGIN
 
 
+def test_scrolling_history_keeps_only_a_small_bottom_gap():
+    entries = [{"height": 90}, {"height": 90}]
+    origin = subtitle_content_origin(MIN_WINDOW_HEIGHT, entries, overflowed=True)
+
+    assert MIN_WINDOW_HEIGHT - (origin + visible_entries_height(entries)) == CONTENT_MARGIN
+
+
+def test_unfilled_history_starts_after_the_top_gap():
+    entries = [{"height": 70}, {"height": 70}]
+
+    assert subtitle_content_origin(MIN_WINDOW_HEIGHT, entries, overflowed=False) == CONTENT_MARGIN
+
+
 def test_native_subtitle_clamps_legacy_package_height_and_keeps_history():
     app = QApplication.instance() or QApplication([])
     window = NativeSubtitleWindow(_LegacySubtitleConfig())
@@ -121,6 +140,41 @@ def test_native_subtitle_clamps_legacy_package_height_and_keeps_history():
         visible = entries_fitting_height(entries, window.height() - 32)
         assert len(visible) >= 2
         assert window._flow_active is True
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_minimum_window_height_keeps_two_complete_subtitles_at_smallest_font():
+    app = QApplication.instance() or QApplication([])
+    window = NativeSubtitleWindow(_LegacySubtitleConfig())
+    try:
+        window.settings.update({
+            "fontSize": 16,
+            "showTimestamp": True,
+            "showLatency": True,
+            "maxDisplayCount": 5,
+        })
+        for segment_id in range(1, 4):
+            window.update_subtitle_json(json.dumps({
+                "segment_id": segment_id,
+                "original": f"original {segment_id}",
+                "translated": f"translated {segment_id}",
+                "asr_latency_ms": 63,
+                "total_latency_ms": 375,
+            }))
+
+        font = QFont("Microsoft JhengHei UI")
+        font.setPixelSize(16)
+        metadata_font = QFont(font)
+        metadata_font.setPixelSize(10)
+        entries = window._layout_entries(font, metadata_font, 726)
+        visible = entries_fitting_height(
+            entries,
+            MIN_WINDOW_HEIGHT - CONTENT_MARGIN * 2 + 6,
+        )
+
+        assert len(visible) >= 2
     finally:
         window.close()
         app.processEvents()

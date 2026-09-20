@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 CONTENT_MARGIN = 16
 ENTRY_TRAILING_GAP = 6
+MIN_WINDOW_HEIGHT = 240
 
 
 def visible_entries_height(entries: list[dict[str, Any]]) -> int:
@@ -24,6 +25,14 @@ def visible_entries_height(entries: list[dict[str, Any]]) -> int:
     if not entries:
         return 0
     return max(0, sum(int(entry["height"]) for entry in entries) - ENTRY_TRAILING_GAP)
+
+
+def subtitle_content_origin(window_height: int, entries: list[dict[str, Any]], overflowed: bool) -> int:
+    """Keep a small edge gap and remove leftover space after history starts scrolling."""
+    if not overflowed:
+        return CONTENT_MARGIN
+    total_height = visible_entries_height(entries)
+    return max(CONTENT_MARGIN, window_height - CONTENT_MARGIN - total_height)
 
 
 class NativeSubtitleWindow(QWidget):
@@ -98,7 +107,7 @@ class NativeSubtitleWindow(QWidget):
         # 舊版可攜包的預設高度只有 200px；在同時顯示時間、延遲、原文與
         # 譯文時，扣除邊距後通常只容得下一筆。提高最小高度可讓沿用舊
         # config.yaml 的打包版也至少保留多筆字幕視口。
-        self.setMinimumSize(240, 240)
+        self.setMinimumSize(240, MIN_WINDOW_HEIGHT)
 
         self._load_config()
         self._geometry_ready = True
@@ -254,23 +263,22 @@ class NativeSubtitleWindow(QWidget):
 
         margin = CONTENT_MARGIN
         content_width = max(80, self.width() - margin * 2 - 42)
-        entries = self._layout_entries(text_font, metadata_font, content_width)
+        all_entries = self._layout_entries(text_font, metadata_font, content_width)
         # entry.height 已包含每筆尾端間距；分隔線畫在該間距內，不可再次
         # 累加，否則會誤判溢出並造成頂部裁切、底部留白過多。
         available_height = max(0, self.height() - margin * 2)
         # Each entry reserves a following-row gap. Give the final entry that
         # gap while fitting, then remove it from the visible edge calculation.
-        entries = entries_fitting_height(entries, available_height + ENTRY_TRAILING_GAP)
-        total_height = visible_entries_height(entries)
-        # 字幕一律由可視區頂端連續排列。當內容超過高度時，
-        # entries_fitting_height 已保留最新且放得下的字幕，因此舊字幕會
-        # 自然往上離開，不會因靠底對齊在上方留下大片空白。
-        y = margin
+        entries = entries_fitting_height(all_entries, available_height + ENTRY_TRAILING_GAP)
+        overflowed = len(entries) < len(all_entries)
+        # 尚未填滿時由頂端的小間隙開始；開始淘汰舊字幕後，最新內容貼住
+        # 底部的小間隙，避免第三筆進來時在下方留下大片空白。
+        y = subtitle_content_origin(self.height(), entries, overflowed)
 
         flow_progress = self._flow_progress()
         flow_offset = 0
         outgoing_entry = None
-        if self._flow_active and entries:
+        if self._flow_active and entries and overflowed:
             # At progress 0 the existing rows retain their old positions. The
             # incoming row starts below the content edge; all rows then travel
             # together while the preceding row fades through the top edge.

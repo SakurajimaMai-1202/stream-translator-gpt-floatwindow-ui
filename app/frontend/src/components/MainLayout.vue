@@ -19,7 +19,7 @@ watch(() => interfaceMode.mode, (mode) => {
 const visibleSettingsGroups = computed(() => interfaceMode.isSimple
   ? [{ groupName: '常用設定', items: [{ id: 'general', name: '一般設定' }] }]
   : settingsGroups);
-const appVersion = import.meta.env.VITE_APP_VERSION || '1.4.6';
+const appVersion = import.meta.env.VITE_APP_VERSION || '1.4.7';
 const isMobileMenuOpen = ref(false);
 
 // Define navigation items
@@ -88,9 +88,9 @@ watch(() => route.fullPath, () => {
 <template>
   <div v-if="!interfaceMode.loaded || !interfaceMode.mode || interfaceMode.pendingMode" class="flex min-h-screen items-center justify-center bg-slate-950 p-6 text-white">
     <section class="w-full max-w-2xl space-y-6" aria-labelledby="interface-mode-title">
-      <h1 id="interface-mode-title" class="text-2xl font-bold">選擇適合你的介面</h1>
-      <p class="text-sm text-slate-300">選擇會自動記住，之後也能在側欄隨時切換。</p>
-      <p class="text-sm text-slate-300">首次使用會準備 CPU 語音辨識環境，並預先下載 SenseVoice、Parakeet 日文及 Parakeet v3。已安裝的項目會略過，全部就緒後才進入首頁。</p>
+      <template v-if="interfaceMode.onboardingStep === 'mode'">
+      <h1 id="interface-mode-title" class="text-2xl font-bold">第一次使用，選擇操作方式</h1>
+      <p class="text-sm text-slate-300">簡單模式會自動準備語音辨識與翻譯；選擇會記住，之後可在側欄切換。</p>
       <div v-if="interfaceMode.loaded" class="grid gap-4 sm:grid-cols-2">
         <button :disabled="interfaceMode.busy" class="rounded-2xl border border-indigo-400 bg-indigo-500/15 p-6 text-left disabled:opacity-50" @click="interfaceMode.select('simple')">
           <span class="block text-lg font-bold">簡單模式 · 推薦</span>
@@ -101,6 +101,46 @@ watch(() => route.fullPath, () => {
           <span class="mt-3 block text-sm text-slate-300">完整設定、辨識引擎、模型管理、音訊切片、執行日誌與分享。</span>
         </button>
       </div>
+      </template>
+      <template v-else-if="interfaceMode.onboardingStep === 'translation'">
+        <div>
+          <p class="text-xs font-bold uppercase tracking-widest text-indigo-300">簡單模式設定</p>
+          <h1 id="interface-mode-title" class="mt-2 text-2xl font-bold">你想用哪種方式翻譯？</h1>
+          <p class="mt-2 text-sm text-slate-300">選好後，程式會自動完成其餘設定。</p>
+        </div>
+        <div v-if="interfaceMode.hardware?.selected_gpu" class="rounded-xl border border-white/10 bg-white/5 p-4 text-sm">
+          偵測到 {{ interfaceMode.hardware.selected_gpu.name }} · {{ interfaceMode.hardware.vram_gb }} GB VRAM
+        </div>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <button :disabled="interfaceMode.busy || !interfaceMode.hardware?.simple_setup.supported" class="rounded-2xl border border-emerald-400/40 bg-emerald-500/10 p-5 text-left disabled:opacity-45" @click="interfaceMode.configureLocal()">
+            <span class="block text-lg font-bold">使用這台電腦翻譯</span>
+            <span class="mt-2 block text-sm text-slate-300">自動下載 llama.cpp 與適合顯存的 Hy-MT2 模型。</span>
+            <span class="mt-3 block text-xs text-emerald-200">{{ interfaceMode.hardware?.simple_setup.reason }}</span>
+          </button>
+          <div class="rounded-2xl border border-indigo-400/40 bg-indigo-500/10 p-5">
+            <span class="block text-lg font-bold">使用 Gemini 雲端翻譯</span>
+            <span class="mt-2 block text-sm text-slate-300">不下載翻譯模型，需要網路與 Google API Key。</span>
+            <a href="https://aistudio.google.com/api-keys" target="_blank" rel="noopener noreferrer" class="mt-3 inline-block text-sm font-semibold text-indigo-300 underline">前往 Google AI Studio 取得 API Key ↗</a>
+            <input v-model="interfaceMode.googleApiKey" type="password" autocomplete="off" placeholder="貼上 API Key" class="mt-3 w-full rounded-lg border border-white/20 bg-slate-950 px-3 py-2 text-sm text-white" />
+            <button :disabled="interfaceMode.busy || !interfaceMode.googleApiKey.trim()" class="mt-3 w-full rounded-lg bg-indigo-500 px-4 py-2 text-sm font-bold disabled:opacity-45" @click="interfaceMode.configureCloud()">測試並繼續</button>
+            <p class="mt-2 text-xs text-white/45">預設模型：gemini-2.5-flash-lite</p>
+          </div>
+        </div>
+        <button class="text-sm text-slate-300 underline" @click="interfaceMode.backToModeChoice()">返回選擇介面</button>
+      </template>
+      <template v-else>
+        <h1 id="interface-mode-title" class="text-2xl font-bold">正在自動準備</h1>
+        <p class="text-sm text-slate-300">{{ interfaceMode.setupMessage }}</p>
+        <div v-if="interfaceMode.runtimeInstallStatus" class="space-y-2 rounded-xl border border-white/10 p-4">
+          <p class="text-sm">翻譯引擎 · {{ interfaceMode.runtimeInstallStatus.message }}</p>
+          <progress class="w-full" :value="interfaceMode.runtimeInstallStatus.progress" :max="1" />
+        </div>
+        <div v-if="interfaceMode.localModelInstallStatus" class="space-y-2 rounded-xl border border-white/10 p-4">
+          <p class="text-sm">翻譯模型 · {{ interfaceMode.localModelInstallStatus.message }}</p>
+          <progress class="w-full" :value="interfaceMode.localModelInstallStatus.progress" :max="1" />
+          <p class="text-xs text-slate-400">{{ Math.round(interfaceMode.localModelInstallStatus.progress * 100) }}%</p>
+        </div>
+      </template>
       <p v-if="interfaceMode.busy" role="status">{{ interfaceMode.setupMessage || (interfaceMode.loaded ? '正在儲存選擇…' : '正在讀取設定…') }}</p>
       <div v-if="interfaceMode.sidecarStatus" class="space-y-2" aria-label="CPU 語音辨識環境安裝進度">
         <progress class="w-full" :value="interfaceMode.sidecarStatus.progress" :max="1" />
@@ -114,7 +154,7 @@ watch(() => route.fullPath, () => {
           <p class="text-xs text-slate-300">{{ model.message }}</p>
         </div>
       </div>
-      <button v-if="interfaceMode.pendingMode && !interfaceMode.busy" class="rounded-lg border px-4 py-2" @click="interfaceMode.select(interfaceMode.pendingMode)">重試準備環境</button>
+      <button v-if="interfaceMode.pendingMode && !interfaceMode.busy && interfaceMode.error && interfaceMode.onboardingStep === 'translation'" class="rounded-lg border px-4 py-2" @click="interfaceMode.translationChoice === 'local' ? interfaceMode.configureLocal() : interfaceMode.translationChoice === 'cloud' ? interfaceMode.configureCloud() : undefined">重試準備環境</button>
       <button v-if="!interfaceMode.loaded && !interfaceMode.busy" class="rounded-lg border px-4 py-2" @click="interfaceMode.load()">重新讀取</button>
     </section>
   </div>

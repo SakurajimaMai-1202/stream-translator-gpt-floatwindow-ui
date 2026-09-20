@@ -84,3 +84,23 @@ def test_sakura_parameters_distinguish_model_card_facts_from_app_defaults():
     assert galtransl["deployment_config"]["n_ctx"] == 2048
     assert "模型卡要求" in galtransl["parameter_source"]
     assert "未公布" in sakura14b["parameter_source"]
+
+
+def test_simple_setup_uses_small_model_for_four_gb_nvidia():
+    result = build_translation_model_recommendations([gpu("NVIDIA GeForce RTX", 4096)])
+    assert result["simple_setup"]["supported"] is True
+    assert result["simple_setup"]["model_id"] == "hy-mt2-iq3-xxs"
+    assert result["simple_setup"]["quant"] == "i1-IQ3_XXS"
+
+
+def test_simple_setup_uses_q6_model_for_eight_gb_nvidia():
+    result = build_translation_model_recommendations([gpu("NVIDIA GeForce RTX", 8192)])
+    assert result["simple_setup"]["supported"] is True
+    assert result["simple_setup"]["model_id"] == "hy-mt2-q6-k"
+    assert result["simple_setup"]["quant"] == "i1-Q6_K"
+
+
+def test_simple_setup_sends_unsupported_hardware_to_cloud():
+    result = build_translation_model_recommendations([gpu("NVIDIA GeForce RTX", 3072)])
+    assert result["simple_setup"]["supported"] is False
+    assert result["simple_setup"]["model_id"] == ""

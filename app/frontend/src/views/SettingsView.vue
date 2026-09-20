@@ -285,15 +285,15 @@ const localConfig = ref<any>({
   },
   audio_slicing_vad: {
     min_audio_length: 0.7,
-    max_audio_length: 6.0,
-    target_audio_length: 3.0,
+    max_audio_length: 8.0,
+    target_audio_length: 4.0,
     continuous_no_speech_threshold: 0.5,
     disable_dynamic_no_speech_threshold: false,
     prefix_retention_length: 0.25,
     vad_enabled: true,
     vad_threshold: 0.35,
     disable_dynamic_vad_threshold: false,
-    vad_every_n_frames: 1,
+    vad_every_n_frames: 2,
     vad_backend: 'firered',
     firered_vad_model_path: ''
   },
@@ -332,7 +332,7 @@ const localConfig = ref<any>({
     backend: 'gpt',
     target_language: 'Traditional Chinese',
     gpt_model: 'gpt-4o-mini',
-    gemini_model: 'gemini-2.0-flash-exp',
+    gemini_model: 'gemini-2.5-flash-lite',
     gpt_base_url: 'https://api.openai.com/v1',
     gemini_base_url: 'https://generativelanguage.googleapis.com/v1beta',
     translation_history_size: 0,
@@ -2938,7 +2938,7 @@ async function handleFileChange(event: Event) {
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label class="block text-white/70 font-semibold mb-2">Gemini 模型</label>
-                    <input v-model="localConfig.translation.gemini_model" type="text" placeholder="gemini-2.0-flash-exp"
+                    <input v-model="localConfig.translation.gemini_model" type="text" placeholder="gemini-2.5-flash-lite"
                       class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
                     <p class="text-white/40 text-xs mt-1">例如: gemini-2.0-flash-exp, gemini-1.5-pro</p>
                   </div>

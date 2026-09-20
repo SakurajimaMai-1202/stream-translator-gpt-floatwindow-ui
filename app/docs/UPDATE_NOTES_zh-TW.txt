@@ -1,4 +1,4 @@
-Stream Translator v1.4.6 更新說明
+Stream Translator v1.4.7 更新說明
 =================================
 
 主要更新
@@ -15,4 +15,4 @@ Stream Translator v1.4.6 更新說明
 - CUDA、CPU 與 ROCm App Update 只能套用到相同 Profile。
 - config.yaml、models、output、srt、logs 及已下載模型可以保留。
 
-完整異動內容請參閱 RELEASE_NOTES_v1.4.6_zh-TW.md。
+完整異動內容請參閱 RELEASE_NOTES_v1.4.7_zh-TW.md。

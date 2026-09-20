@@ -5,6 +5,7 @@ import { useTranslationStore } from '../stores/translation';
 import { useLlamaStore } from '../stores/llama';
 import { useInterfaceModeStore } from '../stores/interfaceMode';
 import { simpleAsrModel, simpleAsrLanguages } from '../utils/simpleAsr';
+import { sameLanguage } from '../utils/languageIdentity';
 import { useModelDownloadStore } from '../stores/modelDownload';
 import { translationApi, configApi, runtimeApi, serverApi, systemApi, type AppUpdateStatus, type AudioSource, type AudioDevice, type Config, type FfmpegCheckResult, type ModelComputeBackend, type ModelEngine } from '../services/api';
 import UiSelect, { type UiSelectOption } from '../components/UiSelect.vue';
@@ -429,6 +430,12 @@ const selectedInputLanguage = ref('auto');
 const selectedOutputLanguage = ref('Traditional Chinese');
 const selectedBackend = ref('gpt');
 const translationEnabled = ref(true);  // 🔧 新增: 翻譯開關
+const sameLanguageSelected = computed(() => sameLanguage(
+  !interfaceMode.isSimple && selectedTranscriptionEngine.value === 'parakeet-ctc-ja'
+    ? parakeetLanguageForModel(selectedParakeetModel.value) : selectedInputLanguage.value,
+  selectedOutputLanguage.value,
+));
+const effectiveTranslationEnabled = computed(() => translationEnabled.value && !sameLanguageSelected.value);
 
 const localLlmModelName = computed(() => {
   const value = llamaStore.currentModel || llamaStore.selectedModelPath;
@@ -465,7 +472,11 @@ const localLlmStatusLabel = computed(() => {
 
 const localLlmStatusDescription = computed(() => {
   if (!llamaStore.selectedModelPath) return '請先到「LLM 模型管理」選擇 GGUF 模型';
-  if (llamaStore.isServerReady) return '即時轉譯會使用此模型進行本地翻譯';
+  if (llamaStore.isServerReady) {
+    const runningUrl = llamaStore.serverStatus.server_url;
+    if (runningUrl) return `本機翻譯正在 ${runningUrl} 運行`;
+    return `本機翻譯正在連接埠 ${llamaStore.serverConfig.port} 運行`;
+  }
   if (llamaStore.isLoading || llamaStore.isServerRunning) return '正在載入模型，完成後即可開始轉譯';
   if (llamaStore.localLlmEnabled && llamaStore.serverStatus.last_error) return llamaStore.serverStatus.last_error;
   return '開啟後會啟動 llama.cpp，關閉則不使用本地模型';
@@ -722,7 +733,7 @@ const configWarnings = computed<ConfigWarning[]>(() => {
     });
   }
 
-  if (translationEnabled.value && selectedBackend.value === 'gpt' && !config.translation?.openai_api_key) {
+  if (effectiveTranslationEnabled.value && selectedBackend.value === 'gpt' && !config.translation?.openai_api_key) {
     warnings.push({
       level: 'error',
       message: 'OpenAI API Key 未設定',
@@ -730,7 +741,7 @@ const configWarnings = computed<ConfigWarning[]>(() => {
     });
   }
   
-  if (translationEnabled.value && selectedBackend.value === 'gemini' && !config.translation?.google_api_key) {
+  if (effectiveTranslationEnabled.value && selectedBackend.value === 'gemini' && !config.translation?.google_api_key) {
     warnings.push({
       level: 'error',
       message: 'Google API Key 未設定',
@@ -1153,7 +1164,7 @@ async function handleStart() {
   addLog(`目標語言: ${selectedOutputLanguage.value}`);
   
   try {
-    if (llamaStore.localLlmEnabled && !llamaStore.isServerReady) {
+    if (effectiveTranslationEnabled.value && llamaStore.localLlmEnabled && !llamaStore.isServerReady) {
       addLog('🦙 正在啟動本地 LLM...');
       await llamaStore.startServer();
       addLog('✅ 本地 LLM 已就緒');
@@ -1195,7 +1206,7 @@ async function handleStart() {
       target_language: translationEnabled.value ? selectedOutputLanguage.value : undefined,
       gpt_model: translationEnabled.value ? store.config.translation?.gpt_model : undefined,
       translation_backend: translationEnabled.value ? selectedBackend.value : undefined,
-      translation_enabled: translationEnabled.value
+      translation_enabled: effectiveTranslationEnabled.value
     });
     
     // 更新 store 狀態
@@ -1582,6 +1593,7 @@ function clearLogs() {
                   :disabled="store.isRunning || !translationEnabled"
                   button-class="bg-white/5 border border-white/15 hover:bg-white/10 text-xs rounded-xl disabled:opacity-40"
                 />
+                <p v-if="translationEnabled && sameLanguageSelected" class="mt-2 text-xs text-indigo-200" role="status">輸入與目標語言相同，僅辨識並顯示原文，不呼叫翻譯模型。</p>
               </div>
             </div>
 
@@ -1764,7 +1776,6 @@ function clearLogs() {
 
           <!-- 本地 LLM 快速控制 -->
           <div
-            v-if="!interfaceMode.isSimple || llamaStore.localLlmEnabled"
             class="relative overflow-hidden rounded-2xl border p-4 transition-all duration-300"
             :class="llamaStore.localLlmEnabled
               ? 'border-emerald-400/25 bg-gradient-to-r from-emerald-950/35 via-slate-950/95 to-cyan-950/25 shadow-lg shadow-emerald-950/20'

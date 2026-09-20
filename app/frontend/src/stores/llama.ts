@@ -69,7 +69,7 @@ export const useLlamaStore = defineStore('llama', () => {
     repeat_penalty: 1.1,
     n_predict: 512,
     // 進階性能參數
-    flash_attn: true,
+    flash_attn: 'auto',
     no_mmap: false
   });
 
@@ -284,7 +284,11 @@ export const useLlamaStore = defineStore('llama', () => {
           temp: llamaConfig.temp || 0.8,
           repeat_penalty: llamaConfig.repeat_penalty || 1.1,
           n_predict: llamaConfig.n_predict || 512,
-          flash_attn: llamaConfig.flash_attn !== false,
+          flash_attn: llamaConfig.flash_attn === true
+            ? 'on'
+            : llamaConfig.flash_attn === false
+              ? 'off'
+              : (['on', 'off', 'auto'].includes(llamaConfig.flash_attn) ? llamaConfig.flash_attn : 'auto'),
           no_mmap: llamaConfig.no_mmap || false
         };
 

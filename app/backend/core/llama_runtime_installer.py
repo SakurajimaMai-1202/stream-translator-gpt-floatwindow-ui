@@ -21,6 +21,7 @@ from backend.config import settings
 from backend.core.hardware_detector import GpuDevice, detect_gpus
 
 RELEASE_API = "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
+RELEASE_TAG_API = "https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/{tag}"
 _VARIANT_LABELS = {
     "cpu": "Windows x64 CPU",
     "vulkan": "Windows x64 Vulkan",
@@ -91,13 +92,36 @@ def installed_runtime_build_tag() -> str:
     return ""
 
 
-def _release_json() -> dict[str, Any]:
+def _fetch_json(url: str) -> dict[str, Any]:
     request = urllib.request.Request(
-        RELEASE_API,
+        url,
         headers={"Accept": "application/vnd.github+json", "User-Agent": "Stream-Translator"},
     )
     with urllib.request.urlopen(request, timeout=20) as response:
         return json.load(response)
+
+
+def _fetch_text(url: str) -> str:
+    request = urllib.request.Request(url, headers={"User-Agent": "Stream-Translator"})
+    with urllib.request.urlopen(request, timeout=20) as response:
+        return response.read().decode("utf-8", errors="replace").strip()
+
+
+def _release_json() -> dict[str, Any]:
+    """Resolve the stable release to the binary-bearing nightly release when needed."""
+    release = _fetch_json(RELEASE_API)
+    if _build_variants(release.get("assets", [])):
+        return release
+    pointer = next((
+        asset for asset in release.get("assets", [])
+        if str(asset.get("name") or "").lower() == "nightly-tag.txt"
+    ), None)
+    if not pointer:
+        return release
+    tag = _fetch_text(str(pointer.get("browser_download_url") or "")).strip()
+    if not re.fullmatch(r"b\d+", tag, re.IGNORECASE):
+        raise RuntimeError("llama.cpp 官方 nightly 指標格式不正確")
+    return _fetch_json(RELEASE_TAG_API.format(tag=tag))
 
 
 def _asset_digest(asset: dict[str, Any]) -> str:

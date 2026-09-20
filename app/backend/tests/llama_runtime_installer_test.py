@@ -27,6 +27,40 @@ def _runtime_zip_bytes(marker: bytes = b"new-runtime") -> bytes:
     return payload.getvalue()
 
 
+def test_stable_release_follows_official_nightly_pointer(monkeypatch):
+    stable = {
+        "tag_name": "v0.4.1",
+        "assets": [_asset("nightly-tag.txt")],
+    }
+    nightly = {
+        "tag_name": "b10964",
+        "assets": [
+            _asset("llama-b10964-bin-win-cuda-12.4-x64.zip"),
+            _asset("cudart-llama-bin-win-cuda-12.4-x64.zip"),
+        ],
+    }
+    requested = []
+
+    def fetch_json(url):
+        requested.append(url)
+        return stable if url == runtime.RELEASE_API else nightly
+
+    monkeypatch.setattr(runtime, "_fetch_json", fetch_json)
+    monkeypatch.setattr(runtime, "_fetch_text", lambda _url: "b10964\n")
+
+    assert runtime._release_json() == nightly
+    assert requested == [runtime.RELEASE_API, runtime.RELEASE_TAG_API.format(tag="b10964")]
+
+
+def test_invalid_nightly_pointer_is_rejected(monkeypatch):
+    monkeypatch.setattr(runtime, "_fetch_json", lambda _url: {
+        "tag_name": "v0.4.1", "assets": [_asset("nightly-tag.txt")],
+    })
+    monkeypatch.setattr(runtime, "_fetch_text", lambda _url: "../../unexpected")
+    with pytest.raises(RuntimeError, match="nightly"):
+        runtime._release_json()
+
+
 def test_latest_runtime_variants_pair_cuda_runtime_and_recommend_hardware(monkeypatch):
     monkeypatch.setattr(runtime, "_release_json", lambda: {
         "tag_name": "b9999",

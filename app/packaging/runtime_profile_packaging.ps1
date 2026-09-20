@@ -84,7 +84,7 @@ function Get-RuntimeProfileDocText {
         [Parameter(Mandatory = $true)]
         [ValidateSet("cuda", "cpu", "rocm")]
         [string]$RuntimeProfile,
-        [string]$Version = "1.4.6",
+        [string]$Version = "1.4.7",
         [Parameter(Mandatory = $true)]
         [ValidateSet("portable_guide", "update_notes", "readme")]
         [string]$Document
@@ -285,7 +285,7 @@ function Write-RuntimeProfileDocs {
         [Parameter(Mandatory = $true)]
         [ValidateSet("cuda", "cpu", "rocm")]
         [string]$RuntimeProfile,
-        [string]$Version = "1.4.6"
+        [string]$Version = "1.4.7"
     )
 
     if (-not (Test-Path $Destination)) {

@@ -1,7 +1,8 @@
 import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
-import { configApi, runtimeApi, type CpuAsrSidecarInstallStatus } from '../services/api';
+import { configApi, runtimeApi, translationApi, type CpuAsrSidecarInstallStatus } from '../services/api';
 import { useModelDownloadStore } from './modelDownload';
+import { llamaApi, type ModelInstallStatus, type RuntimeInstallStatus, type TranslationModelRecommendationInfo } from '../services/llamaApi';
 
 const STARTER_MODELS = [
   { engine: 'sensevoice' as const, id: 'iic/SenseVoiceSmall', label: 'SenseVoice Small（中文）' },
@@ -20,6 +21,12 @@ export const useInterfaceModeStore = defineStore('interfaceMode', () => {
   const isSimple = computed(() => mode.value === 'simple');
   const downloads = useModelDownloadStore();
   const preparingModels = ref(false);
+  const onboardingStep = ref<'mode' | 'translation' | 'preparing'>('mode');
+  const translationChoice = ref<'local' | 'cloud' | null>(null);
+  const googleApiKey = ref('');
+  const hardware = ref<TranslationModelRecommendationInfo | null>(null);
+  const runtimeInstallStatus = ref<RuntimeInstallStatus | null>(null);
+  const localModelInstallStatus = ref<ModelInstallStatus | null>(null);
   const modelProgress = computed(() => STARTER_MODELS.map(model => {
     const task = downloads.getTask(model.engine, model.id, 'cpu');
     const ready = downloads.isDownloaded(model.engine, model.id, 'cpu');
@@ -61,6 +68,7 @@ export const useInterfaceModeStore = defineStore('interfaceMode', () => {
       const config = await configApi.getConfig(true);
       const saved = config.interface?.mode;
       mode.value = saved === 'simple' || saved === 'advanced' ? saved : null;
+      onboardingStep.value = mode.value ? 'mode' : 'mode';
       loaded.value = true;
     } catch {
       error.value = '無法讀取介面設定，請重試。';
@@ -76,6 +84,13 @@ export const useInterfaceModeStore = defineStore('interfaceMode', () => {
     error.value = '';
     preparingModels.value = false;
     try {
+      if (!mode.value && value === 'simple' && !pendingMode.value) {
+        pendingMode.value = value;
+        onboardingStep.value = 'translation';
+        setupMessage.value = '正在偵測顯示卡與顯存…';
+        hardware.value = await llamaApi.getModelRecommendations(true);
+        return;
+      }
       if (!mode.value || pendingMode.value) {
         pendingMode.value = value;
         await prepareCpuAsr();
@@ -86,6 +101,7 @@ export const useInterfaceModeStore = defineStore('interfaceMode', () => {
       await configApi.updateSection('interface', { mode: value });
       mode.value = value;
       pendingMode.value = null;
+      onboardingStep.value = 'mode';
       sidecarStatus.value = null;
     } catch (cause: any) {
       error.value = cause?.response?.data?.detail || cause?.message || '介面模式或環境準備失敗，請重試。';
@@ -94,5 +110,128 @@ export const useInterfaceModeStore = defineStore('interfaceMode', () => {
     }
   }
 
-  return { mode, loaded, busy, error, isSimple, pendingMode, setupMessage, sidecarStatus, preparingModels, modelProgress, load, select };
+  async function waitForRuntime() {
+    for (let index = 0; index < 3600; index++) {
+      const status = await llamaApi.getRuntimeInstallStatus();
+      runtimeInstallStatus.value = status;
+      setupMessage.value = status.message || '正在準備本機翻譯引擎…';
+      if (status.state === 'completed') return;
+      if (status.state === 'error') throw new Error(status.error || 'llama.cpp 安裝失敗');
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    throw new Error('llama.cpp 安裝逾時，請重試。');
+  }
+
+  async function waitForLocalModel(): Promise<string> {
+    for (let index = 0; index < 10800; index++) {
+      const status = await llamaApi.getSimpleModelInstallStatus();
+      localModelInstallStatus.value = status;
+      setupMessage.value = status.message || '正在下載本機翻譯模型…';
+      if (status.state === 'completed') {
+        if (!status.path) throw new Error('翻譯模型安裝完成，但找不到模型檔案。');
+        return status.path;
+      }
+      if (status.state === 'error') throw new Error(status.error || '翻譯模型下載失敗');
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    throw new Error('翻譯模型下載逾時，請重試。');
+  }
+
+  async function finishSimpleMode() {
+    setupMessage.value = '正在準備 CPU 語音辨識…';
+    await prepareCpuAsr();
+    await prepareModels();
+    if (sidecarStatus.value?.restart_required) throw new Error('環境已準備完成，請重新啟動程式後繼續。');
+    await configApi.updateSection('interface', { mode: 'simple' });
+    mode.value = 'simple';
+    pendingMode.value = null;
+    onboardingStep.value = 'mode';
+    sidecarStatus.value = null;
+  }
+
+  async function configureCloud() {
+    if (!googleApiKey.value.trim()) {
+      error.value = '請先貼上 Google AI Studio API Key。';
+      return;
+    }
+    busy.value = true;
+    error.value = '';
+    onboardingStep.value = 'preparing';
+    translationChoice.value = 'cloud';
+    try {
+      setupMessage.value = '正在儲存 Gemini 翻譯設定…';
+      await translationApi.testGemini(googleApiKey.value.trim());
+      await configApi.updateSection('translation', {
+        backend: 'gemini', google_api_key: googleApiKey.value.trim(), gemini_model: 'gemini-2.5-flash-lite',
+      });
+      await finishSimpleMode();
+    } catch (cause: any) {
+      error.value = cause?.response?.data?.detail || cause?.message || 'Gemini 設定失敗，請重試。';
+      onboardingStep.value = 'translation';
+    } finally { busy.value = false; }
+  }
+
+  async function configureLocal() {
+    const setup = hardware.value?.simple_setup;
+    if (!setup?.supported) {
+      error.value = setup?.reason || '這台電腦不適合自動設定本機翻譯，請選擇雲端翻譯。';
+      return;
+    }
+    busy.value = true;
+    error.value = '';
+    onboardingStep.value = 'preparing';
+    translationChoice.value = 'local';
+    try {
+      setupMessage.value = '正在選擇適合這台電腦的 llama.cpp…';
+      const release = await llamaApi.getRuntimeReleases();
+      const variant = release.recommended_variant;
+      if (!variant) throw new Error('無法判斷這台電腦適用的 llama.cpp Runtime。');
+      const selected = release.variants.find(item => item.id === variant);
+      if (!selected?.installable) throw new Error(selected?.compatibility_error || '找不到可安裝的 llama.cpp Runtime。');
+      if (!(release.is_latest && release.installed_variant === variant)) {
+        await llamaApi.installRuntime(variant);
+        await waitForRuntime();
+      }
+      setupMessage.value = `正在下載 ${setup.quant} 翻譯模型…`;
+      await llamaApi.installSimpleModel(setup.model_id);
+      const modelPath = await waitForLocalModel();
+      const port = await llamaApi.getAvailablePort(8080);
+      await configApi.updateSection('llama', {
+        local_llm_enabled: true, model_dir: modelPath.replace(/[\\/][^\\/]+$/, ''), model_path: modelPath,
+        host: '127.0.0.1', port, n_ctx: 4096, n_gpu_layers: 999, n_threads: 4, n_parallel: 1,
+        temp: 0.7, top_p: 0.6, top_k: 20, repeat_penalty: 1.05, n_predict: 4096,
+        flash_attn: 'auto', no_mmap: false,
+      });
+      await configApi.updateSection('translation', { backend: 'llama' });
+      setupMessage.value = `正在啟動本機翻譯服務（連接埠 ${port}）…`;
+      await llamaApi.startServer({
+        model_path: modelPath, host: '127.0.0.1', port, n_ctx: 4096, n_gpu_layers: 999,
+        n_threads: 4, n_parallel: 1, temp: 0.7, top_p: 0.6, top_k: 20,
+        repeat_penalty: 1.05, n_predict: 4096, flash_attn: 'auto', no_mmap: false,
+      });
+      for (let index = 0; index < 180; index++) {
+        const status = await llamaApi.getServerStatus();
+        if (status.is_ready) break;
+        if (!status.is_running) throw new Error(status.last_error || '本機翻譯模型無法啟動。');
+        if (index === 179) throw new Error('本機翻譯模型載入逾時。');
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+      await finishSimpleMode();
+    } catch (cause: any) {
+      error.value = cause?.response?.data?.detail || cause?.message || '本機翻譯設定失敗，請重試。';
+      onboardingStep.value = 'translation';
+    } finally { busy.value = false; }
+  }
+
+  function backToModeChoice() {
+    if (busy.value) return;
+    pendingMode.value = null;
+    onboardingStep.value = 'mode';
+    translationChoice.value = null;
+    error.value = '';
+  }
+
+  return { mode, loaded, busy, error, isSimple, pendingMode, setupMessage, sidecarStatus, preparingModels,
+    modelProgress, onboardingStep, translationChoice, googleApiKey, hardware, runtimeInstallStatus,
+    localModelInstallStatus, load, select, configureCloud, configureLocal, backToModeChoice };
 });

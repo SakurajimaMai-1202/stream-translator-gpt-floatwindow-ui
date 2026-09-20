@@ -426,6 +426,9 @@ export interface ModelStorageInfo {
 }
 
 export const translationApi = {
+  async testGemini(apiKey: string, model = 'gemini-2.5-flash-lite'): Promise<void> {
+    await axios.post(`${API_BASE}/translation/test-gemini`, { api_key: apiKey, model });
+  },
   async start(request: StartTranslationRequest): Promise<StartResponse> {
     const response = await axios.post(`${API_BASE}/translation/start`, request);
     return response.data;

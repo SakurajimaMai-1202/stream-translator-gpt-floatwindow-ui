@@ -45,7 +45,7 @@ from native_subtitle_sse import NativeSubtitleSseClient
 
 # 設定日誌
 # 由 UI 啟動器統一在每次開啟時清掉 app/backend/translator stderr 舊檔，避免 log 無限累積。
-LOG_FILE = configure_logging("app", reset_log_names=["backend", "translator_stderr"])
+LOG_FILE = configure_logging("app", reset_log_names=["backend", "translator_stderr", "llama"])
 logger = logging.getLogger(__name__)
 
 

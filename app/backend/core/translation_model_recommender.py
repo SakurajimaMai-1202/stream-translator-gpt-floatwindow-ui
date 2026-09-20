@@ -136,10 +136,30 @@ def build_translation_model_recommendations(devices: Iterable[GpuDevice]) -> dic
         item["comfortable_vram_gb"],
         item["catalog_order"],
     ))
+    nvidia = selected if selected and selected.vendor == "nvidia" else None
+    if nvidia and vram_gb is not None and vram_gb >= 8:
+        simple_setup = {
+            "supported": True, "model_id": "hy-mt2-q6-k",
+            "filename": "Hy-MT2-7B.i1-Q6_K.gguf", "quant": "i1-Q6_K",
+            "reason": f"偵測到 NVIDIA GPU 與 {vram_gb:g} GB VRAM，使用高品質量化。",
+        }
+    elif nvidia and vram_gb is not None and vram_gb >= 4:
+        simple_setup = {
+            "supported": True, "model_id": "hy-mt2-iq3-xxs",
+            "filename": "Hy-MT2-7B.i1-IQ3_XXS.gguf", "quant": "i1-IQ3_XXS",
+            "reason": f"偵測到 NVIDIA GPU 與 {vram_gb:g} GB VRAM，使用節省顯存量化。",
+        }
+    else:
+        simple_setup = {
+            "supported": False, "model_id": "", "filename": "", "quant": "",
+            "reason": "未偵測到至少 4 GB VRAM 的 NVIDIA 獨立顯卡，建議使用 Gemini 雲端翻譯。",
+        }
+
     return {
         "selected_gpu": asdict(selected) if selected else None,
         "detected_gpus": [asdict(device) for device in detected],
         "vram_gb": vram_gb,
         "models": models,
+        "simple_setup": simple_setup,
         "notice": "VRAM 建議以指定量化的實際檔案大小加上 llama.cpp／KV cache 餘量計算；ASR 同時使用 GPU 時需另外預留顯存。",
     }

@@ -192,3 +192,30 @@ def configure_logging(
         logging.getLogger(logger_name).setLevel(max(log_level, logging.WARNING))
 
     return log_file
+
+
+def configure_dedicated_file_logger(logger_name: str, log_name: str) -> logging.Logger:
+    """建立只寫入指定檔案、不傳回 root logger 的獨立輪替 logger。"""
+    log_dir = resolve_log_dir()
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    logger = logging.getLogger(logger_name)
+    expected_path = resolve_log_file(log_name)
+    for handler in logger.handlers:
+        if isinstance(handler, RotatingFileHandler) and Path(handler.baseFilename) == expected_path:
+            return logger
+
+    _close_handlers(logger)
+    handler = RotatingFileHandler(
+        expected_path,
+        maxBytes=LOG_MAX_BYTES,
+        backupCount=LOG_BACKUP_COUNT,
+        encoding="utf-8",
+        delay=True,
+    )
+    handler.setLevel(get_configured_log_level())
+    handler.setFormatter(_build_formatter())
+    logger.addHandler(handler)
+    logger.setLevel(get_configured_log_level())
+    logger.propagate = False
+    return logger

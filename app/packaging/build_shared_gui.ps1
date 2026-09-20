@@ -1,6 +1,6 @@
 #!/usr/bin/env pwsh
 param(
-    [string]$Version = "1.4.6",
+    [string]$Version = "1.4.7",
     [string]$Destination = "",
     [ValidateRange(1, 128)][int]$CopyThreads = 16
 )

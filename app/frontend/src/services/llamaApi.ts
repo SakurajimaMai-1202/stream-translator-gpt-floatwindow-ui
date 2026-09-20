@@ -31,7 +31,7 @@ export interface ServerConfig {
   n_predict?: number;
 
   // 進階性能參數
-  flash_attn?: boolean;
+  flash_attn?: 'on' | 'off' | 'auto';
   no_mmap?: boolean;
 }
 
@@ -134,6 +134,7 @@ export interface TranslationModelRecommendationInfo {
   detected_gpus: Array<{ name: string; vendor: string; backend: string; memory_mb: number | null; is_integrated: boolean }>;
   vram_gb: number | null;
   notice: string;
+  simple_setup: { supported: boolean; model_id: string; filename: string; quant: string; reason: string };
   models: Array<{
     id: string; name: string; repo: string; url: string; recommended_quant: string;
     model_size_gb: number; minimum_quant: string; minimum_size_gb: number; min_vram_gb: number; comfortable_vram_gb: number; vram_basis: string; category: string; use_case?: string;
@@ -144,6 +145,12 @@ export interface TranslationModelRecommendationInfo {
     runtime_note?: string;
     fit: 'recommended' | 'possible' | 'unknown' | 'not_recommended'; fit_reason: string;
   }>;
+}
+
+export interface ModelInstallStatus {
+  state: 'idle' | 'resolving' | 'downloading' | 'verifying' | 'completed' | 'error';
+  message: string; progress: number; job_id: string; model_id: string; filename: string;
+  path: string; bytes_downloaded: number; bytes_total: number; sha256: string; error: string;
 }
 
 export const llamaApi = {
@@ -163,6 +170,14 @@ export const llamaApi = {
 
   async getRuntimeInstallStatus(): Promise<RuntimeInstallStatus> {
     const response = await axios.get(`${API_BASE}/runtime/install/status`);
+    return response.data;
+  },
+  async installSimpleModel(modelId: string): Promise<{ success: boolean; message: string; job_id: string }> {
+    const response = await axios.post(`${API_BASE}/model/install`, { model_id: modelId });
+    return response.data;
+  },
+  async getSimpleModelInstallStatus(): Promise<ModelInstallStatus> {
+    const response = await axios.get(`${API_BASE}/model/install/status`);
     return response.data;
   },
   /**
@@ -196,6 +211,10 @@ export const llamaApi = {
   async getServerStatus(): Promise<ServerStatus> {
     const response = await axios.get(`${API_BASE}/server/status`);
     return response.data;
+  },
+  async getAvailablePort(preferred = 8080): Promise<number> {
+    const response = await axios.get(`${API_BASE}/server/available-port`, { params: { preferred } });
+    return response.data.port;
   },
 
   /**

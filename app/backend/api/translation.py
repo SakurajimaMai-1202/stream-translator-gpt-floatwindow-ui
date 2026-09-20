@@ -8,6 +8,8 @@ from backend.core.translator import active_translations, create_task, get_task, 
 from backend.core.runtime_profiles import get_runtime_capabilities
 from backend.core.config_manager import ConfigManager, normalize_transcription_engine_flags
 from backend.core.app_sync import publish_app_event
+from backend.core.language_identity import same_language
+from pydantic import BaseModel
 
 router = APIRouter(prefix="/translation", tags=["translation"])
 from backend.api.config import get_config_manager
@@ -19,6 +21,33 @@ PARAKEET_CTC_JA_MODEL_IDS = {
     "nvidia/parakeet-tdt_ctc-1.1b",
     "grider-transwithai/parakeet-ctc-1.1b-ja",
 }
+
+
+class GeminiConnectionTest(BaseModel):
+    api_key: str
+    model: str = "gemini-2.5-flash-lite"
+
+
+@router.post("/test-gemini")
+async def test_gemini(request: GeminiConnectionTest):
+    """Validate an onboarding API key without persisting or logging it."""
+    import httpx
+    model = request.model.strip() or "gemini-2.5-flash-lite"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}"
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(url, headers={"x-goog-api-key": request.api_key.strip()})
+        if response.status_code == 200:
+            return {"success": True, "model": model}
+        if response.status_code in {401, 403}:
+            raise HTTPException(status_code=400, detail="API Key 無效或沒有 Gemini API 權限")
+        if response.status_code == 404:
+            raise HTTPException(status_code=400, detail=f"此帳號目前無法使用 {model}")
+        raise HTTPException(status_code=400, detail=f"Gemini 連線測試失敗（HTTP {response.status_code}）")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"無法連線 Google AI Studio：{exc}") from exc
 
 
 @router.post("/start", response_model=TranslationTaskResponse)
@@ -113,6 +142,12 @@ async def start_translation(request: StartTranslationRequest, http_request: Requ
                 if section in current_config and isinstance(values, dict):
                     current_config[section].update(values)
         
+        # Compare the final task configuration, including request overrides.
+        if same_language(current_config['transcription'].get('language'),
+                         current_config['translation'].get('target_language')):
+            current_config['translation']['backend'] = 'none'
+            current_config['output_notification']['hide_transcribe_result'] = False
+
         # 3. 轉換為命令行參數
         # Coerce ASR backend based on runtime profile
         runtime_config = current_config.get('runtime', {})

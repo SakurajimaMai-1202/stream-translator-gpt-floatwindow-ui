@@ -579,18 +579,24 @@
           </div>
 
           <div class="toggle-stack">
-            <label class="toggle-card">
-              <input v-model="llamaStore.serverConfig.flash_attn" type="checkbox" />
+            <label :class="['toggle-card', { 'is-disabled': isHyMtModel }]">
               <div>
-                <strong>啟用 Flash Attention</strong>
-                <small>推薦優先開啟，有支援的硬體通常可獲得更好的推理速度。</small>
+                <strong>Flash Attention [on|off|auto]</strong>
+                <small v-if="isHyMtModel">Hy-MT／Hy-MT2 不相容，已自動關閉。</small>
+                <small v-else>預設 auto，由 llama.cpp 根據模型與硬體自行判斷。</small>
               </div>
+              <select v-model="llamaStore.serverConfig.flash_attn" class="form-select compact-select" :disabled="isHyMtModel">
+                <option value="auto">auto</option>
+                <option value="on">on</option>
+                <option value="off">off</option>
+              </select>
             </label>
-            <label class="toggle-card">
-              <input v-model="llamaStore.serverConfig.no_mmap" type="checkbox" />
+            <label :class="['toggle-card', { 'is-disabled': isHyMtModel }]">
+              <input v-model="llamaStore.serverConfig.no_mmap" type="checkbox" :disabled="isHyMtModel" />
               <div>
                 <strong>禁用 mmap</strong>
-                <small>某些環境能改善載入穩定性，但會使用更多記憶體。</small>
+                <small v-if="isHyMtModel">Hy-MT／Hy-MT2 必須停用 mmap，已自動套用。</small>
+                <small v-else>某些環境能改善載入穩定性，但會使用更多記憶體。</small>
               </div>
             </label>
           </div>
@@ -814,6 +820,13 @@ let runtimeInstallPollTimer: number | null = null;
 const runtimeInstallBusy = computed(() => ['resolving', 'downloading', 'verifying', 'staging', 'activating'].includes(runtimeInstallStatus.value?.state || ''));
 const selectedRuntimeOption = computed(() => runtimeRelease.value?.variants.find(item => item.id === selectedRuntimeVariant.value));
 
+function isHyMtModelPath(modelPath: string): boolean {
+  const compactName = (modelPath.split(/[\\/]/).pop() || '').toLowerCase().replace(/[-_]/g, '');
+  return compactName.includes('hymt');
+}
+
+const isHyMtModel = computed(() => isHyMtModelPath(llamaStore.selectedModelPath));
+
 function formatRuntimeBytes(bytes: number) {
   if (!bytes) return '0 MB';
   return `${(bytes / 1024 / 1024).toFixed(0)} MB`;
@@ -900,7 +913,7 @@ const DEFAULT_TUNING: Required<Pick<ServerConfig, 'n_ctx' | 'n_gpu_layers' | 'n_
   temp: 0.8,
   repeat_penalty: 1.1,
   n_predict: 512,
-  flash_attn: true,
+  flash_attn: 'auto',
   no_mmap: false
 };
 
@@ -1142,7 +1155,7 @@ const currentConfigItems = computed(() => [
   },
   {
     label: '效能模式',
-    value: llamaStore.serverConfig.flash_attn ? 'Flash Attention 開啟' : '標準注意力模式',
+    value: `Flash Attention ${llamaStore.serverConfig.flash_attn || 'auto'}`,
     help: llamaStore.serverConfig.no_mmap ? '已禁用 mmap' : '使用 mmap 載入模型'
   }
 ]);
@@ -1342,6 +1355,16 @@ onMounted(async () => {
 });
 
 let pollTimer: number | null = null;
+
+watch(
+  isHyMtModel,
+  (hyMtSelected) => {
+    if (!hyMtSelected) return;
+    llamaStore.serverConfig.flash_attn = 'off';
+    llamaStore.serverConfig.no_mmap = true;
+  },
+  { immediate: true }
+);
 
 watch(
   () => llamaStore.isServerRunning,
@@ -1799,6 +1822,15 @@ async function executePrimaryTest() {
   display: block;
   line-height: 1.5;
   color: rgba(255, 255, 255, 0.62);
+}
+
+.toggle-card.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.toggle-card.is-disabled small {
+  color: #fbbf24;
 }
 
 .action-tile.primary {

@@ -54,7 +54,7 @@ def test_flash_attention_uses_explicit_value_for_new_runtime(monkeypatch):
         ),
     )
 
-    assert llama._flash_attn_args("new-llama-server.exe") == ["--flash-attn", "on"]
+    assert llama._flash_attn_args("new-llama-server.exe", "auto") == ["--flash-attn", "auto"]
 
 
 def test_flash_attention_uses_boolean_switch_for_old_runtime(monkeypatch):
@@ -68,7 +68,47 @@ def test_flash_attention_uses_boolean_switch_for_old_runtime(monkeypatch):
         ),
     )
 
-    assert llama._flash_attn_args("old-llama-server.exe") == ["--flash-attn"]
+    assert llama._flash_attn_args("old-llama-server.exe", "on") == ["--flash-attn"]
+    assert llama._flash_attn_args("old-llama-server.exe", "auto") == []
+
+
+def test_no_mmap_uses_load_mode_none_for_new_runtime(monkeypatch):
+    llama._no_mmap_args.cache_clear()
+    monkeypatch.setattr(
+        llama.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            stdout="--load-mode MODE model loading mode",
+            stderr="",
+        ),
+    )
+
+    assert llama._no_mmap_args("new-llama-server.exe") == ["--load-mode", "none"]
+
+
+def test_no_mmap_uses_legacy_switch_for_old_runtime(monkeypatch):
+    llama._no_mmap_args.cache_clear()
+    monkeypatch.setattr(
+        llama.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            stdout="--mmap, --no-mmap whether to memory-map model",
+            stderr="",
+        ),
+    )
+
+    assert llama._no_mmap_args("old-llama-server.exe") == ["--no-mmap"]
+
+
+def test_hymt_models_force_flash_attention_and_mmap_off():
+    assert llama._is_hymt_model("Hy-MT2-7B.i1-Q6_K.gguf") is True
+    assert llama._is_hymt_model("hy_mt-translation.gguf") is True
+    assert llama._effective_memory_options("Hy-MT2-7B.gguf", "auto", False) == ("off", True)
+
+
+def test_other_models_keep_requested_memory_options():
+    assert llama._is_hymt_model("gemma-4-e2b.gguf") is False
+    assert llama._effective_memory_options("gemma-4-e2b.gguf", "auto", False) == ("auto", False)
 
 
 def test_translation_uses_saved_model_sampling_parameters(monkeypatch):

@@ -55,6 +55,24 @@ def test_config_changes_survive_new_manager(tmp_path):
     assert reloaded["output"]["output_txt"] is True
 
 
+def test_audio_vad_defaults_match_recommended_live_settings(tmp_path):
+    config = ConfigManager(tmp_path / "config.yaml").get_config()["audio_slicing_vad"]
+    assert config == {
+        "min_audio_length": 0.7,
+        "max_audio_length": 8.0,
+        "target_audio_length": 4.0,
+        "continuous_no_speech_threshold": 0.5,
+        "disable_dynamic_no_speech_threshold": False,
+        "vad_threshold": 0.35,
+        "disable_dynamic_vad_threshold": False,
+        "prefix_retention_length": 0.25,
+        "vad_enabled": True,
+        "vad_every_n_frames": 2,
+        "vad_backend": "firered",
+        "firered_vad_model_path": "",
+    }
+
+
 def test_stale_window_manager_does_not_overwrite_saved_settings(tmp_path):
     config_path = tmp_path / "config.yaml"
     window_manager = ConfigManager(config_path)

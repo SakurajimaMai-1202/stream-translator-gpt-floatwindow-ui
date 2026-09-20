@@ -6,7 +6,7 @@ Llama.cpp 整合 API
 """
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Literal, Union
 from pathlib import Path
 import subprocess
 import asyncio
@@ -14,9 +14,12 @@ import logging
 import os
 import threading
 import time
+import socket
 from functools import lru_cache
 from backend.config import settings
 from backend.core.llama_runtime_installer import active_runtime_executable, installer, list_latest_variants
+from backend.core.llama_model_installer import model_installer
+from backend.core.logging_setup import configure_dedicated_file_logger
 from backend.core.portable_paths import get_app_root
 
 logger = logging.getLogger(__name__)
@@ -37,8 +40,35 @@ class LlamaState:
 llama_state = LlamaState()
 
 
-@lru_cache(maxsize=8)
-def _flash_attn_args(server_exe: str) -> List[str]:
+def _is_hymt_model(model_path: str | Path) -> bool:
+    """Hy-MT/Hy-MT2 GGUF requires Flash Attention and mmap to stay disabled."""
+    compact_name = Path(model_path).name.lower().replace("-", "").replace("_", "")
+    return "hymt" in compact_name
+
+
+FlashAttentionMode = Literal["on", "off", "auto"]
+
+
+def _normalize_flash_attn_mode(value: Union[FlashAttentionMode, bool, str]) -> FlashAttentionMode:
+    """Accept legacy booleans while persisting the llama.cpp tri-state value."""
+    if isinstance(value, bool):
+        return "on" if value else "off"
+    normalized = str(value).strip().lower()
+    return normalized if normalized in {"on", "off", "auto"} else "auto"
+
+
+def _effective_memory_options(
+    model_path: str | Path,
+    flash_attn: Union[FlashAttentionMode, bool, str],
+    no_mmap: bool,
+) -> tuple[FlashAttentionMode, bool]:
+    if _is_hymt_model(model_path):
+        return "off", True
+    return _normalize_flash_attn_mode(flash_attn), no_mmap
+
+
+@lru_cache(maxsize=24)
+def _flash_attn_args(server_exe: str, mode: FlashAttentionMode = "auto") -> List[str]:
     """Return the Flash Attention syntax supported by this llama.cpp build."""
     try:
         result = subprocess.run(
@@ -53,12 +83,39 @@ def _flash_attn_args(server_exe: str) -> List[str]:
         )
         help_text = f"{result.stdout}\n{result.stderr}".lower()
         if "--flash-attn [on|off|auto]" in help_text:
-            return ["--flash-attn", "on"]
+            return ["--flash-attn", mode]
     except Exception as exc:
         logger.debug("Could not inspect llama.cpp Flash Attention syntax: %s", exc)
 
     # Older builds expose Flash Attention as a value-less boolean switch.
-    return ["--flash-attn"]
+    # Omitting it is the closest compatible behavior for off/auto.
+    return ["--flash-attn"] if mode == "on" else []
+
+
+@lru_cache(maxsize=8)
+def _no_mmap_args(server_exe: str) -> List[str]:
+    """Return the no-mmap syntax supported by this llama.cpp build."""
+    try:
+        result = subprocess.run(
+            [server_exe, "--help"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+            check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        help_text = f"{result.stdout}\n{result.stderr}".lower()
+        if "--load-mode mode" in help_text:
+            return ["--load-mode", "none"]
+        if "--no-mmap" in help_text:
+            return ["--no-mmap"]
+    except Exception as exc:
+        logger.debug("Could not inspect llama.cpp mmap syntax: %s", exc)
+
+    # Retain compatibility with older builds when help probing is unavailable.
+    return ["--no-mmap"]
 
 
 # ==================== 啟動探測 ====================
@@ -162,7 +219,7 @@ class ServerConfig(BaseModel):
     n_predict: int = 512
     
     # 進階性能參數
-    flash_attn: bool = True
+    flash_attn: Union[FlashAttentionMode, bool] = "auto"
     no_mmap: bool = False
 
 class ServerStatus(BaseModel):
@@ -196,6 +253,9 @@ class TranslateRequest(BaseModel):
 
 class RuntimeInstallRequest(BaseModel):
     variant: str
+
+class ModelInstallRequest(BaseModel):
+    model_id: str
 
 # ==================== API 端點 ====================
 
@@ -283,6 +343,12 @@ async def start_server(config: ServerConfig, background_tasks: BackgroundTasks):
         if not server_exe:
             raise HTTPException(status_code=400, detail="找不到 llama-server.exe，請在設定中指定路徑或確認安裝位置")
     
+    effective_flash_attn, effective_no_mmap = _effective_memory_options(
+        model_path,
+        config.flash_attn,
+        config.no_mmap,
+    )
+
     # 建構命令列參數
     cmd = [
         str(server_exe),
@@ -301,14 +367,23 @@ async def start_server(config: ServerConfig, background_tasks: BackgroundTasks):
     ]
     
     # 進階選項
-    if config.flash_attn:
-        cmd.extend(_flash_attn_args(str(server_exe)))
-    if config.no_mmap:
-        cmd.append("--no-mmap")
+    cmd.extend(_flash_attn_args(str(server_exe), effective_flash_attn))
+    if effective_no_mmap:
+        cmd.extend(_no_mmap_args(str(server_exe)))
     
     try:
+        process_logger = configure_dedicated_file_logger("llama.server", "llama")
+        if _is_hymt_model(model_path):
+            compatibility_message = (
+                "Hy-MT compatibility override applied: Flash Attention disabled, mmap disabled "
+                f"({' '.join(_no_mmap_args(str(server_exe)))})."
+            )
+            logger.info(compatibility_message)
+            process_logger.info(compatibility_message)
+
         # 記錄完整命令
         logger.info(f"Starting Llama server with command: {' '.join(cmd)}")
+        process_logger.info("Starting llama-server with command: %s", " ".join(cmd))
         
         # 啟動子程序
         process = subprocess.Popen(
@@ -330,7 +405,7 @@ async def start_server(config: ServerConfig, background_tasks: BackgroundTasks):
                 for line in iter(pipe.readline, ''):
                     if line:
                         line_stripped = line.strip()
-                        logger.info(f"[{prefix}] {line_stripped}")
+                        process_logger.info(f"[{prefix}] {line_stripped}")
                         if prefix == "Llama-Stderr" and any(
                             marker in line_stripped.lower()
                             for marker in ("error", "invalid argument", "fatal", "failed")
@@ -346,6 +421,7 @@ async def start_server(config: ServerConfig, background_tasks: BackgroundTasks):
                 pipe.close()
             except Exception as e:
                 logger.error(f"Error reading {prefix}: {e}")
+                process_logger.exception("Error reading %s", prefix)
 
         import threading
         threading.Thread(target=log_output, args=(process.stdout, "Llama-Stdout"), daemon=True).start()
@@ -366,6 +442,7 @@ async def start_server(config: ServerConfig, background_tasks: BackgroundTasks):
                 llama_state.is_ready = False
                 llama_state.server_process = None
                 logger.info("Llama server process exited with code %s", return_code)
+                process_logger.info("llama-server process exited with code %s", return_code)
 
         threading.Thread(target=monitor_process, daemon=True).start()
         
@@ -430,6 +507,19 @@ async def get_server_status():
     )
 
 
+@router.get("/server/available-port")
+async def get_available_port(preferred: int = 8080):
+    for port in range(max(1024, preferred), min(65535, preferred + 100)):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                probe.bind(("127.0.0.1", port))
+                return {"port": port}
+            except OSError:
+                continue
+    raise HTTPException(status_code=503, detail="找不到可用的本機翻譯連接埠")
+
+
 @router.get("/runtime/releases")
 async def get_runtime_releases():
     try:
@@ -469,6 +559,21 @@ async def install_runtime(request: RuntimeInstallRequest, background_tasks: Back
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     background_tasks.add_task(installer.install, job_id, request.variant, profile)
     return {"success": True, "message": "已開始下載 llama.cpp Runtime", "job_id": job_id}
+
+
+@router.get("/model/install/status")
+async def get_model_install_status():
+    return model_installer.status()
+
+
+@router.post("/model/install")
+async def install_model(request: ModelInstallRequest, background_tasks: BackgroundTasks):
+    try:
+        job_id = model_installer.begin(request.model_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    background_tasks.add_task(model_installer.install, job_id, request.model_id)
+    return {"success": True, "message": "已開始下載翻譯模型", "job_id": job_id}
 
 
 def _find_llama_server() -> Optional[Path]:
@@ -694,7 +799,7 @@ PRESETS = {
         "n_gpu_layers": 99,
         "n_threads": 8,
         "n_parallel": 1,
-        "flash_attn": True,
+        "flash_attn": "auto",
         "no_mmap": False,
         "top_k": 40,
         "top_p": 1.0,
@@ -707,7 +812,7 @@ PRESETS = {
         "n_gpu_layers": 99,
         "n_threads": 8,
         "n_parallel": 1,
-        "flash_attn": True,
+        "flash_attn": "auto",
         "no_mmap": False,
         "top_k": 20,
         "top_p": 0.9,
@@ -720,7 +825,7 @@ PRESETS = {
         "n_gpu_layers": 99,
         "n_threads": 12,
         "n_parallel": 1,
-        "flash_attn": True,
+        "flash_attn": "auto",
         "no_mmap": True,
         "top_k": 50,
         "top_p": 0.95,

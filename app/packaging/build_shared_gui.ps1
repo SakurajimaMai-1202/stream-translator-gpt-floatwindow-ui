@@ -81,8 +81,19 @@ try {
 & $pythonExe -m PyInstaller (Join-Path $packagingDir "stream-translator-updater.spec") --noconfirm --clean --distpath $pyInstallerDist --workpath (Join-Path $scriptDir "build-updater")
 if ($LASTEXITCODE -ne 0) { throw "Updater build failed" }
 
+$builtUpdater = Join-Path $pyInstallerDist "StreamTranslatorUpdater.exe"
+$updaterHealth = Start-Process -FilePath $builtUpdater `
+    -ArgumentList "--health-check" `
+    -WorkingDirectory $env:TEMP `
+    -WindowStyle Hidden `
+    -Wait `
+    -PassThru
+if ($updaterHealth.ExitCode -ne 0) {
+    throw "Frozen updater Qt health check failed (exit $($updaterHealth.ExitCode))"
+}
+
 $builtApp = Join-Path $pyInstallerDist "Stream Translator"
-Copy-Item (Join-Path $pyInstallerDist "StreamTranslatorUpdater.exe") $builtApp -Force
+Copy-Item $builtUpdater $builtApp -Force
 Get-ChildItem $builtApp -File -Filter "qtwebengine_devtools_resources.debug.pak" -Recurse -ErrorAction SilentlyContinue |
     Remove-Item -Force
 

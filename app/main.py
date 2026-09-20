@@ -230,9 +230,19 @@ class UI2Application:
             if update_root not in plan.parents or not plan.is_file() or not updater.is_file():
                 raise RuntimeError("更新交接路徑無效")
             creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            updater_env = os.environ.copy()
+            if sys.platform == "win32":
+                # The frozen main process prepends its private Qt directory to
+                # PATH.  Do not leak that ABI into the standalone updater,
+                # which carries and pins its own Qt runtime.
+                private_qt = str(_qt_bin.resolve()).casefold() if getattr(sys, "frozen", False) and _qt_bin.is_dir() else ""
+                updater_env["PATH"] = os.pathsep.join(
+                    entry for entry in updater_env.get("PATH", "").split(os.pathsep)
+                    if not private_qt or str(Path(entry).resolve()).casefold() != private_qt
+                )
             subprocess.Popen(
                 [str(updater), "--plan", str(plan)],
-                cwd=str(app_root), creationflags=creationflags,
+                cwd=str(updater.parent), creationflags=creationflags, env=updater_env,
             )
             logger.info("已啟動外部更新器，主程式準備退出")
             QTimer.singleShot(100, self.app.quit)

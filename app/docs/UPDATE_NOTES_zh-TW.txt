@@ -8,6 +8,7 @@ Stream Translator v1.4.7 更新說明
 - 翻譯後端放到簡單模式首頁，直接接 OpenAI、Gemini 或 OpenAI-compatible API。
 - 首次選擇模式時會檢查 CPU ASR Runtime，並預先準備三個推薦 ASR 模型。
 - 修正小視窗無法切回簡單模式，以及下拉選單距離過遠的問題。
+- 修正更新器可能因 Qt DLL 版本混用而無法載入 PyQt6.QtCore 的問題。
 
 更新方式
 --------

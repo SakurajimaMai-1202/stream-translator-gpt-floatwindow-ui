@@ -357,9 +357,12 @@ class AppUpdateManager:
         staging = self._staging.resolve()
         if app_root not in staging.parents:
             raise RuntimeError("Invalid update staging path")
-        updater = app_root / "StreamTranslatorUpdater.exe"
+        # Run the updater shipped with the downloaded update.  Reusing the
+        # installed updater can pin an older PyQt/Qt ABI and fail before the
+        # rollback-capable update UI starts.
+        updater = staging / "StreamTranslatorUpdater.exe"
         if not updater.is_file():
-            raise RuntimeError("StreamTranslatorUpdater.exe is missing")
+            raise RuntimeError("Downloaded update is missing StreamTranslatorUpdater.exe")
         plan = {
             "schema": 2, "app_root": str(app_root), "staging": str(staging),
             "version": self._state.latest_version, "profile": self._state.profile,

@@ -126,7 +126,7 @@ class AppUpdateManagerTest(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=APP_DIR) as temp_dir:
             root = Path(temp_dir)
             _, release = self._fixture(root)
-            (root / "StreamTranslatorUpdater.exe").write_bytes(b"fake updater")
+            (root / "StreamTranslatorUpdater.exe").write_bytes(b"legacy installed updater")
             with mock.patch.object(update_module, "get_app_root", return_value=root), mock.patch.object(
                 update_module, "get_packaged_runtime_profile", return_value="cuda"
             ), mock.patch.object(update_module.settings, "APP_VERSION", "1.4.0"):
@@ -144,6 +144,7 @@ class AppUpdateManagerTest(unittest.TestCase):
                 plan = manager.create_apply_plan()
                 self.assertTrue(Path(plan["plan_path"]).is_file())
                 self.assertTrue(Path(plan["updater_path"]).is_file())
+                self.assertEqual(Path(plan["updater_path"]).read_bytes(), b"fake updater")
 
     def test_download_ignores_stale_partial_from_previous_release(self):
         with tempfile.TemporaryDirectory(dir=APP_DIR) as temp_dir:

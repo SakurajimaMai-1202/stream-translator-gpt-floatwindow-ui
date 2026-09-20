@@ -283,7 +283,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--plan")
     parser.add_argument("--preview", action="store_true")
+    parser.add_argument("--health-check", action="store_true")
     args = parser.parse_args()
+    if args.health_check:
+        return 0
     preview = args.preview or not args.plan
     app = QApplication(sys.argv)
     app.setApplicationName("Stream Translator Updater")
@@ -292,8 +295,8 @@ def main():
         app.setWindowIcon(QIcon(str(icon)))
     window = Window(args.plan, preview)
     window.show()
-    sys.exit(app.exec())
+    return app.exec()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

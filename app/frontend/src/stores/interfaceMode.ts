@@ -67,16 +67,16 @@ export const useInterfaceModeStore = defineStore('interfaceMode', () => {
     } finally {
       busy.value = false;
     }
-    if (loaded.value && mode.value === 'simple') await select('simple');
   }
 
   async function select(value: 'simple' | 'advanced') {
     if (busy.value) return;
+    if (mode.value === value && !pendingMode.value) return;
     busy.value = true;
     error.value = '';
     preparingModels.value = false;
     try {
-      if (!mode.value || value === 'simple' || pendingMode.value) {
+      if (!mode.value || pendingMode.value) {
         pendingMode.value = value;
         await prepareCpuAsr();
         await prepareModels();

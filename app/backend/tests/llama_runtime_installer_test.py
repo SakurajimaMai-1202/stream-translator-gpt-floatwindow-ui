@@ -121,6 +121,26 @@ def test_cpu_profile_recommends_discrete_nvidia_runtime():
     assert variant == "cuda12"
 
 
+def test_cuda_profile_stays_on_cuda_without_hardware_detection():
+    variant, reason = runtime._recommend_variant_for_hardware(
+        "cuda",
+        [{"id": item} for item in ("cpu", "cuda12", "hip", "sycl", "vulkan")],
+        [GpuDevice(0, "AMD Radeon RX 7900 XTX", "amd", "rocm", 24576, False)],
+    )
+    assert variant == "cuda12"
+    assert "固定" in reason
+
+
+def test_rocm_profile_stays_on_rocm_without_hardware_detection():
+    variant, reason = runtime._recommend_variant_for_hardware(
+        "rocm",
+        [{"id": item} for item in ("cpu", "cuda12", "hip", "sycl", "vulkan")],
+        [GpuDevice(0, "NVIDIA RTX 4090", "nvidia", "cuda", 24576, False)],
+    )
+    assert variant == "hip"
+    assert "固定" in reason
+
+
 def test_cpu_profile_recommends_discrete_amd_runtime():
     variant, _ = runtime._recommend_variant_for_hardware(
         "cpu",
@@ -268,6 +288,25 @@ def test_gpu_runtime_validation_failure_falls_back_to_vulkan(monkeypatch, tmp_pa
     assert status["variant"] == "vulkan"
     assert "Vulkan" in status["message"]
     assert "0xC0000005" in status["fallback_reason"]
+
+
+def test_fixed_cuda_profile_does_not_fall_back_to_vulkan(monkeypatch, tmp_path):
+    variants = [
+        {"id": "cuda12", "label": "Windows x64 CUDA 12", "installable": True,
+         "assets": [{"name": "cuda.zip", "role": "runtime", "size": 10}]},
+        {"id": "vulkan", "label": "Windows x64 Vulkan", "installable": True,
+         "assets": [{"name": "vulkan.zip", "role": "runtime", "size": 5}]},
+    ]
+    monkeypatch.setattr(runtime, "list_latest_variants", lambda *_args: {"tag": "b10964", "variants": variants})
+    installer = runtime.LlamaRuntimeInstaller()
+    monkeypatch.setattr(installer, "_download_and_install", lambda *_args: (_ for _ in ()).throw(
+        runtime.RuntimeValidationError("llama-server.exe 驗證失敗：3221225477", 3221225477)
+    ))
+    job_id = installer.begin("cuda12")
+    asyncio.run(installer.install(job_id, "cuda12", "cuda"))
+    status = installer.status()
+    assert status["state"] == "error"
+    assert status["variant"] == "cuda12"
 
 
 def test_safe_extract_rejects_parent_traversal(tmp_path):

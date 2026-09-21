@@ -281,8 +281,19 @@ def _recommend_variant_for_hardware(
     discrete GPU when one is visible; integrated graphics alone deliberately
     falls back to the CPU build.
     """
-    del profile  # llama.cpp is an independent native runtime.
     available = {item["id"] for item in variants if item.get("installable", True)}
+    if profile == "cuda":
+        for candidate in ("cuda12", "cuda13"):
+            if candidate in available:
+                return candidate, "CUDA 版本固定使用 NVIDIA CUDA llama runtime。"
+        return "", "官方 Release 沒有可用的 NVIDIA CUDA llama runtime。"
+    if profile == "rocm":
+        if "hip" in available:
+            return "hip", "ROCm 版本固定使用 AMD ROCm llama runtime。"
+        return "", "官方 Release 沒有可用的 AMD ROCm llama runtime。"
+
+    # The CPU application has no preselected GPU ecosystem, so it detects the
+    # installed display adapter and recommends a matching standalone runtime.
     detected = devices if devices is not None else detect_gpus()
     discrete = [device for device in detected if not device.is_integrated]
     selected = max(discrete, key=lambda device: int(device.memory_mb or 0), default=None)
@@ -421,7 +432,7 @@ class LlamaRuntimeInstaller:
                 completed_message = "llama.cpp Runtime 安裝完成"
             except RuntimeValidationError as validation_error:
                 fallback = next((item for item in release["variants"] if item["id"] == "vulkan" and item.get("installable", True)), None)
-                if not fallback or variant_id not in {"cuda12", "cuda13", "hip", "sycl"}:
+                if profile != "cpu" or not fallback or variant_id not in {"cuda12", "cuda13", "hip", "sycl"}:
                     raise
                 reason = f"{variant['label']} 無法在此電腦執行（{validation_error}），已改用 Vulkan GPU Runtime。"
                 self._prepare_variant_status(release["tag"], fallback, fallback_reason=reason)

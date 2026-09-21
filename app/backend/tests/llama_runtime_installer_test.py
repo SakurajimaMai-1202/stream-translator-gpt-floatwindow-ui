@@ -121,13 +121,13 @@ def test_cpu_profile_recommends_discrete_amd_runtime():
     assert variant == "hip"
 
 
-def test_sub_four_gb_discrete_gpu_uses_cpu_runtime():
+def test_sub_four_gb_nvidia_still_uses_gpu_runtime():
     variant, reason = runtime._recommend_variant_for_hardware(
         "cpu",
         [{"id": item} for item in ("cpu", "cuda12", "hip", "vulkan")],
         [GpuDevice(0, "NVIDIA GeForce GTX", "nvidia", "cuda", 3072, False)],
     )
-    assert variant == "cpu"
+    assert variant == "cuda12"
     assert "未滿 4 GB" in reason
 
 

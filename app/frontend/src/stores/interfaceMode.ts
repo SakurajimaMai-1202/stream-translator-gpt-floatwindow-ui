@@ -187,6 +187,7 @@ export const useInterfaceModeStore = defineStore('interfaceMode', () => {
       const release = await llamaApi.getRuntimeReleases();
       const variant = release.recommended_variant;
       if (!variant) throw new Error('無法判斷這台電腦適用的 llama.cpp Runtime。');
+      if (variant === 'cpu') throw new Error('簡單模式不使用 CPU llama.cpp Runtime，請選擇 Gemini 或到進階模式手動設定。');
       const selected = release.variants.find(item => item.id === variant);
       if (!selected?.installable) throw new Error(selected?.compatibility_error || '找不到可安裝的 llama.cpp Runtime。');
       if (!(release.is_latest && release.installed_variant === variant)) {
@@ -197,17 +198,16 @@ export const useInterfaceModeStore = defineStore('interfaceMode', () => {
       await llamaApi.installSimpleModel(setup.model_id);
       const modelPath = await waitForLocalModel();
       const port = await llamaApi.getAvailablePort(8080);
-      const useCpuRuntime = variant === 'cpu';
       await configApi.updateSection('llama', {
         local_llm_enabled: false, model_dir: modelPath.replace(/[\\/][^\\/]+$/, ''), model_path: modelPath,
-        host: '127.0.0.1', port, n_ctx: 4096, n_gpu_layers: useCpuRuntime ? 0 : 999, n_threads: 4, n_parallel: 1,
+        host: '127.0.0.1', port, n_ctx: 4096, n_gpu_layers: 999, n_threads: 4, n_parallel: 1,
         temp: 0.7, top_p: 0.6, top_k: 20, repeat_penalty: 1.05, n_predict: 4096,
         flash_attn: 'auto', no_mmap: false,
       });
       await configApi.updateSection('translation', { backend: 'llama' });
       setupMessage.value = `正在啟動本機翻譯服務（連接埠 ${port}）…`;
       await llamaApi.startServer({
-        model_path: modelPath, host: '127.0.0.1', port, n_ctx: 4096, n_gpu_layers: useCpuRuntime ? 0 : 999,
+        model_path: modelPath, host: '127.0.0.1', port, n_ctx: 4096, n_gpu_layers: 999,
         n_threads: 4, n_parallel: 1, temp: 0.7, top_p: 0.6, top_k: 20,
         repeat_penalty: 1.05, n_predict: 4096, flash_attn: 'auto', no_mmap: false,
       });

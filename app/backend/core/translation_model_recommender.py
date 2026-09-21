@@ -154,7 +154,7 @@ def build_translation_model_recommendations(devices: Iterable[GpuDevice]) -> dic
         simple_setup = {
             "supported": True, "model_id": "hy-mt2-iq3-xxs",
             "filename": "Hy-MT2-7B.i1-IQ3_XXS.gguf", "quant": "i1-IQ3_XXS",
-            "reason": f"偵測到 {selected.name}，屬於 {tier_label}；改用 CPU Runtime 與最省資源量化。",
+            "reason": f"偵測到 {selected.name}，屬於 {tier_label}；使用 GPU Runtime 與最省資源量化。",
         }
     else:
         simple_setup = {

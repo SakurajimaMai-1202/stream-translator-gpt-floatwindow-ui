@@ -256,9 +256,6 @@ def _recommend_variant_for_hardware(
     nvidia = bool(selected and (selected.vendor == "nvidia" or selected.backend == "cuda"))
     amd = bool(selected and (selected.vendor == "amd" or selected.backend == "rocm"))
 
-    if selected and tier_id == "under_4gb" and "cpu" in available:
-        return "cpu", f"偵測到 {selected.name}（{tier_label}），簡單模式推薦 CPU llama runtime。"
-
     if nvidia:
         for candidate in ("cuda12", "cuda13", "vulkan"):
             if candidate in available:

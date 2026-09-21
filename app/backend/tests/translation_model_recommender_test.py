@@ -103,12 +103,12 @@ def test_simple_setup_uses_q6_model_for_eight_gb_nvidia():
     assert result["vram_tier"] == "8gb_plus"
 
 
-def test_simple_setup_uses_cpu_path_below_four_gb():
+def test_simple_setup_uses_small_gpu_model_below_four_gb():
     result = build_translation_model_recommendations([gpu("NVIDIA GeForce RTX", 3072)])
     assert result["simple_setup"]["supported"] is True
     assert result["simple_setup"]["model_id"] == "hy-mt2-iq3-xxs"
     assert result["vram_tier"] == "under_4gb"
-    assert "CPU Runtime" in result["simple_setup"]["reason"]
+    assert "GPU Runtime" in result["simple_setup"]["reason"]
 
 
 def test_simple_setup_supports_amd_in_middle_and_high_tiers():

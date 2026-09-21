@@ -5,10 +5,12 @@ Stream Translator v1.4.8 更新說明
 --------
 - 簡單模式依 NVIDIA／AMD 顯卡與 VRAM 自動選擇 GPU llama.cpp Runtime 及 Hy-MT2 量化。
 - 未滿 4 GB 使用 i1-IQ3_XXS，4 GB～未滿 8 GB 使用 i1-IQ4_NL，8 GB 以上使用 i1-Q6_K。
-- 簡單模式不使用 CPU llama.cpp Runtime；CUDA／HIP 驗證失敗時自動改用 Vulkan GPU Runtime。
+- 簡單模式不使用 CPU llama.cpp Runtime；CUDA／ROCm 應用固定使用相符 Runtime，CPU 應用則依顯卡推薦 CUDA、HIP、SYCL 或 Vulkan。
 - NVIDIA VRAM 改由 nvidia-smi 可靠偵測，避免 Windows 大容量顯存誤判。
-- llama.cpp Runtime 改查詢最新可下載 nightly，不再固定於舊的 b10964 指標。
-- Runtime 發生 0xC0000005 時會顯示原因、清理失敗暫存版本並保留原有可用 Runtime。
+- llama.cpp 外部程序會隔離 Qt／PyInstaller DLL 路徑，修正 0xC0000005；CUDA 主套件與 cudart 會嚴格配對同版。
+- Hy-MT2 下載會先取得並驗證官方檔案大小與 SHA-256，首次準備畫面也會顯示實際百分比。
+- 首次導引完成下載後不會直接啟動本地 LLM；進入首頁後由使用者手動開啟。
+- 浮動字幕改善自然捲動、小高度排版、翻譯行保留、控制按鈕自動隱藏及時間軸顏色。
 
 更新方式
 --------

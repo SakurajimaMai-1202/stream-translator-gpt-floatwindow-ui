@@ -19,7 +19,7 @@ watch(() => interfaceMode.mode, (mode) => {
 const visibleSettingsGroups = computed(() => interfaceMode.isSimple
   ? [{ groupName: '常用設定', items: [{ id: 'general', name: '一般設定' }] }]
   : settingsGroups);
-const appVersion = import.meta.env.VITE_APP_VERSION || '1.4.7';
+const appVersion = import.meta.env.VITE_APP_VERSION || '1.4.8';
 const isMobileMenuOpen = ref(false);
 
 // Define navigation items

@@ -2,13 +2,13 @@
 
 Windows 即時語音辨識、翻譯與浮動字幕工具。它能擷取直播網址、系統聲音、麥克風或本機影音，先以本機／雲端 ASR 轉成文字，再交由 OpenAI、Google Gemini 或本機 LLM 翻譯，最後輸出成桌面字幕、區網字幕頁或字幕檔。
 
-[下載最新版](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest) · [v1.4.6 更新說明](app/docs/RELEASE_NOTES_v1.4.6_zh-TW.md) · [回報問題](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/issues)
+[下載最新版](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest) · [v1.4.8 更新說明](app/docs/RELEASE_NOTES_v1.4.8_zh-TW.md) · [回報問題](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/issues)
 
 ![Windows](https://img.shields.io/badge/platform-Windows-lightgrey)
 ![NVIDIA CUDA](https://img.shields.io/badge/GPU-NVIDIA%20CUDA-green)
 ![AMD ROCm](https://img.shields.io/badge/GPU-AMD%20ROCm%20Experimental-orange)
 ![CPU sherpa-onnx](https://img.shields.io/badge/CPU-sherpa--onnx-blueviolet)
-![Release](https://img.shields.io/badge/release-v1.4.6-blue)
+![Release](https://img.shields.io/badge/release-v1.4.8-blue)
 
 <img width="2381" height="1058" alt="Stream Translator FloatWindow" src="https://github.com/user-attachments/assets/0a663535-dd94-40a6-8444-3c00844bc563" />
 
@@ -56,21 +56,22 @@ Windows 即時語音辨識、翻譯與浮動字幕工具。它能擷取直播網
 
 > v1.3.11 起，術語表與 ASR 修正規則的 CSV／TSV 匯入支援引號、欄位內逗號、Tab、換行與 UTF-8 BOM；匯出使用 UTF-8 BOM 與 CRLF，方便 Excel 正確辨識繁體中文。
 
-## v1.4.6 更新重點
+## v1.4.8 更新重點
 
-v1.4.6 的重點包括：
+v1.4.8 的重點包括：
 
-- 首次啟動新增簡單／進階模式，會記住選擇並能隨時切換。
-- 簡單模式將翻譯後端放到首頁，並依語言自動選擇 CPU ASR 模型。
-- 首次選擇模式時檢查 CPU ASR 環境，預先下載 SenseVoice、日文 Parakeet 與 Parakeet v3。
-- 小視窗的側欄可獨立捲動，模式切換器固定可見。
-- 修正深色模式選單白底及短選單向上展開距離過遠。
+- 簡單模式會偵測 GPU 與 VRAM，自動選擇 NVIDIA CUDA／AMD HIP Runtime 及合適的 Hy-MT2 量化模型。
+- 首次導引只會下載、驗證並設定 Runtime 與模型；本地 LLM 保持關閉，進入首頁後由使用者手動啟動。
+- 修正 Hugging Face 模型檔案大小與 SHA-256 讀取，避免首次設定誤報模型缺少驗證資訊。
+- llama.cpp 的 CUDA、ROCm、SYCL 與 Vulkan 套件會依應用 Profile 與硬體正確配對，並隔離 Qt／PyInstaller DLL 環境，修正 `0xC0000005` 啟動失敗。
+- Runtime 安裝與首次準備畫面顯示實際百分比；llama.cpp 記錄獨立輸出，Flash Attention 提供 `on | off | auto`。
+- 浮動字幕改善小高度排列、自然向上捲動、完整保留翻譯行、控制按鈕自動隱藏及時間軸顏色套用。
 
-完整內容請見 [v1.4.6 更新說明](app/docs/RELEASE_NOTES_v1.4.6_zh-TW.md)。
+完整內容請見 [v1.4.8 更新說明](app/docs/RELEASE_NOTES_v1.4.8_zh-TW.md)。
 
 ## 下載：先選對執行版本
 
-請從 [GitHub Releases v1.4.6](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/tag/v1.4.6) 下載。GitHub 自動提供的 `Source code (zip)` 不是可直接執行的 Windows 完整包。
+請從 [GitHub Releases v1.4.8](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/tag/v1.4.8) 下載。GitHub 自動提供的 `Source code (zip)` 不是可直接執行的 Windows 完整包。
 
 | 版本 | 適用硬體 | 本機 ASR 路徑 | Full package |
 |---|---|---|---|
@@ -84,7 +85,7 @@ ROCm 版本仍屬實驗性支援，能否使用取決於顯示卡、驅動程式
 
 1. CPU 使用者可直接下載並解壓 `StreamTranslator-win64-CPU-Full.zip`；CUDA／ROCm 使用者請下載同一 Profile 的全部 `.partXX` 與 `merge-full-package.bat`。
 2. 將檔案放在同一資料夾，雙擊 `merge-full-package.bat`。
-3. 以 `SHA256SUMS-v1.4.6.txt` 驗證合併後的 ZIP。
+3. 以 `SHA256SUMS-v1.4.8.txt` 驗證合併後的 ZIP。
 4. 解壓到一般可寫入路徑，例如 `D:\Apps\StreamTranslator`。
 5. 執行 `Stream Translator.exe`。
 
@@ -104,9 +105,9 @@ ROCm 版本仍屬實驗性支援，能否使用取決於顯示卡、驅動程式
 
 從 v1.4.0 起，上述流程已整合到「設定 → 一般設定」。從更舊版本首次升級到 v1.4.0 時，請完整解壓相同 Profile 的 App Update；更新包已包含 `StreamTranslatorUpdater.exe`，不需另外下載。
 
-CUDA／ROCm 使用者若缺少 CPU ASR sidecar，可在首次模式準備流程自動安裝，或下載 `StreamTranslator-CPU-ASR-Sidecar-v1.4.6.zip`。Sidecar 只含 CPU ASR Runtime；首次模式準備流程會再下載三個推薦模型。
+CUDA／ROCm 使用者若缺少 CPU ASR sidecar，可在首次模式準備流程自動安裝，或下載 `StreamTranslator-CPU-ASR-Sidecar-v1.4.8.zip`。Sidecar 只含 CPU ASR Runtime；首次模式準備流程會再下載三個推薦模型。
 
-v1.4.6 的 Full package 不包含 `llama` 資料夾。若使用 API 翻譯，不需要本機 LLM；需要離線本機翻譯時，再到「LLM 模型管理」下載 GGUF 與相符的 llama.cpp Runtime。
+v1.4.8 的 Full package 不包含 `llama` 資料夾。若使用 API 翻譯，不需要本機 LLM；簡單模式選擇本機翻譯時會依 GPU 自動下載 GGUF 與相符的 llama.cpp Runtime，完成後仍需在首頁手動開啟本地 LLM。
 
 ## 第一次使用教學
 
@@ -275,7 +276,7 @@ ASR 決定「聽到了什麼」。選型時依序考慮：硬體與 Runtime、�
 
 ## 媒體輸入注意事項
 
-- v1.4.6 Full package 內含 Node.js 22+，供 yt-dlp 處理需要 JavaScript Runtime 的來源。
+- v1.4.8 Full package 內含 Node.js 22+，供 yt-dlp 處理需要 JavaScript Runtime 的來源。
 - 部分 YouTube／Twitch 內容可能需要登入、地區權限或 cookies；請匯出 Netscape 格式 `cookies.txt`。
 - Chromium 的 App-Bound Encryption 可能阻止直接讀取瀏覽器 cookies，匯出檔通常較穩定。
 - 系統音訊請選擇實際播放裝置；無聲時先確認 Windows 音量混音器與輸出裝置。
@@ -352,7 +353,7 @@ cd .\app
   -CopyThreads 16
 ```
 
-正式資產輸出至 `app/release-v1.4.6-assets/`，包含 App Update、Full package 分割檔、manifest 與 SHA-256 清單。
+正式資產輸出至 `app/release-v1.4.8-assets/`，包含 App Update、Full package 分割檔、manifest 與 SHA-256 清單。
 
 ## 專案來源
 

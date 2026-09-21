@@ -72,7 +72,10 @@ class LlamaModelInstaller:
 
     @staticmethod
     def _metadata(filename: str) -> tuple[str, int, str]:
-        api_url = f"https://huggingface.co/api/models/{REPOSITORY}"
+        # Hugging Face omits LFS hashes from the default model response.  The
+        # blobs view includes the authoritative size and SHA-256 needed before
+        # we download multi-gigabyte GGUF files.
+        api_url = f"https://huggingface.co/api/models/{REPOSITORY}?blobs=true"
         request = urllib.request.Request(api_url, headers={"User-Agent": "Stream-Translator"})
         with urllib.request.urlopen(request, timeout=30) as response:
             payload = json.load(response)

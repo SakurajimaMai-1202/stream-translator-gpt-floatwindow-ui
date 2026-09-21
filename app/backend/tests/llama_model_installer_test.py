@@ -1,6 +1,46 @@
 import hashlib
+import io
+import json
 
 from backend.core import llama_model_installer as models
+
+
+class _Response(io.BytesIO):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        self.close()
+
+
+def test_metadata_requests_blob_details_and_returns_verified_asset(monkeypatch):
+    filename = models.MODELS["hy-mt2-q6-k"]
+    expected = "a" * 64
+    payload = json.dumps({
+        "siblings": [{
+            "rfilename": filename,
+            "size": 123,
+            "lfs": {"sha256": expected, "size": 456},
+        }],
+    }).encode()
+    requested = {}
+
+    def urlopen(request, timeout):
+        requested["url"] = request.full_url
+        requested["timeout"] = timeout
+        return _Response(payload)
+
+    monkeypatch.setattr(models.urllib.request, "urlopen", urlopen)
+
+    url, size, digest = models.LlamaModelInstaller._metadata(filename)
+
+    assert requested == {
+        "url": f"https://huggingface.co/api/models/{models.REPOSITORY}?blobs=true",
+        "timeout": 30,
+    }
+    assert url.endswith("/resolve/main/Hy-MT2-7B.i1-Q6_K.gguf")
+    assert size == 456
+    assert digest == expected
 
 
 def test_installer_downloads_verifies_and_activates_model(tmp_path, monkeypatch):

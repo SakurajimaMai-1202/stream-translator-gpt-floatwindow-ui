@@ -133,8 +133,16 @@ watch(() => route.fullPath, () => {
         <h1 id="interface-mode-title" class="text-2xl font-bold">正在自動準備</h1>
         <p class="text-sm text-slate-300">{{ interfaceMode.setupMessage }}</p>
         <div v-if="interfaceMode.runtimeInstallStatus" class="space-y-2 rounded-xl border border-white/10 p-4">
-          <p class="text-sm">翻譯引擎 · {{ interfaceMode.runtimeInstallStatus.message }}</p>
-          <progress class="w-full" :value="interfaceMode.runtimeInstallStatus.progress" :max="1" />
+          <div class="flex items-center justify-between gap-4 text-sm">
+            <p>翻譯引擎 · {{ interfaceMode.runtimeInstallStatus.message }}</p>
+            <span class="shrink-0 tabular-nums text-slate-300">{{ Math.round(Math.min(1, Math.max(0, interfaceMode.runtimeInstallStatus.progress || 0)) * 100) }}%</span>
+          </div>
+          <progress
+            class="w-full"
+            :value="interfaceMode.runtimeInstallStatus.progress"
+            :max="1"
+            :aria-label="`翻譯引擎安裝進度 ${Math.round(Math.min(1, Math.max(0, interfaceMode.runtimeInstallStatus.progress || 0)) * 100)}%`"
+          />
         </div>
         <div v-if="interfaceMode.localModelInstallStatus" class="space-y-2 rounded-xl border border-white/10 p-4">
           <p class="text-sm">翻譯模型 · {{ interfaceMode.localModelInstallStatus.message }}</p>

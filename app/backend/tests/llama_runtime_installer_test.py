@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import io
 import zipfile
@@ -210,6 +211,35 @@ def test_unknown_hardware_does_not_silently_recommend_cpu(monkeypatch):
 
     assert release["recommended_variant"] == ""
     assert "無法確認" in release["recommendation_reason"]
+
+
+def test_gpu_runtime_validation_failure_falls_back_to_vulkan(monkeypatch, tmp_path):
+    variants = [
+        {"id": "cuda12", "label": "Windows x64 CUDA 12", "installable": True,
+         "assets": [{"name": "cuda.zip", "role": "runtime", "size": 10}]},
+        {"id": "vulkan", "label": "Windows x64 Vulkan", "installable": True,
+         "assets": [{"name": "vulkan.zip", "role": "runtime", "size": 5}]},
+    ]
+    monkeypatch.setattr(runtime, "list_latest_variants", lambda *_args: {"tag": "b10964", "variants": variants})
+    calls = []
+
+    def install_variant(_tag, variant):
+        calls.append(variant["id"])
+        if variant["id"] == "cuda12":
+            raise runtime.RuntimeValidationError("llama-server.exe 驗證失敗：3221225477 (0xC0000005)", 3221225477)
+        return tmp_path / "vulkan" / "llama-server.exe"
+
+    installer = runtime.LlamaRuntimeInstaller()
+    monkeypatch.setattr(installer, "_download_and_install", install_variant)
+    job_id = installer.begin("cuda12")
+    asyncio.run(installer.install(job_id, "cuda12", "cpu"))
+
+    status = installer.status()
+    assert calls == ["cuda12", "vulkan"]
+    assert status["state"] == "completed"
+    assert status["variant"] == "vulkan"
+    assert "Vulkan" in status["message"]
+    assert "0xC0000005" in status["fallback_reason"]
 
 
 def test_safe_extract_rejects_parent_traversal(tmp_path):

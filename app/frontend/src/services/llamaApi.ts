@@ -117,6 +117,7 @@ export interface RuntimeInstallStatus {
   installed_path: string;
   previous_runtime: string;
   error: string;
+  fallback_reason: string;
   files: Array<{
     name: string;
     role: 'runtime' | 'dependency';

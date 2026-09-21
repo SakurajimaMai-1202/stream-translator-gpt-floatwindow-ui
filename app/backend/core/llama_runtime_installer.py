@@ -32,6 +32,14 @@ _VARIANT_LABELS = {
 _BUSY_STATES = {"resolving", "downloading", "verifying", "staging", "activating"}
 
 
+class RuntimeValidationError(RuntimeError):
+    """The downloaded native runtime exists but cannot execute on this PC."""
+
+    def __init__(self, message: str, returncode: int | None = None) -> None:
+        super().__init__(message)
+        self.returncode = returncode
+
+
 def llama_root() -> Path:
     exe_dir = getattr(settings, "EXE_DIR", None)
     return (Path(exe_dir) if exe_dir else settings.BASE_DIR.parent) / "llama"
@@ -332,6 +340,7 @@ class InstallStatus:
     installed_path: str = ""
     previous_runtime: str = ""
     error: str = ""
+    fallback_reason: str = ""
     files: list[dict[str, Any]] | None = None
 
 
@@ -375,19 +384,35 @@ class LlamaRuntimeInstaller:
                 raise RuntimeError(variant.get("compatibility_error") or "此 Runtime 資產不完整")
             if self.status().get("job_id") != job_id:
                 return
-            files = [
-                asdict(FileInstallStatus(
-                    name=item["name"],
-                    role=item.get("role", "runtime"),
-                    total_bytes=int(item.get("size") or 0),
-                ))
-                for item in variant["assets"]
-            ]
-            self._set(tag=release["tag"], state="downloading", message="正在下載官方 Runtime", files=files)
-            installed = await asyncio.to_thread(self._download_and_install, release["tag"], variant)
-            self._set(state="completed", message="llama.cpp Runtime 安裝完成", progress=1.0, installed_path=str(installed))
+            self._prepare_variant_status(release["tag"], variant)
+            try:
+                installed = await asyncio.to_thread(self._download_and_install, release["tag"], variant)
+                completed_message = "llama.cpp Runtime 安裝完成"
+            except RuntimeValidationError as validation_error:
+                fallback = next((item for item in release["variants"] if item["id"] == "vulkan" and item.get("installable", True)), None)
+                if not fallback or variant_id not in {"cuda12", "cuda13", "hip"}:
+                    raise
+                reason = f"{variant['label']} 無法在此電腦執行（{validation_error}），已改用 Vulkan GPU Runtime。"
+                self._prepare_variant_status(release["tag"], fallback, fallback_reason=reason)
+                installed = await asyncio.to_thread(self._download_and_install, release["tag"], fallback)
+                completed_message = "原生 GPU Runtime 驗證失敗，已改用 Vulkan GPU Runtime"
+            self._set(state="completed", message=completed_message, progress=1.0, installed_path=str(installed))
         except Exception as exc:
             self._set(state="error", message="llama.cpp Runtime 安裝失敗", error=str(exc))
+
+    def _prepare_variant_status(self, tag: str, variant: dict[str, Any], fallback_reason: str = "") -> None:
+        files = [
+            asdict(FileInstallStatus(
+                name=item["name"], role=item.get("role", "runtime"),
+                total_bytes=int(item.get("size") or 0),
+            ))
+            for item in variant["assets"]
+        ]
+        self._set(
+            tag=tag, variant=variant["id"], state="downloading", progress=0.0,
+            message="正在下載官方 Runtime", files=files,
+            fallback_reason=fallback_reason, error="",
+        )
 
     def _set_file(self, index: int, **values: Any) -> None:
         with self._lock:
@@ -420,7 +445,7 @@ class LlamaRuntimeInstaller:
     def _validate_runtime(directory: Path) -> Path:
         server = directory / "llama-server.exe"
         if not server.is_file():
-            raise RuntimeError("Runtime 驗證失敗：缺少 llama-server.exe")
+            raise RuntimeValidationError("Runtime 驗證失敗：缺少 llama-server.exe")
         result = subprocess.run(
             [str(server), "--version"],
             capture_output=True,
@@ -433,7 +458,9 @@ class LlamaRuntimeInstaller:
         )
         if result.returncode != 0:
             output = (result.stdout + "\n" + result.stderr).strip()
-            raise RuntimeError(f"llama-server.exe 驗證失敗：{output or result.returncode}")
+            unsigned_code = result.returncode & 0xFFFFFFFF
+            detail = output or f"{unsigned_code} (0x{unsigned_code:08X})"
+            raise RuntimeValidationError(f"llama-server.exe 驗證失敗：{detail}", result.returncode)
         return server
 
     @staticmethod
@@ -506,7 +533,11 @@ class LlamaRuntimeInstaller:
             if staging.exists():
                 shutil.rmtree(staging)
             shutil.copytree(payload, staging)
-            self._validate_runtime(staging)
+            try:
+                self._validate_runtime(staging)
+            except Exception:
+                shutil.rmtree(staging, ignore_errors=True)
+                raise
             self._set(state="activating", message="正在啟用新的 Runtime", progress=0.95)
             backup = target.with_name(target.name + f".backup-{self._status.job_id[:8]}")
             moved_existing = False

@@ -200,6 +200,7 @@
               <small v-if="file.error" class="runtime-error">{{ file.error }}</small>
             </div>
           </div>
+          <p v-if="runtimeInstallStatus.fallback_reason" class="runtime-recommendation">{{ runtimeInstallStatus.fallback_reason }}</p>
           <p v-if="runtimeInstallStatus.error" class="runtime-error">{{ runtimeInstallStatus.error }}</p>
         </div>
         <button type="button" class="btn-start-quick" :disabled="!selectedRuntimeOption?.installable || runtimeInstallBusy || llamaStore.isServerRunning || runtimeRelease.is_latest" @click="installSelectedRuntime">{{ runtimeInstallBusy ? '下載安裝中…' : runtimeRelease.is_latest ? '目前已是最新版本' : '下載並安裝選取版本' }}</button>

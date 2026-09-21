@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.config import settings
+from backend.core.external_process import run_external
 from backend.core.hardware_detector import GpuDevice, detect_gpus, vram_tier
 
 RELEASE_API = "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
@@ -82,7 +83,7 @@ def installed_runtime_build_tag() -> str:
         if not executable or not executable.is_file():
             continue
         try:
-            result = subprocess.run(
+            result = run_external(
                 [str(executable), "--version"],
                 capture_output=True,
                 text=True,
@@ -468,7 +469,7 @@ class LlamaRuntimeInstaller:
         server = directory / "llama-server.exe"
         if not server.is_file():
             raise RuntimeValidationError("Runtime 驗證失敗：缺少 llama-server.exe")
-        result = subprocess.run(
+        result = run_external(
             [str(server), "--version"],
             capture_output=True,
             text=True,

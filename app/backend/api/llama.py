@@ -17,6 +17,7 @@ import time
 import socket
 from functools import lru_cache
 from backend.config import settings
+from backend.core.external_process import run_external, popen_external
 from backend.core.llama_runtime_installer import active_runtime_executable, installer, list_latest_variants
 from backend.core.llama_model_installer import model_installer
 from backend.core.logging_setup import configure_dedicated_file_logger
@@ -71,7 +72,7 @@ def _effective_memory_options(
 def _flash_attn_args(server_exe: str, mode: FlashAttentionMode = "auto") -> List[str]:
     """Return the Flash Attention syntax supported by this llama.cpp build."""
     try:
-        result = subprocess.run(
+        result = run_external(
             [server_exe, "--help"],
             capture_output=True,
             text=True,
@@ -96,7 +97,7 @@ def _flash_attn_args(server_exe: str, mode: FlashAttentionMode = "auto") -> List
 def _no_mmap_args(server_exe: str) -> List[str]:
     """Return the no-mmap syntax supported by this llama.cpp build."""
     try:
-        result = subprocess.run(
+        result = run_external(
             [server_exe, "--help"],
             capture_output=True,
             text=True,
@@ -386,7 +387,7 @@ async def start_server(config: ServerConfig, background_tasks: BackgroundTasks):
         process_logger.info("Starting llama-server with command: %s", " ".join(cmd))
         
         # 啟動子程序
-        process = subprocess.Popen(
+        process = popen_external(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -607,7 +608,7 @@ def _get_llama_runtime_info() -> Dict[str, Any]:
     version = "未安裝"
     if executable:
         try:
-            result = subprocess.run(
+            result = run_external(
                 [str(executable), "--version"], capture_output=True, text=True,
                 encoding="utf-8", errors="replace", timeout=5,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,

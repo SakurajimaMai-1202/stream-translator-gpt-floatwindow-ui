@@ -400,7 +400,7 @@ def test_legacy_runtime_version_can_be_recognized_as_latest(monkeypatch, tmp_pat
     root.mkdir()
     (root / "llama-server.exe").write_bytes(b"runtime")
     monkeypatch.setattr(runtime, "llama_root", lambda: root)
-    monkeypatch.setattr(runtime.subprocess, "run", lambda *_args, **_kwargs: type("Result", (), {
+    monkeypatch.setattr(runtime, "run_external", lambda *_args, **_kwargs: type("Result", (), {
         "stdout": "version: 10312 (abcdef)", "stderr": ""
     })())
 

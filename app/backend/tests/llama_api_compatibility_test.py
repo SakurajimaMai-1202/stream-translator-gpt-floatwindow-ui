@@ -46,8 +46,8 @@ def test_resource_status_reuses_short_lived_cache(monkeypatch):
 def test_flash_attention_uses_explicit_value_for_new_runtime(monkeypatch):
     llama._flash_attn_args.cache_clear()
     monkeypatch.setattr(
-        llama.subprocess,
-        "run",
+        llama,
+        "run_external",
         lambda *args, **kwargs: SimpleNamespace(
             stdout="--flash-attn [on|off|auto] set Flash Attention use",
             stderr="",
@@ -60,8 +60,8 @@ def test_flash_attention_uses_explicit_value_for_new_runtime(monkeypatch):
 def test_flash_attention_uses_boolean_switch_for_old_runtime(monkeypatch):
     llama._flash_attn_args.cache_clear()
     monkeypatch.setattr(
-        llama.subprocess,
-        "run",
+        llama,
+        "run_external",
         lambda *args, **kwargs: SimpleNamespace(
             stdout="--flash-attn enable Flash Attention",
             stderr="",
@@ -75,8 +75,8 @@ def test_flash_attention_uses_boolean_switch_for_old_runtime(monkeypatch):
 def test_no_mmap_uses_load_mode_none_for_new_runtime(monkeypatch):
     llama._no_mmap_args.cache_clear()
     monkeypatch.setattr(
-        llama.subprocess,
-        "run",
+        llama,
+        "run_external",
         lambda *args, **kwargs: SimpleNamespace(
             stdout="--load-mode MODE model loading mode",
             stderr="",
@@ -89,8 +89,8 @@ def test_no_mmap_uses_load_mode_none_for_new_runtime(monkeypatch):
 def test_no_mmap_uses_legacy_switch_for_old_runtime(monkeypatch):
     llama._no_mmap_args.cache_clear()
     monkeypatch.setattr(
-        llama.subprocess,
-        "run",
+        llama,
+        "run_external",
         lambda *args, **kwargs: SimpleNamespace(
             stdout="--mmap, --no-mmap whether to memory-map model",
             stderr="",

@@ -209,6 +209,26 @@ def test_cuda_variant_does_not_pair_a_different_minor_runtime(monkeypatch):
     assert len(cuda["assets"]) == 1
 
 
+def test_current_windows_rocm_and_sycl_assets_are_exposed(monkeypatch):
+    monkeypatch.setattr(runtime, "_release_json", lambda: {
+        "tag_name": "b10964",
+        "assets": [
+            _asset("llama-b10964-bin-win-rocm-10.0-x64.zip"),
+            _asset("llama-b10964-bin-win-sycl-x64.zip"),
+        ],
+    })
+    variants = runtime.list_latest_variants("cpu", [
+        GpuDevice(0, "Intel Arc A770", "intel", "sycl", 16384, False),
+    ])
+    rocm = next(item for item in variants["variants"] if item["id"] == "hip")
+    sycl = next(item for item in variants["variants"] if item["id"] == "sycl")
+    assert rocm["backend"] == "hip"
+    assert rocm["runtime_version"] == "10.0"
+    assert sycl["backend"] == "sycl"
+    assert sycl["recommended"] is True
+    assert variants["recommended_variant"] == "sycl"
+
+
 def test_unknown_hardware_does_not_silently_recommend_cpu(monkeypatch):
     monkeypatch.setattr(runtime, "_release_json", lambda: {
         "tag_name": "b4000",

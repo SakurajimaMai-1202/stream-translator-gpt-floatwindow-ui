@@ -27,7 +27,8 @@ RECENT_RELEASES_API = "https://api.github.com/repos/ggml-org/llama.cpp/releases?
 _VARIANT_LABELS = {
     "cpu": "Windows x64 CPU",
     "vulkan": "Windows x64 Vulkan",
-    "hip": "Windows x64 HIP (AMD)",
+    "hip": "Windows x64 ROCm (AMD)",
+    "sycl": "Windows x64 SYCL (Intel Arc)",
     "cuda12": "Windows x64 CUDA 12",
     "cuda13": "Windows x64 CUDA 13",
 }
@@ -68,7 +69,7 @@ def active_runtime_release() -> dict[str, str]:
     try:
         relative = marker.read_text(encoding="utf-8").strip().replace("\\", "/")
         directory = Path(relative).name
-        match = re.match(r"^(?P<tag>b\d+)-(?P<variant>cuda12|cuda13|hip|vulkan|cpu)$", directory, re.IGNORECASE)
+        match = re.match(r"^(?P<tag>b\d+)-(?P<variant>cuda12|cuda13|hip|sycl|vulkan|cpu)$", directory, re.IGNORECASE)
         if match:
             return {"tag": match.group("tag"), "variant": match.group("variant").lower()}
     except OSError:
@@ -180,6 +181,11 @@ def _is_windows_x64_zip(name: str) -> bool:
     return lowered.endswith(".zip") and "-win-" in lowered and "x64" in lowered
 
 
+def _backend_version_from_name(name: str, backend: str) -> str:
+    match = re.search(rf"-{re.escape(backend)}-(\d+(?:\.\d+)*)-x64\.zip$", name.lower())
+    return match.group(1) if match else ""
+
+
 def _asset_payload(asset: dict[str, Any], role: str) -> dict[str, Any]:
     return {
         "name": str(asset.get("name") or ""),
@@ -218,6 +224,9 @@ def _build_variants(assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
             variant_id = "vulkan"
         elif "-hip-" in lowered or "-rocm-" in lowered:
             variant_id = "hip"
+            version = _backend_version_from_name(lowered, "rocm") or _backend_version_from_name(lowered, "hip")
+        elif "-sycl-" in lowered:
+            variant_id = "sycl"
         elif "-cuda-" in lowered:
             cuda_version = _cuda_version_from_name(lowered)
             if cuda_version and cuda_version[0] in (12, 13):
@@ -227,12 +236,12 @@ def _build_variants(assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
             mains.setdefault(variant_id, []).append((asset, version))
 
     variants: list[dict[str, Any]] = []
-    for variant_id in ("cuda12", "cuda13", "hip", "vulkan", "cpu"):
+    for variant_id in ("cuda12", "cuda13", "hip", "sycl", "vulkan", "cpu"):
         candidates = mains.get(variant_id, [])
         if not candidates:
             continue
         # Prefer the most specific CUDA version and otherwise a stable name order.
-        main, cuda_version = sorted(
+        main, runtime_version = sorted(
             candidates,
             key=lambda item: (item[1], str(item[0].get("name") or "")),
             reverse=True,
@@ -240,13 +249,7 @@ def _build_variants(assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
         downloads = [_asset_payload(main, "runtime")]
         compatibility_error = ""
         if variant_id.startswith("cuda"):
-            cuda_major = int(variant_id[-2:])
-            exact = [item for item in cudart_assets if item[1][1] == cuda_version]
-            major_only = [
-                item for item in cudart_assets
-                if item[1][0] == cuda_major and item[1][1] == str(cuda_major)
-            ]
-            dependency = exact or major_only
+            dependency = [item for item in cudart_assets if item[1][1] == runtime_version]
             if dependency:
                 downloads.append(_asset_payload(dependency[0][0], "dependency"))
             else:
@@ -256,7 +259,7 @@ def _build_variants(assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "id": variant_id,
             "label": _VARIANT_LABELS[variant_id],
             "backend": "cuda" if variant_id.startswith("cuda") else variant_id,
-            "runtime_version": cuda_version,
+            "runtime_version": runtime_version,
             "recommended": False,
             "installable": installable,
             "compatibility_error": compatibility_error,
@@ -286,6 +289,7 @@ def _recommend_variant_for_hardware(
     tier_id, tier_label = vram_tier(selected.memory_mb if selected else None)
     nvidia = bool(selected and (selected.vendor == "nvidia" or selected.backend == "cuda"))
     amd = bool(selected and (selected.vendor == "amd" or selected.backend == "rocm"))
+    intel = bool(selected and selected.vendor == "intel" and "arc" in selected.name.lower())
 
     if nvidia:
         for candidate in ("cuda12", "cuda13", "vulkan"):
@@ -295,8 +299,12 @@ def _recommend_variant_for_hardware(
         for candidate in ("hip", "vulkan"):
             if candidate in available:
                 return candidate, f"偵測到 AMD 獨立 GPU（{tier_label}），推薦 HIP llama runtime。"
+    if intel:
+        for candidate in ("sycl", "vulkan"):
+            if candidate in available:
+                return candidate, f"偵測到 Intel Arc（{tier_label}），推薦 SYCL llama runtime。"
     if discrete and "vulkan" in available:
-        return "vulkan", "偵測到獨立 GPU，但沒有可用的原生 CUDA/HIP runtime，推薦 Vulkan。"
+        return "vulkan", "偵測到獨立 GPU，但沒有可用的原生 CUDA/ROCm/SYCL runtime，推薦 Vulkan。"
     if not detected:
         return "", "無法確認本機 GPU，請手動選擇 llama.cpp Runtime。"
     if "cpu" in available:
@@ -413,7 +421,7 @@ class LlamaRuntimeInstaller:
                 completed_message = "llama.cpp Runtime 安裝完成"
             except RuntimeValidationError as validation_error:
                 fallback = next((item for item in release["variants"] if item["id"] == "vulkan" and item.get("installable", True)), None)
-                if not fallback or variant_id not in {"cuda12", "cuda13", "hip"}:
+                if not fallback or variant_id not in {"cuda12", "cuda13", "hip", "sycl"}:
                     raise
                 reason = f"{variant['label']} 無法在此電腦執行（{validation_error}），已改用 Vulkan GPU Runtime。"
                 self._prepare_variant_status(release["tag"], fallback, fallback_reason=reason)

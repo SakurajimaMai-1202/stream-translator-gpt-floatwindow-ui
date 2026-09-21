@@ -179,7 +179,7 @@
             <input v-model="selectedRuntimeVariant" type="radio" :value="variant.id" :disabled="!variant.installable" />
             <span class="runtime-variant-content">
               <span class="runtime-variant-title"><strong>{{ variant.label }}</strong><span v-if="variant.recommended" class="recommended-badge">依偵測硬體推薦</span><span v-if="variant.installed_latest" class="recommended-badge">已安裝最新版</span></span>
-              <small>{{ formatRuntimeBytes(variant.size) }} · {{ variant.assets.length }} 個官方檔案<template v-if="variant.runtime_version"> · CUDA {{ variant.runtime_version }}</template></small>
+              <small>{{ formatRuntimeBytes(variant.size) }} · {{ variant.assets.length }} 個官方檔案<template v-if="variant.runtime_version"> · {{ variant.backend === 'cuda' ? 'CUDA' : variant.backend === 'hip' ? 'ROCm' : variant.backend.toUpperCase() }} {{ variant.runtime_version }}</template></small>
               <span class="runtime-asset-list">
                 <small v-for="asset in variant.assets" :key="asset.name"><b>{{ asset.role === 'dependency' ? 'CUDA-RT' : 'llama.cpp' }}</b>{{ asset.name }}</small>
               </span>

@@ -34,6 +34,7 @@ DISCRETE_NAME_MARKERS = (
     "amd radeon rx",
     "amd radeon pro",
     "amd instinct",
+    "intel arc",
 )
 
 _GPU_CACHE_LOCK = threading.Lock()
@@ -105,6 +106,8 @@ def backend_for_vendor(vendor: str, torch_hip_version: str | None = None) -> str
         return "cuda"
     if vendor == "amd":
         return "rocm" if torch_hip_version else "unknown"
+    if vendor == "intel":
+        return "sycl"
     return "unknown"
 
 

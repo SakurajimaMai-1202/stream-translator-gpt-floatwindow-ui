@@ -117,31 +117,41 @@ def _fetch_text(url: str) -> str:
 
 
 def _release_json() -> dict[str, Any]:
-    """Prefer the newest binary-bearing nightly, then use the stable pointer."""
+    """Use llama.cpp's official stable pointer before considering raw nightlies.
+
+    The newest bNNNNN build can be published before it has seen broad Windows
+    GPU testing.  The stable release's nightly-tag.txt is the upstream-selected
+    binary build and is therefore safer for unattended first-run setup.
+    """
     try:
-        recent = _fetch_json(RECENT_RELEASES_API)
-        nightly = [
-            item for item in recent if isinstance(item, dict)
-            and re.fullmatch(r"b\d+", str(item.get("tag_name") or ""), re.IGNORECASE)
-            and _build_variants(item.get("assets", []))
-        ] if isinstance(recent, list) else []
-        if nightly:
-            return max(nightly, key=lambda item: int(str(item["tag_name"])[1:]))
+        release = _fetch_json(RELEASE_API)
     except Exception:
-        pass
-    release = _fetch_json(RELEASE_API)
+        release = {}
     if _build_variants(release.get("assets", [])):
         return release
     pointer = next((
         asset for asset in release.get("assets", [])
         if str(asset.get("name") or "").lower() == "nightly-tag.txt"
     ), None)
-    if not pointer:
-        return release
-    tag = _fetch_text(str(pointer.get("browser_download_url") or "")).strip()
-    if not re.fullmatch(r"b\d+", tag, re.IGNORECASE):
-        raise RuntimeError("llama.cpp 官方 nightly 指標格式不正確")
-    return _fetch_json(RELEASE_TAG_API.format(tag=tag))
+    if pointer:
+        tag = _fetch_text(str(pointer.get("browser_download_url") or "")).strip()
+        if not re.fullmatch(r"b\d+", tag, re.IGNORECASE):
+            raise RuntimeError("llama.cpp 官方 nightly 指標格式不正確")
+        try:
+            selected = _fetch_json(RELEASE_TAG_API.format(tag=tag))
+            if _build_variants(selected.get("assets", [])):
+                return selected
+        except Exception:
+            pass
+    recent = _fetch_json(RECENT_RELEASES_API)
+    nightly = [
+        item for item in recent if isinstance(item, dict)
+        and re.fullmatch(r"b\d+", str(item.get("tag_name") or ""), re.IGNORECASE)
+        and _build_variants(item.get("assets", []))
+    ] if isinstance(recent, list) else []
+    if not nightly:
+        raise RuntimeError("找不到可用的 llama.cpp Windows Runtime")
+    return max(nightly, key=lambda item: int(str(item["tag_name"])[1:]))
 
 
 def _asset_digest(asset: dict[str, Any]) -> str:

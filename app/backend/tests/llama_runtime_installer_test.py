@@ -44,31 +44,27 @@ def test_stable_release_follows_official_nightly_pointer(monkeypatch):
 
     def fetch_json(url):
         requested.append(url)
-        if url == runtime.RECENT_RELEASES_API:
-            return []
         return stable if url == runtime.RELEASE_API else nightly
 
     monkeypatch.setattr(runtime, "_fetch_json", fetch_json)
     monkeypatch.setattr(runtime, "_fetch_text", lambda _url: "b10964\n")
 
     assert runtime._release_json() == nightly
-    assert requested == [runtime.RECENT_RELEASES_API, runtime.RELEASE_API, runtime.RELEASE_TAG_API.format(tag="b10964")]
+    assert requested == [runtime.RELEASE_API, runtime.RELEASE_TAG_API.format(tag="b10964")]
 
 
-def test_release_resolver_prefers_newest_binary_nightly(monkeypatch):
+def test_release_resolver_uses_newest_binary_nightly_when_stable_pointer_fails(monkeypatch):
     releases = [
         {"tag_name": "b11067", "assets": [_asset("llama-b11067-bin-win-vulkan-x64.zip")]},
         {"tag_name": "v0.4.1", "assets": [_asset("nightly-tag.txt")]},
         {"tag_name": "b11068", "assets": [_asset("llama-b11068-bin-win-vulkan-x64.zip")]},
     ]
-    monkeypatch.setattr(runtime, "_fetch_json", lambda url: releases if url == runtime.RECENT_RELEASES_API else pytest.fail("unexpected fallback"))
+    monkeypatch.setattr(runtime, "_fetch_json", lambda url: releases if url == runtime.RECENT_RELEASES_API else {"tag_name": "v0.4.1", "assets": []})
     assert runtime._release_json()["tag_name"] == "b11068"
 
 
 def test_invalid_nightly_pointer_is_rejected(monkeypatch):
-    monkeypatch.setattr(runtime, "_fetch_json", lambda url: [] if url == runtime.RECENT_RELEASES_API else {
-        "tag_name": "v0.4.1", "assets": [_asset("nightly-tag.txt")],
-    })
+    monkeypatch.setattr(runtime, "_fetch_json", lambda url: [] if url == runtime.RECENT_RELEASES_API else {"tag_name": "v0.4.1", "assets": [_asset("nightly-tag.txt")]})
     monkeypatch.setattr(runtime, "_fetch_text", lambda _url: "../../unexpected")
     with pytest.raises(RuntimeError, match="nightly"):
         runtime._release_json()

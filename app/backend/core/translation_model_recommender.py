@@ -146,9 +146,9 @@ def build_translation_model_recommendations(devices: Iterable[GpuDevice]) -> dic
         }
     elif selected and vendor in {"nvidia", "amd"} and tier_id == "4_to_8gb":
         simple_setup = {
-            "supported": True, "model_id": "hy-mt2-iq3-xxs",
-            "filename": "Hy-MT2-7B.i1-IQ3_XXS.gguf", "quant": "i1-IQ3_XXS",
-            "reason": f"偵測到 {selected.name}，屬於 {tier_label}，使用節省顯存量化。",
+            "supported": True, "model_id": "hy-mt2-iq4-nl",
+            "filename": "Hy-MT2-7B.i1-IQ4_NL.gguf", "quant": "i1-IQ4_NL",
+            "reason": f"偵測到 {selected.name}，屬於 {tier_label}，使用兼顧品質與顯存的量化。",
         }
     elif selected and vendor in {"nvidia", "amd"} and tier_id == "under_4gb":
         simple_setup = {

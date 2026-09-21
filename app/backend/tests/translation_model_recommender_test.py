@@ -90,8 +90,8 @@ def test_sakura_parameters_distinguish_model_card_facts_from_app_defaults():
 def test_simple_setup_uses_small_model_for_four_gb_nvidia():
     result = build_translation_model_recommendations([gpu("NVIDIA GeForce RTX", 4096)])
     assert result["simple_setup"]["supported"] is True
-    assert result["simple_setup"]["model_id"] == "hy-mt2-iq3-xxs"
-    assert result["simple_setup"]["quant"] == "i1-IQ3_XXS"
+    assert result["simple_setup"]["model_id"] == "hy-mt2-iq4-nl"
+    assert result["simple_setup"]["quant"] == "i1-IQ4_NL"
     assert result["vram_tier"] == "4_to_8gb"
 
 
@@ -114,7 +114,7 @@ def test_simple_setup_uses_cpu_path_below_four_gb():
 def test_simple_setup_supports_amd_in_middle_and_high_tiers():
     middle = build_translation_model_recommendations([gpu("AMD Radeon RX", 6144, vendor="amd")])
     high = build_translation_model_recommendations([gpu("AMD Radeon RX", 12288, vendor="amd")])
-    assert middle["simple_setup"]["model_id"] == "hy-mt2-iq3-xxs"
+    assert middle["simple_setup"]["model_id"] == "hy-mt2-iq4-nl"
     assert middle["vram_tier"] == "4_to_8gb"
     assert high["simple_setup"]["model_id"] == "hy-mt2-q6-k"
     assert high["vram_tier"] == "8gb_plus"

@@ -18,6 +18,7 @@ from backend.core.portable_paths import get_app_root
 REPOSITORY = "mradermacher/Hy-MT2-7B-i1-GGUF"
 MODELS = {
     "hy-mt2-iq3-xxs": "Hy-MT2-7B.i1-IQ3_XXS.gguf",
+    "hy-mt2-iq4-nl": "Hy-MT2-7B.i1-IQ4_NL.gguf",
     "hy-mt2-q6-k": "Hy-MT2-7B.i1-Q6_K.gguf",
 }
 BUSY = {"resolving", "downloading", "verifying"}

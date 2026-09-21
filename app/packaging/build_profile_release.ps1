@@ -2,7 +2,7 @@
 param(
     [ValidateSet("cuda", "cpu", "rocm")]
     [string]$Profile = "cuda",
-    [string]$Version = "1.4.5",
+    [string]$Version = "1.4.8",
     [switch]$ForceRuntime,
     [switch]$ReuseRuntimeCache,
     [switch]$SkipFullZip,
@@ -280,7 +280,7 @@ foreach ($name in @("ffmpeg.exe", "ffprobe.exe")) {
 }
 
 # llama.cpp Runtime is installed on demand by the application and is intentionally
-# excluded from all v1.4.5 Full packages. This keeps the three profiles smaller
+# excluded from all Full packages. This keeps the three profiles smaller
 # and prevents an obsolete bundled server from being used accidentally.
 if (Test-Path -LiteralPath (Join-Path $releaseRoot "llama")) {
     throw "Packaging guard failed: llama folder must not be included in v$Version package"

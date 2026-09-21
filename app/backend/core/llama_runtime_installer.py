@@ -22,6 +22,7 @@ from backend.core.hardware_detector import GpuDevice, detect_gpus, vram_tier
 
 RELEASE_API = "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
 RELEASE_TAG_API = "https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/{tag}"
+RECENT_RELEASES_API = "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=20"
 _VARIANT_LABELS = {
     "cpu": "Windows x64 CPU",
     "vulkan": "Windows x64 Vulkan",
@@ -100,7 +101,7 @@ def installed_runtime_build_tag() -> str:
     return ""
 
 
-def _fetch_json(url: str) -> dict[str, Any]:
+def _fetch_json(url: str) -> Any:
     request = urllib.request.Request(
         url,
         headers={"Accept": "application/vnd.github+json", "User-Agent": "Stream-Translator"},
@@ -116,7 +117,18 @@ def _fetch_text(url: str) -> str:
 
 
 def _release_json() -> dict[str, Any]:
-    """Resolve the stable release to the binary-bearing nightly release when needed."""
+    """Prefer the newest binary-bearing nightly, then use the stable pointer."""
+    try:
+        recent = _fetch_json(RECENT_RELEASES_API)
+        nightly = [
+            item for item in recent if isinstance(item, dict)
+            and re.fullmatch(r"b\d+", str(item.get("tag_name") or ""), re.IGNORECASE)
+            and _build_variants(item.get("assets", []))
+        ] if isinstance(recent, list) else []
+        if nightly:
+            return max(nightly, key=lambda item: int(str(item["tag_name"])[1:]))
+    except Exception:
+        pass
     release = _fetch_json(RELEASE_API)
     if _build_variants(release.get("assets", [])):
         return release

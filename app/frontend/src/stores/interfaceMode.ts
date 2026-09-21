@@ -3,7 +3,6 @@ import { defineStore } from 'pinia';
 import { configApi, runtimeApi, translationApi, type CpuAsrSidecarInstallStatus } from '../services/api';
 import { useModelDownloadStore } from './modelDownload';
 import { llamaApi, type ModelInstallStatus, type RuntimeInstallStatus, type TranslationModelRecommendationInfo } from '../services/llamaApi';
-import { useLlamaStore } from './llama';
 
 const STARTER_MODELS = [
   { engine: 'sensevoice' as const, id: 'iic/SenseVoiceSmall', label: 'SenseVoice Small（中文）' },
@@ -205,21 +204,9 @@ export const useInterfaceModeStore = defineStore('interfaceMode', () => {
         flash_attn: 'auto', no_mmap: false,
       });
       await configApi.updateSection('translation', { backend: 'llama' });
-      setupMessage.value = `正在啟動本機翻譯服務（連接埠 ${port}）…`;
-      await llamaApi.startServer({
-        model_path: modelPath, host: '127.0.0.1', port, n_ctx: 4096, n_gpu_layers: 999,
-        n_threads: 4, n_parallel: 1, temp: 0.7, top_p: 0.6, top_k: 20,
-        repeat_penalty: 1.05, n_predict: 4096, flash_attn: 'auto', no_mmap: false,
-      });
-      for (let index = 0; index < 180; index++) {
-        const status = await llamaApi.getServerStatus();
-        if (status.is_ready) break;
-        if (!status.is_running) throw new Error(status.last_error || '本機翻譯模型無法啟動。');
-        if (index === 179) throw new Error('本機翻譯模型載入逾時。');
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
-      // 使用者在本次導引中明確選擇並啟動本機模型，因此只開啟本次工作階段。
-      await useLlamaStore().setLocalLlmEnabled(true);
+      // 首次導引只安裝並設定 Runtime/模型。模型服務由使用者進入首頁後
+      // 透過「本地 LLM 翻譯」開關啟動，避免完成下載便立刻占用 VRAM。
+      setupMessage.value = `本機翻譯已準備完成（預設連接埠 ${port}），進入首頁後可手動啟動。`;
       await finishSimpleMode();
     } catch (cause: any) {
       error.value = cause?.response?.data?.detail || cause?.message || '本機翻譯設定失敗，請重試。';

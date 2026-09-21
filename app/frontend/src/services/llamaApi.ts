@@ -133,6 +133,8 @@ export interface TranslationModelRecommendationInfo {
   selected_gpu: null | { name: string; vendor: string; backend: string; memory_mb: number | null; is_integrated: boolean };
   detected_gpus: Array<{ name: string; vendor: string; backend: string; memory_mb: number | null; is_integrated: boolean }>;
   vram_gb: number | null;
+  vram_tier: 'under_4gb' | '4_to_8gb' | '8gb_plus' | 'unknown';
+  vram_tier_label: string;
   notice: string;
   simple_setup: { supported: boolean; model_id: string; filename: string; quant: string; reason: string };
   models: Array<{

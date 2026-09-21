@@ -2,8 +2,9 @@ from backend.core.hardware_detector import GpuDevice
 from backend.core.translation_model_recommender import build_translation_model_recommendations
 
 
-def gpu(name: str, memory_mb: int, integrated: bool = False) -> GpuDevice:
-    return GpuDevice(index=0, name=name, vendor="nvidia", backend="cuda", memory_mb=memory_mb, is_integrated=integrated)
+def gpu(name: str, memory_mb: int, integrated: bool = False, vendor: str = "nvidia") -> GpuDevice:
+    backend = "cuda" if vendor == "nvidia" else "rocm" if vendor == "amd" else "unknown"
+    return GpuDevice(index=0, name=name, vendor=vendor, backend=backend, memory_mb=memory_mb, is_integrated=integrated)
 
 
 def test_recommendations_use_largest_discrete_gpu_and_rank_fits_first():
@@ -91,6 +92,7 @@ def test_simple_setup_uses_small_model_for_four_gb_nvidia():
     assert result["simple_setup"]["supported"] is True
     assert result["simple_setup"]["model_id"] == "hy-mt2-iq3-xxs"
     assert result["simple_setup"]["quant"] == "i1-IQ3_XXS"
+    assert result["vram_tier"] == "4_to_8gb"
 
 
 def test_simple_setup_uses_q6_model_for_eight_gb_nvidia():
@@ -98,9 +100,21 @@ def test_simple_setup_uses_q6_model_for_eight_gb_nvidia():
     assert result["simple_setup"]["supported"] is True
     assert result["simple_setup"]["model_id"] == "hy-mt2-q6-k"
     assert result["simple_setup"]["quant"] == "i1-Q6_K"
+    assert result["vram_tier"] == "8gb_plus"
 
 
-def test_simple_setup_sends_unsupported_hardware_to_cloud():
+def test_simple_setup_uses_cpu_path_below_four_gb():
     result = build_translation_model_recommendations([gpu("NVIDIA GeForce RTX", 3072)])
-    assert result["simple_setup"]["supported"] is False
-    assert result["simple_setup"]["model_id"] == ""
+    assert result["simple_setup"]["supported"] is True
+    assert result["simple_setup"]["model_id"] == "hy-mt2-iq3-xxs"
+    assert result["vram_tier"] == "under_4gb"
+    assert "CPU Runtime" in result["simple_setup"]["reason"]
+
+
+def test_simple_setup_supports_amd_in_middle_and_high_tiers():
+    middle = build_translation_model_recommendations([gpu("AMD Radeon RX", 6144, vendor="amd")])
+    high = build_translation_model_recommendations([gpu("AMD Radeon RX", 12288, vendor="amd")])
+    assert middle["simple_setup"]["model_id"] == "hy-mt2-iq3-xxs"
+    assert middle["vram_tier"] == "4_to_8gb"
+    assert high["simple_setup"]["model_id"] == "hy-mt2-q6-k"
+    assert high["vram_tier"] == "8gb_plus"

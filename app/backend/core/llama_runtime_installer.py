@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.config import settings
-from backend.core.hardware_detector import GpuDevice, detect_gpus
+from backend.core.hardware_detector import GpuDevice, detect_gpus, vram_tier
 
 RELEASE_API = "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
 RELEASE_TAG_API = "https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/{tag}"
@@ -251,17 +251,22 @@ def _recommend_variant_for_hardware(
     available = {item["id"] for item in variants if item.get("installable", True)}
     detected = devices if devices is not None else detect_gpus()
     discrete = [device for device in detected if not device.is_integrated]
-    nvidia = any(device.vendor == "nvidia" or device.backend == "cuda" for device in discrete)
-    amd = any(device.vendor == "amd" or device.backend == "rocm" for device in discrete)
+    selected = max(discrete, key=lambda device: int(device.memory_mb or 0), default=None)
+    tier_id, tier_label = vram_tier(selected.memory_mb if selected else None)
+    nvidia = bool(selected and (selected.vendor == "nvidia" or selected.backend == "cuda"))
+    amd = bool(selected and (selected.vendor == "amd" or selected.backend == "rocm"))
+
+    if selected and tier_id == "under_4gb" and "cpu" in available:
+        return "cpu", f"偵測到 {selected.name}（{tier_label}），簡單模式推薦 CPU llama runtime。"
 
     if nvidia:
         for candidate in ("cuda12", "cuda13", "vulkan"):
             if candidate in available:
-                return candidate, "偵測到 NVIDIA 獨立 GPU，推薦 CUDA llama runtime。"
+                return candidate, f"偵測到 NVIDIA 獨立 GPU（{tier_label}），推薦 CUDA llama runtime。"
     if amd:
         for candidate in ("hip", "vulkan"):
             if candidate in available:
-                return candidate, "偵測到 AMD 獨立 GPU，推薦 HIP llama runtime。"
+                return candidate, f"偵測到 AMD 獨立 GPU（{tier_label}），推薦 HIP llama runtime。"
     if discrete and "vulkan" in available:
         return "vulkan", "偵測到獨立 GPU，但沒有可用的原生 CUDA/HIP runtime，推薦 Vulkan。"
     if not detected:

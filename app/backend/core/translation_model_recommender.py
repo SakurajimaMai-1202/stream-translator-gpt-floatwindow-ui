@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any, Iterable
 
-from .hardware_detector import GpuDevice
+from .hardware_detector import GpuDevice, vram_tier
 
 VRAM_TIERS_GB = (4, 6, 8, 10, 12, 16, 24, 32, 48)
 
@@ -102,6 +102,7 @@ def build_translation_model_recommendations(devices: Iterable[GpuDevice]) -> dic
     usable = [device for device in discrete if device.memory_mb]
     selected = max(usable, key=lambda device: int(device.memory_mb or 0), default=None)
     vram_gb = round((selected.memory_mb or 0) / 1024, 1) if selected else None
+    tier_id, tier_label = vram_tier(selected.memory_mb if selected else None)
 
     models: list[dict[str, Any]] = []
     for position, source in enumerate(MODEL_CATALOG):
@@ -136,29 +137,37 @@ def build_translation_model_recommendations(devices: Iterable[GpuDevice]) -> dic
         item["comfortable_vram_gb"],
         item["catalog_order"],
     ))
-    nvidia = selected if selected and selected.vendor == "nvidia" else None
-    if nvidia and vram_gb is not None and vram_gb >= 8:
+    vendor = selected.vendor if selected else "unknown"
+    if selected and vendor in {"nvidia", "amd"} and tier_id == "8gb_plus":
         simple_setup = {
             "supported": True, "model_id": "hy-mt2-q6-k",
             "filename": "Hy-MT2-7B.i1-Q6_K.gguf", "quant": "i1-Q6_K",
-            "reason": f"偵測到 NVIDIA GPU 與 {vram_gb:g} GB VRAM，使用高品質量化。",
+            "reason": f"偵測到 {selected.name}，屬於 {tier_label}，使用高品質量化。",
         }
-    elif nvidia and vram_gb is not None and vram_gb >= 4:
+    elif selected and vendor in {"nvidia", "amd"} and tier_id == "4_to_8gb":
         simple_setup = {
             "supported": True, "model_id": "hy-mt2-iq3-xxs",
             "filename": "Hy-MT2-7B.i1-IQ3_XXS.gguf", "quant": "i1-IQ3_XXS",
-            "reason": f"偵測到 NVIDIA GPU 與 {vram_gb:g} GB VRAM，使用節省顯存量化。",
+            "reason": f"偵測到 {selected.name}，屬於 {tier_label}，使用節省顯存量化。",
+        }
+    elif selected and vendor in {"nvidia", "amd"} and tier_id == "under_4gb":
+        simple_setup = {
+            "supported": True, "model_id": "hy-mt2-iq3-xxs",
+            "filename": "Hy-MT2-7B.i1-IQ3_XXS.gguf", "quant": "i1-IQ3_XXS",
+            "reason": f"偵測到 {selected.name}，屬於 {tier_label}；改用 CPU Runtime 與最省資源量化。",
         }
     else:
         simple_setup = {
             "supported": False, "model_id": "", "filename": "", "quant": "",
-            "reason": "未偵測到至少 4 GB VRAM 的 NVIDIA 獨立顯卡，建議使用 Gemini 雲端翻譯。",
+            "reason": "無法可靠讀取 NVIDIA／AMD 獨立顯卡與 VRAM，建議使用 Gemini，或到進階模式手動設定。",
         }
 
     return {
         "selected_gpu": asdict(selected) if selected else None,
         "detected_gpus": [asdict(device) for device in detected],
         "vram_gb": vram_gb,
+        "vram_tier": tier_id,
+        "vram_tier_label": tier_label,
         "models": models,
         "simple_setup": simple_setup,
         "notice": "VRAM 建議以指定量化的實際檔案大小加上 llama.cpp／KV cache 餘量計算；ASR 同時使用 GPU 時需另外預留顯存。",

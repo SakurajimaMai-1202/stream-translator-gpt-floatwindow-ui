@@ -197,16 +197,17 @@ export const useInterfaceModeStore = defineStore('interfaceMode', () => {
       await llamaApi.installSimpleModel(setup.model_id);
       const modelPath = await waitForLocalModel();
       const port = await llamaApi.getAvailablePort(8080);
+      const useCpuRuntime = variant === 'cpu';
       await configApi.updateSection('llama', {
         local_llm_enabled: false, model_dir: modelPath.replace(/[\\/][^\\/]+$/, ''), model_path: modelPath,
-        host: '127.0.0.1', port, n_ctx: 4096, n_gpu_layers: 999, n_threads: 4, n_parallel: 1,
+        host: '127.0.0.1', port, n_ctx: 4096, n_gpu_layers: useCpuRuntime ? 0 : 999, n_threads: 4, n_parallel: 1,
         temp: 0.7, top_p: 0.6, top_k: 20, repeat_penalty: 1.05, n_predict: 4096,
         flash_attn: 'auto', no_mmap: false,
       });
       await configApi.updateSection('translation', { backend: 'llama' });
       setupMessage.value = `正在啟動本機翻譯服務（連接埠 ${port}）…`;
       await llamaApi.startServer({
-        model_path: modelPath, host: '127.0.0.1', port, n_ctx: 4096, n_gpu_layers: 999,
+        model_path: modelPath, host: '127.0.0.1', port, n_ctx: 4096, n_gpu_layers: useCpuRuntime ? 0 : 999,
         n_threads: 4, n_parallel: 1, temp: 0.7, top_p: 0.6, top_k: 20,
         repeat_penalty: 1.05, n_predict: 4096, flash_attn: 'auto', no_mmap: false,
       });

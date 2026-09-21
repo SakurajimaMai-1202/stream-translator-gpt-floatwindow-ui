@@ -41,6 +41,17 @@ _GPU_CACHE: tuple[float, tuple["GpuDevice", ...]] | None = None
 GPU_CACHE_TTL_SECONDS = 60.0
 
 
+def vram_tier(memory_mb: int | None) -> tuple[str, str]:
+    """Return the simple-mode VRAM tier using stable binary boundaries."""
+    if memory_mb is None or memory_mb <= 0:
+        return "unknown", "VRAM 未知"
+    if memory_mb < 4096:
+        return "under_4gb", "未滿 4 GB"
+    if memory_mb < 8192:
+        return "4_to_8gb", "4 GB–未滿 8 GB"
+    return "8gb_plus", "8 GB 以上"
+
+
 @dataclass(frozen=True)
 class GpuDevice:
     index: int
@@ -219,6 +230,56 @@ def detect_windows_video_controllers() -> list[GpuDevice]:
     return devices
 
 
+def detect_nvidia_smi_gpus() -> list[GpuDevice]:
+    """Read dedicated NVIDIA VRAM without Win32_VideoController's 32-bit limit."""
+    executable = shutil.which("nvidia-smi")
+    if not executable:
+        return []
+    try:
+        result = subprocess.run(
+            [executable, "--query-gpu=index,name,memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+            check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+    except Exception:
+        return []
+    if result.returncode != 0:
+        return []
+    devices: list[GpuDevice] = []
+    for line in result.stdout.splitlines():
+        parts = [part.strip() for part in line.split(",", 2)]
+        if len(parts) != 3:
+            continue
+        try:
+            index = int(parts[0])
+            memory_mb = int(parts[2])
+        except ValueError:
+            continue
+        devices.append(GpuDevice(
+            index=index, name=parts[1], vendor="nvidia", backend="cuda",
+            memory_mb=memory_mb or None, is_integrated=False, source="nvidia_smi",
+        ))
+    return devices
+
+
+def _merge_gpu_detections(*groups: Iterable[GpuDevice]) -> list[GpuDevice]:
+    """Merge fallback detectors, preferring entries with reliable VRAM values."""
+    merged: list[GpuDevice] = []
+    for device in (item for group in groups for item in group):
+        key = normalize_gpu_name(device.name)
+        existing_index = next((i for i, item in enumerate(merged) if normalize_gpu_name(item.name) == key), None)
+        if existing_index is None:
+            merged.append(device)
+        elif merged[existing_index].memory_mb is None and device.memory_mb is not None:
+            merged[existing_index] = device
+    return merged
+
+
 def detect_gpus(include_windows_fallback: bool = True, *, force_refresh: bool = False) -> list[GpuDevice]:
     global _GPU_CACHE
     now = time.monotonic()
@@ -231,7 +292,10 @@ def detect_gpus(include_windows_fallback: bool = True, *, force_refresh: bool = 
         devices = runtime_devices
     else:
         torch_devices = detect_torch_gpus()
-        devices = torch_devices if (torch_devices or not include_windows_fallback) else detect_windows_video_controllers()
+        if torch_devices or not include_windows_fallback:
+            devices = torch_devices
+        else:
+            devices = _merge_gpu_detections(detect_nvidia_smi_gpus(), detect_windows_video_controllers())
     if include_windows_fallback:
         with _GPU_CACHE_LOCK:
             _GPU_CACHE = (time.monotonic(), tuple(devices))

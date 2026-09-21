@@ -110,6 +110,7 @@ watch(() => route.fullPath, () => {
         </div>
         <div v-if="interfaceMode.hardware?.selected_gpu" class="rounded-xl border border-white/10 bg-white/5 p-4 text-sm">
           偵測到 {{ interfaceMode.hardware.selected_gpu.name }} · {{ interfaceMode.hardware.vram_gb }} GB VRAM
+          <span class="ml-2 rounded-full bg-indigo-400/15 px-2 py-1 text-xs text-indigo-200">{{ interfaceMode.hardware.vram_tier_label }}</span>
         </div>
         <div class="grid gap-4 sm:grid-cols-2">
           <button :disabled="interfaceMode.busy || !interfaceMode.hardware?.simple_setup.supported" class="rounded-2xl border border-emerald-400/40 bg-emerald-500/10 p-5 text-left disabled:opacity-45" @click="interfaceMode.configureLocal()">

@@ -77,19 +77,19 @@ v1.4.8 的重點包括：
 |---|---|---|---|
 | CUDA | NVIDIA CUDA 相容獨立顯示卡 | CUDA 原生 ASR；亦含 sherpa-onnx CPU sidecar | `StreamTranslator-win64-CUDA-Full.zip.part01`～`.part03` |
 | CPU | 無獨立顯示卡、相容性優先 | sherpa-onnx／ONNX Runtime，不包含 PyTorch | `StreamTranslator-win64-CPU-Full.zip`（可直接解壓） |
-| ROCm Experimental | 支援 Windows ROCm／HIP 的 AMD 獨立顯示卡 | ROCm 原生 ASR；亦含 sherpa-onnx CPU sidecar | `StreamTranslator-win64-ROCm-Experimental-Full.zip.part01` |
+| ROCm Experimental | 支援 Windows ROCm／HIP 的 AMD 獨立顯示卡 | ROCm 原生 ASR；亦含 sherpa-onnx CPU sidecar | `StreamTranslator-win64-ROCm-Experimental-Full.zip`（可直接解壓） |
 
 ROCm 版本仍屬實驗性支援，能否使用取決於顯示卡、驅動程式與 Windows ROCm Runtime 相容性。若不確定，先使用 CPU 版。
 
 ### 合併與安裝 Full package
 
-1. CPU 使用者可直接下載並解壓 `StreamTranslator-win64-CPU-Full.zip`；CUDA／ROCm 使用者請下載同一 Profile 的全部 `.partXX` 與 `merge-full-package.bat`。
-2. 將檔案放在同一資料夾，雙擊 `merge-full-package.bat`。
+1. CPU／ROCm 使用者可直接下載並解壓對應的 Full ZIP；CUDA 使用者請下載 `.part01`～`.part03` 與 `merge-full-package.bat`。
+2. CUDA 使用者將四個檔案放在同一資料夾，雙擊 `merge-full-package.bat`。
 3. 以 `SHA256SUMS-v1.4.8.txt` 驗證合併後的 ZIP。
 4. 解壓到一般可寫入路徑，例如 `D:\Apps\StreamTranslator`。
 5. 執行 `Stream Translator.exe`。
 
-不要直接解壓 `.part01`；CUDA 與 ROCm 完整包必須先透過 `merge-full-package.bat` 產生 ZIP。
+不要直接解壓 `.part01`；CUDA 完整包必須先透過 `merge-full-package.bat` 產生 ZIP。
 
 ### 更新既有安裝
 

@@ -197,27 +197,28 @@ foreach ($result in $profileResults) {
         $timer.Restart()
         $fullZipPath = Join-Path $distDir $packageInfo.FullZip
         Test-ReleaseZip -SevenZipPath $sevenZipExe -Path $fullZipPath
-        $parts = @(Split-ReleaseFile -Path $fullZipPath -PartSizeMiB $SplitSizeMiB)
-        $fullZipHash = Test-SplitReleaseFile -OriginalPath $fullZipPath -Parts $parts -SevenZipPath $sevenZipExe
-        $timer.Stop()
-        $stepTimings["$($result.profile)_split_verify_seconds"] = [Math]::Round($timer.Elapsed.TotalSeconds, 2)
-
-        $result.full_zip_sha256 = $fullZipHash
-        $result.parts = @($parts | Sort-Object Name | ForEach-Object {
-            Copy-Item -LiteralPath $_.FullName -Destination $assetDir -Force
-            $partHash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
-            $checksumEntries += [pscustomobject]@{ hash = $partHash; name = $_.Name }
-            [pscustomobject]@{
-                name = $_.Name
-                size_bytes = $_.Length
-                sha256 = $partHash
-            }
-        })
-        if ($parts.Count -eq 1) {
-            # Single-part archives are already below the GitHub asset limit.
-            # Publish the ordinary ZIP too so CPU-first users can extract it directly.
+        $fullZipFile = Get-Item -LiteralPath $fullZipPath
+        if ($fullZipFile.Length -le $githubAssetLimit) {
+            $fullZipHash = (Get-FileHash -LiteralPath $fullZipPath -Algorithm SHA256).Hash
             Copy-Item -LiteralPath $fullZipPath -Destination $assetDir -Force
+            $result.parts = @()
+        } else {
+            $parts = @(Split-ReleaseFile -Path $fullZipPath -PartSizeMiB $SplitSizeMiB)
+            $fullZipHash = Test-SplitReleaseFile -OriginalPath $fullZipPath -Parts $parts -SevenZipPath $sevenZipExe
+            $result.parts = @($parts | Sort-Object Name | ForEach-Object {
+                Copy-Item -LiteralPath $_.FullName -Destination $assetDir -Force
+                $partHash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
+                $checksumEntries += [pscustomobject]@{ hash = $partHash; name = $_.Name }
+                [pscustomobject]@{
+                    name = $_.Name
+                    size_bytes = $_.Length
+                    sha256 = $partHash
+                }
+            })
         }
+        $timer.Stop()
+        $stepTimings["$($result.profile)_publish_verify_seconds"] = [Math]::Round($timer.Elapsed.TotalSeconds, 2)
+        $result.full_zip_sha256 = $fullZipHash
         $checksumEntries += [pscustomobject]@{ hash = $fullZipHash; name = $packageInfo.FullZip }
     }
 }

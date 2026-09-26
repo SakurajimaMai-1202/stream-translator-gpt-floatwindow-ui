@@ -61,7 +61,7 @@ class SileroVADAdapter:
 
 class FireRedVADAdapter:
 
-    def __init__(self, threshold: float, model_path: str | None = None):
+    def __init__(self, threshold: float, model_path: str | None = None, native_options: dict | None = None):
         try:
             from omnivad import OmniStreamVAD
         except ImportError as e:
@@ -72,7 +72,8 @@ class FireRedVADAdapter:
         model_path = model_path.strip() if isinstance(model_path, str) else model_path
         if model_path == '' or model_path == 'auto':
             model_path = None
-        self.model = OmniStreamVAD(model_path=model_path, threshold=threshold)
+        model_options = dict(native_options or {})
+        self.model = OmniStreamVAD(model_path=model_path, threshold=threshold, **model_options)
         self.audio_buffer = np.array([], dtype=np.float32)
         self.last_speech_prob = 0.0
 
@@ -95,21 +96,42 @@ class FireRedVADAdapter:
             self.last_speech_prob = max(probs)
         return self.last_speech_prob
 
+    def process_native_events(self, audio: np.array):
+        """Return each complete 10 ms frame with its native START/END result."""
+        audio = np.asarray(audio, dtype=np.float32).flatten()
+        if len(audio):
+            self.audio_buffer = np.concatenate((self.audio_buffer, np.clip(audio, -1.0, 1.0)))
+        frames = []
+        while len(self.audio_buffer) >= FIRERED_FRAME_LENGTH:
+            chunk = np.ascontiguousarray(self.audio_buffer[:FIRERED_FRAME_LENGTH], dtype=np.float32)
+            self.audio_buffer = self.audio_buffer[FIRERED_FRAME_LENGTH:]
+            event = self.model.process(chunk)
+            frames.append((chunk, event))
+        return frames
+
+    def take_pending_audio(self):
+        pending = self.audio_buffer
+        self.audio_buffer = np.array([], dtype=np.float32)
+        return pending
+
     def reset_states(self):
         self.model.reset()
         self.audio_buffer = np.array([], dtype=np.float32)
         self.last_speech_prob = 0.0
 
 
-def create_vad_adapter(vad_backend: str, vad_threshold: float, firered_vad_model_path: str | None = None):
+def create_vad_adapter(vad_backend: str, vad_threshold: float, firered_vad_model_path: str | None = None,
+                       native_options: dict | None = None):
     vad_backend = (vad_backend or 'firered').strip().lower()
     if vad_backend == 'silero':
         if torch is None:
             print(f'{WARNING}Silero VAD is unavailable without PyTorch; using CPU FireRed VAD instead.')
-            return FireRedVADAdapter(threshold=vad_threshold, model_path=firered_vad_model_path)
+            return FireRedVADAdapter(threshold=vad_threshold, model_path=firered_vad_model_path,
+                                     native_options=native_options)
         return SileroVADAdapter()
     if vad_backend == 'firered':
-        return FireRedVADAdapter(threshold=vad_threshold, model_path=firered_vad_model_path)
+        return FireRedVADAdapter(threshold=vad_threshold, model_path=firered_vad_model_path,
+                                 native_options=native_options)
     raise ValueError(f'Unsupported VAD backend: {vad_backend}')
 
 
@@ -136,7 +158,11 @@ class AudioSlicer(LoopWorkerBase):
                  continuous_no_speech_threshold: float, dynamic_no_speech_threshold: bool,
                  prefix_retention_length: float, vad_threshold: float, dynamic_vad_threshold: bool,
                  disable_vad: bool = False, vad_every_n_frames: int = 1,
-                 vad_backend: str = 'firered', firered_vad_model_path: str | None = None):
+                 vad_backend: str = 'firered', firered_vad_model_path: str | None = None,
+                 slicing_mode: str = 'omnivad_native', omnivad_smooth_window_size: int = 5,
+                 omnivad_pad_start_frame: int = 5, omnivad_min_speech_frame: int = 8,
+                 omnivad_max_speech_frame: int = 2000, omnivad_min_silence_frame: int = 20,
+                 omnivad_threshold: float = 0.35):
         self.min_audio_length = min_audio_length
         self.max_audio_length = max_audio_length
         self.prefix_retention_count = max(0, round(prefix_retention_length / FRAME_DURATION))
@@ -157,12 +183,34 @@ class AudioSlicer(LoopWorkerBase):
         self.first_speech_at = None
         self.last_speech_at = None
         self.last_latency_trace = None
+        self.slicing_mode = (slicing_mode or 'omnivad_native').strip().lower()
+        if self.slicing_mode not in ('legacy', 'omnivad_native'):
+            raise ValueError(f'Unsupported slicing mode: {slicing_mode}')
+        normalized_vad_backend = (vad_backend or 'firered').strip().lower()
+        if self.slicing_mode == 'omnivad_native' and (disable_vad or normalized_vad_backend != 'firered'):
+            raise ValueError('OmniVAD native slicing requires enabled FireRed VAD.')
+        self._native_active = False
+        self._native_end_pending = False
+        self._native_total_samples = 0
+        self._native_prefix_frames = max(0, math.ceil(prefix_retention_length * SAMPLE_RATE /
+                                                       FIRERED_FRAME_LENGTH))
 
         self.disable_vad = disable_vad
         if not self.disable_vad:
-            self.vad = create_vad_adapter(vad_backend, vad_threshold, firered_vad_model_path)
-            self.vad_threshold = vad_threshold
-            self.vad_neg_threshold = _get_neg_threshold(vad_threshold)
+            native_options = None
+            if self.slicing_mode == 'omnivad_native':
+                native_options = {
+                    'smooth_window_size': max(1, int(omnivad_smooth_window_size)),
+                    'pad_start_frame': max(0, int(omnivad_pad_start_frame)),
+                    'min_speech_frame': max(1, int(omnivad_min_speech_frame)),
+                    'max_speech_frame': max(1, int(omnivad_max_speech_frame)),
+                    'min_silence_frame': max(1, int(omnivad_min_silence_frame)),
+                }
+            effective_vad_threshold = omnivad_threshold if self.slicing_mode == 'omnivad_native' else vad_threshold
+            self.vad = create_vad_adapter(vad_backend, effective_vad_threshold,
+                                          firered_vad_model_path, native_options)
+            self.vad_threshold = effective_vad_threshold
+            self.vad_neg_threshold = _get_neg_threshold(effective_vad_threshold)
             self.vad_every_n_frames = max(1, int(vad_every_n_frames))
             self._last_speech_prob = 0.0
             self.dynamic_vad_threshold = dynamic_vad_threshold
@@ -186,6 +234,10 @@ class AudioSlicer(LoopWorkerBase):
             if self.first_speech_at is None:
                 self.first_speech_at = frame_received_at
             self.last_speech_at = frame_received_at
+            return
+
+        if self.slicing_mode == 'omnivad_native':
+            self._put_native(audio, frame_received_at)
             return
 
         # VAD 跳幀優化：第一幀仍執行推論，後續連續語音 / 連續靜音都可沿用上一幀結果，
@@ -226,12 +278,40 @@ class AudioSlicer(LoopWorkerBase):
                 self.vad_threshold = min(self.vad_threshold, self.max_vad_threshold)
                 self.vad_neg_threshold = _get_neg_threshold(self.vad_threshold)
 
+    def _put_native(self, audio: np.array, frame_received_at: float):
+        for chunk, event in self.vad.process_native_events(audio):
+            self.audio_buffer.append(chunk)
+            self._native_total_samples += len(chunk)
+            if event is not None and event.is_speech_start:
+                self._native_active = True
+                self._native_end_pending = False
+                self.speech_count = max(1, self.speech_count)
+                if self.first_speech_at is None:
+                    self.first_speech_at = frame_received_at
+                if self.capture_started_at is None:
+                    self.capture_started_at = frame_received_at
+            if event is not None and event.is_speech:
+                self.speech_count = max(1, self.speech_count)
+                self.last_speech_at = frame_received_at
+            if event is not None and event.is_speech_end:
+                self._native_active = False
+                self._native_end_pending = True
+
+            if self.speech_count == 0:
+                if len(self.audio_buffer) > self._native_prefix_frames:
+                    self.audio_buffer = self.audio_buffer[-self._native_prefix_frames:] if self._native_prefix_frames else []
+                buffered_samples = sum(len(frame) for frame in self.audio_buffer)
+                self.last_slice_second = (self._native_total_samples - buffered_samples) / SAMPLE_RATE
+                self.capture_started_at = frame_received_at
+
     def should_slice(self):
-        audio_length = len(self.audio_buffer) * FRAME_DURATION
+        audio_length = self._buffer_duration()
         if audio_length < self.min_audio_length:
             return False
         if audio_length > self.max_audio_length:
             return True
+        if self.slicing_mode == 'omnivad_native':
+            return self.speech_count > 0 and self._native_end_pending
         if self.dynamic_no_speech_threshold:
             no_speech_threshold = _get_dynamic_no_speech_threshold(audio_length, self.initial_no_speech_threshold,
                                                                    self.target_audio_length)
@@ -241,13 +321,20 @@ class AudioSlicer(LoopWorkerBase):
             return True
         return False
 
+    def _buffer_duration(self):
+        if self.slicing_mode == 'omnivad_native':
+            return sum(len(frame) for frame in self.audio_buffer) / SAMPLE_RATE
+        return len(self.audio_buffer) * FRAME_DURATION
+
     def slice(self):
         slice_emitted_at = time.perf_counter()
         concatenate_buffer = self.prefix_audio_buffer + self.audio_buffer
         concatenate_audio = np.concatenate(concatenate_buffer)
         self.audio_buffer = []
-        if self.prefix_retention_count > 0:
-            self.prefix_audio_buffer = concatenate_buffer[-self.prefix_retention_count:]
+        retention_count = (self._native_prefix_frames
+                           if self.slicing_mode == 'omnivad_native' else self.prefix_retention_count)
+        if retention_count > 0:
+            self.prefix_audio_buffer = concatenate_buffer[-retention_count:]
         else:
             self.prefix_audio_buffer = []
         self.speech_count = 0
@@ -265,16 +352,28 @@ class AudioSlicer(LoopWorkerBase):
         self.first_speech_at = None
         self.last_speech_at = None
         self.last_latency_trace = trace
-        slice_second = self.counter * FRAME_DURATION
+        slice_second = (self._native_total_samples / SAMPLE_RATE
+                        if self.slicing_mode == 'omnivad_native' else self.counter * FRAME_DURATION)
         last_slice_second = self.last_slice_second
         self.last_slice_second = slice_second
+        self._native_end_pending = False
+        if self.slicing_mode == 'omnivad_native' and self._native_active:
+            # A max-length guard may split an active native speech segment. Keep
+            # accepting the continuation because no second START event will occur.
+            self.speech_count = 1
+            self.first_speech_at = slice_emitted_at
         return concatenate_audio, (last_slice_second, slice_second)
 
     def loop(self, input_queue: queue.SimpleQueue[np.array], output_queue: queue.SimpleQueue[TranslationTask]):
         vad_reset_interval = round(60 * 5 / FRAME_DURATION)  # 5 minutes
 
         def flush_buffer() -> None:
-            audio_length = len(self.audio_buffer) * FRAME_DURATION
+            if self.slicing_mode == 'omnivad_native':
+                pending = self.vad.take_pending_audio()
+                if len(pending):
+                    self.audio_buffer.append(pending)
+                    self._native_total_samples += len(pending)
+            audio_length = self._buffer_duration()
             if self.speech_count > 0 and audio_length >= self.min_audio_length:
                 sliced_audio, time_range = self.slice()
                 output_queue.put(TranslationTask(sliced_audio, time_range, latency_trace=self.last_latency_trace))
@@ -293,11 +392,15 @@ class AudioSlicer(LoopWorkerBase):
                 if not self.disable_vad:
                     self.vad.reset_states()
                     self._last_speech_prob = 0.0
+                    self._native_active = False
+                    self._native_end_pending = False
+                    self.speech_count = 0
                 continue
             self.put(audio)
             if self.should_slice():
                 sliced_audio, time_range = self.slice()
                 task = TranslationTask(sliced_audio, time_range, latency_trace=self.last_latency_trace)
                 output_queue.put(task)
-            if not self.disable_vad and self.counter % vad_reset_interval == 0:
+            if (not self.disable_vad and self.slicing_mode == 'legacy'
+                    and self.counter % vad_reset_interval == 0):
                 self.vad.reset_states()

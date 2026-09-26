@@ -4,7 +4,7 @@ import queue
 import re
 import time
 
-from .common import LoopWorkerBase, TranslationTask
+from .common import LoopWorkerBase, TranslationTask, sec2str
 
 
 _SENTENCE_END_RE = re.compile(r"[。！？!?…．.][」』”’）)\]]?$")
@@ -48,6 +48,8 @@ class SubtitleSegmenter(LoopWorkerBase):
         assembler_wait_ms: int = 400,
         assembler_max_duration: float = 6.0,
         assembler_gap_threshold: float = 0.8,
+        print_result: bool = False,
+        output_timestamps: bool = False,
     ):
         self.deduplicate_overlap = bool(deduplicate_overlap)
         self.assembler_enabled = bool(assembler_enabled)
@@ -55,6 +57,8 @@ class SubtitleSegmenter(LoopWorkerBase):
         self.assembler_max_duration = max(0.1, float(assembler_max_duration))
         self.assembler_gap_threshold = max(0.0, float(assembler_gap_threshold))
         self.previous_transcript = ""
+        self.print_result = bool(print_result)
+        self.output_timestamps = bool(output_timestamps)
 
     @staticmethod
     def _is_complete(task: TranslationTask) -> bool:
@@ -91,12 +95,17 @@ class SubtitleSegmenter(LoopWorkerBase):
             and gap <= self.assembler_gap_threshold
         )
 
-    @staticmethod
-    def _emit(task: TranslationTask, output_queue: queue.SimpleQueue[TranslationTask]) -> None:
+    def _emit(self, task: TranslationTask, output_queue: queue.SimpleQueue[TranslationTask]) -> None:
         task.latency_trace.assembler_emitted_at = time.perf_counter()
         if task.translation_queued_at is None:
             task.translation_queued_at = task.latency_trace.assembler_emitted_at
         task.latency_trace.translation_queued_at = task.translation_queued_at
+        if self.print_result:
+            if self.output_timestamps:
+                timestamp = f'{sec2str(task.time_range[0])} --> {sec2str(task.time_range[1])}'
+                print(f'{timestamp} {task.transcript}', flush=True)
+            else:
+                print(task.transcript, flush=True)
         output_queue.put(task)
 
     def loop(

@@ -68,6 +68,13 @@ def create_slicer(options: dict):
         firered_vad_model_path=options.get("firered_vad_model_path"),
         disable_vad=bool(options.get("disable_vad")),
         vad_every_n_frames=options.get("vad_every_n_frames", 1),
+        slicing_mode=options.get("slicing_mode", "omnivad_native"),
+        omnivad_smooth_window_size=options.get("omnivad_smooth_window_size", 5),
+        omnivad_pad_start_frame=options.get("omnivad_pad_start_frame", 5),
+        omnivad_min_speech_frame=options.get("omnivad_min_speech_frame", 8),
+        omnivad_max_speech_frame=options.get("omnivad_max_speech_frame", 2000),
+        omnivad_min_silence_frame=options.get("omnivad_min_silence_frame", 20),
+        omnivad_threshold=options.get("omnivad_threshold", 0.35),
     )
 
 
@@ -171,6 +178,8 @@ def create_subtitle_segmenter(options: dict):
         assembler_wait_ms=options.get("subtitle_assembler_wait_ms", 400),
         assembler_max_duration=options.get("subtitle_assembler_max_duration", 6.0),
         assembler_gap_threshold=options.get("subtitle_assembler_gap_threshold", 0.8),
+        print_result=not bool(options.get("hide_transcribe_result")),
+        output_timestamps=bool(options.get("output_timestamps")),
     )
 
 
@@ -207,6 +216,9 @@ def run_inprocess_pipeline(url: str,
     slicer = create_slicer(options)
     translator = create_translator(options)
     segmenter = create_subtitle_segmenter(options)
+    # The segmenter decides which ASR results actually enter translation.
+    # Printing earlier leaves untranslated rows behind for discarded overlaps.
+    transcriber.print_result = False
     exporter = create_exporter(options, subtitle_share_push_url, subtitle_share_token)
 
     workers = PipelineWorkers()

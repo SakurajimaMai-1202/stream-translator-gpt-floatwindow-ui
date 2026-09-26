@@ -11,7 +11,7 @@ from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings, QWebEngineScript
 from PyQt6.QtWebChannel import QWebChannel
 from PyQt6.QtCore import Qt, QUrl, QTimer, QPoint, QRect, QEvent, QObject, pyqtSlot, pyqtSignal
-from PyQt6.QtGui import QIcon, QCursor, QMouseEvent, QWheelEvent, QKeyEvent, QColor
+from PyQt6.QtGui import QIcon, QCursor, QMouseEvent, QWheelEvent, QKeyEvent, QColor, QDesktopServices
 import logging
 
 logger = logging.getLogger(__name__)
@@ -238,6 +238,10 @@ class WebViewWindow(QMainWindow):
 
 class CustomWebPage(QWebEnginePage):
     """自訂 WebPage 用於處理控制台訊息"""
+
+    def createWindow(self, window_type):
+        """Send links requesting a new window to the system browser."""
+        return ExternalLinkPage(self)
     
     def javaScriptConsoleMessage(self, level, message, lineNumber, sourceID):
         """捕獲 JavaScript 控制台訊息"""
@@ -248,6 +252,17 @@ class CustomWebPage(QWebEnginePage):
         }
         log_func = log_levels.get(level, logger.debug)
         log_func(f"[WebView Console] {message} (Line: {lineNumber})")
+
+
+class ExternalLinkPage(QWebEnginePage):
+    """Temporary page used only to capture target=_blank navigation."""
+
+    def acceptNavigationRequest(self, url, navigation_type, is_main_frame):
+        if url.scheme() in ("http", "https"):
+            if not QDesktopServices.openUrl(url):
+                logger.warning("Failed to open external URL: %s", url.toString())
+            self.deleteLater()
+        return False
 
 
 class HomeWindow(WebViewWindow):

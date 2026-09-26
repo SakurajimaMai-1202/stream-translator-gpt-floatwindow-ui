@@ -6,9 +6,11 @@ from pydantic import BaseModel
 import asyncio
 import yaml
 import io
+import logging
 from backend.core.app_sync import publish_app_event
 
 router = APIRouter(prefix="/config", tags=["config"])
+logger = logging.getLogger(__name__)
 
 # Singleton instance
 _config_manager_instance = None
@@ -64,8 +66,6 @@ async def update_section(section: str, data: Dict[str, Any], request: Request):
             incoming_presets = data.get('custom_presets')
             
             # Debug logging
-            import logging
-            logger = logging.getLogger(__name__)
             logger.info(f"Updating llama section. Current presets: {list(current_presets.keys())}, Incoming presets: {list(incoming_presets.keys()) if incoming_presets else 'None'}")
             
             # 如果更新資料中沒有 custom_presets，但現有配置中有，則保留現有的
@@ -84,6 +84,7 @@ async def update_section(section: str, data: Dict[str, Any], request: Request):
         })
         return {"success": True, "data": full_config.get(section)}
     except Exception as e:
+        logger.exception("Failed to save config section %s", section)
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/reset")

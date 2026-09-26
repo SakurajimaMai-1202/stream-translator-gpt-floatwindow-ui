@@ -99,6 +99,8 @@ if ($Profile -eq "cpu" -and -not $manifest.sherpa_onnx) {
     throw "CPU artifact manifest missing sherpa-onnx version: $runtimeManifestPath"
 }
 & $runtimePython -I -c "import opencc, stream_translator_gpt.main; print('ASR script normalization dependencies OK')"
+& $runtimePython -I -c "import omnivad; print('Native VAD dependency OK')"
+if ($LASTEXITCODE -ne 0) { throw "$Profile runtime is missing omnivad required by the default VAD mode" }
 if ($LASTEXITCODE -ne 0) {
     throw "Runtime is missing OpenCC ASR script normalization support: $runtimePath"
 }

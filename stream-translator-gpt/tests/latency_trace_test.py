@@ -1,6 +1,7 @@
 import pytest
 import json
 import queue
+from types import SimpleNamespace
 import numpy as np
 
 from stream_translator_gpt.common import AUDIO_STREAM_GAP, LatencyTrace, TranslationTask
@@ -99,6 +100,137 @@ def test_audio_slicer_does_not_discard_valid_weak_speech(monkeypatch):
     task = output_queue.get()
     assert isinstance(task, TranslationTask)
     assert task.audio.shape == (7 * 512,)
+    assert output_queue.get() is None
+
+
+def test_audio_slicer_uses_omnivad_native_end_event(monkeypatch):
+    class _NativeVad:
+        def __init__(self):
+            self.index = 0
+
+        def process_native_events(self, audio):
+            frames = []
+            samples = np.asarray(audio, dtype=np.float32)
+            for offset in range(0, len(samples), 160):
+                chunk = samples[offset:offset + 160]
+                if len(chunk) < 160:
+                    continue
+                self.index += 1
+                frames.append((chunk, SimpleNamespace(
+                    is_speech_start=self.index == 1,
+                    is_speech=self.index <= 3,
+                    is_speech_end=self.index == 4,
+                )))
+            return frames
+
+        def take_pending_audio(self):
+            return np.array([], dtype=np.float32)
+
+        def reset_states(self):
+            pass
+
+    monkeypatch.setattr(
+        "stream_translator_gpt.audio_slicer.create_vad_adapter",
+        lambda *_args, **_kwargs: _NativeVad(),
+    )
+    slicer = AudioSlicer(
+        min_audio_length=0.03,
+        max_audio_length=6.0,
+        target_audio_length=3.0,
+        continuous_no_speech_threshold=0.5,
+        dynamic_no_speech_threshold=True,
+        prefix_retention_length=0.0,
+        vad_threshold=0.5,
+        dynamic_vad_threshold=True,
+        vad_backend="firered",
+        slicing_mode="omnivad_native",
+    )
+    input_queue = queue.SimpleQueue()
+    output_queue = queue.SimpleQueue()
+    input_queue.put(np.ones(640, dtype=np.float32))
+    input_queue.put(None)
+
+    slicer.loop(input_queue, output_queue)
+
+    task = output_queue.get()
+    assert isinstance(task, TranslationTask)
+    assert task.audio.shape == (640,)
+    assert task.time_range == pytest.approx((0.0, 0.04))
+    assert output_queue.get() is None
+
+
+def test_omnivad_native_mode_rejects_incompatible_vad():
+    with pytest.raises(ValueError, match="requires enabled FireRed VAD"):
+        AudioSlicer(
+            min_audio_length=0.7,
+            max_audio_length=6.0,
+            target_audio_length=3.0,
+            continuous_no_speech_threshold=0.5,
+            dynamic_no_speech_threshold=True,
+            prefix_retention_length=0.25,
+            vad_threshold=0.5,
+            dynamic_vad_threshold=True,
+            vad_backend="silero",
+            slicing_mode="omnivad_native",
+        )
+
+
+def test_omnivad_native_max_split_keeps_active_speech(monkeypatch):
+    class _ContinuousNativeVad:
+        def __init__(self):
+            self.index = 0
+
+        def process_native_events(self, audio):
+            frames = []
+            samples = np.asarray(audio, dtype=np.float32)
+            for offset in range(0, len(samples), 160):
+                chunk = samples[offset:offset + 160]
+                if len(chunk) < 160:
+                    continue
+                self.index += 1
+                frames.append((chunk, SimpleNamespace(
+                    is_speech_start=self.index == 1,
+                    is_speech=True,
+                    is_speech_end=False,
+                )))
+            return frames
+
+        def take_pending_audio(self):
+            return np.array([], dtype=np.float32)
+
+        def reset_states(self):
+            pass
+
+    monkeypatch.setattr(
+        "stream_translator_gpt.audio_slicer.create_vad_adapter",
+        lambda *_args, **_kwargs: _ContinuousNativeVad(),
+    )
+    slicer = AudioSlicer(
+        min_audio_length=0.01,
+        max_audio_length=0.02,
+        target_audio_length=3.0,
+        continuous_no_speech_threshold=0.5,
+        dynamic_no_speech_threshold=True,
+        prefix_retention_length=0.0,
+        vad_threshold=0.35,
+        dynamic_vad_threshold=False,
+        vad_backend="firered",
+        slicing_mode="omnivad_native",
+    )
+    input_queue = queue.SimpleQueue()
+    output_queue = queue.SimpleQueue()
+    input_queue.put(np.ones(480, dtype=np.float32))
+    input_queue.put(np.ones(160, dtype=np.float32))
+    input_queue.put(None)
+
+    slicer.loop(input_queue, output_queue)
+
+    first = output_queue.get()
+    second = output_queue.get()
+    assert first.audio.shape == (480,)
+    assert second.audio.shape == (160,)
+    assert first.time_range == pytest.approx((0.0, 0.03))
+    assert second.time_range == pytest.approx((0.03, 0.04))
     assert output_queue.get() is None
 
 

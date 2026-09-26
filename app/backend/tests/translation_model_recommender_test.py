@@ -20,8 +20,40 @@ def test_recommendations_use_largest_discrete_gpu_and_rank_fits_first():
 
 def test_unknown_vram_does_not_claim_a_model_is_recommended():
     result = build_translation_model_recommendations([gpu("NVIDIA GPU", 0)])
-    assert result["selected_gpu"] is None
+    assert result["selected_gpu"]["memory_mb"] == 0
     assert {model["fit"] for model in result["models"]} == {"unknown"}
+    assert result["simple_setup"]["model_id"] == "hy-mt2-iq3-xxs"
+
+
+def test_unknown_amd_vram_keeps_simple_mode_available_without_virtual_monitor():
+    result = build_translation_model_recommendations([
+        GpuDevice(0, "Meta Virtual Monitor", "unknown", "unknown", None, False),
+        GpuDevice(2, "AMD Radeon RX 9070 XT", "amd", "unknown", None, False),
+    ])
+    assert result["selected_gpu"]["name"] == "AMD Radeon RX 9070 XT"
+    assert result["vram_tier"] == "unknown"
+    assert result["simple_setup"]["supported"] is True
+    assert result["simple_setup"]["model_id"] == "hy-mt2-iq3-xxs"
+
+
+def test_cpu_package_uses_dxgi_vram_for_rx_9070_xt(monkeypatch):
+    from backend.core import hardware_detector as detector
+
+    dxgi = GpuDevice(0, "AMD Radeon RX 9070 XT", "amd", "unknown", 16384, False, source="dxgi")
+    windows = GpuDevice(2, "AMD Radeon RX 9070 XT", "amd", "unknown", None, False,
+                        source="win32_video_controller", raw={"AdapterRAM": 4293918720})
+    virtual = GpuDevice(0, "Meta Virtual Monitor", "unknown", "unknown", None, False)
+    monkeypatch.setattr(detector, "detect_runtime_python_gpus", lambda: [])
+    monkeypatch.setattr(detector, "detect_torch_gpus", lambda: [])
+    monkeypatch.setattr(detector, "detect_windows_dxgi_adapters", lambda: [dxgi])
+    monkeypatch.setattr(detector, "detect_nvidia_smi_gpus", lambda: [])
+    monkeypatch.setattr(detector, "detect_windows_video_controllers", lambda: [virtual, windows])
+
+    result = build_translation_model_recommendations(detector.detect_gpus(force_refresh=True))
+    assert result["selected_gpu"]["name"] == "AMD Radeon RX 9070 XT"
+    assert result["vram_gb"] == 16.0
+    assert result["simple_setup"]["supported"] is True
+    assert result["simple_setup"]["model_id"] == "hy-mt2-q6-k"
 
 
 def test_gemma_e4b_recommendation_uses_qat_repository():

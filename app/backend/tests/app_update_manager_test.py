@@ -145,6 +145,8 @@ class AppUpdateManagerTest(unittest.TestCase):
                 self.assertTrue(Path(plan["plan_path"]).is_file())
                 self.assertTrue(Path(plan["updater_path"]).is_file())
                 self.assertEqual(Path(plan["updater_path"]).read_bytes(), b"fake updater")
+                plan_data = json.loads(Path(plan["plan_path"]).read_text(encoding="utf-8"))
+                self.assertEqual(plan_data["backend_pid"], update_module.os.getpid())
 
     def test_download_ignores_stale_partial_from_previous_release(self):
         with tempfile.TemporaryDirectory(dir=APP_DIR) as temp_dir:
@@ -317,7 +319,10 @@ class AppUpdateManagerTest(unittest.TestCase):
                 "version": "1.4.1", "profile": "cuda", "executable": old_exe.name,
                 "parent_pid": 99999999,
             }), encoding="utf-8")
-            errors=[]; worker=Worker(plan); worker.failed.connect(errors.append); worker.run()
+            errors=[]; worker=Worker(plan); worker.failed.connect(errors.append)
+            with mock.patch("updater.subprocess.run", side_effect=OSError("not a valid executable")), \
+                 mock.patch("updater.subprocess.Popen"):
+                worker.run()
             self.assertTrue(errors)
             self.assertEqual(old_exe.read_bytes(), b"old executable")
             self.assertIn("glossary_list",(app_root / "config.yaml").read_text(encoding="utf-8"))
@@ -357,6 +362,46 @@ class AppUpdateManagerTest(unittest.TestCase):
             self.assertTrue(errors)
             self.assertIn("GUI/DLL", errors[0])
             self.assertEqual(old_exe.read_bytes(), b"old executable")
+
+    def test_external_updater_waits_for_gui_and_backend(self):
+        worker = Worker(Path("unused"))
+        alive = {101: 2, 202: 1}
+
+        def process_exists(pid):
+            remaining = alive.get(pid, 0)
+            alive[pid] = max(0, remaining - 1)
+            return remaining > 0
+
+        with mock.patch.object(worker, "process_exists", side_effect=process_exists), \
+             mock.patch("updater.time.sleep"):
+            worker.wait_for_processes([101, 202], timeout=1)
+
+        self.assertEqual(alive, {101: 0, 202: 0})
+
+    def test_atomic_rename_retries_locked_native_module_without_copy_fallback(self):
+        with tempfile.TemporaryDirectory(dir=APP_DIR) as temp_dir:
+            root = Path(temp_dir)
+            source = root / "_internal"
+            destination = root / "backup-internal"
+            source.mkdir()
+            (source / "locked.pyd").write_bytes(b"native module")
+            real_replace = update_module.os.replace
+            attempts = 0
+
+            def replace_with_transient_lock(src, dst):
+                nonlocal attempts
+                attempts += 1
+                if attempts == 1:
+                    raise PermissionError(5, "access denied", str(src))
+                real_replace(src, dst)
+
+            with mock.patch("updater.os.replace", side_effect=replace_with_transient_lock), \
+                 mock.patch("updater.time.sleep"):
+                Worker.rename_with_retry(source, destination, timeout=1)
+
+            self.assertEqual(attempts, 2)
+            self.assertFalse(source.exists())
+            self.assertEqual((destination / "locked.pyd").read_bytes(), b"native module")
 
 
 if __name__ == "__main__":

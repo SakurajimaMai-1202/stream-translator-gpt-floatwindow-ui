@@ -19,7 +19,7 @@ watch(() => interfaceMode.mode, (mode) => {
 const visibleSettingsGroups = computed(() => interfaceMode.isSimple
   ? [{ groupName: '常用設定', items: [{ id: 'general', name: '一般設定' }] }]
   : settingsGroups);
-const appVersion = import.meta.env.VITE_APP_VERSION || '1.4.8';
+const appVersion = import.meta.env.VITE_APP_VERSION || '1.4.9';
 const isMobileMenuOpen = ref(false);
 
 // Define navigation items
@@ -101,6 +101,11 @@ watch(() => route.fullPath, () => {
           <span class="mt-3 block text-sm text-slate-300">完整設定、辨識引擎、模型管理、音訊切片、執行日誌與分享。</span>
         </button>
       </div>
+      <p class="text-sm leading-6 text-slate-400">
+        如果下載 Runtime 或模型速度太慢，可以先到
+        <a href="https://one.one.one.one/" target="_blank" rel="noopener noreferrer" class="font-semibold text-indigo-300 underline hover:text-indigo-200">Cloudflare 官方網站下載 WARP ↗</a>，
+        在 Cloudflare One Client 選擇「流量和 DNS」模式並按「連線」，連上後回到程式重新下載。實際速度依網路環境而異。
+      </p>
       </template>
       <template v-else-if="interfaceMode.onboardingStep === 'translation'">
         <div>

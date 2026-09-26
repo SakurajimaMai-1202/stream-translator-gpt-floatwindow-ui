@@ -27,6 +27,14 @@ LIVE_AUDIO_KEYS = {
     "vad_every_n_frames",
     "vad_backend",
     "firered_vad_model_path",
+    "slicing_mode",
+    "omnivad_threshold",
+    "omnivad_max_audio_length",
+    "omnivad_smooth_window_size",
+    "omnivad_pad_start_frame",
+    "omnivad_min_speech_frame",
+    "omnivad_max_speech_frame",
+    "omnivad_min_silence_frame",
 }
 REMOVED_AUDIO_KEYS = {
     "chunk_gap_threshold",
@@ -70,6 +78,14 @@ def test_audio_vad_defaults_match_recommended_live_settings(tmp_path):
         "vad_every_n_frames": 2,
         "vad_backend": "firered",
         "firered_vad_model_path": "",
+        "slicing_mode": "omnivad_native",
+        "omnivad_threshold": 0.35,
+        "omnivad_max_audio_length": 6.0,
+        "omnivad_smooth_window_size": 5,
+        "omnivad_pad_start_frame": 5,
+        "omnivad_min_speech_frame": 8,
+        "omnivad_max_speech_frame": 2000,
+        "omnivad_min_silence_frame": 20,
     }
 
 
@@ -149,6 +165,19 @@ def test_vad_controls_are_supported_by_runtime_cli_contract():
         assert f"kwargs.get('{key}', {value})" in runtime_source
 
 
+def test_native_vad_uses_its_validated_six_second_max_without_changing_legacy():
+    manager = ConfigManager.__new__(ConfigManager)
+    config = json.loads(json.dumps(ConfigManager.DEFAULT_CONFIG))
+    config["audio_slicing_vad"]["max_audio_length"] = 8.0
+    config["audio_slicing_vad"]["omnivad_max_audio_length"] = 6.0
+
+    config["audio_slicing_vad"]["slicing_mode"] = "legacy"
+    assert manager.to_main_args(config)["max_audio_length"] == 8.0
+
+    config["audio_slicing_vad"]["slicing_mode"] = "omnivad_native"
+    assert manager.to_main_args(config)["max_audio_length"] == 6.0
+
+
 def test_translation_pipeline_controls_are_supported_by_runtime_cli_contract():
     translator_source = TRANSLATOR_SOURCE.read_text(encoding="utf-8")
     runtime_source = RUNTIME_MAIN_SOURCE.read_text(encoding="utf-8")
@@ -170,6 +199,14 @@ def test_translation_pipeline_controls_are_supported_by_runtime_cli_contract():
     }
 
     for flag in flags:
+        assert f"'{flag}'" in translator_source
+        assert f"'--{flag}'" in runtime_source
+
+    for flag in (
+        "slicing_mode", "omnivad_threshold", "omnivad_smooth_window_size",
+        "omnivad_pad_start_frame", "omnivad_min_speech_frame",
+        "omnivad_max_speech_frame", "omnivad_min_silence_frame",
+    ):
         assert f"'{flag}'" in translator_source
         assert f"'--{flag}'" in runtime_source
 

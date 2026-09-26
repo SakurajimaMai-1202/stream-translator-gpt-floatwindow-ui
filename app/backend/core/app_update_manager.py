@@ -368,6 +368,11 @@ class AppUpdateManager:
             "version": self._state.latest_version, "profile": self._state.profile,
             "update_mode": self._state.update_mode,
             "executable": "Stream Translator.exe", "parent_pid": os.getppid(),
+            # The API runs in the packaged backend child process.  Waiting for
+            # only its GUI parent is insufficient on Windows: a backend that
+            # is still shutting down keeps native modules in _internal loaded
+            # and makes both the update and rollback fail with WinError 5.
+            "backend_pid": os.getpid(),
         }
         plan_path = app_root / ".app-update" / "apply-plan.json"
         plan_path.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")

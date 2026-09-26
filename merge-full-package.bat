@@ -2,7 +2,7 @@
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 
-echo Stream Translator Full Package Merger
+echo Stream Translator Release Archive Merger
 echo =====================================
 echo.
 echo Put this file in the same folder as the .part files, then run it.
@@ -12,6 +12,9 @@ set "FOUND=0"
 call :merge "StreamTranslator-win64-CUDA-Full.zip"
 call :merge "StreamTranslator-win64-CPU-Full.zip"
 call :merge "StreamTranslator-win64-ROCm-Experimental-Full.zip"
+call :merge "StreamTranslator-CUDA-App-Update.zip"
+call :merge "StreamTranslator-CPU-App-Update.zip"
+call :merge "StreamTranslator-ROCm-Experimental-App-Update.zip"
 
 if "%FOUND%"=="0" (
   echo No supported .part files were found in:
@@ -21,6 +24,9 @@ if "%FOUND%"=="0" (
   echo   StreamTranslator-win64-CUDA-Full.zip.part01
   echo   StreamTranslator-win64-CPU-Full.zip.part01
   echo   StreamTranslator-win64-ROCm-Experimental-Full.zip.part01
+  echo   StreamTranslator-CUDA-App-Update.zip.part01
+  echo   StreamTranslator-CPU-App-Update.zip.part01
+  echo   StreamTranslator-ROCm-Experimental-App-Update.zip.part01
   echo.
 )
 

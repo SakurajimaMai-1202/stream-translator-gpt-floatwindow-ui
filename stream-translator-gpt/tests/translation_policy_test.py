@@ -342,6 +342,31 @@ def test_overlap_deduplication_is_conservative_for_cjk_and_latin():
     assert remove_text_overlap("今日は雨", "今日は晴れ") == "今日は晴れ"
 
 
+def test_discarded_overlap_never_prints_an_untranslated_subtitle(capsys):
+    segmenter = SubtitleSegmenter(
+        print_result=True,
+        output_timestamps=True,
+    )
+    first = _task(1)
+    first.transcript = "あのランプの色、ランプの色、何かな？ランプの色。"
+    first.time_range = (0.0, 6.0)
+    duplicate = _task(2)
+    duplicate.transcript = "ランプの色、ランプの色、何かな？ランプの色。"
+    duplicate.time_range = (6.0, 9.0)
+    input_queue = queue.SimpleQueue()
+    output_queue = queue.SimpleQueue()
+    for task in (first, duplicate, None):
+        input_queue.put(task)
+
+    segmenter.loop(input_queue, output_queue)
+
+    assert output_queue.get() is first
+    assert output_queue.get() is None
+    assert capsys.readouterr().out.splitlines() == [
+        "00:00:00,000 --> 00:00:06,000 あのランプの色、ランプの色、何かな？ランプの色。"
+    ]
+
+
 def test_subtitle_assembler_merges_adjacent_incomplete_segments():
     segmenter = SubtitleSegmenter(
         deduplicate_overlap=False,

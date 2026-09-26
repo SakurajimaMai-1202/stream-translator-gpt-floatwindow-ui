@@ -89,7 +89,15 @@ class ConfigManager:
             'vad_enabled': True,
             'vad_every_n_frames': 2,
             'vad_backend': 'firered',
-            'firered_vad_model_path': ''
+            'firered_vad_model_path': '',
+            'slicing_mode': 'omnivad_native',
+            'omnivad_threshold': 0.35,
+            'omnivad_max_audio_length': 6.0,
+            'omnivad_smooth_window_size': 5,
+            'omnivad_pad_start_frame': 5,
+            'omnivad_min_speech_frame': 8,
+            'omnivad_max_speech_frame': 2000,
+            'omnivad_min_silence_frame': 20
         },
         'transcription': {
             'openai_api_key': '',
@@ -506,10 +514,9 @@ class ConfigManager:
         lock_path = self.config_path.with_suffix(self.config_path.suffix + '.lock')
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         with open(lock_path, 'a+b') as lock_file:
-            lock_file.seek(0)
-            if lock_file.tell() == 0 and lock_file.read(1) == b'':
-                lock_file.write(b'0')
-                lock_file.flush()
+            # Windows byte-range locks also forbid reads by other handles.
+            # Do not read/initialize the byte before acquiring its lock:
+            # locking past EOF is supported, including an empty lock file.
             lock_file.seek(0)
 
             if os.name == 'nt':
@@ -830,7 +837,11 @@ class ConfigManager:
             
             # 音頻切片
             'min_audio_length': config.get('audio_slicing_vad', {}).get('min_audio_length', 0.7),
-            'max_audio_length': config.get('audio_slicing_vad', {}).get('max_audio_length', 8.0),
+            'max_audio_length': (
+                config.get('audio_slicing_vad', {}).get('omnivad_max_audio_length', 6.0)
+                if config.get('audio_slicing_vad', {}).get('slicing_mode', 'omnivad_native') == 'omnivad_native'
+                else config.get('audio_slicing_vad', {}).get('max_audio_length', 8.0)
+            ),
             'target_audio_length': config.get('audio_slicing_vad', {}).get('target_audio_length', 4.0),
             'continuous_no_speech_threshold': config.get('audio_slicing_vad', {}).get('continuous_no_speech_threshold', 0.5),
             'disable_dynamic_no_speech_threshold': config.get('audio_slicing_vad', {}).get('disable_dynamic_no_speech_threshold', False),
@@ -841,6 +852,13 @@ class ConfigManager:
             'vad_every_n_frames': config.get('audio_slicing_vad', {}).get('vad_every_n_frames', 2),
             'vad_backend': config.get('audio_slicing_vad', {}).get('vad_backend', 'firered'),
             'firered_vad_model_path': config.get('audio_slicing_vad', {}).get('firered_vad_model_path', ''),
+            'slicing_mode': config.get('audio_slicing_vad', {}).get('slicing_mode', 'omnivad_native'),
+            'omnivad_threshold': config.get('audio_slicing_vad', {}).get('omnivad_threshold', 0.35),
+            'omnivad_smooth_window_size': config.get('audio_slicing_vad', {}).get('omnivad_smooth_window_size', 5),
+            'omnivad_pad_start_frame': config.get('audio_slicing_vad', {}).get('omnivad_pad_start_frame', 5),
+            'omnivad_min_speech_frame': config.get('audio_slicing_vad', {}).get('omnivad_min_speech_frame', 8),
+            'omnivad_max_speech_frame': config.get('audio_slicing_vad', {}).get('omnivad_max_speech_frame', 2000),
+            'omnivad_min_silence_frame': config.get('audio_slicing_vad', {}).get('omnivad_min_silence_frame', 20),
             'preload_asr_model': transcription_backend in ['qwen3-asr', 'faster-whisper', 'whisper', 'sensevoice', 'fun-asr-nano', 'parakeet-ctc-ja'],
             'keep_asr_loaded': transcription_backend in ['qwen3-asr', 'faster-whisper', 'whisper', 'sensevoice', 'fun-asr-nano', 'parakeet-ctc-ja'],
             

@@ -16,6 +16,7 @@ from threading import Lock
 from typing import Dict, List, Literal, Optional
 
 from backend.core.http_downloader import HttpDownloader
+from backend.core.logging_setup import configure_dedicated_file_logger
 from backend.core.hf_parallel_download import prefetch_large_files
 from backend.models.model_download import ModelDownloadTask, DownloadedModelInfo, ModelComputeBackend
 from backend.core.portable_paths import (
@@ -258,6 +259,12 @@ class ModelDownloadManager:
 
     async def _run_download_task(self, task_id: str, engine: str, model_id: str, compute_backend: ModelComputeBackend) -> None:
         """執行單一下載任務"""
+        download_logger = configure_dedicated_file_logger("model.download", "model_download")
+        source = (SHERPA_RELEASE_ROOT if compute_backend == "cpu" and model_id not in SHERPA_HF_REPOS
+                  else "Hugging Face" if compute_backend == "cpu" or engine != "sensevoice"
+                  else "ModelScope")
+        download_logger.info("Starting task=%s backend=%s engine=%s model=%s source=%s",
+                             task_id, compute_backend, engine, model_id, source)
         try:
             self._update_task(task_id, status="downloading", progress=0.05, message="準備下載")
             if compute_backend == "cpu":
@@ -268,8 +275,11 @@ class ModelDownloadManager:
                 repo_id = self._normalize_repo_id(engine, model_id)
                 await self._download_from_hf(task_id, repo_id)
             self._update_task(task_id, status="completed", progress=1.0, message="下載完成")
+            download_logger.info("Completed task=%s model=%s", task_id, model_id)
         except Exception as e:
             logger.exception("模型下載失敗 task_id=%s", task_id)
+            download_logger.exception("Failed task=%s backend=%s model=%s source=%s",
+                                      task_id, compute_backend, model_id, source)
             self._update_task(task_id, status="failed", message="下載失敗", error=str(e))
 
     async def _download_sherpa_archive(self, task_id: str, model_id: str) -> None:

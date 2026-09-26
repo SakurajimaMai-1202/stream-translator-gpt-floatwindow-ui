@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
 import os
 import shutil
@@ -37,6 +38,77 @@ class Worker(QThread):
     def step(self, value: int, message: str) -> None:
         self.progress.emit(value, message)
         self.log.emit(message)
+
+    @staticmethod
+    def process_exists(pid: int) -> bool:
+        if pid <= 0:
+            return False
+        if os.name == "nt":
+            # os.kill(pid, 0) is not a harmless existence probe on Windows:
+            # CPython maps unsupported signals to TerminateProcess.  Query a
+            # limited process handle instead, without requesting termination
+            # rights or changing the target process.
+            process_query_limited_information = 0x1000
+            still_active = 259
+            kernel32 = ctypes.windll.kernel32
+            kernel32.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+            kernel32.OpenProcess.restype = ctypes.c_void_p
+            kernel32.GetExitCodeProcess.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+            kernel32.GetExitCodeProcess.restype = ctypes.c_int
+            kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+            kernel32.CloseHandle.restype = ctypes.c_int
+            handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+            if not handle:
+                return False
+            try:
+                exit_code = ctypes.c_ulong()
+                return bool(kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))) and exit_code.value == still_active
+            finally:
+                kernel32.CloseHandle(handle)
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+
+    def wait_for_processes(self, pids: list[int], timeout: float = 45.0) -> None:
+        pending = {pid for pid in pids if pid > 0}
+        deadline = time.monotonic() + timeout
+        while pending and time.monotonic() < deadline:
+            pending = {pid for pid in pending if self.process_exists(pid)}
+            if pending:
+                time.sleep(0.25)
+        if pending:
+            raise RuntimeError(f"主程式或後端未在期限內關閉（PID: {', '.join(map(str, sorted(pending))) }）")
+        # Process exit and Windows image-section release are not always
+        # observed at exactly the same instant.  Give loaded .pyd/DLL files a
+        # short grace period before the first atomic directory rename.
+        time.sleep(0.5)
+
+    @staticmethod
+    def rename_with_retry(source: Path, destination: Path, timeout: float = 30.0) -> None:
+        """Atomically rename an update item without shutil.move's copy fallback."""
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                os.replace(source, destination)
+                return
+            except PermissionError as exc:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(f"檔案仍被其他程序使用，無法移動：{source}") from exc
+                time.sleep(0.25)
+
+    @staticmethod
+    def remove_with_retry(path: Path, timeout: float = 30.0) -> None:
+        deadline = time.monotonic() + timeout
+        while path.exists():
+            try:
+                shutil.rmtree(path) if path.is_dir() else path.unlink()
+                return
+            except PermissionError as exc:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(f"檔案仍被其他程序使用，無法移除：{path}") from exc
+                time.sleep(0.25)
 
     @staticmethod
     def prune_user_backups(backup_parent: Path, keep: int = 5) -> None:
@@ -151,33 +223,29 @@ class Worker(QThread):
             return
         backup = None
         moved: list[str] = []
+        installed: list[str] = []
         items: list[Path] = []
         app_root = None
         try:
             plan, _manifest, app_root, _staging, items, mode = self.validate_plan(self.plan_path)
-            self.step(8, "等待 Stream Translator 關閉")
-            deadline = time.time() + 45
-            while time.time() < deadline:
-                try:
-                    os.kill(int(plan["parent_pid"]), 0)
-                    time.sleep(0.25)
-                except OSError:
-                    break
-            else:
-                raise RuntimeError("主程式未在期限內關閉")
+            self.step(8, "等待 Stream Translator 與後端完全關閉")
+            process_ids = [int(plan.get("parent_pid") or 0), int(plan.get("backend_pid") or 0)]
+            self.wait_for_processes(process_ids)
             self.step(18, "備份 config、術語、ASR 修正與 Cookies")
             user_backup = self.backup_user_settings(app_root, str(plan["version"]))
             self.log.emit(f"使用者設定備份：{user_backup}")
             self.step(30, f"準備 {mode} 回復點")
             backup = app_root.parent / f".stream-translator-backup-{plan['version']}-{int(time.time())}"
             backup.mkdir()
-            self.step(52, "套用程式與 Runtime 更新")
+            apply_label = "套用程式更新（保留 Runtime）" if mode == "app_only" else "套用程式與 Runtime 更新"
+            self.step(52, apply_label)
             for item in items:
                 target = app_root / item.name
                 if target.exists():
-                    shutil.move(str(target), str(backup / item.name))
+                    self.rename_with_retry(target, backup / item.name)
                     moved.append(item.name)
-                shutil.move(str(item), str(target))
+                self.rename_with_retry(item, target)
+                installed.append(item.name)
             self.step(72, "驗證新版 GUI 與 DLL")
             exe = app_root / plan["executable"]
             creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
@@ -207,21 +275,34 @@ class Worker(QThread):
             self.completed.emit(f"已更新至 v{plan['version']}")
         except Exception as exc:
             self.log.emit(f"更新失敗：{exc}\n正在回復上一版本")
+            rollback_errors = []
             try:
                 if app_root and backup:
-                    for item in items:
-                        target = app_root / item.name
+                    for name in reversed(installed):
+                        target = app_root / name
                         if target.exists():
-                            shutil.rmtree(target) if target.is_dir() else target.unlink()
-                    for name in moved:
+                            try:
+                                self.remove_with_retry(target)
+                            except Exception as rollback_exc:
+                                rollback_errors.append(str(rollback_exc))
+                    for name in reversed(moved):
                         saved = backup / name
                         if saved.exists():
-                            shutil.move(str(saved), str(app_root / name))
+                            target = app_root / name
+                            if target.exists():
+                                rollback_errors.append(f"回復目標仍存在：{target}")
+                                continue
+                            try:
+                                self.rename_with_retry(saved, target)
+                            except Exception as rollback_exc:
+                                rollback_errors.append(str(rollback_exc))
                     old = app_root / "Stream Translator.exe"
-                    if old.exists():
+                    if old.exists() and not rollback_errors:
                         subprocess.Popen([str(old)], cwd=app_root)
             except Exception as rollback:
-                self.log.emit(f"回復失敗：{rollback}")
+                rollback_errors.append(str(rollback))
+            if rollback_errors:
+                self.log.emit("回復未完全成功：" + "；".join(rollback_errors))
             self.failed.emit(str(exc))
 
 

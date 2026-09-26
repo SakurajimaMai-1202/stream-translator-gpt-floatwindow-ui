@@ -2,13 +2,14 @@
 
 Windows 即時語音辨識、翻譯與浮動字幕工具。它能擷取直播網址、系統聲音、麥克風或本機影音，先以本機／雲端 ASR 轉成文字，再交由 OpenAI、Google Gemini 或本機 LLM 翻譯，最後輸出成桌面字幕、區網字幕頁或字幕檔。
 
-[下載最新版](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest) · [v1.4.8 更新說明](app/docs/RELEASE_NOTES_v1.4.8_zh-TW.md) · [回報問題](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/issues)
+[下載最新版](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest) · [v1.4.9 更新說明](app/docs/RELEASE_NOTES_v1.4.9_zh-TW.md) · [回報問題](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/issues)
+
 
 ![Windows](https://img.shields.io/badge/platform-Windows-lightgrey)
 ![NVIDIA CUDA](https://img.shields.io/badge/GPU-NVIDIA%20CUDA-green)
 ![AMD ROCm](https://img.shields.io/badge/GPU-AMD%20ROCm%20Experimental-orange)
 ![CPU sherpa-onnx](https://img.shields.io/badge/CPU-sherpa--onnx-blueviolet)
-![Release](https://img.shields.io/badge/release-v1.4.8-blue)
+![Release](https://img.shields.io/badge/release-v1.4.9-blue)
 
 <img width="2381" height="1058" alt="Stream Translator FloatWindow" src="https://github.com/user-attachments/assets/0a663535-dd94-40a6-8444-3c00844bc563" />
 
@@ -44,7 +45,7 @@ Windows 即時語音辨識、翻譯與浮動字幕工具。它能擷取直播網
 | 多種音源 | 支援直播 URL、本機影音、麥克風與 Windows 系統音訊（WASAPI Loopback）。URL 來源透過 yt-dlp 處理，支援範圍取決於網站與 yt-dlp。 |
 | 本機與雲端 ASR | 提供 Qwen3-ASR、Fun-ASR、SenseVoice、NVIDIA Parakeet、faster-whisper 與 OpenAI Whisper API；實際選項會依 Runtime Profile 顯示。 |
 | Runtime Profile | 提供 CUDA、CPU、ROCm Experimental 三種打包版。CUDA／ROCm Full 包也可透過獨立 sherpa-onnx CPU sidecar 切換到 CPU ASR。 |
-| VAD 與即時處理 | 提供 **FireRedVAD**（目前預設，透過 OmniVAD；未指定路徑時使用內建模型）與 **Silero VAD**。VAD 先偵測語音區段再送入 ASR，可調整偵測門檻、動態門檻、計算頻率，以及最短／目標／最長切片長度，在反應速度、句子完整度與 CPU 負載之間取捨。 |
+| VAD 與即時處理 | 新安裝預設採用 **FireRed OmniStreamVAD 原生事件切段**，語音閾值 0.35、原生最長切片 6 秒；也保留傳統 FireRedVAD 與 Silero VAD 選項。可調整偵測門檻、切段長度與語音／靜音 frame。既有 `config.yaml` 的設定不會被預設值覆蓋。 |
 | 多種翻譯後端 | 支援 OpenAI GPT、Google Gemini、OpenAI-compatible API，以及程式內管理的 llama.cpp 本機伺服器。 |
 | 浮動字幕 | 置頂字幕視窗支援逐字流式顯示，可調整字型、顏色、透明度、位置與顯示行數；右側紅／綠燈可直接判斷是否正在收音。 |
 | 字幕分享 | 內建區網字幕頁與遠端字幕 API，手機、平板或其他電腦可用瀏覽器觀看。 |
@@ -56,7 +57,18 @@ Windows 即時語音辨識、翻譯與浮動字幕工具。它能擷取直播網
 
 > v1.3.11 起，術語表與 ASR 修正規則的 CSV／TSV 匯入支援引號、欄位內逗號、Tab、換行與 UTF-8 BOM；匯出使用 UTF-8 BOM 與 CRLF，方便 Excel 正確辨識繁體中文。
 
-## v1.4.8 更新重點
+## v1.4.9 更新重點
+
+- 新安裝預設採用 OmniStreamVAD 原生事件切段：語音閾值 0.35、原生最長切片 6 秒，其他 frame 設定依介面截圖；已保存的個人設定不變。
+- 桌面視窗的外部連結改由系統瀏覽器開啟，首次模式選擇補上 WARP 下載與連線步驟。
+- 改善 Windows App Update 等待後端關閉與失敗回復、即時字幕重疊去除、簡單模式初始語言與 GPU 顯存偵測。
+- v1.4.9 App Update 會一併更新相同 Profile 的完整 Runtime，確保新的原生 VAD 程式碼與依賴確實進入既有安裝。
+
+CUDA 的 v1.4.9 App Update 超過單一資產大小限制，分成 `StreamTranslator-CUDA-App-Update.zip.part01` 和 `.part02`；先用同目錄的 `merge-full-package.bat` 合併，再依更新流程使用。CPU 與 ROCm App Update 是單一 ZIP。
+
+完整內容見 [v1.4.9 更新說明](app/docs/RELEASE_NOTES_v1.4.9_zh-TW.md)。下載檔案與檢查碼請見 [v1.4.9 Release](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/tag/v1.4.9)。
+
+## v1.4.8 已發布版本更新重點
 
 v1.4.8 的重點包括：
 
@@ -71,7 +83,7 @@ v1.4.8 的重點包括：
 
 ## 下載：先選對執行版本
 
-請從 [GitHub Releases v1.4.8](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/tag/v1.4.8) 下載。GitHub 自動提供的 `Source code (zip)` 不是可直接執行的 Windows 完整包。
+請從 [GitHub Releases v1.4.9](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/tag/v1.4.9) 下載。GitHub 自動提供的 `Source code (zip)` 不是可直接執行的 Windows 完整包。
 
 | 版本 | 適用硬體 | 本機 ASR 路徑 | Full package |
 |---|---|---|---|
@@ -85,7 +97,7 @@ ROCm 版本仍屬實驗性支援，能否使用取決於顯示卡、驅動程式
 
 1. CPU／ROCm 使用者可直接下載並解壓對應的 Full ZIP；CUDA 使用者請下載 `.part01`～`.part03` 與 `merge-full-package.bat`。
 2. CUDA 使用者將四個檔案放在同一資料夾，雙擊 `merge-full-package.bat`。
-3. 以 `SHA256SUMS-v1.4.8.txt` 驗證合併後的 ZIP。
+3. 以 `SHA256SUMS-v1.4.9.txt` 驗證合併後的 ZIP。
 4. 解壓到一般可寫入路徑，例如 `D:\Apps\StreamTranslator`。
 5. 執行 `Stream Translator.exe`。
 
@@ -95,19 +107,19 @@ ROCm 版本仍屬實驗性支援，能否使用取決於顯示卡、驅動程式
 
 同一 Profile 的舊版可使用對應 App Update：
 
-- `StreamTranslator-CUDA-App-Update.zip`
+- `StreamTranslator-CUDA-App-Update.zip.part01` 和 `.part02`（先用 `merge-full-package.bat` 合併）
 - `StreamTranslator-CPU-App-Update.zip`
 - `StreamTranslator-ROCm-Experimental-App-Update.zip`
 
 更新器會在套用前備份 `config.yaml`、自訂術語、ASR 修正規則與 Cookies，最多保留五份。App Update 只能套用相同 Profile，不要以 CUDA 更新包更新 CPU 或 ROCm 安裝。
 
-更新包有兩種模式：`app_only` 不包含也不替換 `_runtime`；`runtime_replace` 必須包含完整 Runtime，並會在啟動失敗時回復舊 Runtime。低於最低可直接升級版本的安裝會在下載前提示改用同 Profile Full package。
+v1.4.9 更新包使用 `runtime_replace`，包含完整 Runtime，並會在啟動失敗時回復舊 Runtime。低於最低可直接升級版本的安裝會在下載前提示改用同 Profile Full package。
 
 從 v1.4.0 起，上述流程已整合到「設定 → 一般設定」。從更舊版本首次升級到 v1.4.0 時，請完整解壓相同 Profile 的 App Update；更新包已包含 `StreamTranslatorUpdater.exe`，不需另外下載。
 
-CUDA／ROCm 使用者若缺少 CPU ASR sidecar，可在首次模式準備流程自動安裝，或下載 `StreamTranslator-CPU-ASR-Sidecar-v1.4.8.zip`。Sidecar 只含 CPU ASR Runtime；首次模式準備流程會再下載三個推薦模型。
+CUDA／ROCm 使用者若缺少 CPU ASR sidecar，可在首次模式準備流程自動安裝，或下載 `StreamTranslator-CPU-ASR-Sidecar-v1.4.9.zip`。Sidecar 只含 CPU ASR Runtime；首次模式準備流程會再下載三個推薦模型。
 
-v1.4.8 的 Full package 不包含 `llama` 資料夾。若使用 API 翻譯，不需要本機 LLM；簡單模式選擇本機翻譯時會依 GPU 自動下載 GGUF 與相符的 llama.cpp Runtime，完成後仍需在首頁手動開啟本地 LLM。
+v1.4.9 的 Full package 不包含 `llama` 資料夾。若使用 API 翻譯，不需要本機 LLM；簡單模式選擇本機翻譯時會依 GPU 自動下載 GGUF 與相符的 llama.cpp Runtime，完成後仍需在首頁手動開啟本地 LLM。
 
 ## 第一次使用教學
 
@@ -276,7 +288,7 @@ ASR 決定「聽到了什麼」。選型時依序考慮：硬體與 Runtime、�
 
 ## 媒體輸入注意事項
 
-- v1.4.8 Full package 內含 Node.js 22+，供 yt-dlp 處理需要 JavaScript Runtime 的來源。
+- v1.4.9 Full package 內含 Node.js 22+，供 yt-dlp 處理需要 JavaScript Runtime 的來源。
 - 部分 YouTube／Twitch 內容可能需要登入、地區權限或 cookies；請匯出 Netscape 格式 `cookies.txt`。
 - Chromium 的 App-Bound Encryption 可能阻止直接讀取瀏覽器 cookies，匯出檔通常較穩定。
 - 系統音訊請選擇實際播放裝置；無聲時先確認 Windows 音量混音器與輸出裝置。
@@ -341,19 +353,19 @@ python .\main.py
 cd .\app
 
 # 快速驗證
-.\build_all_profiles.ps1 -Version 1.4.6 -Mode Quick -ReuseRuntimeCache
+.\build_all_profiles.ps1 -Version 1.4.9 -Mode Quick -ReuseRuntimeCache
 
 # 正式發佈
 .\build_all_profiles.ps1 `
-  -Version 1.4.6 `
+  -Version 1.4.9 `
   -Mode Final `
   -ReuseRuntimeCache `
   -CompressionLevel 7 `
   -SplitSizeMiB 1900 `
-  -CopyThreads 16
+  -CopyThreads 8
 ```
 
-正式資產輸出至 `app/release-v1.4.8-assets/`，包含 App Update、Full package 分割檔、manifest 與 SHA-256 清單。
+v1.4.9 發布資產包含 App Update、Full package 分割檔、manifest 與 SHA-256 清單；檔名及使用方式以上方下載說明為準。
 
 ## 專案來源
 

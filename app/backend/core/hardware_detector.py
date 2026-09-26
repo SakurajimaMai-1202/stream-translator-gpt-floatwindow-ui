@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import ctypes
 import shutil
 import subprocess
 import sys
@@ -233,6 +234,72 @@ def detect_windows_video_controllers() -> list[GpuDevice]:
     return devices
 
 
+def detect_windows_dxgi_adapters() -> list[GpuDevice]:
+    """Read dedicated VRAM without Win32_VideoController.AdapterRAM's 32-bit limit."""
+    if os.name != "nt":
+        return []
+
+    class Guid(ctypes.Structure):
+        _fields_ = [("data1", ctypes.c_uint32), ("data2", ctypes.c_uint16),
+                    ("data3", ctypes.c_uint16), ("data4", ctypes.c_ubyte * 8)]
+
+    class Luid(ctypes.Structure):
+        _fields_ = [("low", ctypes.c_uint32), ("high", ctypes.c_int32)]
+
+    class AdapterDesc1(ctypes.Structure):
+        _fields_ = [("description", ctypes.c_wchar * 128),
+                    ("vendor_id", ctypes.c_uint32), ("device_id", ctypes.c_uint32),
+                    ("subsys_id", ctypes.c_uint32), ("revision", ctypes.c_uint32),
+                    ("dedicated_video_memory", ctypes.c_size_t),
+                    ("dedicated_system_memory", ctypes.c_size_t),
+                    ("shared_system_memory", ctypes.c_size_t),
+                    ("adapter_luid", Luid), ("flags", ctypes.c_uint32)]
+
+    def method(pointer: ctypes.c_void_p, index: int, result_type, *argument_types):
+        vtable = ctypes.cast(pointer, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+        return ctypes.WINFUNCTYPE(result_type, ctypes.c_void_p, *argument_types)(vtable[index])
+
+    # IID_IDXGIFactory1; EnumAdapters1 is slot 12 and IDXGIAdapter1.GetDesc1 is slot 10.
+    factory_iid = Guid(0x770AAE78, 0xF26F, 0x4DBA,
+                       (ctypes.c_ubyte * 8)(0xA8, 0x29, 0x25, 0x3C, 0x83, 0xD1, 0xB3, 0x87))
+    factory = ctypes.c_void_p()
+    devices: list[GpuDevice] = []
+    try:
+        create_factory = ctypes.WinDLL("dxgi.dll").CreateDXGIFactory1
+        create_factory.argtypes = (ctypes.POINTER(Guid), ctypes.POINTER(ctypes.c_void_p))
+        create_factory.restype = ctypes.c_long
+        if create_factory(ctypes.byref(factory_iid), ctypes.byref(factory)) != 0 or not factory.value:
+            return []
+        enumerate_adapter = method(factory, 12, ctypes.c_long, ctypes.c_uint32,
+                                   ctypes.POINTER(ctypes.c_void_p))
+        for index in range(32):
+            adapter = ctypes.c_void_p()
+            if enumerate_adapter(factory, index, ctypes.byref(adapter)) != 0:
+                break
+            try:
+                desc = AdapterDesc1()
+                get_desc = method(adapter, 10, ctypes.c_long, ctypes.POINTER(AdapterDesc1))
+                if get_desc(adapter, ctypes.byref(desc)) != 0 or desc.flags & 2:
+                    continue
+                name = desc.description.rstrip("\x00")
+                memory_mb = int(desc.dedicated_video_memory // (1024 * 1024)) or None
+                vendor = classify_vendor(name)
+                devices.append(GpuDevice(
+                    index=index, name=name, vendor=vendor, backend=backend_for_vendor(vendor),
+                    memory_mb=memory_mb, is_integrated=is_integrated_gpu_name(name), source="dxgi",
+                    raw={"vendor_id": desc.vendor_id, "device_id": desc.device_id},
+                ))
+            finally:
+                if adapter.value:
+                    method(adapter, 2, ctypes.c_ulong)(adapter)
+    except (OSError, AttributeError, ValueError):
+        return []
+    finally:
+        if factory.value:
+            method(factory, 2, ctypes.c_ulong)(factory)
+    return devices
+
+
 def detect_nvidia_smi_gpus() -> list[GpuDevice]:
     """Read dedicated NVIDIA VRAM without Win32_VideoController's 32-bit limit."""
     executable = shutil.which("nvidia-smi")
@@ -298,7 +365,9 @@ def detect_gpus(include_windows_fallback: bool = True, *, force_refresh: bool = 
         if torch_devices or not include_windows_fallback:
             devices = torch_devices
         else:
-            devices = _merge_gpu_detections(detect_nvidia_smi_gpus(), detect_windows_video_controllers())
+            devices = _merge_gpu_detections(
+                detect_windows_dxgi_adapters(), detect_nvidia_smi_gpus(), detect_windows_video_controllers()
+            )
     if include_windows_fallback:
         with _GPU_CACHE_LOCK:
             _GPU_CACHE = (time.monotonic(), tuple(devices))

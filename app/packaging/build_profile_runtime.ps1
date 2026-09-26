@@ -80,8 +80,8 @@ import importlib
 import sys
 
 profile = '$Profile'
-required = ['opencc', 'sherpa_onnx', 'numpy', 'scipy', 'omnivad', 'stream_translator_gpt.main'] if profile == 'cpu' else ['opencc', 'qwen_asr', 'funasr', 'torchaudio']
-if profile == 'cuda': required.extend(['faster_whisper', 'whisper', 'omnivad', 'nemo.collections.asr.models'])
+required = ['opencc', 'sherpa_onnx', 'numpy', 'scipy', 'omnivad', 'stream_translator_gpt.main'] if profile == 'cpu' else ['opencc', 'qwen_asr', 'funasr', 'torchaudio', 'omnivad']
+if profile == 'cuda': required.extend(['faster_whisper', 'whisper', 'nemo.collections.asr.models'])
 
 for name in required:
     importlib.import_module(name)

@@ -58,6 +58,13 @@ def main(url, **kwargs):
     disable_vad = kwargs.get('disable_vad', False)
     vad_backend = kwargs.get('vad_backend', 'firered')
     firered_vad_model_path = kwargs.get('firered_vad_model_path')
+    slicing_mode = kwargs.get('slicing_mode', 'omnivad_native')
+    omnivad_smooth_window_size = kwargs.get('omnivad_smooth_window_size', 5)
+    omnivad_pad_start_frame = kwargs.get('omnivad_pad_start_frame', 5)
+    omnivad_min_speech_frame = kwargs.get('omnivad_min_speech_frame', 8)
+    omnivad_max_speech_frame = kwargs.get('omnivad_max_speech_frame', 2000)
+    omnivad_min_silence_frame = kwargs.get('omnivad_min_silence_frame', 20)
+    omnivad_threshold = kwargs.get('omnivad_threshold', 0.35)
 
     whisper_filters = kwargs.get('whisper_filters', 'emoji_filter,repetition_filter')
     transcription_filters = kwargs.get('transcription_filters')
@@ -262,12 +269,19 @@ def main(url, **kwargs):
             disable_vad=disable_vad,
             vad_backend=vad_backend,
             firered_vad_model_path=firered_vad_model_path,
+            slicing_mode=slicing_mode,
+            omnivad_smooth_window_size=omnivad_smooth_window_size,
+            omnivad_pad_start_frame=omnivad_pad_start_frame,
+            omnivad_min_speech_frame=omnivad_min_speech_frame,
+            omnivad_max_speech_frame=omnivad_max_speech_frame,
+            omnivad_min_silence_frame=omnivad_min_silence_frame,
+            omnivad_threshold=omnivad_threshold,
         )
 
         def init_transcriber():
             common_args = {
                 'whisper_filters': whisper_filters,
-                'print_result': not hide_transcribe_result,
+                'print_result': False,
                 'output_timestamps': output_timestamps,
                 'disable_transcription_context': disable_transcription_context,
                 'transcription_initial_prompt': transcription_initial_prompt,
@@ -472,6 +486,8 @@ def main(url, **kwargs):
             assembler_wait_ms=subtitle_assembler_wait_ms,
             assembler_max_duration=subtitle_assembler_max_duration,
             assembler_gap_threshold=subtitle_assembler_gap_threshold,
+            print_result=not hide_transcribe_result,
+            output_timestamps=output_timestamps,
         )
 
     if hasattr(audio_getter, '_exit_handler'):
@@ -755,6 +771,14 @@ def cli():
                         type=str,
                         default=None,
                         help='Optional OmniVAD FireRedVAD .omnivad model path. If omitted, the bundled OmniVAD model is used.')
+    parser.add_argument('--slicing_mode', choices=['legacy', 'omnivad_native'], default='omnivad_native',
+                        help='Use legacy probability slicing or OmniStreamVAD native START/END events.')
+    parser.add_argument('--omnivad_smooth_window_size', type=int, default=5)
+    parser.add_argument('--omnivad_pad_start_frame', type=int, default=5)
+    parser.add_argument('--omnivad_min_speech_frame', type=int, default=8)
+    parser.add_argument('--omnivad_max_speech_frame', type=int, default=2000)
+    parser.add_argument('--omnivad_min_silence_frame', type=int, default=20)
+    parser.add_argument('--omnivad_threshold', type=float, default=0.35)
     parser.add_argument(
         '--model',
         type=str,

@@ -2,7 +2,7 @@
 param(
     [ValidateSet("cuda", "cpu", "rocm")]
     [string]$Profile = "cuda",
-    [string]$Version = "1.4.8",
+    [string]$Version = "1.4.9",
     [switch]$ForceRuntime,
     [switch]$ReuseRuntimeCache,
     [switch]$SkipFullZip,
@@ -165,9 +165,9 @@ if ($ReuseRuntimeCache) {
     $requiredImports = if ($Profile -eq "cpu") {
         @("sherpa_onnx", "numpy", "scipy", "omnivad", "stream_translator_gpt.main")
     } else {
-        @("qwen_asr", "funasr", "torchaudio")
+        @("qwen_asr", "funasr", "torchaudio", "omnivad")
     }
-    if ($Profile -eq "cuda") { $requiredImports += @("faster_whisper", "whisper", "omnivad") }
+    if ($Profile -eq "cuda") { $requiredImports += @("faster_whisper", "whisper") }
     if ($Profile -eq "cuda") {
         $requiredImports += "nemo.collections.asr.models"
     }

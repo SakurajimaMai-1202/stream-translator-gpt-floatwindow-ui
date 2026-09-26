@@ -3,6 +3,7 @@ import { defineStore } from 'pinia';
 import { configApi, runtimeApi, translationApi, type CpuAsrSidecarInstallStatus } from '../services/api';
 import { useModelDownloadStore } from './modelDownload';
 import { llamaApi, type ModelInstallStatus, type RuntimeInstallStatus, type TranslationModelRecommendationInfo } from '../services/llamaApi';
+import { normalizeAsrLanguage } from '../utils/asrCapabilities';
 
 const STARTER_MODELS = [
   { engine: 'sensevoice' as const, id: 'iic/SenseVoiceSmall', label: 'SenseVoice Small（中文）' },
@@ -61,6 +62,20 @@ export const useInterfaceModeStore = defineStore('interfaceMode', () => {
     }
   }
 
+  async function setSimpleModeDefaults() {
+    const config = await configApi.getConfig(true);
+    const language = config.transcription?.language || 'auto';
+    if (normalizeAsrLanguage(language) !== 'auto') return;
+    await configApi.updateSection('transcription', {
+      language: 'ja', backend: 'parakeet-ctc-ja', asr_compute_backend: 'cpu',
+      model: 'nvidia/parakeet-tdt_ctc-0.6b-ja',
+      nemo_asr_model: 'nvidia/parakeet-tdt_ctc-0.6b-ja',
+    });
+    if (!config.translation?.target_language) {
+      await configApi.updateSection('translation', { target_language: '繁體中文' });
+    }
+  }
+
   async function load() {
     error.value = '';
     busy.value = true;
@@ -96,6 +111,7 @@ export const useInterfaceModeStore = defineStore('interfaceMode', () => {
         await prepareCpuAsr();
         await prepareModels();
         if (sidecarStatus.value?.restart_required) throw new Error('CPU 環境與三個 ASR 模型已準備完成，請重新啟動程式。');
+        if (value === 'simple') await setSimpleModeDefaults();
       }
       setupMessage.value = '正在儲存選擇…';
       await configApi.updateSection('interface', { mode: value });
@@ -142,6 +158,7 @@ export const useInterfaceModeStore = defineStore('interfaceMode', () => {
     await prepareCpuAsr();
     await prepareModels();
     if (sidecarStatus.value?.restart_required) throw new Error('環境已準備完成，請重新啟動程式後繼續。');
+    await setSimpleModeDefaults();
     await configApi.updateSection('interface', { mode: 'simple' });
     mode.value = 'simple';
     pendingMode.value = null;

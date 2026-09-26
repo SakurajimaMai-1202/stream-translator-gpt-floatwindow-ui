@@ -41,6 +41,14 @@ audio_slicing_vad:
   vad_every_n_frames: 2
   vad_backend: firered
   firered_vad_model_path: ''
+  slicing_mode: omnivad_native
+  omnivad_threshold: 0.35
+  omnivad_max_audio_length: 6.0
+  omnivad_smooth_window_size: 5
+  omnivad_pad_start_frame: 5
+  omnivad_min_speech_frame: 8
+  omnivad_max_speech_frame: 2000
+  omnivad_min_silence_frame: 20
 transcription:
   openai_api_key: ''
   backend: qwen3-asr

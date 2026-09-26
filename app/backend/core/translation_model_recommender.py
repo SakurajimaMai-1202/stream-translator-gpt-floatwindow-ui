@@ -101,7 +101,9 @@ def build_translation_model_recommendations(devices: Iterable[GpuDevice]) -> dic
     discrete = [device for device in detected if not device.is_integrated]
     usable = [device for device in discrete if device.memory_mb]
     selected = max(usable, key=lambda device: int(device.memory_mb or 0), default=None)
-    vram_gb = round((selected.memory_mb or 0) / 1024, 1) if selected else None
+    if selected is None:
+        selected = next((device for device in discrete if device.vendor in {"nvidia", "amd"}), None)
+    vram_gb = round(selected.memory_mb / 1024, 1) if selected and selected.memory_mb else None
     tier_id, tier_label = vram_tier(selected.memory_mb if selected else None)
 
     models: list[dict[str, Any]] = []
@@ -138,7 +140,13 @@ def build_translation_model_recommendations(devices: Iterable[GpuDevice]) -> dic
         item["catalog_order"],
     ))
     vendor = selected.vendor if selected else "unknown"
-    if selected and vendor in {"nvidia", "amd"} and tier_id == "8gb_plus":
+    if selected and vendor in {"nvidia", "amd"} and tier_id == "unknown":
+        simple_setup = {
+            "supported": True, "model_id": "hy-mt2-iq3-xxs",
+            "filename": "Hy-MT2-7B.i1-IQ3_XXS.gguf", "quant": "i1-IQ3_XXS",
+            "reason": f"偵測到 {selected.name}，但無法可靠讀取 VRAM；先使用較小量化。",
+        }
+    elif selected and vendor in {"nvidia", "amd"} and tier_id == "8gb_plus":
         simple_setup = {
             "supported": True, "model_id": "hy-mt2-q6-k",
             "filename": "Hy-MT2-7B.i1-Q6_K.gguf", "quant": "i1-Q6_K",

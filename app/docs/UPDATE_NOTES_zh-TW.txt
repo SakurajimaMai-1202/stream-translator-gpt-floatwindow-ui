@@ -1,21 +1,16 @@
-Stream Translator v1.4.8 更新說明
-=================================
+Stream Translator v1.4.9 更新說明
+=============================================
 
 主要更新
 --------
-- 簡單模式依 NVIDIA／AMD 顯卡與 VRAM 自動選擇 GPU llama.cpp Runtime 及 Hy-MT2 量化。
-- 未滿 4 GB 使用 i1-IQ3_XXS，4 GB～未滿 8 GB 使用 i1-IQ4_NL，8 GB 以上使用 i1-Q6_K。
-- 簡單模式不使用 CPU llama.cpp Runtime；CUDA／ROCm 應用固定使用相符 Runtime，CPU 應用則依顯卡推薦 CUDA、HIP、SYCL 或 Vulkan。
-- NVIDIA VRAM 改由 nvidia-smi 可靠偵測，避免 Windows 大容量顯存誤判。
-- llama.cpp 外部程序會隔離 Qt／PyInstaller DLL 路徑，修正 0xC0000005；CUDA 主套件與 cudart 會嚴格配對同版。
-- Hy-MT2 下載會先取得並驗證官方檔案大小與 SHA-256，首次準備畫面也會顯示實際百分比。
-- 首次導引完成下載後不會直接啟動本地 LLM；進入首頁後由使用者手動開啟。
-- 浮動字幕改善自然捲動、小高度排版、翻譯行保留、控制按鈕自動隱藏及時間軸顏色。
+- 新安裝預設使用 FireRed OmniStreamVAD 原生事件切段，語音閾值 0.35、最長切片 6 秒；已儲存的 VAD 設定不變。
+- 修正桌面視窗中的外部下載連結無法開啟；首次設定加入 WARP 連線指引。
+- 改善 Windows App Update 等待後端退出、檔案移動與失敗回復。
+- 修正即時字幕去除重疊後可能顯示未翻譯原文。
+- 改善簡單模式日文初始設定、顯存偵測、模型推薦及下載記錄。
 
 更新方式
 --------
-- 新手仍可使用 CPU ASR 搭配 Gemini／API 翻譯；本機 Hy-MT2 翻譯需使用 GPU Runtime。
-- CUDA、CPU 與 ROCm App Update 只能套用到相同 Profile。
-- config.yaml、models、output、srt、logs 及已下載模型可以保留。
-
-完整異動內容請參閱 RELEASE_NOTES_v1.4.8_zh-TW.md。
+- v1.4.9 App Update 包含完整 Runtime 並會替換舊 Runtime；CUDA、CPU、ROCm 只能套用於相同 Profile，跨 Profile 請使用 Full package。
+- 保留原有 config.yaml 時，使用者已儲存的設定不會被新預設覆蓋。
+- 完整內容見 RELEASE_NOTES_v1.4.9_zh-TW.md。

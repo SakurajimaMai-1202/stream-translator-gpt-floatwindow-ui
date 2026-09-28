@@ -14,7 +14,7 @@ if __name__ == '__main__':
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     __package__ = "stream_translator_gpt"
 
-from .common import ApiKeyPool, configure_utf8_stdio, PipelineWorkers, is_url, WARNING, ERROR, INFO
+from .common import ApiKeyPool, configure_utf8_stdio, ObservableTaskQueue, PipelineWorkers, is_url, WARNING, ERROR, INFO
 from .audio_getter import (
     StreamAudioGetter,
     LocalFileAudioGetter,
@@ -176,6 +176,16 @@ def main(url, **kwargs):
     translation_output_format = kwargs.get('translation_output_format', 'auto')
     translation_max_concurrency = kwargs.get('translation_max_concurrency', 0)
     translation_max_output_tokens = kwargs.get('translation_max_output_tokens', 128)
+    hy_mt2_optimizer_enabled = kwargs.get('hy_mt2_optimizer_enabled', False)
+    hy_mt2_context_window = kwargs.get('hy_mt2_context_window', 3)
+    hy_mt2_max_context_chars = kwargs.get('hy_mt2_max_context_chars', 1000)
+    hy_mt2_max_terms = kwargs.get('hy_mt2_max_terms', 10)
+    hy_mt2_style = kwargs.get('hy_mt2_style', True)
+    hy_mt2_style_text = kwargs.get('hy_mt2_style_text', '')
+    hy_mt2_preferences = kwargs.get('hy_mt2_preferences', '')
+    hy_mt2_debug = kwargs.get('hy_mt2_debug', False)
+    hy_mt2_aliases = kwargs.get('hy_mt2_aliases')
+    hy_mt2_glossary_folder = kwargs.get('hy_mt2_glossary_folder')
     paired_subtitle_mode = not kwargs.get('disable_paired_subtitle_mode', False)
     translation_provider = kwargs.get('translation_provider', 'auto')
     deduplicate_asr_overlap = not kwargs.get('disable_asr_overlap_deduplication', False)
@@ -214,7 +224,7 @@ def main(url, **kwargs):
 
     # Init queues
     getter_to_slicer_queue = queue.SimpleQueue()
-    slicer_to_transcriber_queue = queue.SimpleQueue()
+    slicer_to_transcriber_queue = ObservableTaskQueue()
     transcriber_to_segmenter_queue = queue.SimpleQueue()
     segmenter_to_translator_queue = queue.SimpleQueue()
     translator_to_exporter_queue = queue.SimpleQueue() if translation_prompt else segmenter_to_translator_queue
@@ -414,16 +424,18 @@ def main(url, **kwargs):
                 provider,
             )
             capabilities = get_capabilities(model_family)
+            optimizer_active = hy_mt2_optimizer_enabled and model_family == 'hy_mt2'
+            effective_history_size = max(translation_history_size, max(0, min(5, hy_mt2_context_window))) if optimizer_active else translation_history_size
             max_concurrency = int(translation_max_concurrency or 0)
             max_concurrency = max_concurrency or capabilities.default_max_concurrency
-            if translation_history_size:
+            if effective_history_size:
                 max_concurrency = 1
             if provider == "gemini":
                 llm_client = LLMClient(
                     llm_type=LLMClient.LLM_TYPE.GEMINI,
                     model=gemini_model,
                     prompt=translation_prompt,
-                    history_size=translation_history_size,
+                    history_size=effective_history_size,
                     proxy=processing_proxy,
                     use_json_result=use_json_result,
                     gemini_base_url=gemini_base_url,
@@ -433,13 +445,23 @@ def main(url, **kwargs):
                     max_output_tokens=translation_max_output_tokens,
                     provider=provider,
                     glossary_audit_enabled=translation_glossary_audit_enabled,
+                    hy_mt2_optimizer_enabled=optimizer_active,
+                    hy_mt2_context_window=hy_mt2_context_window,
+                    hy_mt2_max_context_chars=hy_mt2_max_context_chars,
+                    hy_mt2_max_terms=hy_mt2_max_terms,
+                    hy_mt2_style=hy_mt2_style,
+                    hy_mt2_style_text=hy_mt2_style_text,
+                    hy_mt2_preferences=hy_mt2_preferences,
+                    hy_mt2_debug=hy_mt2_debug,
+                    hy_mt2_aliases=hy_mt2_aliases,
+                    hy_mt2_glossary_folder=hy_mt2_glossary_folder,
                 )
             else:
                 llm_client = LLMClient(
                     llm_type=LLMClient.LLM_TYPE.GPT,
                     model=gpt_model,
                     prompt=translation_prompt,
-                    history_size=translation_history_size,
+                    history_size=effective_history_size,
                     proxy=processing_proxy,
                     use_json_result=use_json_result,
                     glossary=glossary,
@@ -448,6 +470,16 @@ def main(url, **kwargs):
                     max_output_tokens=translation_max_output_tokens,
                     provider=provider,
                     glossary_audit_enabled=translation_glossary_audit_enabled,
+                    hy_mt2_optimizer_enabled=optimizer_active,
+                    hy_mt2_context_window=hy_mt2_context_window,
+                    hy_mt2_max_context_chars=hy_mt2_max_context_chars,
+                    hy_mt2_max_terms=hy_mt2_max_terms,
+                    hy_mt2_style=hy_mt2_style,
+                    hy_mt2_style_text=hy_mt2_style_text,
+                    hy_mt2_preferences=hy_mt2_preferences,
+                    hy_mt2_debug=hy_mt2_debug,
+                    hy_mt2_aliases=hy_mt2_aliases,
+                    hy_mt2_glossary_folder=hy_mt2_glossary_folder,
                 )
             return ParallelTranslator(
                 llm_client=llm_client,
@@ -493,8 +525,6 @@ def main(url, **kwargs):
     if hasattr(audio_getter, '_exit_handler'):
         signal.signal(signal.SIGINT, audio_getter._exit_handler)
 
-    print(f'{INFO}Initialization complete, starting up...')
-
     workers = PipelineWorkers()
     # Start working
     workers.start(audio_getter.loop, output_queue=getter_to_slicer_queue)
@@ -523,6 +553,10 @@ def main(url, **kwargs):
         exporter.loop,
         input_queue=translator_to_exporter_queue,
     )
+    # The ASR constructor has completed and the audio/ASR workers are running.
+    # Keep this machine-readable signal separate from human-readable log text.
+    print('__ST_ASR_READY__', flush=True)
+    print(f'{INFO}Initialization complete, starting up...', flush=True)
 
     pipeline_exit_code = 0
     try:
@@ -926,7 +960,7 @@ def cli():
         help='Prompt and output policy used for the selected translation model.')
     parser.add_argument(
         '--translation_provider',
-        choices=['auto', 'openai', 'openai_compatible', 'gemini'],
+        choices=['auto', 'openai', 'openai_compatible', 'lm_studio', 'llama_cpp', 'gemini'],
         default='auto',
         help='Translation transport provider. API keys are used only for authentication.')
     parser.add_argument(
@@ -944,6 +978,16 @@ def cli():
         type=int,
         default=128,
         help='Maximum generated tokens for each subtitle translation.')
+    parser.add_argument('--hy_mt2_optimizer_enabled', action='store_true')
+    parser.add_argument('--hy_mt2_context_window', type=int, default=3)
+    parser.add_argument('--hy_mt2_max_context_chars', type=int, default=1000)
+    parser.add_argument('--hy_mt2_max_terms', type=int, default=10)
+    parser.add_argument('--hy_mt2_style', action='store_true')
+    parser.add_argument('--hy_mt2_style_text', type=str, default='')
+    parser.add_argument('--hy_mt2_preferences', type=str, default='')
+    parser.add_argument('--hy_mt2_debug', action='store_true')
+    parser.add_argument('--hy_mt2_aliases', type=str, default=None)
+    parser.add_argument('--hy_mt2_glossary_folder', type=str, default=None)
     parser.add_argument(
         '--disable_paired_subtitle_mode',
         action='store_true',

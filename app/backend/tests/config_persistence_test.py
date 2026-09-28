@@ -328,6 +328,7 @@ def test_local_llm_enabled_resets_on_new_application_session(tmp_path):
     manager.update_section("llama", {
         "local_llm_enabled": True,
         "model_path": "D:/models/translation.gguf",
+        "server_exe": "D:/llama/llama-server.exe",
         "port": 8081,
     })
 
@@ -335,6 +336,7 @@ def test_local_llm_enabled_resets_on_new_application_session(tmp_path):
 
     assert reloaded["llama"]["local_llm_enabled"] is False
     assert reloaded["llama"]["model_path"] == "D:/models/translation.gguf"
+    assert reloaded["llama"]["server_exe"] == "D:/llama/llama-server.exe"
     assert reloaded["llama"]["port"] == 8081
 
 

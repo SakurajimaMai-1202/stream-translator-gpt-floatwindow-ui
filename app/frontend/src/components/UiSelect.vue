@@ -17,6 +17,7 @@ const props = withDefaults(defineProps<{
   menuClass?: string;
   searchable?: boolean;
   searchPlaceholder?: string;
+  ariaLabel?: string;
 }>(), {
   disabled: false,
   placeholder: '請選擇',
@@ -205,6 +206,7 @@ onBeforeUnmount(detachOpenListeners);
   <div ref="rootRef" class="relative">
     <button
       type="button"
+      :aria-label="ariaLabel"
       :disabled="disabled"
       :class="[
         'w-full flex items-center justify-between px-3 py-2 rounded-lg border border-white/20 bg-white/5 text-white focus:outline-none focus:border-blue-400 transition-colors',

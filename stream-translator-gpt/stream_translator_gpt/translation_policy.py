@@ -26,6 +26,7 @@ class TranslationRequest:
     previous_original: str = ""
     previous_translation: str = ""
     glossary: dict[str, str] | None = None
+    previous_sources: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -166,7 +167,22 @@ class TranslationPromptStrategy:
 
 
 class HyMT2PromptStrategy(TranslationPromptStrategy):
+    optimizer_settings = None
+
     def prepare(self, request: TranslationRequest) -> PreparedPrompt:
+        if self.optimizer_settings is not None:
+            from .hy_mt2_optimizer import build_prompt
+            return PreparedPrompt(
+                system_instruction=None,
+                user_content=build_prompt(request.source_text, self.prompt,
+                                          request.glossary or {}, request.previous_sources,
+                                          self.optimizer_settings),
+                output_format="text",
+                temperature=self.capabilities.temperature,
+                top_p=self.capabilities.top_p,
+                top_k=self.capabilities.top_k,
+                repetition_penalty=self.capabilities.repetition_penalty,
+            )
         blocks = []
         glossary = _matching_glossary(request.source_text, request.glossary or {})
         if glossary:

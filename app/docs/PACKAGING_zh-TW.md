@@ -172,32 +172,9 @@ PyInstaller 可以只建置一次，再分別組裝 CUDA、CPU 與 ROCm runtime�
 
 ## Runtime diagnostics
 
-每個 full package 與 App Update package 會附上 `diagnose_runtime.ps1`。這個工具用來收集目標機器上的 runtime JSON log，尤其是 ROCm Experimental 包在沒有 AMD 顯卡的建置機上無法做實機推論驗證時。
+Full 與 App Update package 不再附帶 PowerShell smoke／diagnose 腳本。使用者可在「設定 → ASR 模型管理」匯出 Runtime 診斷 JSON；報告包含 package profile、GPU 選擇、CPU ASR sidecar、模型根目錄，以及目前 llama Runtime／模型位置，且不包含 API Key、Cookie 或字幕內容。
 
-在 package 根目錄執行：
-
-```powershell
-.\diagnose_runtime.ps1 -Profile rocm
-```
-
-常用參數：
-
-```powershell
-.\diagnose_runtime.ps1 -Profile cuda
-.\diagnose_runtime.ps1 -Profile cpu
-.\diagnose_runtime.ps1 -Profile rocm -AllowIntegratedGpu
-.\diagnose_runtime.ps1 -Profile rocm -Output .\rocm-diagnostics.json
-```
-
-診斷工具會驗證 runtime manifest、PyTorch CUDA/HIP backend、Qwen3-ASR / FunASR import、GPU 選擇策略與輕量 torch tensor execution。它不會宣稱完整 ASR inference 已通過；完整 ASR smoke test 仍需要實際音檔與模型 cache。
-
-SenseVoiceSmall 真實 ASR smoke test 可使用 package 內的：
-
-```powershell
-.\smoke_sensevoice_asr.ps1 -Profile cpu -Audio .\sample.wav
-.\smoke_sensevoice_asr.ps1 -Profile cuda -Audio .\sample.wav
-.\smoke_sensevoice_asr.ps1 -Profile rocm -Audio .\sample.wav
-```
+匯出報告只確認環境與資源解析狀態，不代表完整 ASR inference 已通過；完整驗證仍需使用目標機器、實際音檔及所選模型。原始碼中的腳本可保留作工程調查，不列入正式發佈包。
 
 SenseVoiceSmall 已通過 AMD ROCm 實機測試；ROCm package 仍保留 Experimental 標示，因整體 ROCm/HIP 相容性仍依顯卡、驅動與 PyTorch ROCm build 而定。
 ## CUDA Parakeet CTC JA 打包注意
@@ -207,3 +184,16 @@ SenseVoiceSmall 已通過 AMD ROCm 實機測試；ROCm package 仍保留 Experim
 - NeMo 依賴請用 `app/requirements_cuda_parakeet.txt` 安裝；`check_runtime_profile_env.ps1 -Profile cuda` 會檢查 `nemo.collections.asr.models`。
 - HuggingFace repo 內的實際模型檔是 `.nemo`，目前預設使用 `parakeet-ja.nemo`，程式會以 `ASRModel.restore_from()` 載入。
 - CPU / ROCm 包不啟用 Parakeet；不要把 CUDA App Update 覆蓋到 CPU 或 ROCm 完整包。
+# App Update 大小與 Runtime 相容性
+
+一般版本使用預設 `-UpdateMode app_only`，保留已安裝的 `_runtime`。
+目前 `-MinimumRuntimeVersion` 預設為 `1.4.9`（含 OmniStreamVAD 的基準）；
+更新端與獨立 updater 都會檢查 Runtime manifest、profile、Python 與 OmniStreamVAD 檔案。
+舊 Runtime 或缺少 manifest 的安裝需先使用同 profile Full 包／含 Runtime 更新包。
+
+新增或變更 Runtime 依賴時，維護者必須明確指定 `-UpdateMode runtime_replace`
+並將 `-MinimumRuntimeVersion` 提高到該次版本；依賴相容性不以主程式版本自動猜測。
+後續僅改程式的版本仍使用該 Runtime 基準與 `app_only`。
+`Quick`／`Final` 只控制壓縮與 Full 包輸出，不會偷偷改變更新模式。
+重用 App Update 產物時會核對版本、profile、模式與 Runtime 基準，不相符即停止。
+舊參數 `SkipRuntimeDependenciesInAppUpdate` 僅相容 app_only，與 runtime_replace 並用會報錯。

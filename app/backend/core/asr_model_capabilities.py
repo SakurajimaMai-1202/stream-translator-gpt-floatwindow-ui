@@ -40,6 +40,7 @@ def _entry(
     *,
     default_language: str = "auto",
     note: str = "",
+    supports_context: bool = False,
 ) -> dict[str, Any]:
     return {
         "model_id": model_id,
@@ -48,6 +49,11 @@ def _entry(
         "supported_languages": list(supported_languages),
         "default_language": default_language,
         "note": note,
+        "supports_auto_language": language_mode == "multilingual",
+        "supports_language_hint": True,
+        "supports_context": supports_context,
+        "supported_sources": ["url", "file", "system_audio", "microphone"],
+        "streaming_behavior": "vad_sliced",
     }
 
 
@@ -59,14 +65,15 @@ ASR_MODEL_CAPABILITIES: dict[str, dict[str, Any]] = {
             "multilingual",
             SUPPORTED_UI_LANGUAGES,
             note="Multilingual Whisper model; auto language detection is available.",
+            supports_context=True,
         )
         for model_id in WHISPER_MODEL_IDS
     },
     "Qwen/Qwen3-ASR-0.6B": _entry(
-        "Qwen/Qwen3-ASR-0.6B", "qwen3-asr", "multilingual", QWEN3_LANGUAGES
+        "Qwen/Qwen3-ASR-0.6B", "qwen3-asr", "multilingual", QWEN3_LANGUAGES, supports_context=True
     ),
     "Qwen/Qwen3-ASR-1.7B": _entry(
-        "Qwen/Qwen3-ASR-1.7B", "qwen3-asr", "multilingual", QWEN3_LANGUAGES
+        "Qwen/Qwen3-ASR-1.7B", "qwen3-asr", "multilingual", QWEN3_LANGUAGES, supports_context=True
     ),
     "jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame": _entry(
         "jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame",

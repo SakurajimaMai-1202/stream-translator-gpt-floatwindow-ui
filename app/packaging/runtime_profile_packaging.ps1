@@ -84,7 +84,7 @@ function Get-RuntimeProfileDocText {
         [Parameter(Mandatory = $true)]
         [ValidateSet("cuda", "cpu", "rocm")]
         [string]$RuntimeProfile,
-        [string]$Version = "1.4.9",
+        [string]$Version = "1.4.10",
         [Parameter(Mandatory = $true)]
         [ValidateSet("portable_guide", "update_notes", "readme")]
         [string]$Document
@@ -145,7 +145,7 @@ function Get-RuntimeProfileDocText {
         $notes = @(
             "本版本是 AMD ROCm Experimental，不是 NVIDIA CUDA 版。",
             "Qwen3-ASR 在 CUDA / ROCm profile 預設使用 bf16。",
-            "SenseVoiceSmall 已通過 AMD ROCm 實機測試；仍建議使用 smoke_sensevoice_asr.ps1 在目標機器確認音訊與模型 cache。",
+            "SenseVoiceSmall 已通過 AMD ROCm 實機測試；可在程式設定中匯出 Runtime 診斷報告，並以實際音訊確認模型。",
             "預設裝置策略為 auto_discrete，會避免選到 AMD 內顯 / APU；沒有 ROCm 獨顯時會在診斷中標示未驗證。",
             "使用 -IncludeCpuAsrSidecar 可另外加入 sherpa-onnx INT8 CPU ASR；sidecar 與 ROCm 主 runtime 完全隔離。",
             "Radeon RX 9070 XT 已由使用者實機測試確認可用。"
@@ -193,7 +193,8 @@ $modelLines
 
 App Update 包更新方式
 --------------------
-App Update 包只更新主程式與 Python 程式碼，不包含完整 runtime、模型與個人設定。
+App Update 的模式記錄於 app-update-build.json：app_only 保留既有 Runtime；runtime_replace 包含並替換完整 Runtime。
+建議從程式內執行更新，會檢查 Runtime 相容性並支援失敗回復。手動覆蓋前，請先確認既有 Runtime 符合 minimum_runtime_version；不符合時請使用同 Profile Full 包。
 1. 關閉 Stream Translator。
 2. 備份 config.yaml。
 3. 將 App Update ZIP 解壓到既有完整包資料夾，覆蓋同名檔案。
@@ -280,7 +281,7 @@ function Write-RuntimeProfileDocs {
         [Parameter(Mandatory = $true)]
         [ValidateSet("cuda", "cpu", "rocm")]
         [string]$RuntimeProfile,
-        [string]$Version = "1.4.9"
+        [string]$Version = "1.4.10"
     )
 
     if (-not (Test-Path $Destination)) {

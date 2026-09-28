@@ -2,7 +2,7 @@
 param(
     [ValidateSet("cuda", "cpu", "rocm")]
     [string]$Profile = "cuda",
-    [string]$Version = "1.4.9",
+    [string]$Version = "1.4.10",
     [switch]$ForceRuntime,
     [switch]$ReuseRuntimeCache,
     [switch]$SkipFullZip,
@@ -13,12 +13,23 @@ param(
     [switch]$SkipRuntimeDependenciesInAppUpdate,
     [switch]$IncludeCpuAsrSidecar = $true,
     [string]$MinimumUpgradableVersion = "1.3.11",
+    [string]$MinimumRuntimeVersion = "1.4.9",
     [switch]$RequiresFullInstall,
     [ValidateSet("app_only", "runtime_replace")]
     [string]$UpdateMode = "app_only"
 )
 
 $ErrorActionPreference = "Stop"
+if ($SkipRuntimeDependenciesInAppUpdate -and $UpdateMode -ne "app_only") {
+    throw "SkipRuntimeDependenciesInAppUpdate conflicts with runtime_replace."
+}
+if ($MinimumRuntimeVersion -notmatch '^\d+\.\d+\.\d+$' -or [version]$Version -lt [version]$MinimumRuntimeVersion) {
+    throw "MinimumRuntimeVersion must be a valid version no newer than the release."
+}
+if ($UpdateMode -eq "app_only" -and [version]$MinimumUpgradableVersion -lt [version]$MinimumRuntimeVersion) {
+    # Older installed updaters already understand this field.
+    $MinimumUpgradableVersion = $MinimumRuntimeVersion
+}
 $packagingDir = $PSScriptRoot
 $scriptDir = Split-Path -Parent $packagingDir
 $projectRoot = Split-Path -Parent $scriptDir
@@ -204,18 +215,6 @@ New-Item $distDir -ItemType Directory -Force | Out-Null
 $updateRoot = Join-Path $distDir "App-Update"
 Invoke-FastDirectoryCopy -Source $builtApp -Destination $updateRoot -Threads $CopyThreads
 Copy-PortableJsRuntime -DestinationRoot $updateRoot
-$updatePackageDir = Join-Path $updateRoot "_runtime\Lib\site-packages"
-$runtimePackageDir = Join-Path $runtimeCache "Lib\site-packages"
-$runtimeUpdateExcludePatterns = @(
-    "stream_translator_gpt",
-    "torch", "torch-*", "torchgen", "functorch",
-    "torchaudio", "torchaudio-*",
-    "torchvision", "torchvision-*",
-    "nemo*", "megatron*", "lightning*", "pytorch_lightning*",
-    "PyQt6", "PyQt6-*", "pyqt6_*.dist-info",
-    "PyInstaller", "pyinstaller-*", "_pytest", "pytest", "pytest-*",
-    "~orch", "~orch-*", "__editable__*", "*.egg-link"
-)
 if ($UpdateMode -eq "runtime_replace") {
     Remove-BuildDirectoryFast -Path (Join-Path $updateRoot "_runtime") -AllowedRoot $distDir
     Invoke-FastDirectoryCopy -Source $runtimeCache -Destination (Join-Path $updateRoot "_runtime") -Threads $CopyThreads
@@ -233,6 +232,7 @@ $appUpdateBuildInfo = [ordered]@{
     update_mode = $UpdateMode
     runtime_dependencies_included = ($UpdateMode -eq "runtime_replace")
     minimum_upgradable_version = $MinimumUpgradableVersion
+    minimum_runtime_version = $MinimumRuntimeVersion
     requires_full_install = [bool]$RequiresFullInstall
 }
 [IO.File]::WriteAllText(
@@ -240,8 +240,6 @@ $appUpdateBuildInfo = [ordered]@{
     ($appUpdateBuildInfo | ConvertTo-Json) + [Environment]::NewLine,
     [Text.UTF8Encoding]::new($false)
 )
-Copy-Item (Join-Path $scriptDir "diagnose_runtime.ps1") $updateRoot
-Copy-Item (Join-Path $scriptDir "smoke_sensevoice_asr.ps1") $updateRoot
 Write-RuntimeProfileDocs -Destination $updateRoot -RuntimeProfile $Profile -Version $Version
 $appUpdateZipPath = Join-Path $distDir $packageInfo.AppUpdateZip
 Compress-ReleaseDirectory `
@@ -267,8 +265,6 @@ if ($IncludeCpuAsrSidecar -and $Profile -ne "cpu") {
 Set-RuntimeManifestAppVersion -RuntimeDir (Join-Path $releaseRoot "_runtime")
 New-Item (Join-Path $releaseRoot "models\huggingface\hub") -ItemType Directory -Force | Out-Null
 Copy-ProfileConfig (Join-Path $releaseRoot "config.yaml")
-Copy-Item (Join-Path $scriptDir "diagnose_runtime.ps1") $releaseRoot
-Copy-Item (Join-Path $scriptDir "smoke_sensevoice_asr.ps1") $releaseRoot
 Write-RuntimeProfileDocs -Destination $releaseRoot -RuntimeProfile $Profile -Version $Version
 
 $ffmpegSource = Join-Path $projectRoot "ffmpeg-8.1-essentials_build\ffmpeg-8.1-essentials_build\bin"

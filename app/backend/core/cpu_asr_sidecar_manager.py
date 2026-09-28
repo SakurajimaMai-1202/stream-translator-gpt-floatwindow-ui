@@ -85,6 +85,38 @@ class CpuAsrSidecarManager(HttpDownloader):
                 self._state.message = "Cancelling CPU ASR runtime download"
         return self.status()
 
+    def import_archive(self, archive_path: str) -> dict[str, Any]:
+        """Install a user-supplied sidecar archive without network access."""
+        archive = Path(os.path.expandvars(os.path.expanduser(str(archive_path or "").strip())))
+        if not archive.is_absolute():
+            archive = get_app_root() / archive
+        archive = archive.resolve()
+        if not archive.is_file():
+            raise FileNotFoundError(f"CPU ASR Runtime 壓縮檔不存在: {archive}")
+        if archive.suffix.lower() != ".zip":
+            raise ValueError("CPU ASR Runtime 離線套件必須是 ZIP 檔案")
+        with self._lock:
+            if self._worker is not None and self._worker.is_alive():
+                raise RuntimeError("CPU ASR Runtime 正在下載或安裝中")
+            self._state = SidecarInstallState(
+                status="verifying", progress=0.2, message="正在檢查離線 CPU ASR Runtime 套件"
+            )
+        try:
+            with tempfile.TemporaryDirectory(prefix="stream-translator-cpu-asr-import-") as temporary:
+                extracted = Path(temporary) / "extracted"
+                extracted.mkdir()
+                self._safe_extract(archive, extracted)
+                self._set(status="installing", progress=0.65, message="正在安裝離線 CPU ASR Runtime")
+                self._install(extracted)
+            self._set(
+                status="completed", progress=1.0, message="離線 CPU ASR Runtime 已安裝",
+                error="", restart_required=True,
+            )
+            return self.status()
+        except Exception as exc:
+            self._set(status="error", message="離線 CPU ASR Runtime 安裝失敗", error=str(exc))
+            raise
+
     def _set(self, **changes: Any) -> None:
         with self._lock:
             for key, value in changes.items():

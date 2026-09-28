@@ -52,6 +52,13 @@ export interface SubtitleLatencyTrace {
   translation_inference_ms?: number | null;
   delivery_ms?: number | null;
   end_to_end_ms?: number | null;
+  first_speech_to_delivery_ms?: number | null;
+  speech_end_to_final_delivery_ms?: number | null;
+  frontend_receipt_to_render_ms?: number | null;
+  frontend_render_confirmed_at?: number | null;
+  asr_queue_audio_seconds?: number | null;
+  asr_queue_oldest_wait_ms?: number | null;
+  asr_queue_depth?: number | null;
 }
 
 export interface LatencyWindowSnapshot {
@@ -133,6 +140,11 @@ export interface AsrModelCapability {
   supported_languages: string[];
   default_language: string;
   note: string;
+  supports_auto_language: boolean;
+  supports_language_hint: boolean;
+  supports_context: boolean;
+  supported_sources: AudioSource[];
+  streaming_behavior: 'vad_sliced';
 }
 
 export interface RuntimeSelection {
@@ -279,6 +291,14 @@ export const runtimeApi = {
     const response = await axios.post(`${API_BASE}/runtime/cpu-asr-sidecar/cancel`, {});
     return response.data.data || response.data;
   },
+  async importCpuAsrSidecar(archivePath: string): Promise<CpuAsrSidecarInstallStatus> {
+    const response = await axios.post(`${API_BASE}/runtime/cpu-asr-sidecar/import`, { archive_path: archivePath });
+    return response.data.data || response.data;
+  },
+  async getDiagnostics(): Promise<Record<string, any>> {
+    const response = await axios.get(`${API_BASE}/runtime/diagnostics`);
+    return response.data.data || response.data;
+  },
   async getAppUpdateStatus(): Promise<AppUpdateStatus> {
     const response = await axios.get(`${API_BASE}/runtime/app-update`);
     return response.data.data || response.data;
@@ -340,6 +360,28 @@ export interface CpuAsrSidecarInstallStatus {
 
 export type AudioSource = 'url' | 'file' | 'microphone' | 'system_audio';
 
+export interface SourceCheckResult {
+  source: AudioSource;
+  status: 'ready' | 'error' | 'unknown';
+  stage: string;
+  message: string;
+  recovery: string;
+  trace_id: string;
+  elapsed_ms: number;
+  details: Record<string, any>;
+}
+
+export const readinessApi = {
+  async get(): Promise<Record<string, any>> {
+    const response = await axios.get(`${API_BASE}/readiness`);
+    return response.data.data || response.data;
+  },
+  async checkSource(payload: { source: AudioSource; value?: string; device_index?: number | null; duration_seconds?: number }): Promise<SourceCheckResult> {
+    const response = await axios.post(`${API_BASE}/readiness/source-check`, payload);
+    return response.data.data || response.data;
+  },
+};
+
 export interface AudioDevice {
   index: number;
   name: string;
@@ -398,7 +440,7 @@ export interface ModelDownloadTask {
   engine: ModelEngine;
   model_id: string;
   compute_backend: ModelComputeBackend;
-  status: 'pending' | 'downloading' | 'completed' | 'failed';
+  status: 'pending' | 'downloading' | 'cancelling' | 'cancelled' | 'completed' | 'failed';
   progress: number;
   downloaded_bytes: number;
   total_bytes: number;
@@ -483,9 +525,17 @@ export const modelApi = {
     const response = await axios.get(`${API_BASE}/models/list`);
     return response.data;
   },
+  async cancelTask(taskId: string): Promise<ModelDownloadTask> {
+    const response = await axios.post(`${API_BASE}/models/tasks/${taskId}/cancel`, {});
+    return response.data;
+  },
 
   async getStorage(): Promise<{ success: boolean; storage: ModelStorageInfo }> {
     const response = await axios.get(`${API_BASE}/models/storage`);
+    return response.data;
+  },
+  async validateStorage(storagePath: string): Promise<{ success: boolean; path: string; recognized: string[] }> {
+    const response = await axios.post(`${API_BASE}/models/storage/validate`, { storage_path: storagePath });
     return response.data;
   },
 

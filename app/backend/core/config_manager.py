@@ -140,7 +140,7 @@ class ConfigManager:
             'backend': 'custom:localllm',
             'model': 'localllm',
             'translation_prompt': '翻譯成繁體中文',
-            'target_language': '繁體中文',
+            'target_language': 'Traditional Chinese',
             'history_size': 0,
             'timeout': 10,
             'gpt_model': 'localllm',
@@ -156,6 +156,21 @@ class ConfigManager:
             'translation_output_format': 'auto',
             'translation_max_concurrency': 0,
             'translation_max_output_tokens': 128,
+            'hy_mt2_optimizer_enabled': False,
+            'hy_mt2_context_window': 3,
+            'hy_mt2_max_context_chars': 1000,
+            'hy_mt2_max_terms': 10,
+            'hy_mt2_style': True,
+            'hy_mt2_style_text': '使用自然、簡潔的台灣繁體中文直播字幕；保留原文語氣，不要補充原文沒有的資訊；只輸出譯文。',
+            'hy_mt2_preferences': '',
+            'hy_mt2_debug': False,
+            'hy_mt2_provider': 'existing',
+            'hy_mt2_lm_studio_url': 'http://127.0.0.1:1234/v1',
+            'hy_mt2_lm_studio_model': '',
+            'hy_mt2_llama_cpp_url': 'http://127.0.0.1:8081/v1',
+            'hy_mt2_llama_cpp_model': '',
+            'hy_mt2_glossary_folder': '',
+            'hy_mt2_glossary_preset': '',
             'paired_subtitle_mode': True,
             'deduplicate_asr_overlap': True,
             'subtitle_assembler_enabled': True,
@@ -167,7 +182,7 @@ class ConfigManager:
             'custom_models': [
                 {
                     'name': 'localllm',
-                    'base_url': 'http://127.0.0.1:8080',
+                    'base_url': 'http://127.0.0.1:8081',
                     'api_key': '114514',
                     'model_name': 'localllm'
                 }
@@ -179,6 +194,7 @@ class ConfigManager:
             'terminology_glossary': {},
             'glossary': '',
             'glossary_list': [],
+            'custom_glossary_scopes': [],
         },
         'output': {
             'output_file': '',
@@ -215,12 +231,13 @@ class ConfigManager:
             'position': 'bottom',
             'autoScroll': True,
             'maxDisplayCount': 5,
-            'textColor': '#FFFFFF',
+            'textColor': '#55FFFF',
             'translatedColor': '#FFDD00',
-            'timestampColor': '#888888',
-            'latencyColor': '#7DD3FC',
-            'backgroundColor': '#000000',
-            'backgroundOpacity': 50
+            'timestampColor': '#FF5500',
+            'latencyColor': '#AAFF00',
+            'backgroundColor': '#FFFFFF',
+            'backgroundOpacity': 5,
+            'mousePassthrough': False,
         },
         'ui': {
             'theme': 'light',
@@ -240,19 +257,20 @@ class ConfigManager:
                 'home': {'x': 100, 'y': 100, 'width': 600, 'height': 500, 'visible': True},
                 'main_window': {'width': 1287, 'height': 917},
                 'settings': {'x': 150, 'y': 150, 'width': 800, 'height': 600, 'visible': False},
-                'floating_subtitle': {'x': 200, 'y': 200, 'width': 800, 'height': 300, 'visible': True, 'transparency': 80}
+                'floating_subtitle': {'width': 800, 'height': 300, 'visible': True, 'transparency': 80}
             }
         },
         'llama': {
             'local_llm_enabled': False,
             'model_dir': '',
             'model_path': '',
+            'server_exe': '',
             'recent_model_paths': [],
             'favorite_model_paths': [],
             'selected_preset': '',
             'default_preset': '',
             'host': '127.0.0.1',
-            'port': 8080,
+            'port': 8081,
             'n_ctx': 2048,
             'n_gpu_layers': 0,
             'n_threads': 4,
@@ -985,13 +1003,9 @@ class ConfigManager:
                 
                 use_glossary = config.get('terminology', {}).get('use_terminology_glossary', False)
                 terminology_config = config.get('terminology', {})
-                glossary = terminology_config.get('terminology_glossary', {})
-                glossary_list = terminology_config.get('glossary_list', [])
-                # 相容前端 glossary_list array 格式
-                if not glossary and glossary_list:
-                    glossary = {item['original']: item['translated']
-                                for item in glossary_list
-                                if item.get('original') and item.get('translated')}
+                from backend.core.hy_mt2_glossary_presets import effective_user_glossary
+                glossary = effective_user_glossary(
+                    terminology_config, str(translation_config.get('hy_mt2_glossary_preset', '')))
                 
                 if use_glossary and glossary:
                     import json as _json
@@ -1004,14 +1018,9 @@ class ConfigManager:
 
                 # A custom prompt replaces only the prompt text; an enabled glossary still applies.
                 terminology_config = config.get('terminology', {})
-                glossary = terminology_config.get('terminology_glossary', {})
-                glossary_list = terminology_config.get('glossary_list', [])
-                if not glossary and glossary_list:
-                    glossary = {
-                        item['original']: item['translated']
-                        for item in glossary_list
-                        if item.get('original') and item.get('translated')
-                    }
+                from backend.core.hy_mt2_glossary_presets import effective_user_glossary
+                glossary = effective_user_glossary(
+                    terminology_config, str(translation_config.get('hy_mt2_glossary_preset', '')))
                 if terminology_config.get('use_terminology_glossary', False) and glossary:
                     args['translation_glossary'] = json.dumps(glossary, ensure_ascii=False)
                 else:
@@ -1037,6 +1046,14 @@ class ConfigManager:
             'translation_output_format': translation_config.get('translation_output_format', 'auto'),
             'translation_max_concurrency': translation_config.get('translation_max_concurrency', 0),
             'translation_max_output_tokens': translation_config.get('translation_max_output_tokens', 128),
+            'hy_mt2_optimizer_enabled': translation_config.get('hy_mt2_optimizer_enabled', False),
+            'hy_mt2_context_window': translation_config.get('hy_mt2_context_window', 3),
+            'hy_mt2_max_context_chars': translation_config.get('hy_mt2_max_context_chars', 1000),
+            'hy_mt2_max_terms': translation_config.get('hy_mt2_max_terms', 10),
+            'hy_mt2_style': translation_config.get('hy_mt2_style', True),
+            'hy_mt2_style_text': translation_config.get('hy_mt2_style_text', ''),
+            'hy_mt2_preferences': translation_config.get('hy_mt2_preferences', ''),
+            'hy_mt2_debug': translation_config.get('hy_mt2_debug', False),
             'disable_paired_subtitle_mode': not translation_config.get('paired_subtitle_mode', True),
             'disable_asr_overlap_deduplication': not translation_config.get('deduplicate_asr_overlap', True),
             'disable_subtitle_assembler': not translation_config.get('subtitle_assembler_enabled', True),
@@ -1051,6 +1068,32 @@ class ConfigManager:
             'use_json_result': translation_config.get('use_json_result', False),
             'retry_if_translation_fails': translation_config.get('retry_if_translation_fails', True),
         })
+        if translation_config.get('hy_mt2_optimizer_enabled', False):
+            aliases = {}
+            if args.get('translation_glossary'):
+                from backend.core.hy_mt2_glossary_presets import active_user_terms
+                for item in active_user_terms(
+                        config.get('terminology', {}),
+                        str(translation_config.get('hy_mt2_glossary_preset', ''))):
+                    target = item.get('translated')
+                    names = item.get('aliases', [])
+                    if isinstance(names, str):
+                        names = names.split(',')
+                    if target and isinstance(names, list):
+                        for name in names:
+                            if isinstance(name, str) and name.strip():
+                                aliases[name.strip()] = target
+            from backend.core.hy_mt2_glossary_presets import get_preset_terms
+            for source, target in get_preset_terms(str(translation_config.get('hy_mt2_glossary_preset', ''))).items():
+                aliases.setdefault(source, target)
+            if aliases:
+                args['hy_mt2_aliases'] = json.dumps(aliases, ensure_ascii=False)
+        glossary_folder = str(translation_config.get('hy_mt2_glossary_folder', '') or '').strip()
+        if glossary_folder and translation_config.get('hy_mt2_optimizer_enabled', False):
+            folder_path = Path(glossary_folder)
+            if not folder_path.is_absolute():
+                folder_path = self.config_path.parent / folder_path
+            args['hy_mt2_glossary_folder'] = str(folder_path)
         
         # 後端模型邏輯
         backend = config['translation'].get('backend', '')
@@ -1092,6 +1135,21 @@ class ConfigManager:
         else:
             args['gpt_model'] = gpt_model
             args['openai_api_key'] = resolved_api_keys.get('openai_api_key', '')
+        # Both local servers use the same OpenAI-compatible request path. Only
+        # endpoint identity changes; glossary, context and prompt stay upstream.
+        if translation_config.get('hy_mt2_optimizer_enabled', False) and backend != 'none':
+            local_provider = translation_config.get('hy_mt2_provider', 'existing')
+            if local_provider in {'lm_studio', 'llama_cpp'}:
+                prefix = 'hy_mt2_lm_studio' if local_provider == 'lm_studio' else 'hy_mt2_llama_cpp'
+                endpoint = str(translation_config.get(f'{prefix}_url', '') or '').strip()
+                model_id = str(translation_config.get(f'{prefix}_model', '') or '').strip()
+                if not endpoint or not model_id:
+                    raise ValueError(f'{local_provider} requires a server URL and model ID')
+                args['translation_provider'] = local_provider
+                args['translation_model_family'] = 'hy_mt2'
+                args['gpt_base_url'] = endpoint
+                args['gpt_model'] = model_id
+                args['openai_api_key'] = '114514'
         
         args['google_api_key'] = resolved_api_keys.get('google_api_key', '')
         args['openai_transcription_api_key'] = str(

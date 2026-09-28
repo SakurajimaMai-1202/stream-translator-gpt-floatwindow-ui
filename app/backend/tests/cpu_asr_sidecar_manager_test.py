@@ -159,6 +159,28 @@ class CpuAsrSidecarManagerTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Unsafe path"):
                 sidecar_module.CpuAsrSidecarManager._safe_extract(archive, root / "extract")
 
+    def test_import_archive_installs_without_network(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            archive = root / "sidecar.zip"
+            with zipfile.ZipFile(archive, "w") as bundle:
+                bundle.writestr("_runtime_cpu_asr/python.exe", "python")
+                bundle.writestr("_runtime_cpu_asr/runtime-version.json", '{}')
+            manager = sidecar_module.CpuAsrSidecarManager()
+            with mock.patch.object(manager, "_install") as install:
+                status = manager.import_archive(str(archive))
+            install.assert_called_once()
+            self.assertEqual(status["status"], "completed")
+            self.assertTrue(status["restart_required"])
+
+    def test_import_archive_rejects_non_zip(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = Path(temp_dir) / "runtime.txt"
+            source.write_text("invalid", encoding="utf-8")
+            manager = sidecar_module.CpuAsrSidecarManager()
+            with self.assertRaisesRegex(ValueError, "ZIP"):
+                manager.import_archive(str(source))
+
     def test_runtime_health_is_cached_until_runtime_changes(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             runtime = Path(temp_dir)

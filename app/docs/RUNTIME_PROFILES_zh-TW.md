@@ -240,21 +240,11 @@ ROCm release 應維持 `Experimental`，並把驗證狀態拆開：
 package_validated: yes
 runtime_import_validated: yes
 torch_execution_validated: depends on target machine
-gpu_inference_validated: no, unless diagnose_runtime.ps1 passes on AMD GPU
+gpu_inference_validated: no, unless the built-in diagnostic report and an ASR sample pass on AMD GPU
 asr_inference_validated: SenseVoiceSmall yes on tested AMD ROCm machine; otherwise depends on target machine
 ```
 
-包內會附上 `diagnose_runtime.ps1`。有 AMD 顯卡的測試者在 package 根目錄執行：
-
-```powershell
-.\diagnose_runtime.ps1 -Profile rocm
-```
-
-如果要測 APU/iGPU 實驗路徑，可明確打開：
-
-```powershell
-.\diagnose_runtime.ps1 -Profile rocm -AllowIntegratedGpu
-```
+有 AMD 顯卡的測試者可在「設定 → ASR 模型管理」匯出 Runtime 診斷報告，再以實際音訊執行 ASR。APU／iGPU 實驗路徑仍需在 Runtime 設定明確允許整合式 GPU。
 
 診斷 JSON 會列出：
 

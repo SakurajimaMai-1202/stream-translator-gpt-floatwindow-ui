@@ -18,6 +18,8 @@ import {
 
 const testingGpt = ref(false);
 const testingGemini = ref(false);
+const hyMt2HealthChecking = ref(false);
+const hyMt2HealthResult = ref('');
 const LlamaSettings = defineAsyncComponent(() => import('../components/LlamaSettings.vue'));
 const AsrModelGroup = defineAsyncComponent(() => import('../components/AsrModelGroup.vue'));
 const WhisperFilterSettings = defineAsyncComponent(() => import('../components/WhisperFilterSettings.vue'));
@@ -355,6 +357,21 @@ const localConfig = ref<any>({
     translation_output_format: 'auto',
     translation_max_concurrency: 0,
     translation_max_output_tokens: 128,
+    hy_mt2_optimizer_enabled: false,
+    hy_mt2_context_window: 3,
+    hy_mt2_max_context_chars: 1000,
+    hy_mt2_max_terms: 10,
+    hy_mt2_style: true,
+    hy_mt2_style_text: '使用自然、簡潔的台灣繁體中文直播字幕；保留原文語氣，不要補充原文沒有的資訊；只輸出譯文。',
+    hy_mt2_preferences: '',
+    hy_mt2_debug: false,
+    hy_mt2_provider: 'existing',
+    hy_mt2_lm_studio_url: 'http://127.0.0.1:1234/v1',
+    hy_mt2_lm_studio_model: '',
+    hy_mt2_llama_cpp_url: 'http://127.0.0.1:8081/v1',
+    hy_mt2_llama_cpp_model: '',
+    hy_mt2_glossary_folder: '',
+    hy_mt2_glossary_preset: '',
     paired_subtitle_mode: true,
     deduplicate_asr_overlap: true,
     subtitle_assembler_enabled: true,
@@ -370,7 +387,8 @@ const localConfig = ref<any>({
     use_terminology_glossary: false,  // 🔧 新增: 術語表啟用開關
     translation_glossary_audit_enabled: false,
     glossary: '',
-    glossary_list: []
+    glossary_list: [],
+    custom_glossary_scopes: []
   },
   output: {
     output_dir: './output',
@@ -491,6 +509,7 @@ const settingsTabIds = new Set([
   'general',
   'input',
   'output',
+  'diagnostics',
   'audio_vad',
   'transcription',
   'model_management',
@@ -530,6 +549,41 @@ const translationBackendOptions = computed<UiSelectOption[]>(() => {
   return [...base, ...customOptions];
 });
 
+const hyMt2RecommendedAvailable = computed(() => {
+  const translation = localConfig.value.translation;
+  return translation.hy_mt2_provider !== 'existing' || !['gpt', 'gemini'].includes(translation.backend);
+});
+
+const hyMt2EffectiveBackend = computed(() => {
+  const translation = localConfig.value.translation;
+  if (translation.hy_mt2_optimizer_enabled && translation.hy_mt2_provider === 'lm_studio') {
+    return `LM Studio · ${translation.hy_mt2_lm_studio_model || '尚未填模型 ID'}`;
+  }
+  if (translation.hy_mt2_optimizer_enabled && translation.hy_mt2_provider === 'llama_cpp') {
+    return `llama.cpp · ${translation.hy_mt2_llama_cpp_model || '尚未填模型 ID'}`;
+  }
+  const selected = String(translation.backend || 'none');
+  if (selected.startsWith('custom:')) {
+    const name = selected.slice('custom:'.length);
+    const model = (translation.custom_models || []).find((item: any) => item.name === name);
+    return `沿用目前模型 · ${model?.model_name || name}${model?.base_url ? ` · ${model.base_url}` : ''}`;
+  }
+  return `沿用目前後端 · ${selected}`;
+});
+
+function applyHyMt2RecommendedSettings() {
+  if (!hyMt2RecommendedAvailable.value) return;
+  const translation = localConfig.value.translation;
+  translation.hy_mt2_optimizer_enabled = true;
+  translation.translation_model_family = 'hy_mt2';
+  translation.translation_output_format = 'text';
+  translation.target_language = 'Traditional Chinese';
+  translation.use_smart_prompt = true;
+  translation.hy_mt2_context_window = 3;
+  translation.hy_mt2_style = true;
+  localConfig.value.terminology.use_terminology_glossary = true;
+}
+
 // Each config section saves independently so a small UI edit does not traverse,
 // serialize, replace, and re-render the complete configuration tree.
 const sectionSaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -567,6 +621,24 @@ async function saveSectionNow(section: string): Promise<void> {
   })();
   sectionSaveInFlight.set(section, request);
   await request;
+}
+
+async function checkHyMt2Backend() {
+  hyMt2HealthChecking.value = true;
+  hyMt2HealthResult.value = '';
+  try {
+    const pendingSave = sectionSaveTimers.get('translation');
+    if (pendingSave) clearTimeout(pendingSave);
+    sectionSaveTimers.delete('translation');
+    await saveSectionNow('translation');
+    const response = await axios.post('/api/config/hy-mt2-health');
+    const result = response.data;
+    hyMt2HealthResult.value = `已連線 ${result.model}；測試回應「${result.sample}」（${result.latency_ms} ms）`;
+  } catch (error: any) {
+    hyMt2HealthResult.value = `連線失敗：${error?.response?.data?.detail || error?.message || '未知錯誤'}`;
+  } finally {
+    hyMt2HealthChecking.value = false;
+  }
 }
 
 function debouncedAutoSaveSection(section: string) {
@@ -629,12 +701,80 @@ async function testConnection(backend: 'gpt' | 'gemini') {
 // 術語表
 const newTermOriginal = ref('');
 const newTermTranslated = ref('');
+const newTermAliases = ref('');
+const newTermScope = ref('all');
+const glossaryEntryForm = ref<HTMLElement | null>(null);
+const glossaryUserList = ref<HTMLElement | null>(null);
 const termSearchQuery = ref('');
+const terminologySubTab = ref<'translation' | 'asr'>('translation');
+const expandedGlossaryTerm = ref<any | null>(null);
+const selectedGlossaryTerms = ref<any[]>([]);
+const bulkGlossaryScope = ref('hololive_vtuber');
+const removedGlossaryTerm = ref<{ term: any; index: number } | null>(null);
+const glossaryListMode = ref<'active' | 'all' | 'global'>('active');
+const presetGlossaries = ref<Record<string, Record<string, string>>>({});
+const builtinGlossaryScopeOptions = [
+  { value: 'all', label: '所有直播' },
+  { value: 'general_chat', label: '日文雜談' },
+  { value: 'hololive_vtuber', label: 'Hololive／VTuber 雜談' },
+  { value: 'cosplay', label: 'Cosplay 雜談' },
+];
+const customGlossaryScopes = computed<{ value: string; label: string }[]>(() =>
+  Array.isArray(localConfig.value.terminology?.custom_glossary_scopes)
+    ? localConfig.value.terminology.custom_glossary_scopes.filter((scope: any) =>
+      typeof scope?.value === 'string' && scope.value.startsWith('custom_') && typeof scope?.label === 'string')
+    : []);
+const glossaryScopeOptions = computed(() => [...builtinGlossaryScopeOptions, ...customGlossaryScopes.value]);
+const newGlossaryScopeName = ref('');
+const editingGlossaryScope = ref('');
+const editingGlossaryScopeName = ref('');
+const selectedGlossaryPreset = computed(() => String(localConfig.value.translation?.hy_mt2_glossary_preset || ''));
+const selectedGlossaryPresetLabel = computed(() => glossaryScopeOptions.value.find(option => option.value === selectedGlossaryPreset.value)?.label || '不加情境詞表');
+const activeUserGlossaryRows = computed<any[]>(() => {
+  const rows: any[] = localConfig.value.terminology?.glossary_list || [];
+  const globalRows = rows.filter(row => String(row?.scope || 'all') === 'all');
+  const scopedRows = rows.filter(row => selectedGlossaryPreset.value && row?.scope === selectedGlossaryPreset.value);
+  return [...globalRows, ...scopedRows];
+});
+const userGlossaryBySource = computed(() => {
+  const values = new Map<string, string>();
+  if (!localConfig.value.terminology?.use_terminology_glossary) return values;
+  const legacy = localConfig.value.terminology?.terminology_glossary || {};
+  if (Object.keys(legacy).length > 0) {
+    for (const [source, target] of Object.entries(legacy)) values.set(source, String(target));
+  } else {
+    for (const row of activeUserGlossaryRows.value) {
+      if (row.original?.trim() && row.translated?.trim()) values.set(row.original.trim(), row.translated.trim());
+    }
+  }
+  return values;
+});
+const selectedPresetPreview = computed(() => Object.entries(presetGlossaries.value[selectedGlossaryPreset.value] || {}).map(([source, target]) => ({
+  source, target, override: userGlossaryBySource.value.get(source),
+})));
+const activeGlossaryRows = computed<any[]>(() => {
+  const legacy = localConfig.value.terminology?.terminology_glossary || {};
+  const userRows = !localConfig.value.terminology?.use_terminology_glossary ? []
+    : Object.keys(legacy).length
+      ? Object.entries(legacy).map(([original, translated]) => ({ original, translated: String(translated), legacy: true }))
+      : [...new Map(activeUserGlossaryRows.value.map(row => [row.original?.trim(), row])).values()];
+  const userSources = new Set(userRows.map(row => row.original?.trim()));
+  const builtinRows = selectedPresetPreview.value
+    .filter(term => !userSources.has(term.source))
+    .map(term => ({ original: term.source, translated: term.target, scope: selectedGlossaryPreset.value, builtin: true }));
+  return [...userRows, ...builtinRows];
+});
+const effectiveGlossaryCount = computed(() => {
+  const sources = new Set(userGlossaryBySource.value.keys());
+  for (const term of selectedPresetPreview.value) sources.add(term.source);
+  return sources.size;
+});
 const newAsrCanonical = ref('');
 const newAsrAliases = ref('');
 const asrCorrectionSearchQuery = ref('');
 const LARGE_LIST_BATCH_SIZE = 100;
-const glossaryRenderLimit = ref(LARGE_LIST_BATCH_SIZE);
+const GLOSSARY_PAGE_SIZE = 20;
+const glossaryRenderLimit = ref(GLOSSARY_PAGE_SIZE);
 const asrCorrectionRenderLimit = ref(LARGE_LIST_BATCH_SIZE);
 
 // 自訂模型
@@ -649,7 +789,10 @@ const customModelForm = ref({
 
 // 過濾後的術語表
 const filteredGlossary = computed(() => {
-  const list = localConfig.value.terminology?.glossary_list || [];
+  const allRows = localConfig.value.terminology?.glossary_list || [];
+  const list = glossaryListMode.value === 'active' ? activeGlossaryRows.value
+    : glossaryListMode.value === 'global' ? allRows.filter((row: any) => String(row?.scope || 'all') === 'all')
+    : allRows;
   if (!termSearchQuery.value.trim()) return list;
   const query = termSearchQuery.value.toLowerCase();
   return list.filter((item: any) => 
@@ -722,6 +865,8 @@ const managedDownloadedModels = computed(() =>
 );
 const cpuAsrRuntimeAvailable = computed(() => Boolean(runtimeStatus.value?.cpu_asr_runtime?.available));
 const cpuAsrSidecarStatus = ref<CpuAsrSidecarInstallStatus | null>(null);
+const cpuAsrOfflineArchive = ref('');
+const diagnosticsBusy = ref(false);
 const cpuAsrSidecarBusy = computed(() =>
   ['starting', 'downloading', 'verifying', 'installing'].includes(cpuAsrSidecarStatus.value?.status || '')
 );
@@ -785,6 +930,63 @@ async function cancelCpuAsrSidecarInstall() {
     };
   }
 }
+
+async function importCpuAsrSidecarOffline() {
+  const archive = cpuAsrOfflineArchive.value.trim();
+  if (!archive) return;
+  try {
+    cpuAsrSidecarStatus.value = await runtimeApi.importCpuAsrSidecar(archive);
+    if (cpuAsrSidecarStatus.value.installed) await store.loadRuntimeStatus();
+  } catch (error: any) {
+    cpuAsrSidecarStatus.value = {
+      ...(cpuAsrSidecarStatus.value || {
+        status: 'error', progress: 0, message: '', installed: false, restart_required: false,
+        bytes_downloaded: 0, bytes_total: 0, version: '', asset_name: '', healthy: false, health_error: '',
+      }),
+      status: 'error', error: error?.response?.data?.detail || error?.message || '離線 Runtime 匯入失敗',
+    };
+  }
+}
+
+async function exportRuntimeDiagnostics() {
+  if (diagnosticsBusy.value) return;
+  diagnosticsBusy.value = true;
+  store.errorMessage = '';
+  try {
+    const report = await runtimeApi.getDiagnostics();
+    const content = JSON.stringify(report, null, 2);
+    const filename = `stream-translator-diagnostics-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+    const bridge = (window as any).pyqt;
+    if (bridge?.saveTextFile) {
+      const savedPath = await new Promise<string>((resolve) => {
+        bridge.saveTextFile(filename, content, (result: string) => resolve(result || ''));
+      });
+      if (!savedPath) {
+        store.statusMessage = '已取消儲存診斷報告';
+        return;
+      }
+      if (savedPath.startsWith('ERROR:')) throw new Error(savedPath.slice(6));
+      store.statusMessage = `診斷報告已儲存：${savedPath}`;
+      return;
+    }
+    const blob = new Blob([content], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    window.setTimeout(() => {
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    }, 10_000);
+    store.statusMessage = `診斷報告已下載：${filename}`;
+  } catch (error: any) {
+    store.errorMessage = `匯出 Runtime 診斷報告失敗：${error?.response?.data?.detail || error?.message || '未知錯誤'}`;
+  } finally {
+    diagnosticsBusy.value = false;
+  }
+}
 const selectedSettingsAsrModelId = computed<string>(() => {
   const transcription = localConfig.value.transcription;
   if (transcription.use_qwen3_asr) return transcription.qwen3_asr_model;
@@ -797,7 +999,14 @@ const visibleGlossary = computed(() => filteredGlossary.value.slice(0, glossaryR
 const visibleAsrCorrections = computed(() => filteredAsrCorrections.value.slice(0, asrCorrectionRenderLimit.value));
 
 watch(termSearchQuery, () => {
-  glossaryRenderLimit.value = LARGE_LIST_BATCH_SIZE;
+  glossaryRenderLimit.value = GLOSSARY_PAGE_SIZE;
+});
+watch(selectedGlossaryPreset, (preset) => {
+  newTermScope.value = preset || 'all';
+  glossaryRenderLimit.value = GLOSSARY_PAGE_SIZE;
+});
+watch(glossaryListMode, () => {
+  glossaryRenderLimit.value = GLOSSARY_PAGE_SIZE;
 });
 watch(asrCorrectionSearchQuery, () => {
   asrCorrectionRenderLimit.value = LARGE_LIST_BATCH_SIZE;
@@ -925,9 +1134,9 @@ const runtimeDiagnosticNotice = computed(() => {
   const profile = runtimeStatus.value?.profile || localConfig.value?.runtime?.profile;
   if (profile !== 'rocm') return '';
   if (runtimeSelection.value?.kind === 'gpu') {
-    return 'ROCm package/profile is selected. Run diagnose_runtime.ps1 on an AMD GPU machine to confirm HIP GPU execution; ASR inference is still not marked verified by package validation alone.';
+    return 'ROCm package/profile is selected. Export the Runtime diagnostics report on an AMD GPU machine and run an ASR sample to confirm HIP execution; package validation alone does not verify inference.';
   }
-  return 'ROCm package/profile is selected, but no suitable AMD discrete GPU is selected on this machine. Package validation can still pass; ROCm GPU inference remains unverified until diagnose_runtime.ps1 passes on AMD hardware.';
+  return 'ROCm package/profile is selected, but no suitable AMD discrete GPU is selected on this machine. Package validation can still pass; ROCm GPU inference remains unverified until an AMD machine exports diagnostics and passes an ASR sample.';
 });
 
 function formatRuntimeMemory(memoryMb: number | null | undefined): string {
@@ -1253,6 +1462,9 @@ onMounted(async () => {
   }
 
   const runtimeStatusPromise = store.loadRuntimeStatus();
+  void axios.get('/api/config/hy-mt2-glossary-presets').then((response) => {
+    presetGlossaries.value = response.data || {};
+  }).catch(() => { presetGlossaries.value = {}; });
   void serverApi.getInfo().then((serverInfo) => {
     if (serverInfo?.lan_addresses) sharingLanAddresses.value = serverInfo.lan_addresses;
   }).catch(() => null);
@@ -1345,17 +1557,74 @@ async function resetToDefault() {
 }
 
 // 術語表操作
+function addGlossaryScope() {
+  const label = newGlossaryScopeName.value.trim();
+  if (!label) return;
+  if (glossaryScopeOptions.value.some(scope => scope.label.toLocaleLowerCase() === label.toLocaleLowerCase())) {
+    store.statusMessage = '已有同名情境，請換一個名稱';
+    return;
+  }
+  const value = `custom_${crypto.randomUUID()}`;
+  if (!Array.isArray(localConfig.value.terminology.custom_glossary_scopes)) {
+    localConfig.value.terminology.custom_glossary_scopes = [];
+  }
+  localConfig.value.terminology.custom_glossary_scopes.push({ value, label });
+  localConfig.value.translation.hy_mt2_glossary_preset = value;
+  newGlossaryScopeName.value = '';
+  store.statusMessage = `已建立「${label}」，儲存設定後可在翻譯時使用`;
+}
+
+function renameGlossaryScope(scope: { value: string; label: string }) {
+  const label = editingGlossaryScopeName.value.trim();
+  if (!label) return;
+  if (glossaryScopeOptions.value.some(other => other.value !== scope.value && other.label.toLocaleLowerCase() === label.toLocaleLowerCase())) {
+    store.statusMessage = '已有同名情境，請換一個名稱';
+    return;
+  }
+  scope.label = label;
+  editingGlossaryScope.value = '';
+}
+
+function removeGlossaryScope(scope: { value: string; label: string }) {
+  const count = (localConfig.value.terminology.glossary_list || []).filter((term: any) => term.scope === scope.value).length;
+  if (count) {
+    store.statusMessage = `「${scope.label}」還有 ${count} 筆詞條，請先將詞條移到其他情境`;
+    glossaryListMode.value = 'all';
+    return;
+  }
+  localConfig.value.terminology.custom_glossary_scopes = customGlossaryScopes.value.filter(item => item.value !== scope.value);
+  if (selectedGlossaryPreset.value === scope.value) localConfig.value.translation.hy_mt2_glossary_preset = '';
+  if (newTermScope.value === scope.value) newTermScope.value = 'all';
+  if (bulkGlossaryScope.value === scope.value) bulkGlossaryScope.value = 'all';
+  editingGlossaryScope.value = '';
+}
+
 function addTerm() {
   if (!newTermOriginal.value.trim() || !newTermTranslated.value.trim()) return;
   if (!localConfig.value.terminology.glossary_list) {
     localConfig.value.terminology.glossary_list = [];
   }
-  localConfig.value.terminology.glossary_list.push({
-    original: newTermOriginal.value.trim(),
-    translated: newTermTranslated.value.trim()
-  });
+  const original = newTermOriginal.value.trim();
+  if (localConfig.value.terminology.glossary_list.some((term: any) =>
+    term.original?.trim() === original && String(term.scope || 'all') === newTermScope.value)) {
+    store.statusMessage = `「${original}」已在此情境存在；請直接編輯下方詞條`;
+    glossaryListMode.value = 'all';
+    termSearchQuery.value = original;
+    return;
+  }
+  const created = {
+    original,
+    translated: newTermTranslated.value.trim(),
+    aliases: newTermAliases.value.split(',').map(s => s.trim()).filter(Boolean),
+    scope: newTermScope.value,
+  };
+  localConfig.value.terminology.glossary_list.push(created);
+  expandedGlossaryTerm.value = created;
+  termSearchQuery.value = original;
+  if (newTermScope.value !== 'all' && newTermScope.value !== selectedGlossaryPreset.value) glossaryListMode.value = 'all';
   newTermOriginal.value = '';
   newTermTranslated.value = '';
+  newTermAliases.value = '';
 }
 
 function removeTerm(index: number) {
@@ -1365,7 +1634,76 @@ function removeTerm(index: number) {
 function removeTermEntry(term: any) {
   const list = localConfig.value.terminology.glossary_list || [];
   const index = list.indexOf(term);
-  if (index >= 0) removeTerm(index);
+  if (index < 0) return;
+  removedGlossaryTerm.value = { term: structuredClone(toRaw(term)), index };
+  removeTerm(index);
+  selectedGlossaryTerms.value = selectedGlossaryTerms.value.filter(item => item !== term);
+  if (expandedGlossaryTerm.value === term) expandedGlossaryTerm.value = null;
+}
+
+function undoRemovedGlossaryTerm() {
+  const removed = removedGlossaryTerm.value;
+  if (!removed) return;
+  localConfig.value.terminology.glossary_list.splice(removed.index, 0, removed.term);
+  removedGlossaryTerm.value = null;
+}
+
+function toggleGlossarySelection(term: any, checked: boolean) {
+  selectedGlossaryTerms.value = checked
+    ? [...selectedGlossaryTerms.value.filter(item => item !== term), term]
+    : selectedGlossaryTerms.value.filter(item => item !== term);
+}
+
+function selectVisibleGlossaryTerms() {
+  selectedGlossaryTerms.value = [...new Set([...selectedGlossaryTerms.value, ...visibleGlossary.value.filter((term: any) => !term.builtin && !term.legacy)])];
+}
+
+function applySelectedGlossaryScope() {
+  const rows = localConfig.value.terminology.glossary_list || [];
+  let changed = 0;
+  let conflicts = 0;
+  for (const term of selectedGlossaryTerms.value) {
+    if (!rows.includes(term) || String(term.scope || 'all') === bulkGlossaryScope.value) continue;
+    const duplicate = rows.some((other: any) => other !== term
+      && other.original?.trim() === term.original?.trim()
+      && String(other.scope || 'all') === bulkGlossaryScope.value);
+    if (duplicate) { conflicts += 1; continue; }
+    term.scope = bulkGlossaryScope.value;
+    changed += 1;
+  }
+  selectedGlossaryTerms.value = [];
+  store.statusMessage = `已調整 ${changed} 筆詞條${conflicts ? `；${conflicts} 筆因同情境已有相同原詞而略過` : ''}`;
+}
+
+function setTermScope(term: any, value: string | number | null) {
+  const scope = String(value || 'all');
+  const duplicate = (localConfig.value.terminology.glossary_list || []).some((other: any) =>
+    other !== term && other.original?.trim() === term.original?.trim() && String(other.scope || 'all') === scope);
+  if (duplicate) {
+    store.statusMessage = `「${term.original}」在此情境已有譯法；請先處理重複詞條`;
+    return;
+  }
+  term.scope = scope;
+}
+
+function setTermAliases(term: any, event: Event) {
+  term.aliases = (event.target as HTMLInputElement).value.split(/[,，]/).map(value => value.trim()).filter(Boolean);
+}
+
+function customizePresetTerm(source: string, target: string, hasOverride: boolean) {
+  if (hasOverride) {
+    glossaryListMode.value = 'active';
+    termSearchQuery.value = source;
+    expandedGlossaryTerm.value = Object.keys(localConfig.value.terminology?.terminology_glossary || {}).length
+      ? null : activeUserGlossaryRows.value.find(row => row.original?.trim() === source) || null;
+    void nextTick(() => glossaryUserList.value?.scrollIntoView({ behavior: 'smooth', block: 'center' }));
+    return;
+  }
+  newTermOriginal.value = source;
+  newTermTranslated.value = target;
+  newTermAliases.value = '';
+  newTermScope.value = selectedGlossaryPreset.value || 'all';
+  void nextTick(() => glossaryEntryForm.value?.scrollIntoView({ behavior: 'smooth', block: 'center' }));
 }
 
 /**
@@ -1463,23 +1801,25 @@ function glossaryExportRows(): string[][] {
   const terminology = localConfig.value.terminology || {};
   const rows: string[][] = [];
   const seen = new Set<string>();
-  const add = (original: unknown, translated: unknown) => {
+  const add = (original: unknown, translated: unknown, scope: unknown = 'all', aliases: unknown = []) => {
     const source = String(original ?? '').trim();
     const target = String(translated ?? '').trim();
+    const termScope = String(scope || 'all');
     if (!source || !target) return;
-    const key = `${source}\u0000${target}`;
+    const key = `${source}\u0000${termScope}`;
     if (seen.has(key)) return;
     seen.add(key);
-    rows.push([source, target]);
+    const aliasList = Array.isArray(aliases) ? aliases : String(aliases || '').split(/[,，]/);
+    rows.push([source, target, termScope, aliasList.map(value => String(value).trim()).filter(Boolean).join(', ')]);
   };
 
-  if (Array.isArray(terminology.glossary_list)) {
-    for (const term of terminology.glossary_list) add(term?.original, term?.translated);
-  }
   if (terminology.terminology_glossary && typeof terminology.terminology_glossary === 'object') {
     for (const [original, translated] of Object.entries(terminology.terminology_glossary)) {
       add(original, translated);
     }
+  }
+  if (Array.isArray(terminology.glossary_list)) {
+    for (const term of terminology.glossary_list) add(term?.original, term?.translated, term?.scope, term?.aliases);
   }
   // Older configurations used `glossary` as either a JSON object or a small
   // delimited text block. Include it as well so export always means *all*.
@@ -1496,7 +1836,8 @@ function glossaryExportRows(): string[][] {
       }
     }
   }
-  return rows;
+  const scopeRows = customGlossaryScopes.value.map(scope => ['#context', scope.value, scope.label, '']);
+  return rows.length || scopeRows.length ? [...scopeRows, ['original', 'translated', 'scope', 'aliases'], ...rows] : [];
 }
 
 function asrCorrectionExportRows(): string[][] {
@@ -1555,7 +1896,7 @@ async function downloadCsv(filename: string, rows: string[][], label: string): P
       const writable = await handle.createWritable();
       await writable.write(blob);
       await writable.close();
-      store.statusMessage = `已匯出全部 ${rows.length} 筆${label}`;
+      store.statusMessage = `已匯出 ${label} CSV`;
       return true;
     } catch (error: any) {
       // User cancellation is not an error. Other picker failures fall back to
@@ -1577,7 +1918,7 @@ async function downloadCsv(filename: string, rows: string[][], label: string): P
     anchor.remove();
     URL.revokeObjectURL(url);
   }, 10_000);
-  store.statusMessage = `已匯出全部 ${rows.length} 筆${label}`;
+  store.statusMessage = `已匯出 ${label} CSV`;
   return true;
 }
 
@@ -1592,12 +1933,44 @@ function importGlossary() {
     glossaryImporting.value = true;
     try {
       const rows = parseDelimitedRows(await file.text());
+      const importedScopes = rows.filter(row => row[0]?.trim() === '#context').map(row => ({
+        value: row[1]?.trim() || '', label: row[2]?.trim() || '',
+      }));
+      const existingScopeIds = new Set(glossaryScopeOptions.value.map(option => option.value));
+      const importedIds = new Set<string>();
+      const importedNames = new Set<string>();
+      for (const scope of importedScopes) {
+        const normalizedName = scope.label.toLocaleLowerCase();
+        if (!/^custom_[0-9a-f-]{36}$/i.test(scope.value) || !scope.label || scope.label.length > 40 || importedIds.has(scope.value) || importedNames.has(normalizedName)) {
+          throw new Error('CSV 中的自訂情境資料無效或重複');
+        }
+        const existing = glossaryScopeOptions.value.find(item => item.value === scope.value);
+        if (existing && existing.label !== scope.label) throw new Error(`情境 ID 衝突：${scope.value}`);
+        if (!existing && glossaryScopeOptions.value.some(item => item.label.toLocaleLowerCase() === normalizedName)) {
+          throw new Error(`已有同名情境：${scope.label}`);
+        }
+        importedIds.add(scope.value);
+        importedNames.add(normalizedName);
+      }
+      const allowedScopes = new Set([...existingScopeIds, ...importedIds]);
       const newTerms: any[] = rows
-        .filter(row => row.length >= 2 && !isGlossaryHeader(row))
-        .map(row => ({ original: row[0].trim(), translated: row[1].trim() }))
+        .filter(row => row.length >= 2 && row[0]?.trim() !== '#context' && !isGlossaryHeader(row))
+        .map(row => {
+          const scope = (row[2] || 'all').trim();
+          if (!allowedScopes.has(scope)) throw new Error(`未知適用情境：${scope}`);
+          return {
+            original: row[0].trim(), translated: row[1].trim(), scope,
+            ...(row.length >= 4 ? { aliases: row[3].split(/[,，]/).map(value => value.trim()).filter(Boolean) } : {}),
+          };
+        })
         .filter(term => term.original && term.translated);
       let mergedCount = localConfig.value.terminology.glossary_list?.length || 0;
       await saveBulkImport('terminology', () => {
+        const currentScopes = Array.isArray(localConfig.value.terminology.custom_glossary_scopes)
+          ? localConfig.value.terminology.custom_glossary_scopes : [];
+        localConfig.value.terminology.custom_glossary_scopes = [
+          ...currentScopes, ...importedScopes.filter(scope => !existingScopeIds.has(scope.value)),
+        ];
         const merged = mergeGlossaryTerms(localConfig.value.terminology.glossary_list || [], newTerms);
         mergedCount = merged.length;
         localConfig.value.terminology.glossary_list = merged;
@@ -1633,11 +2006,15 @@ async function saveBulkImport(section: 'terminology' | 'transcription', applyImp
 }
 
 function mergeGlossaryTerms(existing: any[], imported: any[]): any[] {
-  const merged = new Map<string, { original: string; translated: string }>();
+  const merged = new Map<string, any>();
   for (const term of [...existing, ...imported]) {
     const original = String(term?.original || '').trim();
     const translated = String(term?.translated || '').trim();
-    if (original && translated) merged.set(original, { original, translated });
+    const scope = String(term?.scope || 'all');
+    if (original && translated) {
+      const key = `${original}\u0000${scope}`;
+      merged.set(key, { ...(merged.get(key) || {}), ...term, original, translated, scope });
+    }
   }
   return [...merged.values()];
 }
@@ -2003,6 +2380,20 @@ async function handleFileChange(event: Event) {
 
                 <p v-else class="text-white/40 text-sm">分享頁面與公開字幕 API 已停用，區域網路中的其他裝置無法讀取字幕。</p>
               </div>
+            </div>
+          </div>
+
+          <div v-if="activeTab === 'diagnostics'" class="settings-paint-section space-y-6">
+            <h2 class="text-xl font-bold text-white">進階設定／疑難排解</h2>
+            <div class="rounded-xl border border-white/10 bg-white/5 p-5">
+              <h3 class="text-lg font-semibold text-cyan-300">Runtime 診斷報告</h3>
+              <p class="mt-2 text-sm leading-6 text-white/60">
+                匯出程式版本、CPU／GPU Runtime、CPU ASR Sidecar、模型儲存位置及 llama.cpp 路徑，供啟動失敗或 GPU 未被使用時分析。
+              </p>
+              <p class="mt-2 text-xs leading-5 text-white/40">報告不包含 API Key、Cookie 或字幕內容，也不會下載模型或修改設定。</p>
+              <button type="button" @click="exportRuntimeDiagnostics" :disabled="diagnosticsBusy" class="mt-4 px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-white font-semibold">
+                {{ diagnosticsBusy ? '正在建立報告…' : '匯出 Runtime 診斷報告' }}
+              </button>
             </div>
           </div>
 
@@ -2680,6 +3071,13 @@ async function handleFileChange(event: Event) {
               <p v-if="cpuAsrSidecarStatus?.restart_required" class="text-yellow-200 text-sm mt-3">
                 安裝完成，請重新啟動程式後再切換至 CPU / sherpa-onnx。
               </p>
+              <div class="mt-4 border-t border-white/10 pt-4">
+                <label class="block text-white/70 text-sm mb-1">離線 CPU ASR Runtime ZIP</label>
+                <div class="flex flex-col lg:flex-row gap-2">
+                  <input v-model="cpuAsrOfflineArchive" type="text" placeholder="例如 D:\\Downloads\\StreamTranslator-CPU-ASR-Sidecar.zip" class="flex-1 px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30" />
+                  <button @click="importCpuAsrSidecarOffline" :disabled="cpuAsrSidecarBusy || !cpuAsrOfflineArchive.trim()" class="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-40 text-white font-semibold">匯入離線套件</button>
+                </div>
+              </div>
             </div>
             <h2 class="text-xl font-bold text-white mb-4">ASR 模型管理</h2>
             <div class="grid grid-cols-2 gap-2 p-1 rounded-xl bg-black/20 border border-white/10">
@@ -3159,6 +3557,85 @@ async function handleFileChange(event: Event) {
 
             <!-- 進階翻譯設定 (所有後端共用，但不翻譯時隱藏) -->
             <div v-if="localConfig.translation.backend !== 'none'" class="bg-white/5 rounded-xl p-5 border border-white/10">
+              <div class="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <h3 class="text-lg font-semibold text-blue-300">HY-MT2 即時字幕優化</h3>
+                  <p class="mt-1 text-sm text-white/55">讓日文直播字幕參考詞條、前文與台灣繁中風格。</p>
+                </div>
+                <label class="flex items-center gap-2 rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm font-semibold text-white cursor-pointer">
+                  <input v-model="localConfig.translation.hy_mt2_optimizer_enabled" type="checkbox" class="h-4 w-4 accent-blue-500" />
+                  {{ localConfig.translation.hy_mt2_optimizer_enabled ? '已啟用' : '啟用優化' }}
+                </label>
+              </div>
+              <div class="mt-4 flex flex-wrap items-center gap-2">
+                <button type="button" :disabled="!hyMt2RecommendedAvailable" class="rounded-lg bg-blue-500/25 px-3 py-2 text-sm font-semibold text-blue-100 hover:bg-blue-500/35 disabled:opacity-40" @click="applyHyMt2RecommendedSettings">套用推薦設定</button>
+                <button type="button" :disabled="hyMt2HealthChecking" class="rounded-lg bg-white/10 px-3 py-2 text-sm text-white hover:bg-white/20 disabled:opacity-50" @click="checkHyMt2Backend">{{ hyMt2HealthChecking ? '連線測試中…' : '測試模型連線' }}</button>
+              </div>
+              <p v-if="!hyMt2RecommendedAvailable" class="mt-2 text-sm text-amber-200">請先選擇 HY-MT2 模型，或在進階設定中指定推理後端。</p>
+              <p v-if="hyMt2HealthResult" class="mt-2 text-sm text-white/75" role="status">{{ hyMt2HealthResult }}</p>
+              <div class="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-blue-400/20 bg-blue-400/5 px-3 py-2 text-sm text-white/70">
+                <span>詞條情境：{{ selectedGlossaryPresetLabel }}</span>
+                <span class="text-white/35">·</span>
+                <span>約 {{ effectiveGlossaryCount }} 個原詞</span>
+                <button type="button" class="text-blue-300 underline" @click="activeTab = 'terminology'">管理詞條</button>
+              </div>
+              <details class="mt-4 rounded-lg border border-white/10 p-3">
+                <summary class="cursor-pointer text-sm text-blue-200">進階設定與模型資訊</summary>
+                <div class="mt-3 space-y-1 text-xs text-white/55">
+                  <p>目前模型：{{ hyMt2EffectiveBackend }}</p>
+                  <p>推薦設定會使用台灣繁中、3 句前文與現有詞條，並保留目前選擇的模型。</p>
+                  <p>模型測試只確認連線與回應格式；設定會在重新開始翻譯工作階段後生效。</p>
+                  <p v-if="localConfig.translation.hy_mt2_glossary_folder">JSON 詞條資料夾未計入上方數量。</p>
+                </div>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+                <div class="md:col-span-2">
+                  <label class="block text-white/70 mb-1">推理後端</label>
+                  <UiSelect v-model="localConfig.translation.hy_mt2_provider" :options="[
+                    { value: 'existing', label: '沿用目前翻譯後端' },
+                    { value: 'lm_studio', label: 'LM Studio' },
+                    { value: 'llama_cpp', label: 'llama.cpp / llama-server' }
+                  ]" />
+                </div>
+                <template v-if="localConfig.translation.hy_mt2_provider === 'lm_studio'">
+                  <label class="text-white/70">LM Studio Server URL
+                    <input v-model="localConfig.translation.hy_mt2_lm_studio_url" type="text" placeholder="http://127.0.0.1:1234/v1" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
+                  </label>
+                  <label class="text-white/70">模型 ID（須與伺服器提供的一致）
+                    <input v-model="localConfig.translation.hy_mt2_lm_studio_model" type="text" placeholder="實際模型 ID" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
+                  </label>
+                </template>
+                <template v-if="localConfig.translation.hy_mt2_provider === 'llama_cpp'">
+                  <label class="text-white/70">llama-server URL
+                    <input v-model="localConfig.translation.hy_mt2_llama_cpp_url" type="text" placeholder="http://127.0.0.1:8081/v1" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
+                  </label>
+                  <label class="text-white/70">模型 ID（須與伺服器提供的一致）
+                    <input v-model="localConfig.translation.hy_mt2_llama_cpp_model" type="text" placeholder="實際模型 ID" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
+                  </label>
+                </template>
+                <label class="text-white/70 md:col-span-2">JSON 術語資料夾（選填；相對於設定檔）
+                  <input v-model="localConfig.translation.hy_mt2_glossary_folder" type="text" placeholder="例如：data/glossary" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
+                </label>
+                <label class="text-white/70">前文句數（0–5）
+                  <input v-model.number="localConfig.translation.hy_mt2_context_window" type="number" min="0" max="5" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
+                </label>
+                <label class="text-white/70">前文字數上限
+                  <input v-model.number="localConfig.translation.hy_mt2_max_context_chars" type="number" min="0" max="4000" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
+                </label>
+                <label class="text-white/70">最多術語數
+                  <input v-model.number="localConfig.translation.hy_mt2_max_terms" type="number" min="0" max="30" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
+                </label>
+                <label class="flex items-center gap-2 text-white/70"><input v-model="localConfig.translation.hy_mt2_style" type="checkbox" />台灣口語字幕風格</label>
+                <label v-if="localConfig.translation.hy_mt2_style" class="text-white/70 md:col-span-2">字幕風格指示（最多 500 字）
+                  <textarea v-model="localConfig.translation.hy_mt2_style_text" maxlength="500" rows="2" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
+                </label>
+                <label class="text-white/70 md:col-span-2">個人翻譯偏好（最多 500 字）
+                  <textarea v-model="localConfig.translation.hy_mt2_preferences" maxlength="500" rows="2" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" placeholder="例如：人名沿用術語表，不任意補主詞" />
+                </label>
+                <label class="flex items-center gap-2 text-white/70"><input v-model="localConfig.translation.hy_mt2_debug" type="checkbox" />記錄提示詞與輸出（包含字幕內容）</label>
+              </div>
+              </details>
+            </div>
+            <div v-if="localConfig.translation.backend !== 'none'" class="bg-white/5 rounded-xl p-5 border border-white/10">
               <h3 class="text-lg font-semibold text-blue-300 mb-4">🔧 進階設定</h3>
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
@@ -3322,8 +3799,59 @@ async function handleFileChange(event: Event) {
           <!-- Terminology Settings -->
           <div v-if="activeTab === 'terminology'" class="settings-paint-section space-y-6">
             <h2 class="text-xl font-bold text-white mb-4">術語表</h2>
+            <div class="grid grid-cols-2 gap-2 rounded-xl border border-white/10 bg-black/20 p-1" role="tablist" aria-label="術語設定種類">
+              <button type="button" role="tab" :aria-selected="terminologySubTab === 'translation'" :class="terminologySubTab === 'translation' ? 'bg-purple-500/25 text-purple-100' : 'text-white/60 hover:bg-white/5'" class="rounded-lg px-4 py-3 font-semibold" @click="terminologySubTab = 'translation'">翻譯詞條</button>
+              <button type="button" role="tab" :aria-selected="terminologySubTab === 'asr'" :class="terminologySubTab === 'asr' ? 'bg-cyan-500/25 text-cyan-100' : 'text-white/60 hover:bg-white/5'" class="rounded-lg px-4 py-3 font-semibold" @click="terminologySubTab = 'asr'">ASR 辨識修正</button>
+            </div>
 
-            <div class="bg-gradient-to-br from-cyan-500/10 to-blue-500/10 rounded-xl p-5 border border-cyan-500/20">
+            <div v-if="terminologySubTab === 'translation'" class="rounded-xl border border-blue-400/25 bg-blue-400/5 p-5 space-y-4">
+              <div>
+                <h3 class="text-lg font-semibold text-blue-200">這次要看的內容</h3>
+                <p class="mt-1 text-sm text-white/60">切換情境後，下面會顯示這次生效的個人詞條與內建詞條。選擇不會改動已存的詞條；重新開始翻譯工作階段後生效。</p>
+              </div>
+              <UiSelect v-model="localConfig.translation.hy_mt2_glossary_preset" aria-label="這次觀看的情境" :options="[
+                { value: '', label: '不加情境詞表（只用我的全域詞條）' },
+                ...glossaryScopeOptions.filter(option => option.value !== 'all')
+              ]" />
+              <details class="rounded-lg border border-white/10 bg-black/15 p-3">
+                <summary class="cursor-pointer text-sm font-semibold text-white/80">管理自訂情境（{{ customGlossaryScopes.length }} 個）</summary>
+                <div class="mt-3 space-y-3">
+                <div class="flex flex-wrap gap-2">
+                  <input v-model="newGlossaryScopeName" maxlength="40" type="text" aria-label="新情境名稱" placeholder="例如：星街彗星雜談" class="min-w-[200px] flex-1 rounded-lg border border-white/20 bg-white/5 px-3 py-2 text-white" @keyup.enter="addGlossaryScope" />
+                  <button type="button" :disabled="!newGlossaryScopeName.trim()" class="rounded-lg bg-blue-600 px-4 py-2 font-semibold text-white disabled:opacity-40" @click="addGlossaryScope">新增情境</button>
+                </div>
+                <p class="text-xs text-white/50">自訂情境使用你的全域詞條與該情境詞條；建立後可在下方新增詞條。</p>
+                <div v-for="scope in customGlossaryScopes" :key="scope.value" class="flex flex-wrap items-center gap-2 rounded-lg bg-white/5 px-3 py-2 text-sm">
+                  <template v-if="editingGlossaryScope === scope.value">
+                    <input v-model="editingGlossaryScopeName" maxlength="40" :aria-label="`重新命名 ${scope.label}`" class="min-w-[180px] flex-1 rounded border border-white/20 bg-black/20 px-2 py-1 text-white" @keyup.enter="renameGlossaryScope(scope)" />
+                    <button type="button" class="text-blue-300" @click="renameGlossaryScope(scope)">完成</button>
+                    <button type="button" class="text-white/60" @click="editingGlossaryScope = ''">取消</button>
+                  </template>
+                  <template v-else>
+                    <span class="min-w-0 flex-1 text-white/80">{{ scope.label }}（{{ (localConfig.terminology.glossary_list || []).filter((term: any) => term.scope === scope.value).length }} 筆）</span>
+                    <button type="button" class="text-blue-300" :aria-label="`重新命名 ${scope.label}`" @click="editingGlossaryScope = scope.value; editingGlossaryScopeName = scope.label">改名</button>
+                    <button type="button" class="text-red-300" :aria-label="`刪除 ${scope.label}`" @click="removeGlossaryScope(scope)">刪除</button>
+                  </template>
+                </div>
+                </div>
+              </details>
+              <p class="text-sm text-white/70">{{ localConfig.translation.hy_mt2_optimizer_enabled ? '下次翻譯會使用' : '啟用 HY-MT2 優化後可使用' }}約 {{ effectiveGlossaryCount }} 個原詞：我的詞條 {{ userGlossaryBySource.size }} 個、內建 {{ selectedPresetPreview.length }} 個；同名時以我的譯法為準。</p>
+              <p v-if="localConfig.translation.hy_mt2_glossary_folder" class="text-xs text-white/45">JSON 資料夾的詞條仍會加入翻譯，但不包含在此處的預覽與數量中。</p>
+              <details v-if="selectedPresetPreview.length" class="rounded-lg border border-white/10 bg-black/15 p-3">
+                <summary class="cursor-pointer text-sm font-semibold text-white/80">查看內建詞條（{{ selectedPresetPreview.length }} 筆）</summary>
+                <p class="my-2 text-xs text-white/55">內建詞條已包含在下方「這次生效」清單；按「自訂譯法」可新增個人版本。</p>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-1 text-sm max-h-48 overflow-y-auto">
+                  <div v-for="term in selectedPresetPreview" :key="term.source" class="flex flex-wrap gap-1 text-white/65">
+                    <span>{{ term.source }} → {{ term.override || term.target }}</span>
+                    <span v-if="term.override && term.override !== term.target" class="text-amber-200">（我的譯法；預設 {{ term.target }}）</span>
+                    <span v-else-if="term.override" class="text-blue-200">（我的詞條優先）</span>
+                    <button type="button" class="text-blue-300 underline ml-1" @click="customizePresetTerm(term.source, term.target, !!term.override)">{{ term.override ? '查看我的詞條' : '自訂譯法' }}</button>
+                  </div>
+                </div>
+              </details>
+            </div>
+
+            <div v-if="terminologySubTab === 'asr'" class="bg-gradient-to-br from-cyan-500/10 to-blue-500/10 rounded-xl p-5 border border-cyan-500/20">
               <div class="flex items-center justify-between gap-4">
                 <div>
                   <h3 class="text-lg font-semibold text-cyan-300 mb-2">ASR 人名／專有名詞修正</h3>
@@ -3351,7 +3879,7 @@ async function handleFileChange(event: Event) {
               </label>
             </div>
 
-            <div class="rounded-xl p-5 border border-white/10 bg-white/[0.03] space-y-4">
+            <div v-if="terminologySubTab === 'asr'" class="rounded-xl p-5 border border-white/10 bg-white/[0.03] space-y-4">
               <div class="grid grid-cols-1 lg:grid-cols-[minmax(180px,0.8fr)_minmax(260px,1.4fr)_auto] gap-3">
                 <input v-model="newAsrCanonical" type="text" placeholder="標準名稱，例如：桜島麻衣"
                   class="px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-cyan-400" />
@@ -3399,15 +3927,16 @@ async function handleFileChange(event: Event) {
               <div class="text-white/40 text-sm">共 {{ localConfig.transcription?.asr_correction_rules?.length || 0 }} 筆修正規則</div>
             </div>
 
+            <div v-if="terminologySubTab === 'translation'" class="space-y-5">
             <h3 class="text-lg font-semibold text-purple-300 pt-4">翻譯術語表</h3>
             
             <!-- 啟用術語表開關 -->
             <div class="bg-gradient-to-br from-purple-500/10 to-blue-500/10 rounded-xl p-5 border border-purple-500/20 mb-6">
               <div class="flex items-center justify-between">
                 <div class="flex-1">
-                  <h3 class="text-lg font-semibold text-purple-300 mb-2">📖 術語表功能</h3>
+                  <h3 class="text-lg font-semibold text-purple-300 mb-2">我的詞條</h3>
                   <p class="text-white/60 text-sm">
-                    啟用後,翻譯時會參考您設定的術語對照表,確保專有名詞翻譯一致性
+                    原有詞條維持「所有直播」適用。關閉這個開關只停用我的詞條，不會停用所選的內建情境詞表。
                   </p>
                 </div>
                 <label class="flex items-center gap-3 cursor-pointer ml-6">
@@ -3419,23 +3948,45 @@ async function handleFileChange(event: Event) {
                 <input v-model="localConfig.terminology.translation_glossary_audit_enabled" type="checkbox" class="w-4 h-4 accent-purple-500" />
                 記錄術語遵循狀況與重複未命中（app/logs/translation_glossary_audit.log、translation_glossary_issues.json）
               </label>
+              <p v-if="Object.keys(localConfig.terminology?.terminology_glossary || {}).length" class="mt-3 text-xs text-amber-200">設定檔仍含舊版術語字典；它目前優先於下方個人詞條列表。若修改列表後沒有生效，請先匯出備份並整理舊版字典。</p>
             </div>
             
             <!-- 新增術語 -->
-            <div class="flex flex-wrap gap-3 mb-6">
-              <input v-model="newTermOriginal" type="text" placeholder="原文術語" 
-                class="flex-1 min-w-[150px] px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
-              <input v-model="newTermTranslated" type="text" placeholder="翻譯結果"
-                class="flex-1 min-w-[150px] px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
-              <button @click="addTerm" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg transition">
-                + 新增
-              </button>
+            <div ref="glossaryEntryForm" class="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
+              <h4 class="font-semibold text-white/85">新增個人詞條</h4>
+              <p v-if="newTermOriginal.trim()" class="text-sm text-blue-200">「{{ newTermOriginal }}」目前只填入表單；按「新增詞條」後才會成為你的詞條。</p>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <label class="text-sm text-white/70">日文原詞
+                  <input v-model="newTermOriginal" type="text" placeholder="例如：すいちゃん" class="mt-1 w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
+                </label>
+                <label class="text-sm text-white/70">繁中譯法
+                  <input v-model="newTermTranslated" type="text" placeholder="例如：Sui醬" class="mt-1 w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
+                </label>
+                <label class="text-sm text-white/70">別名（可留空，逗號分隔）
+                  <input v-model="newTermAliases" type="text" placeholder="例如：スイちゃん" class="mt-1 w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
+                </label>
+                <div class="text-sm text-white/70">適用情境
+                  <UiSelect v-model="newTermScope" aria-label="新詞條適用情境" :options="glossaryScopeOptions" button-class="mt-1" />
+                </div>
+              </div>
+              <div class="flex justify-end">
+                <button type="button" @click="addTerm" :disabled="!newTermOriginal.trim() || !newTermTranslated.trim()" class="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-semibold px-5 py-2 rounded-lg transition">新增詞條</button>
+              </div>
             </div>
 
             <!-- 搜尋 & 匯入匯出 -->
-            <div class="flex flex-wrap gap-3 mb-4">
-              <input v-model="termSearchQuery" type="text" placeholder="搜尋術語..."
-                class="flex-1 min-w-[200px] px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
+            <h4 class="text-base font-semibold text-purple-200">詞條清單 <span class="ml-2 text-sm font-normal text-white/55">預設顯示本次生效的個人與內建詞條</span></h4>
+            <div class="flex flex-wrap items-end gap-3 mb-4">
+              <div class="min-w-[215px]">
+                <UiSelect :model-value="glossaryListMode" :options="[
+                  { value: 'active', label: '這次生效：個人＋內建' },
+                  { value: 'global', label: '待分類：所有直播' },
+                  { value: 'all', label: '查看所有我的詞條' }
+                ]" aria-label="詞條顯示範圍" @update:model-value="glossaryListMode = $event === 'all' ? 'all' : $event === 'global' ? 'global' : 'active'" />
+              </div>
+              <label class="flex-1 min-w-[200px] text-sm text-white/70">搜尋詞條
+                <input v-model="termSearchQuery" type="text" placeholder="輸入日文原詞或譯法" class="mt-1 w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
+              </label>
               <button type="button" @click="importGlossary" :disabled="glossaryImporting"
                 class="bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-wait text-white font-semibold py-2 px-4 rounded-lg transition border border-white/20">
                 {{ glossaryImporting ? '📂 匯入並儲存中…' : '📂 匯入 CSV' }}
@@ -3445,30 +3996,64 @@ async function handleFileChange(event: Event) {
               </button>
             </div>
 
-            <!-- 術語列表 -->
-            <div class="max-h-80 overflow-y-auto space-y-2">
-              <div v-for="term in visibleGlossary" :key="`${term.original}-${term.translated}`"
-                class="flex items-center justify-between p-3 bg-white/5 rounded-lg border border-white/10">
-                <div class="flex-1 grid grid-cols-2 gap-4">
-                  <span class="text-white">{{ term.original }}</span>
-                  <span class="text-yellow-300">→ {{ term.translated }}</span>
+            <div v-if="(localConfig.terminology?.glossary_list || []).some((term: any) => String(term.scope || 'all') === 'all')" class="rounded-lg border border-amber-400/20 bg-amber-400/5 p-3 text-sm text-white/70">
+              目前有 {{ (localConfig.terminology?.glossary_list || []).filter((term: any) => String(term.scope || 'all') === 'all').length }} 筆全域詞條。人名、作品名可移到 Hololive／VTuber；一般直播用語可維持全域。請先篩選、勾選，再批次調整；現有詞條不會自動改寫。
+            </div>
+            <div class="flex flex-wrap items-center gap-2 text-sm">
+              <button type="button" class="rounded-lg bg-white/10 px-3 py-2 text-white hover:bg-white/20" @click="selectVisibleGlossaryTerms">選取本頁個人詞條</button>
+              <button type="button" :disabled="!selectedGlossaryTerms.length" class="rounded-lg bg-white/10 px-3 py-2 text-white disabled:opacity-40" @click="selectedGlossaryTerms = []">清除選取</button>
+              <span class="text-white/60">已選 {{ selectedGlossaryTerms.length }} 筆</span>
+              <div class="min-w-[190px] ml-auto"><UiSelect v-model="bulkGlossaryScope" aria-label="批次適用情境" :options="glossaryScopeOptions" /></div>
+              <button type="button" :disabled="!selectedGlossaryTerms.length" class="rounded-lg bg-purple-600 px-3 py-2 font-semibold text-white disabled:opacity-40" @click="applySelectedGlossaryScope">套用情境</button>
+            </div>
+            <div v-if="removedGlossaryTerm" class="rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm text-white/70">
+              已移除「{{ removedGlossaryTerm.term.original }}」。<button type="button" class="ml-2 text-blue-300 underline" @click="undoRemovedGlossaryTerm">還原</button>
+            </div>
+
+            <!-- 精簡清單：只有選中的一筆展開編輯 -->
+            <div ref="glossaryUserList" class="space-y-2">
+              <div v-for="term in visibleGlossary" :key="`${term.original}-${term.scope || 'all'}`"
+                class="rounded-lg border border-white/10 bg-white/[0.03]">
+                <div class="flex items-center gap-3 px-3 py-2">
+                  <input v-if="!term.builtin && !term.legacy" type="checkbox" :checked="selectedGlossaryTerms.includes(term)" :aria-label="`選取 ${term.original}`" @change="toggleGlossarySelection(term, ($event.target as HTMLInputElement).checked)" />
+                  <span v-else class="w-[13px] shrink-0" aria-hidden="true"></span>
+                  <button type="button" :disabled="term.builtin || term.legacy" class="min-w-0 flex-1 grid grid-cols-1 sm:grid-cols-[minmax(110px,1fr)_minmax(130px,1fr)] gap-1 text-left disabled:cursor-default" :aria-expanded="!term.builtin && !term.legacy && expandedGlossaryTerm === term" @click="expandedGlossaryTerm = expandedGlossaryTerm === term ? null : term">
+                    <span class="truncate text-white">{{ term.original }}</span>
+                    <span class="truncate text-yellow-200">→ {{ term.translated }}</span>
+                  </button>
+                  <span class="hidden md:inline shrink-0 rounded bg-white/10 px-2 py-1 text-xs text-white/60">{{ term.builtin ? '內建' : term.legacy ? '舊版詞條' : `我的詞條 · ${glossaryScopeOptions.find(option => option.value === (term.scope || 'all'))?.label || '所有直播'}` }}</span>
+                  <button v-if="term.builtin" type="button" class="shrink-0 text-sm text-blue-300" :aria-label="`自訂 ${term.original} 譯法`" @click="customizePresetTerm(term.original, term.translated, false)">自訂譯法</button>
+                  <span v-else-if="term.legacy" class="text-xs text-amber-200">由舊版設定管理</span>
+                  <button v-else type="button" class="shrink-0 text-sm text-blue-300" :aria-label="`${expandedGlossaryTerm === term ? '收合' : '編輯'} ${term.original}`" @click="expandedGlossaryTerm = expandedGlossaryTerm === term ? null : term">{{ expandedGlossaryTerm === term ? '收合' : '編輯' }}</button>
                 </div>
-                <button @click="removeTermEntry(term)" class="text-red-400 hover:text-red-300 ml-4">✕</button>
+                <div v-if="!term.builtin && !term.legacy && expandedGlossaryTerm === term" class="grid grid-cols-1 md:grid-cols-2 gap-3 border-t border-white/10 p-3">
+                  <label class="text-sm text-white/70">繁中譯法
+                    <input v-model="term.translated" class="mt-1 w-full rounded-lg border border-white/20 bg-white/5 px-3 py-2 text-yellow-200" />
+                  </label>
+                  <div class="text-sm text-white/70">適用情境
+                    <UiSelect :model-value="term.scope || 'all'" :options="glossaryScopeOptions" :aria-label="`${term.original} 的適用情境`" button-class="mt-1" @update:model-value="setTermScope(term, $event)" />
+                  </div>
+                  <label class="text-sm text-white/70 md:col-span-2">別名（可留空，逗號分隔）
+                    <input :value="Array.isArray(term.aliases) ? term.aliases.join(', ') : (term.aliases || '')" @change="setTermAliases(term, $event)" class="mt-1 w-full rounded-lg border border-white/20 bg-white/5 px-3 py-2 text-white" />
+                  </label>
+                  <div class="md:col-span-2 flex justify-end"><button type="button" class="text-sm text-red-300 hover:text-red-200" @click="removeTermEntry(term)">刪除此詞條</button></div>
+                </div>
               </div>
               <div v-if="filteredGlossary.length === 0" class="text-white/40 text-center py-8">
-                {{ (localConfig.terminology?.glossary_list?.length || 0) === 0 ? '尚未新增術語' : '無符合搜尋的術語' }}
+                {{ termSearchQuery.trim() ? '沒有符合搜尋的詞條' : '目前沒有適用詞條' }}
               </div>
               <button
                 v-if="visibleGlossary.length < filteredGlossary.length"
-                @click="glossaryRenderLimit += LARGE_LIST_BATCH_SIZE"
+                @click="glossaryRenderLimit += GLOSSARY_PAGE_SIZE"
                 class="w-full py-2 text-sm text-purple-300 hover:text-purple-200 bg-white/5 hover:bg-white/10 rounded-lg"
               >
-                顯示更多（尚有 {{ filteredGlossary.length - visibleGlossary.length }} 筆）
+                顯示接下來 {{ Math.min(GLOSSARY_PAGE_SIZE, filteredGlossary.length - visibleGlossary.length) }} 筆（尚有 {{ filteredGlossary.length - visibleGlossary.length }} 筆）
               </button>
             </div>
 
             <div class="text-white/40 text-sm mt-4">
-              共 {{ localConfig.terminology?.glossary_list?.length || 0 }} 個術語
+              目前清單 {{ filteredGlossary.length }} 筆；我的詞條總數 {{ localConfig.terminology?.glossary_list?.length || 0 }} 筆
+            </div>
             </div>
           </div>
 

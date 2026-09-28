@@ -164,6 +164,15 @@ class AudioTranscriber(LoopWorkerBase):
             if task is None:
                 output_queue.put(None)
                 break
+            if hasattr(input_queue, "snapshot"):
+                queue_snapshot = input_queue.snapshot()
+                current_audio_seconds = len(task.audio) / SAMPLE_RATE
+                current_wait_ms = max(0.0, time.perf_counter() - task.created_at_monotonic) * 1000
+                task.latency_trace.asr_queue_depth = int(queue_snapshot["depth"]) + 1
+                task.latency_trace.asr_queue_audio_seconds = float(queue_snapshot["audio_seconds"]) + current_audio_seconds
+                task.latency_trace.asr_queue_oldest_wait_ms = max(
+                    float(queue_snapshot["oldest_wait_ms"]), current_wait_ms
+                )
 
             dynamic_context = previous_text if not self.disable_transcription_context else ""
 

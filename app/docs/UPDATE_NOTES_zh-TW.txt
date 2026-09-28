@@ -1,16 +1,16 @@
-Stream Translator v1.4.9 更新說明
-=============================================
+Stream Translator v1.4.10 更新說明
+==============================================
 
 主要更新
 --------
-- 新安裝預設使用 FireRed OmniStreamVAD 原生事件切段，語音閾值 0.35、最長切片 6 秒；已儲存的 VAD 設定不變。
-- 修正桌面視窗中的外部下載連結無法開啟；首次設定加入 WARP 連線指引。
-- 改善 Windows App Update 等待後端退出、檔案移動與失敗回復。
-- 修正即時字幕去除重疊後可能顯示未翻譯原文。
-- 改善簡單模式日文初始設定、顯存偵測、模型推薦及下載記錄。
+- 首次啟動可稍後設定或使用本機已有的 ASR、llama.cpp、GGUF 與離線 CPU ASR Runtime，不再因下載失敗卡住。
+- 簡單模式只準備目前來源與語言需要的一個 ASR 模型，模型下載可以取消。
+- 首頁加入網址、影音檔、系統音訊與麥克風的個別來源測試，以及範例字幕樣式預覽。
+- 修正打包版 CUDA ASR 可能受到 Qt DLL 路徑影響而無法載入 GPU Runtime 的問題。
+- 加入 ASR 佇列與字幕延遲追蹤，並改善鍵盤焦點及首頁提示文字。
 
 更新方式
 --------
-- v1.4.9 App Update 包含完整 Runtime 並會替換舊 Runtime；CUDA、CPU、ROCm 只能套用於相同 Profile，跨 Profile 請使用 Full package。
-- 保留原有 config.yaml 時，使用者已儲存的設定不會被新預設覆蓋。
-- 完整內容見 RELEASE_NOTES_v1.4.9_zh-TW.md。
+- v1.4.10 App Update 包含完整且與 Profile 相符的 Runtime；CUDA、CPU、ROCm 不可交叉套用。
+- 套用前請關閉程式並備份 config.yaml。若使用自訂模型或 Runtime，更新不會刪除外部檔案。
+- 完整內容見 RELEASE_NOTES_v1.4.10_zh-TW.md。

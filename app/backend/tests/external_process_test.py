@@ -1,10 +1,18 @@
 import ctypes
+import inspect
 import os
 import subprocess
 import sys
 
 import pytest
 from backend.core import external_process as external
+from backend.core.translator import TranslationContext
+
+
+def test_translation_runtime_uses_isolated_external_launcher():
+    source = inspect.getsource(TranslationContext._process_loop)
+    assert "popen_external(" in source
+    assert "subprocess.Popen(" not in source
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows DLL inheritance")
@@ -20,25 +28,35 @@ def test_frozen_launch_clears_dll_override_and_restores_it(monkeypatch, tmp_path
     original = current()
     bundle = tmp_path / "bundle"
     bundle.mkdir()
+    ffmpeg = tmp_path / "ffmpeg" / "bin"
+    ffmpeg.mkdir(parents=True)
+    working_directory = tmp_path / "working"
+    working_directory.mkdir()
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(sys, "_MEIPASS", str(bundle), raising=False)
-    monkeypatch.setenv("PATH", str(bundle) + os.pathsep + str(tmp_path / "driver"))
+    inherited_path = os.pathsep.join((str(ffmpeg), str(bundle), str(tmp_path / "driver")))
+    monkeypatch.setenv("PATH", inherited_path)
     sentinel = object()
     def spawn(args, **kwargs):
         assert current() == ""
-        assert kwargs["env"]["PATH"] == str(tmp_path / "driver")
-        assert kwargs["cwd"] == str(tmp_path)
+        assert kwargs["env"]["PATH"] == os.pathsep.join((str(ffmpeg), str(tmp_path / "driver")))
+        assert kwargs["env"]["PYTHONUTF8"] == "1"
+        assert kwargs["cwd"] == str(working_directory)
         if fail:
             raise OSError("spawn failed")
         return sentinel
     monkeypatch.setattr(subprocess, "Popen", spawn)
     try:
         kernel.SetDllDirectoryW(str(bundle))
+        launch_kwargs = {
+            "cwd": str(working_directory),
+            "env": {"PATH": inherited_path, "PYTHONUTF8": "1"},
+        }
         if fail:
             with pytest.raises(OSError, match="spawn failed"):
-                external.popen_external([str(tmp_path / "tool.exe")])
+                external.popen_external([str(tmp_path / "tool.exe")], **launch_kwargs)
         else:
-            assert external.popen_external([str(tmp_path / "tool.exe")]) is sentinel
+            assert external.popen_external([str(tmp_path / "tool.exe")], **launch_kwargs) is sentinel
         assert current() == str(bundle)
     finally:
         kernel.SetDllDirectoryW(original or None)

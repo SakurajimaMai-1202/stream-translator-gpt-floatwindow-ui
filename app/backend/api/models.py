@@ -1,8 +1,12 @@
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from pathlib import Path
+import os
 
 from backend.core.model_download_manager import get_model_download_manager
 from backend.core.runtime_profiles import get_asr_capabilities
 from backend.api.config import get_config_manager
+from backend.core.portable_paths import get_app_root
 from backend.models.model_download import (
     DownloadedModelListResponse,
     ModelActionResponse,
@@ -15,6 +19,10 @@ from backend.models.model_download import (
 )
 
 router = APIRouter(prefix="/models", tags=["models"])
+
+
+class ModelStorageValidateRequest(BaseModel):
+    storage_path: str
 
 
 @router.post("/download", response_model=StartModelDownloadResponse)
@@ -61,6 +69,14 @@ async def get_model_download_task(task_id: str):
     return task
 
 
+@router.post("/tasks/{task_id}/cancel", response_model=ModelDownloadTask)
+async def cancel_model_download_task(task_id: str):
+    try:
+        return get_model_download_manager().cancel(task_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Task not found") from exc
+
+
 @router.get("/list", response_model=DownloadedModelListResponse)
 async def list_downloaded_models():
     """列出已下載模型"""
@@ -73,6 +89,24 @@ async def list_downloaded_models():
 async def get_model_storage():
     manager = get_model_download_manager()
     return ModelStorageInfoResponse(storage=ModelStorageInfo(**manager.get_storage_info()))
+
+
+@router.post("/storage/validate")
+async def validate_model_storage(request: ModelStorageValidateRequest):
+    raw = str(request.storage_path or "").strip()
+    path = Path(os.path.expandvars(os.path.expanduser(raw)))
+    if not path.is_absolute():
+        path = get_app_root() / path
+    path = path.resolve()
+    if not path.is_dir():
+        raise HTTPException(status_code=400, detail=f"ASR 模型根目錄不存在: {path}")
+    recognized = [name for name in ("hub", "modelscope", "sherpa-onnx") if (path / name).is_dir()]
+    if not recognized:
+        raise HTTPException(
+            status_code=400,
+            detail="ASR 模型根目錄中找不到 hub、modelscope 或 sherpa-onnx 子目錄",
+        )
+    return {"success": True, "path": str(path), "recognized": recognized}
 
 
 @router.post("/storage/open", response_model=ModelActionResponse)

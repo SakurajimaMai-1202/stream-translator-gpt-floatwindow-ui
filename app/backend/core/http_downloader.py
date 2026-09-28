@@ -16,8 +16,8 @@ class _RangeUnsupported(Exception):
     pass
 
 class HttpDownloader:
-    def __init__(self, progress=None):
-        self._cancel = threading.Event()
+    def __init__(self, progress=None, cancel_event=None):
+        self._cancel = cancel_event or threading.Event()
         self._progress = progress
 
     def _set(self, **changes):

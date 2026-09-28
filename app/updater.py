@@ -12,13 +12,14 @@ import time
 from pathlib import Path
 
 import yaml
+from update_runtime_contract import validate_update_runtime
 from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication, QDialog, QHBoxLayout, QLabel, QMessageBox, QProgressBar, QPushButton, QTextEdit, QVBoxLayout
 
 ALLOWED = {
-    "app-update-build.json", "StreamTranslatorUpdater.exe", "diagnose_runtime.ps1",
-    "PORTABLE_GUIDE_zh-TW.txt", "smoke_sensevoice_asr.ps1", "Stream Translator.exe",
+    "app-update-build.json", "StreamTranslatorUpdater.exe",
+    "PORTABLE_GUIDE_zh-TW.txt", "Stream Translator.exe",
     "UPDATE_NOTES_zh-TW.txt", "_internal", "_js_runtime", "_runtime",
 }
 UPDATE_MODES = {"app_only", "runtime_replace"}
@@ -212,6 +213,7 @@ class Worker(QThread):
             runtime_info = json.loads(runtime_manifest.read_text(encoding="utf-8"))
             if str(runtime_info.get("profile") or "").lower() != str(plan.get("profile") or "").lower():
                 raise RuntimeError("替換 Runtime 的 Profile 不相符")
+        validate_update_runtime(manifest, runtime if mode == "runtime_replace" else app_root / "_runtime")
         return plan, manifest, app_root, staging, items, mode
 
     def run(self) -> None:

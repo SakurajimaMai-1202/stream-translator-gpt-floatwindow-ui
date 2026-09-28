@@ -16,6 +16,11 @@ TRACKED_LATENCY_METRICS = (
     "translation_inference_ms",
     "delivery_ms",
     "end_to_end_ms",
+    "first_speech_to_delivery_ms",
+    "speech_end_to_final_delivery_ms",
+    "asr_queue_audio_seconds",
+    "asr_queue_oldest_wait_ms",
+    "asr_queue_depth",
 )
 
 

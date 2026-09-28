@@ -91,8 +91,8 @@ translation:
   google_api_key: ''
   backend: custom:localllm
   model: localllm
-  translation_prompt: Translate the following text to English
-  target_language: English
+  translation_prompt: 翻譯成繁體中文
+  target_language: Traditional Chinese
   history_size: 0
   timeout: 10
   gpt_model: localllm
@@ -108,6 +108,20 @@ translation:
   translation_output_format: auto
   translation_max_concurrency: 0
   translation_max_output_tokens: 128
+  hy_mt2_optimizer_enabled: false
+  hy_mt2_context_window: 3
+  hy_mt2_max_context_chars: 1000
+  hy_mt2_max_terms: 10
+  hy_mt2_style: true
+  hy_mt2_style_text: '使用自然、簡潔的台灣繁體中文直播字幕；保留原文語氣，不要補充原文沒有的資訊；只輸出譯文。'
+  hy_mt2_preferences: ''
+  hy_mt2_debug: false
+  hy_mt2_provider: existing
+  hy_mt2_lm_studio_url: http://127.0.0.1:1234/v1
+  hy_mt2_lm_studio_model: ''
+  hy_mt2_llama_cpp_url: http://127.0.0.1:8081/v1
+  hy_mt2_llama_cpp_model: ''
+  hy_mt2_glossary_folder: ''
   paired_subtitle_mode: true
   deduplicate_asr_overlap: true
   subtitle_assembler_enabled: true
@@ -116,7 +130,7 @@ translation:
   subtitle_assembler_gap_threshold: 0.8
   custom_models:
   - name: localllm
-    base_url: http://127.0.0.1:8080
+    base_url: http://127.0.0.1:8081
     api_key: '114514'
     model_name: localllm
   api_key: ''
@@ -161,12 +175,13 @@ subtitle_settings:
   position: bottom
   autoScroll: true
   maxDisplayCount: 30
-  textColor: '#55ffff'
+  textColor: '#55FFFF'
   translatedColor: '#FFDD00'
-  timestampColor: '#888888'
-  latencyColor: '#7DD3FC'
-  backgroundColor: '#ffffff'
+  timestampColor: '#FF5500'
+  latencyColor: '#AAFF00'
+  backgroundColor: '#FFFFFF'
   backgroundOpacity: 5
+  mousePassthrough: false
 ui:
   theme: light
   transparency: 80
@@ -194,8 +209,6 @@ ui:
       height: 600
       visible: false
     floating_subtitle:
-      x: 200
-      y: 200
       width: 800
       height: 300
       visible: true
@@ -208,7 +221,7 @@ llama:
   selected_preset: ''
   default_preset: ''
   host: 127.0.0.1
-  port: 8080
+  port: 8081
   n_ctx: 2048
   n_gpu_layers: 0
   n_threads: 8

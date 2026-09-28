@@ -254,6 +254,7 @@ async def get_translation_status():
         tasks.append({
             "task_id": task_id,
             "is_running": context.running,
+            "asr_ready": context.running and context.asr_ready,
             "url": getattr(context, 'url', ''),
         })
     
@@ -274,6 +275,7 @@ async def get_task_status(task_id: str):
         "success": True,
         "task_id": task_id,
         "is_running": context.running,
+        "asr_ready": context.running and context.asr_ready,
         "url": getattr(context, 'url', ''),
     }
 

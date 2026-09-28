@@ -5,6 +5,7 @@ import itertools
 import time
 import uuid
 import io
+import queue
 from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
@@ -85,6 +86,9 @@ class LatencyTrace:
     translation_started_at: float | None = None
     translation_finished_at: float | None = None
     subtitle_delivered_at: float | None = None
+    asr_queue_audio_seconds: float | None = None
+    asr_queue_oldest_wait_ms: float | None = None
+    asr_queue_depth: int | None = None
 
     def merge(self, other: "LatencyTrace") -> None:
         self.merged_trace_ids.extend([other.trace_id, *other.merged_trace_ids])
@@ -131,6 +135,11 @@ class LatencyTrace:
             "translation_inference_ms": _elapsed_ms(self.translation_started_at, self.translation_finished_at),
             "delivery_ms": _elapsed_ms(self.translation_finished_at, self.subtitle_delivered_at),
             "end_to_end_ms": _elapsed_ms(self.last_speech_at, self.subtitle_delivered_at),
+            "first_speech_to_delivery_ms": _elapsed_ms(self.first_speech_at, self.subtitle_delivered_at),
+            "speech_end_to_final_delivery_ms": _elapsed_ms(self.last_speech_at, self.subtitle_delivered_at),
+            "asr_queue_audio_seconds": self.asr_queue_audio_seconds,
+            "asr_queue_oldest_wait_ms": self.asr_queue_oldest_wait_ms,
+            "asr_queue_depth": self.asr_queue_depth,
         }
         return metrics
 
@@ -150,6 +159,7 @@ class TranslationTask:
         self.time_range = time_range
         self.start_time = None
         self.translation_failed = False
+        self.translation_validation_rejected = False
         self.asr_latency_ms = None
         self.llm_latency_ms = None
         self._llm_latency_started_at = None
@@ -165,6 +175,28 @@ class TranslationTask:
         self.translation_completion_tokens = None
         self._translation_attempts = 0
         self._translation_inflight = False
+
+
+class ObservableTaskQueue(queue.Queue):
+    """Task queue exposing numeric backlog only, never audio or transcript content."""
+
+    def snapshot(self) -> dict[str, float | int]:
+        now = time.perf_counter()
+        with self.mutex:
+            tasks = [item for item in self.queue if isinstance(item, TranslationTask)]
+        audio_seconds = 0.0
+        oldest_wait = 0.0
+        for task in tasks:
+            try:
+                audio_seconds += len(task.audio) / SAMPLE_RATE
+            except (TypeError, AttributeError):
+                pass
+            oldest_wait = max(oldest_wait, now - task.created_at_monotonic)
+        return {
+            "depth": len(tasks),
+            "audio_seconds": audio_seconds,
+            "oldest_wait_ms": max(0.0, oldest_wait) * 1000,
+        }
 
 
 class LoopWorkerBase(ABC):

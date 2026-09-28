@@ -19,7 +19,7 @@ watch(() => interfaceMode.mode, (mode) => {
 const visibleSettingsGroups = computed(() => interfaceMode.isSimple
   ? [{ groupName: '常用設定', items: [{ id: 'general', name: '一般設定' }] }]
   : settingsGroups);
-const appVersion = import.meta.env.VITE_APP_VERSION || '1.4.9';
+const appVersion = import.meta.env.VITE_APP_VERSION || '1.4.10';
 const isMobileMenuOpen = ref(false);
 
 // Define navigation items
@@ -36,7 +36,8 @@ const settingsGroups: Array<{ groupName: string; items: SettingsNavItem[] }> = [
     items: [
       { id: 'general', name: '一般設定' },
       { id: 'input', name: '輸入選項' },
-      { id: 'output', name: '輸出與通知' }
+      { id: 'output', name: '輸出與通知' },
+      { id: 'diagnostics', name: '進階設定／疑難排解' }
     ]
   },
   {
@@ -106,12 +107,52 @@ watch(() => route.fullPath, () => {
         <a href="https://one.one.one.one/" target="_blank" rel="noopener noreferrer" class="font-semibold text-indigo-300 underline hover:text-indigo-200">Cloudflare 官方網站下載 WARP ↗</a>，
         在 Cloudflare One Client 選擇「流量和 DNS」模式並按「連線」，連上後回到程式重新下載。實際速度依網路環境而異。
       </p>
+      <div v-if="interfaceMode.loaded" class="flex flex-col gap-2 sm:flex-row">
+        <button :disabled="interfaceMode.busy" class="rounded-lg border border-cyan-400/40 bg-cyan-500/10 px-4 py-2 text-sm font-semibold text-cyan-100 disabled:opacity-50" @click="interfaceMode.openExistingResources()">使用本機已有檔案</button>
+        <button :disabled="interfaceMode.busy" class="rounded-lg border border-white/15 bg-white/5 px-4 py-2 text-sm text-slate-200 disabled:opacity-50" @click="interfaceMode.skipSetup()">稍後設定，先進入程式</button>
+      </div>
+      </template>
+      <template v-else-if="interfaceMode.onboardingStep === 'purpose'">
+        <div>
+          <p class="text-sm font-bold uppercase tracking-widest text-indigo-300">步驟 1／3</p>
+          <h1 id="interface-mode-title" class="mt-2 text-2xl font-bold">先完成一種用途</h1>
+          <p class="mt-2 text-base text-slate-300">選擇你現在要使用的來源與語言；只會準備這次需要的一個辨識模型。</p>
+        </div>
+        <fieldset class="space-y-3 rounded-2xl border border-white/10 bg-white/5 p-5">
+          <legend class="px-2 text-base font-bold">聲音從哪裡來？</legend>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label v-for="item in [
+              { value: 'system_audio', label: '電腦播放的聲音' },
+              { value: 'microphone', label: '麥克風' },
+              { value: 'file', label: '影音檔案' },
+              { value: 'url', label: '直播網址' },
+            ]" :key="item.value" class="flex cursor-pointer items-center gap-3 rounded-xl border border-white/15 p-3 text-base">
+              <input v-model="interfaceMode.selectedSource" type="radio" :value="item.value" class="h-4 w-4 accent-indigo-500" />
+              {{ item.label }}
+            </label>
+          </div>
+        </fieldset>
+        <label class="block rounded-2xl border border-white/10 bg-white/5 p-5 text-base font-bold">輸入語言
+          <select v-model="interfaceMode.selectedLanguage" class="mt-3 w-full rounded-xl border border-white/20 bg-slate-950 px-4 py-3 text-base text-white">
+            <option value="ja">日文</option>
+            <option value="zh">中文</option>
+            <option value="en">英文</option>
+            <option value="ko" disabled>韓文（請使用進階模式選擇支援模型）</option>
+          </select>
+          <span class="mt-3 block text-sm font-normal text-slate-300">
+            將準備：{{ interfaceMode.selectedStarterModel?.label || '目前沒有簡單模式相容模型' }}；下載大小未知時會明示未知。
+          </span>
+        </label>
+        <div class="flex flex-wrap gap-3">
+          <button :disabled="interfaceMode.busy || !interfaceMode.selectedStarterModel" class="rounded-lg bg-indigo-500 px-5 py-3 text-base font-bold disabled:opacity-45" @click="interfaceMode.continueFromPurpose()">繼續選擇翻譯方式</button>
+          <button class="rounded-lg border border-white/20 px-4 py-3 text-base" @click="interfaceMode.backToModeChoice()">返回</button>
+        </div>
       </template>
       <template v-else-if="interfaceMode.onboardingStep === 'translation'">
         <div>
-          <p class="text-xs font-bold uppercase tracking-widest text-indigo-300">簡單模式設定</p>
+          <p class="text-sm font-bold uppercase tracking-widest text-indigo-300">步驟 2／3 · 翻譯方式</p>
           <h1 id="interface-mode-title" class="mt-2 text-2xl font-bold">你想用哪種方式翻譯？</h1>
-          <p class="mt-2 text-sm text-slate-300">選好後，程式會自動完成其餘設定。</p>
+          <p class="mt-2 text-base text-slate-300">可選本機、雲端，或稍後在首頁關閉翻譯只做語音辨識。</p>
         </div>
         <div v-if="interfaceMode.hardware?.selected_gpu" class="rounded-xl border border-white/10 bg-white/5 p-4 text-sm">
           偵測到 {{ interfaceMode.hardware.selected_gpu.name }} · {{ interfaceMode.hardware.vram_gb }} GB VRAM
@@ -133,6 +174,34 @@ watch(() => route.fullPath, () => {
           </div>
         </div>
         <button class="text-sm text-slate-300 underline" @click="interfaceMode.backToModeChoice()">返回選擇介面</button>
+      </template>
+      <template v-else-if="interfaceMode.onboardingStep === 'local'">
+        <div>
+          <p class="text-xs font-bold uppercase tracking-widest text-cyan-300">離線／手動設定</p>
+          <h1 id="interface-mode-title" class="mt-2 text-2xl font-bold">使用本機已有資源</h1>
+          <p class="mt-2 text-sm text-slate-300">只填你已有的項目。儲存後會進入進階模式，不會自動下載。</p>
+        </div>
+        <div class="space-y-4 rounded-2xl border border-white/10 bg-white/5 p-5">
+          <label class="block text-sm text-slate-200">ASR 模型根目錄
+            <input v-model="interfaceMode.existingAsrStoragePath" type="text" placeholder="例如 D:\\StreamTranslatorModels" class="mt-2 w-full rounded-lg border border-white/20 bg-slate-950 px-3 py-2 text-white" />
+          </label>
+          <label class="block text-sm text-slate-200">llama.cpp Runtime 資料夾
+            <input v-model="interfaceMode.existingLlamaServerExe" type="text" placeholder="例如 D:\\llama.cpp" class="mt-2 w-full rounded-lg border border-white/20 bg-slate-950 px-3 py-2 text-white" />
+          </label>
+          <p class="text-xs text-slate-400">填入包含 llama-server.exe 的資料夾，驗證時會自動偵測。</p>
+          <label class="block text-sm text-slate-200">GGUF 翻譯模型
+            <input v-model="interfaceMode.existingLlamaModelPath" type="text" placeholder="例如 D:\\Models\\Hy-MT2.gguf" class="mt-2 w-full rounded-lg border border-white/20 bg-slate-950 px-3 py-2 text-white" />
+          </label>
+          <label class="block text-sm text-slate-200">CPU ASR Runtime 離線 ZIP（選填）
+            <input v-model="interfaceMode.offlineCpuAsrArchive" type="text" placeholder="例如 D:\\Downloads\\StreamTranslator-CPU-ASR-Sidecar.zip" class="mt-2 w-full rounded-lg border border-white/20 bg-slate-950 px-3 py-2 text-white" />
+          </label>
+          <p class="text-xs leading-5 text-slate-400">ASR 根目錄應包含 hub、modelscope 或 sherpa-onnx 子目錄；變更位置不會搬移或刪除既有檔案。</p>
+        </div>
+        <div class="flex flex-wrap gap-3">
+          <button :disabled="interfaceMode.busy" class="rounded-lg bg-cyan-600 px-4 py-2 font-bold disabled:opacity-50" @click="interfaceMode.configureExistingResources()">驗證並儲存</button>
+          <button :disabled="interfaceMode.busy" class="rounded-lg border border-white/20 px-4 py-2 text-slate-200 disabled:opacity-50" @click="interfaceMode.backToModeChoice()">返回</button>
+          <button :disabled="interfaceMode.busy" class="rounded-lg border border-white/10 px-4 py-2 text-slate-400 disabled:opacity-50" @click="interfaceMode.skipSetup()">不設定，先進入程式</button>
+        </div>
       </template>
       <template v-else>
         <h1 id="interface-mode-title" class="text-2xl font-bold">正在自動準備</h1>
@@ -167,8 +236,13 @@ watch(() => route.fullPath, () => {
           <progress class="w-full" :value="model.progress" :max="1" />
           <p class="text-xs text-slate-300">{{ model.message }}</p>
         </div>
+        <button type="button" class="rounded-lg border border-amber-400/40 px-4 py-2 text-sm font-bold text-amber-100 focus-visible:outline-none" @click="interfaceMode.cancelPreparation()">取消模型下載</button>
       </div>
-      <button v-if="interfaceMode.pendingMode && !interfaceMode.busy && interfaceMode.error && interfaceMode.onboardingStep === 'translation'" class="rounded-lg border px-4 py-2" @click="interfaceMode.translationChoice === 'local' ? interfaceMode.configureLocal() : interfaceMode.translationChoice === 'cloud' ? interfaceMode.configureCloud() : undefined">重試準備環境</button>
+      <div v-if="interfaceMode.pendingMode && !interfaceMode.busy && interfaceMode.error && interfaceMode.onboardingStep === 'translation'" class="flex flex-wrap gap-2">
+        <button class="rounded-lg border px-4 py-2" @click="interfaceMode.translationChoice === 'local' ? interfaceMode.configureLocal() : interfaceMode.translationChoice === 'cloud' ? interfaceMode.configureCloud() : undefined">重試準備環境</button>
+        <button class="rounded-lg border px-4 py-2" @click="interfaceMode.openExistingResources()">使用本機已有檔案</button>
+        <button class="rounded-lg border px-4 py-2" @click="interfaceMode.skipSetup()">稍後設定</button>
+      </div>
       <button v-if="!interfaceMode.loaded && !interfaceMode.busy" class="rounded-lg border px-4 py-2" @click="interfaceMode.load()">重新讀取</button>
     </section>
   </div>

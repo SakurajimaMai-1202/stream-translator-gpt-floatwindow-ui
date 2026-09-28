@@ -2,11 +2,12 @@ from pydantic_settings import BaseSettings
 from pathlib import Path
 from typing import ClassVar
 import sys
+import os
 
 class Settings(BaseSettings):
     """應用程式設定"""
     APP_NAME: str = "YouTube 直播翻譯器 API"
-    APP_VERSION: str = "1.4.9"
+    APP_VERSION: str = "1.4.10"
     API_PREFIX: str = "/api"
     
     # 路徑設定
@@ -29,3 +30,6 @@ class Settings(BaseSettings):
         env_file = ".env"
 
 settings = Settings()
+_config_override = os.environ.get("STREAM_TRANSLATOR_CONFIG_FILE", "").strip()
+if _config_override:
+    settings.CONFIG_FILE = Path(os.path.expandvars(os.path.expanduser(_config_override))).resolve()

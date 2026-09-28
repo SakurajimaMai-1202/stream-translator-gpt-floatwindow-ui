@@ -5,7 +5,7 @@ import time
 
 from .audio_getter import StreamAudioGetter, LocalFileAudioGetter, DeviceAudioGetter
 from .audio_slicer import AudioSlicer
-from .common import ClientPool, INFO, is_url, PipelineWorkers
+from .common import ClientPool, INFO, is_url, ObservableTaskQueue, PipelineWorkers
 from .result_exporter import ResultExporter
 from .subtitle_segmenter import SubtitleSegmenter
 
@@ -106,9 +106,13 @@ def create_translator(options: dict):
         provider,
     )
     capabilities = get_capabilities(model_family)
+    optimizer_active = bool(options.get("hy_mt2_optimizer_enabled")) and model_family == "hy_mt2"
+    history_size = int(options.get("translation_history_size", 0))
+    if optimizer_active:
+        history_size = max(history_size, max(0, min(5, int(options.get("hy_mt2_context_window", 3)))))
     requested_concurrency = int(options.get("translation_max_concurrency") or 0)
     max_concurrency = requested_concurrency or capabilities.default_max_concurrency
-    if options.get("translation_history_size", 0):
+    if history_size:
         max_concurrency = 1
 
     if provider == "gemini":
@@ -116,7 +120,7 @@ def create_translator(options: dict):
             llm_type=LLMClient.LLM_TYPE.GEMINI,
             model=options.get("gemini_model"),
             prompt=options.get("translation_prompt"),
-            history_size=options.get("translation_history_size", 0),
+            history_size=history_size,
             proxy=options.get("processing_proxy"),
             use_json_result=options.get("use_json_result"),
             gemini_base_url=options.get("gemini_base_url"),
@@ -125,13 +129,23 @@ def create_translator(options: dict):
             output_format=options.get("translation_output_format", "auto"),
             max_output_tokens=options.get("translation_max_output_tokens", 128),
             provider=provider,
+            hy_mt2_optimizer_enabled=optimizer_active,
+            hy_mt2_context_window=options.get("hy_mt2_context_window", 3),
+            hy_mt2_max_context_chars=options.get("hy_mt2_max_context_chars", 1000),
+            hy_mt2_max_terms=options.get("hy_mt2_max_terms", 10),
+            hy_mt2_style=options.get("hy_mt2_style", True),
+            hy_mt2_style_text=options.get("hy_mt2_style_text", ""),
+            hy_mt2_preferences=options.get("hy_mt2_preferences", ""),
+            hy_mt2_debug=options.get("hy_mt2_debug", False),
+            hy_mt2_aliases=options.get("hy_mt2_aliases"),
+            hy_mt2_glossary_folder=options.get("hy_mt2_glossary_folder"),
         )
     else:
         llm_client = LLMClient(
             llm_type=LLMClient.LLM_TYPE.GPT,
             model=options.get("gpt_model"),
             prompt=options.get("translation_prompt"),
-            history_size=options.get("translation_history_size", 0),
+            history_size=history_size,
             proxy=options.get("processing_proxy"),
             use_json_result=options.get("use_json_result"),
             glossary=glossary,
@@ -139,6 +153,16 @@ def create_translator(options: dict):
             output_format=options.get("translation_output_format", "auto"),
             max_output_tokens=options.get("translation_max_output_tokens", 128),
             provider=provider,
+            hy_mt2_optimizer_enabled=optimizer_active,
+            hy_mt2_context_window=options.get("hy_mt2_context_window", 3),
+            hy_mt2_max_context_chars=options.get("hy_mt2_max_context_chars", 1000),
+            hy_mt2_max_terms=options.get("hy_mt2_max_terms", 10),
+            hy_mt2_style=options.get("hy_mt2_style", True),
+            hy_mt2_style_text=options.get("hy_mt2_style_text", ""),
+            hy_mt2_preferences=options.get("hy_mt2_preferences", ""),
+            hy_mt2_debug=options.get("hy_mt2_debug", False),
+            hy_mt2_aliases=options.get("hy_mt2_aliases"),
+            hy_mt2_glossary_folder=options.get("hy_mt2_glossary_folder"),
         )
 
     return ParallelTranslator(
@@ -204,7 +228,7 @@ def run_inprocess_pipeline(url: str,
                     google_base_url=options.get("google_base_url"))
 
     getter_to_slicer_queue = queue.SimpleQueue()
-    slicer_to_transcriber_queue = queue.SimpleQueue()
+    slicer_to_transcriber_queue = ObservableTaskQueue()
     transcriber_to_segmenter_queue = queue.SimpleQueue()
     segmenter_to_translator_queue = queue.SimpleQueue()
     translator_to_exporter_queue = queue.SimpleQueue() if options.get("translation_prompt") else segmenter_to_translator_queue

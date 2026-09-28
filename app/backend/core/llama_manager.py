@@ -28,7 +28,7 @@ class LlamaManager:
         self,
         model_path: str,
         host: str = "127.0.0.1",
-        port: int = 8080,
+        port: int = 8081,
         n_ctx: int = 2048,
         n_gpu_layers: int = 0,
         n_threads: int = 4,

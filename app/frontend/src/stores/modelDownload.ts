@@ -16,7 +16,7 @@ export const useModelDownloadStore = defineStore('modelDownload', () => {
   const successMessage = ref('');
 
   const activeTasks = computed(() =>
-    tasks.value.filter((task) => task.status === 'pending' || task.status === 'downloading')
+    tasks.value.filter((task) => ['pending', 'downloading', 'cancelling'].includes(task.status))
   );
 
   const taskMap = computed(() => {
@@ -72,7 +72,7 @@ export const useModelDownloadStore = defineStore('modelDownload', () => {
     clearMessages();
     try {
       const existing = taskMap.value[`${computeBackend}:${engine}:${modelId}`];
-      if (existing && (existing.status === 'pending' || existing.status === 'downloading')) {
+      if (existing && ['pending', 'downloading', 'cancelling'].includes(existing.status)) {
         successMessage.value = '此模型已在下載中';
         return existing.task_id;
       }
@@ -112,8 +112,14 @@ export const useModelDownloadStore = defineStore('modelDownload', () => {
       if (task.status === 'failed') {
         throw new Error(task.error || task.message || '模型下載失敗');
       }
+      if (task.status === 'cancelled') throw new Error('模型下載已取消');
       await new Promise(resolve => window.setTimeout(resolve, POLL_INTERVAL_MS));
     }
+  }
+
+  async function cancelTask(taskId: string) {
+    await modelApi.cancelTask(taskId);
+    await loadTasks();
   }
 
   async function openStorage() {
@@ -206,6 +212,7 @@ export const useModelDownloadStore = defineStore('modelDownload', () => {
     successMessage,
     refreshAll,
     startDownload,
+    cancelTask,
     ensureDownloaded,
     openStorage,
     deleteModel,

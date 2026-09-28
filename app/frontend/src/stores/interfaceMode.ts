@@ -1,15 +1,18 @@
 import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
-import { configApi, runtimeApi, translationApi, type CpuAsrSidecarInstallStatus } from '../services/api';
+import { configApi, modelApi, runtimeApi, translationApi, type CpuAsrSidecarInstallStatus } from '../services/api';
 import { useModelDownloadStore } from './modelDownload';
 import { llamaApi, type ModelInstallStatus, type RuntimeInstallStatus, type TranslationModelRecommendationInfo } from '../services/llamaApi';
 import { normalizeAsrLanguage } from '../utils/asrCapabilities';
+import { simpleAsrModel } from '../utils/simpleAsr';
 
-const STARTER_MODELS = [
-  { engine: 'sensevoice' as const, id: 'iic/SenseVoiceSmall', label: 'SenseVoice Small（中文）' },
-  { engine: 'parakeet-ctc-ja' as const, id: 'nvidia/parakeet-tdt_ctc-0.6b-ja', label: 'Parakeet 0.6B（日文）' },
-  { engine: 'parakeet-ctc-ja' as const, id: 'nvidia/parakeet-tdt-0.6b-v3', label: 'Parakeet v3（25 語言）' },
-];
+function starterModel(language: string) {
+  const id = simpleAsrModel(language);
+  if (!id) return null;
+  return id === 'iic/SenseVoiceSmall'
+    ? { engine: 'sensevoice' as const, id, label: '中文語音辨識' }
+    : { engine: 'parakeet-ctc-ja' as const, id, label: normalizeAsrLanguage(language) === 'ja' ? '日文語音辨識' : '多語言語音辨識' };
+}
 
 export const useInterfaceModeStore = defineStore('interfaceMode', () => {
   const mode = ref<'simple' | 'advanced' | null>(null);
@@ -22,25 +25,42 @@ export const useInterfaceModeStore = defineStore('interfaceMode', () => {
   const isSimple = computed(() => mode.value === 'simple');
   const downloads = useModelDownloadStore();
   const preparingModels = ref(false);
-  const onboardingStep = ref<'mode' | 'translation' | 'preparing'>('mode');
+  const onboardingStep = ref<'mode' | 'purpose' | 'translation' | 'local' | 'preparing'>('mode');
+  const selectedSource = ref<'url' | 'file' | 'system_audio' | 'microphone'>('system_audio');
+  const selectedLanguage = ref('ja');
   const translationChoice = ref<'local' | 'cloud' | null>(null);
   const googleApiKey = ref('');
   const hardware = ref<TranslationModelRecommendationInfo | null>(null);
   const runtimeInstallStatus = ref<RuntimeInstallStatus | null>(null);
   const localModelInstallStatus = ref<ModelInstallStatus | null>(null);
-  const modelProgress = computed(() => STARTER_MODELS.map(model => {
+  const existingAsrStoragePath = ref('');
+  const existingLlamaServerExe = ref('');
+  const existingLlamaModelPath = ref('');
+  const offlineCpuAsrArchive = ref('');
+  const selectedStarterModel = computed(() => starterModel(selectedLanguage.value));
+  const modelProgress = computed(() => selectedStarterModel.value ? [selectedStarterModel.value].map(model => {
     const task = downloads.getTask(model.engine, model.id, 'cpu');
     const ready = downloads.isDownloaded(model.engine, model.id, 'cpu');
     return { ...model, ready, progress: ready ? 1 : downloads.displayProgress(task), message: ready ? '已就緒' : task?.error || task?.message || '等待下載' };
-  }));
+  }) : []);
 
   async function prepareModels() {
     preparingModels.value = true;
-    for (const [index, model] of STARTER_MODELS.entries()) {
-      setupMessage.value = `正在準備 ASR 模型 ${index + 1}/${STARTER_MODELS.length}：${model.label}`;
-      await downloads.ensureDownloaded(model.engine, model.id, 'cpu');
-      if (!downloads.isDownloaded(model.engine, model.id, 'cpu')) throw new Error(`${model.label} 下載後未通過檔案檢查，請重試。`);
-    }
+    const model = selectedStarterModel.value;
+    if (!model) throw new Error('這個語言沒有簡單模式的 CPU 辨識模型，請改用進階模式。');
+    setupMessage.value = `正在準備唯一需要的資源：${model.label}`;
+    await downloads.ensureDownloaded(model.engine, model.id, 'cpu');
+    if (!downloads.isDownloaded(model.engine, model.id, 'cpu')) throw new Error(`${model.label} 下載後未通過檔案檢查，請重試。`);
+  }
+
+  async function cancelPreparation() {
+    const active = downloads.activeTasks.slice();
+    await Promise.all(active.map(task => downloads.cancelTask(task.task_id)));
+    preparingModels.value = false;
+    busy.value = false;
+    setupMessage.value = '已取消模型下載；已完成的設定未變更。';
+    error.value = '準備流程已取消，可重新選擇或稍後設定。';
+    onboardingStep.value = 'translation';
   }
 
   async function prepareCpuAsr() {
@@ -64,15 +84,16 @@ export const useInterfaceModeStore = defineStore('interfaceMode', () => {
 
   async function setSimpleModeDefaults() {
     const config = await configApi.getConfig(true);
-    const language = config.transcription?.language || 'auto';
-    if (normalizeAsrLanguage(language) !== 'auto') return;
+    const model = selectedStarterModel.value;
+    if (!model) throw new Error('所選語言無法使用簡單模式。');
     await configApi.updateSection('transcription', {
-      language: 'ja', backend: 'parakeet-ctc-ja', asr_compute_backend: 'cpu',
-      model: 'nvidia/parakeet-tdt_ctc-0.6b-ja',
-      nemo_asr_model: 'nvidia/parakeet-tdt_ctc-0.6b-ja',
+      language: selectedLanguage.value, backend: model.engine, asr_compute_backend: 'cpu',
+      model: model.id,
+      ...(model.engine === 'sensevoice' ? { sensevoice_model: model.id } : { nemo_asr_model: model.id }),
     });
+    await configApi.updateSection('input', { ...(config.input || {}), audio_source: selectedSource.value });
     if (!config.translation?.target_language) {
-      await configApi.updateSection('translation', { target_language: '繁體中文' });
+      await configApi.updateSection('translation', { target_language: 'Traditional Chinese' });
     }
   }
 
@@ -99,11 +120,15 @@ export const useInterfaceModeStore = defineStore('interfaceMode', () => {
     error.value = '';
     preparingModels.value = false;
     try {
+      if (!mode.value && value === 'advanced' && !pendingMode.value) {
+        setupMessage.value = '正在開啟進階模式…';
+        await configApi.updateSection('interface', { mode: 'advanced' });
+        mode.value = 'advanced';
+        return;
+      }
       if (!mode.value && value === 'simple' && !pendingMode.value) {
         pendingMode.value = value;
-        onboardingStep.value = 'translation';
-        setupMessage.value = '正在偵測顯示卡與顯存…';
-        hardware.value = await llamaApi.getModelRecommendations(true);
+        onboardingStep.value = 'purpose';
         return;
       }
       if (!mode.value || pendingMode.value) {
@@ -124,6 +149,78 @@ export const useInterfaceModeStore = defineStore('interfaceMode', () => {
     } finally {
       busy.value = false;
     }
+  }
+
+  async function continueFromPurpose() {
+    if (busy.value || !selectedStarterModel.value) return;
+    busy.value = true;
+    error.value = '';
+    try {
+      setupMessage.value = '正在偵測這台電腦可用的翻譯方式…';
+      hardware.value = await llamaApi.getModelRecommendations(true);
+      onboardingStep.value = 'translation';
+    } catch (cause: any) {
+      error.value = cause?.response?.data?.detail || cause?.message || '無法取得翻譯方式資訊。';
+    } finally { busy.value = false; }
+  }
+
+  async function skipSetup() {
+    if (busy.value) return;
+    busy.value = true;
+    error.value = '';
+    try {
+      await configApi.updateSection('interface', { mode: 'advanced' });
+      mode.value = 'advanced';
+      pendingMode.value = null;
+      onboardingStep.value = 'mode';
+    } catch (cause: any) {
+      error.value = cause?.response?.data?.detail || cause?.message || '無法保存稍後設定狀態。';
+    } finally { busy.value = false; }
+  }
+
+  function openExistingResources() {
+    if (busy.value) return;
+    pendingMode.value = 'advanced';
+    onboardingStep.value = 'local';
+    error.value = '';
+  }
+
+  async function configureExistingResources() {
+    if (busy.value) return;
+    busy.value = true;
+    error.value = '';
+    try {
+      const asrPath = existingAsrStoragePath.value.trim();
+      const serverExe = existingLlamaServerExe.value.trim();
+      const modelPath = existingLlamaModelPath.value.trim();
+      const sidecarArchive = offlineCpuAsrArchive.value.trim();
+      const validatedAsr = asrPath ? await modelApi.validateStorage(asrPath) : null;
+      const validatedRuntime = serverExe ? await llamaApi.validateRuntime(serverExe) : null;
+      const validatedModel = modelPath ? await llamaApi.validateModel(modelPath) : null;
+      if (sidecarArchive) {
+        setupMessage.value = '正在匯入離線 CPU ASR Runtime…';
+        const status = await runtimeApi.importCpuAsrSidecar(sidecarArchive);
+        sidecarStatus.value = status;
+        if (!status.healthy) throw new Error(status.error || status.health_error || '離線 CPU ASR Runtime 驗證失敗。');
+      }
+      if (validatedAsr) await configApi.updateSection('models', { storage_path: validatedAsr.path });
+      if (serverExe || modelPath) {
+        const config = await configApi.getConfig(true);
+        await configApi.updateSection('llama', {
+          ...(config.llama || {}),
+          server_exe: validatedRuntime?.path || '',
+          model_path: validatedModel?.path || '',
+          model_dir: validatedModel ? validatedModel.path.replace(/[\\/][^\\/]+$/, '') : (config.llama?.model_dir || ''),
+          local_llm_enabled: false,
+        });
+      }
+      await configApi.updateSection('interface', { mode: 'advanced' });
+      mode.value = 'advanced';
+      pendingMode.value = null;
+      onboardingStep.value = 'mode';
+    } catch (cause: any) {
+      error.value = cause?.response?.data?.detail || cause?.message || '本機資源設定失敗。';
+    } finally { busy.value = false; }
   }
 
   async function waitForRuntime() {
@@ -213,7 +310,7 @@ export const useInterfaceModeStore = defineStore('interfaceMode', () => {
       setupMessage.value = `正在下載 ${setup.quant} 翻譯模型…`;
       await llamaApi.installSimpleModel(setup.model_id);
       const modelPath = await waitForLocalModel();
-      const port = await llamaApi.getAvailablePort(8080);
+      const port = await llamaApi.getAvailablePort(8081);
       await configApi.updateSection('llama', {
         local_llm_enabled: false, model_dir: modelPath.replace(/[\\/][^\\/]+$/, ''), model_path: modelPath,
         host: '127.0.0.1', port, n_ctx: 4096, n_gpu_layers: 999, n_threads: 4, n_parallel: 1,
@@ -240,6 +337,9 @@ export const useInterfaceModeStore = defineStore('interfaceMode', () => {
   }
 
   return { mode, loaded, busy, error, isSimple, pendingMode, setupMessage, sidecarStatus, preparingModels,
-    modelProgress, onboardingStep, translationChoice, googleApiKey, hardware, runtimeInstallStatus,
-    localModelInstallStatus, load, select, configureCloud, configureLocal, backToModeChoice };
+    modelProgress, onboardingStep, selectedSource, selectedLanguage, selectedStarterModel,
+    translationChoice, googleApiKey, hardware, runtimeInstallStatus,
+    localModelInstallStatus, existingAsrStoragePath, existingLlamaServerExe, existingLlamaModelPath,
+    offlineCpuAsrArchive, load, select, continueFromPurpose, configureCloud, configureLocal, cancelPreparation, backToModeChoice,
+    skipSetup, openExistingResources, configureExistingResources };
 });

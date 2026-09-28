@@ -6,9 +6,9 @@ import json
 import logging
 from typing import Any, Callable
 
-from PyQt6.QtCore import QDateTime, QEasingCurve, QElapsedTimer, QPoint, QRect, QTimer, Qt
-from PyQt6.QtGui import QColor, QFont, QFontMetrics, QMouseEvent, QPainter, QPainterPath
-from PyQt6.QtWidgets import QApplication, QWidget
+from PyQt6.QtCore import QDateTime, QEasingCurve, QElapsedTimer, QPoint, QRect, QTimer, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QFont, QFontMetrics, QMouseEvent, QPainter, QPainterPath, QPen
+from PyQt6.QtWidgets import QApplication, QPushButton, QWidget
 
 from subtitle_history import entries_fitting_height, find_subtitle_index
 
@@ -18,6 +18,10 @@ logger = logging.getLogger(__name__)
 CONTENT_MARGIN = 16
 ENTRY_TRAILING_GAP = 6
 MIN_WINDOW_HEIGHT = 240
+CONTROL_SIZE = 32
+CONTROL_STEP = 40
+CONTROL_X_INSET = 41
+CONTROL_FIRST_Y = CONTROL_STEP
 
 
 def visible_entries_height(entries: list[dict[str, Any]]) -> int:
@@ -77,8 +81,80 @@ def complete_partial_entry_height(entry: dict[str, Any], available_height: int) 
     return min(int(entry.get("height", available_height)), available_height)
 
 
+class PassthroughButton(QPushButton):
+    """Layer control; its blue state means pass-through is on."""
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setCheckable(True)
+        self.setFixedSize(CONTROL_SIZE, CONTROL_SIZE)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setAccessibleName("切換字幕滑鼠穿透")
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        active = self.isChecked()
+        background = QColor(37, 99, 235, 175) if active else QColor(0, 0, 0, 105)
+        if self.underMouse():
+            background = background.lighter(135)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(background)
+        painter.drawEllipse(0, 0, CONTROL_SIZE, CONTROL_SIZE)
+        self._draw_layer_icon(painter, QRect(6, 4, 20, 20))
+
+    @staticmethod
+    def _draw_layer_icon(painter: QPainter, rect: QRect) -> None:
+        sx, sy = rect.width() / 24, rect.height() / 24
+        layers = QPainterPath()
+        layers.moveTo(rect.x() + 12 * sx, rect.y() + 3 * sy)
+        layers.lineTo(rect.x() + 22 * sx, rect.y() + 9 * sy)
+        layers.lineTo(rect.x() + 12 * sx, rect.y() + 15 * sy)
+        layers.lineTo(rect.x() + 2 * sx, rect.y() + 9 * sy)
+        layers.closeSubpath()
+        layers.moveTo(rect.x() + 2 * sx, rect.y() + 14 * sy)
+        layers.lineTo(rect.x() + 12 * sx, rect.y() + 20 * sy)
+        layers.lineTo(rect.x() + 22 * sx, rect.y() + 14 * sy)
+        painter.setPen(QPen(QColor("#FFFFFF"), max(1.4, 2 * sx), Qt.PenStyle.SolidLine,
+                            Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(layers)
+
+
+class SubtitleStatusControl(QWidget):
+    """A separate native window stays clickable while subtitles pass input through."""
+
+    def __init__(self, owner: "NativeSubtitleWindow") -> None:
+        flags = (Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
+                 | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.WindowDoesNotAcceptFocus)
+        super().__init__(owner, flags)
+        self.owner = owner
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.setFixedSize(40, CONTROL_STEP + CONTROL_SIZE + 4)
+        self.button = PassthroughButton(self)
+        self.button.move(4, CONTROL_STEP)
+        self.button.clicked.connect(owner.toggle_mouse_passthrough)
+        self.refresh()
+
+    def refresh(self) -> None:
+        passthrough = bool(self.owner.settings.get("mousePassthrough", False))
+        self.button.setChecked(passthrough)
+        self.button.setToolTip("讓字幕視窗可操作" if passthrough else "滑鼠可點擊字幕後方的視窗")
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QColor(255, 255, 255, 90))
+        painter.setBrush(QColor("#22C55E" if self.owner._asr_ready else "#EF4444"))
+        painter.drawEllipse(14, 10, 12, 12)
+
+
 class NativeSubtitleWindow(QWidget):
     """以 QPainter 繪製字幕，避開透明 QWebEngineView 的合成路徑。"""
+
+    mousePassthroughChanged = pyqtSignal(bool)
 
     def __init__(
         self,
@@ -94,6 +170,7 @@ class NativeSubtitleWindow(QWidget):
         self._task_id: str | None = None
         self._history_offset = 0
         self._is_recording = False
+        self._asr_ready = False
         self._drag_offset: QPoint | None = None
         self._resize_edge = 0
         self._resize_start_global: QPoint | None = None
@@ -129,12 +206,13 @@ class NativeSubtitleWindow(QWidget):
             "position": "bottom",
             "autoScroll": True,
             "maxDisplayCount": 5,
-            "textColor": "#FFFFFF",
+            "textColor": "#55FFFF",
             "translatedColor": "#FFDD00",
-            "timestampColor": "#888888",
-            "latencyColor": "#7DD3FC",
-            "backgroundColor": "#000000",
-            "backgroundOpacity": 50,
+            "timestampColor": "#FF5500",
+            "latencyColor": "#AAFF00",
+            "backgroundColor": "#FFFFFF",
+            "backgroundOpacity": 5,
+            "mousePassthrough": False,
         }
 
         self.setWindowTitle("字幕")
@@ -157,17 +235,55 @@ class NativeSubtitleWindow(QWidget):
         self.setMinimumSize(240, MIN_WINDOW_HEIGHT)
 
         self._load_config()
+        self._apply_mouse_passthrough()
+        self._status_control = SubtitleStatusControl(self)
         self._geometry_ready = True
 
     def _load_config(self) -> None:
-        if not self.config_manager:
-            self.resize(800, 300)
-            return
-        config = self.config_manager.get_config()
+        config = self.config_manager.get_config() if self.config_manager else {}
         self.settings.update(config.get("subtitle_settings", {}))
         geometry = config.get("ui", {}).get("windows", {}).get("floating_subtitle", {})
         self.resize(int(geometry.get("width", 800)), int(geometry.get("height", 300)))
-        self.move(int(geometry.get("x", 100)), int(geometry.get("y", 100)))
+        if isinstance(geometry.get("x"), (int, float)) and isinstance(geometry.get("y"), (int, float)):
+            self.move(int(geometry["x"]), int(geometry["y"]))
+        else:
+            screen = QApplication.primaryScreen()
+            if screen is not None:
+                area = screen.availableGeometry()
+                margin = min(80, max(24, area.height() // 12))
+                self.move(area.x() + (area.width() - self.width()) // 2,
+                          area.y() + max(0, area.height() - self.height() - margin))
+
+    def _apply_mouse_passthrough(self) -> None:
+        enabled = bool(self.settings.get("mousePassthrough", False))
+        if bool(self.windowFlags() & Qt.WindowType.WindowTransparentForInput) == enabled:
+            return
+        was_visible = self.isVisible()
+        self.setWindowFlag(Qt.WindowType.WindowTransparentForInput, enabled)
+        if was_visible:
+            self.show()
+
+    def toggle_mouse_passthrough(self) -> None:
+        enabled = not bool(self.settings.get("mousePassthrough", False))
+        self.settings["mousePassthrough"] = enabled
+        self._apply_mouse_passthrough()
+        self._status_control.refresh()
+        if self.config_manager:
+            self.config_manager.update_section("subtitle_settings", {"mousePassthrough": enabled})
+        self.mousePassthroughChanged.emit(enabled)
+        if not enabled:
+            self._show_controls_temporarily()
+
+    def _sync_status_control(self) -> None:
+        if not hasattr(self, "_status_control"):
+            return
+        if not self.isVisible():
+            self._status_control.hide()
+            return
+        self._status_control.move(self.x() + self.width() - self._status_control.width() - 5,
+                                  self.y())
+        self._status_control.show()
+        self._status_control.raise_()
 
     def update_subtitle_json(self, payload: str) -> None:
         try:
@@ -270,6 +386,8 @@ class NativeSubtitleWindow(QWidget):
     def update_settings_json(self, payload: str) -> None:
         try:
             self.settings.update(json.loads(payload))
+            self._apply_mouse_passthrough()
+            self._status_control.refresh()
             self._history_offset = min(self._history_offset, self._max_history_offset())
             self.update()
         except (TypeError, ValueError, json.JSONDecodeError):
@@ -279,26 +397,22 @@ class NativeSubtitleWindow(QWidget):
         self._is_recording = bool(is_recording)
         self.update()
 
+    def update_asr_ready(self, ready: bool) -> None:
+        self._asr_ready = bool(ready)
+        self._status_control.refresh()
+        self.update()
+
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
 
-        opacity = max(0, min(100, int(self.settings.get("backgroundOpacity", 50))))
-        background = QColor(str(self.settings.get("backgroundColor", "#000000")))
+        opacity = max(0, min(100, int(self.settings.get("backgroundOpacity", 5))))
+        background = QColor(str(self.settings.get("backgroundColor", "#FFFFFF")))
         background.setAlpha(round(opacity * 2.55))
         path = QPainterPath()
         path.addRoundedRect(0, 0, self.width(), self.height(), 14, 14)
         painter.fillPath(path, background)
-
-        # 綠色代表正在收音／翻譯；紅色代表尚未啟動或已停止。
-        indicator_color = QColor("#22C55E" if self._is_recording else "#EF4444")
-        painter.setPen(QColor(255, 255, 255, 90))
-        painter.setBrush(indicator_color)
-        indicator_size = 11
-        indicator_x = self.width() - 25 - indicator_size // 2
-        indicator_y = 8
-        painter.drawEllipse(indicator_x, indicator_y, indicator_size, indicator_size)
 
         font_size = max(10, int(self.settings.get("fontSize", 24)))
         font_weight = max(100, min(900, int(self.settings.get("fontWeight", 700))))
@@ -397,7 +511,7 @@ class NativeSubtitleWindow(QWidget):
             metadata_x = margin
             if timestamp:
                 timestamp_width = entry["metadata_timestamp_width"]
-                painter.setPen(QColor(str(self.settings.get("timestampColor", "#888888"))))
+                painter.setPen(QColor(str(self.settings.get("timestampColor", "#FF5500"))))
                 painter.drawText(
                     QRect(metadata_x, y, timestamp_width, entry["metadata_height"]),
                     Qt.TextFlag.TextWordWrap,
@@ -406,7 +520,7 @@ class NativeSubtitleWindow(QWidget):
                 metadata_x += timestamp_width
             if latency:
                 latency_text = f" · {latency}" if timestamp else latency
-                painter.setPen(QColor(str(self.settings.get("latencyColor", "#7DD3FC"))))
+                painter.setPen(QColor(str(self.settings.get("latencyColor", "#AAFF00"))))
                 painter.drawText(
                     QRect(metadata_x, y, max(1, content_width - (metadata_x - margin)), entry["metadata_height"]),
                     Qt.TextFlag.TextWordWrap,
@@ -446,7 +560,7 @@ class NativeSubtitleWindow(QWidget):
         if self.settings.get("showOriginal", True) and line.get("original"):
             text = str(line.get("_display_original", line["original"]))
             height = max(text_metrics.height(), text_metrics.boundingRect(QRect(0, 0, width - 10, 4000), Qt.TextFlag.TextWordWrap, text).height())
-            rows.append((text, QColor(str(self.settings.get("textColor", "#FFFFFF"))), height))
+            rows.append((text, QColor(str(self.settings.get("textColor", "#55FFFF"))), height))
         if self.settings.get("showTranslated", True) and line.get("translated"):
             text = str(line.get("_display_translated", line["translated"]))
             height = max(text_metrics.height(), text_metrics.boundingRect(QRect(0, 0, width - 10, 4000), Qt.TextFlag.TextWordWrap, text).height())
@@ -517,16 +631,21 @@ class NativeSubtitleWindow(QWidget):
             painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, symbol)
 
     def _settings_rect(self) -> QRect:
-        return QRect(self.width() - 42, 28, 34, 30)
+        return self._control_rect(1)
 
     def _close_rect(self) -> QRect:
-        return QRect(self.width() - 42, 136, 32, 32)
+        return self._control_rect(4)
 
     def _stop_rect(self) -> QRect:
-        return QRect(self.width() - 42, 64, 32, 32)
+        return self._control_rect(2)
 
     def _clear_rect(self) -> QRect:
-        return QRect(self.width() - 42, 100, 32, 32)
+        return self._control_rect(3)
+
+    def _control_rect(self, index: int) -> QRect:
+        return QRect(self.width() - CONTROL_X_INSET,
+                     CONTROL_FIRST_Y + CONTROL_STEP * index,
+                     CONTROL_SIZE, CONTROL_SIZE)
 
     def _set_controls_visible(self, visible: bool) -> None:
         visible = bool(visible)
@@ -670,11 +789,25 @@ class NativeSubtitleWindow(QWidget):
 
     def moveEvent(self, event) -> None:
         super().moveEvent(event)
+        self._sync_status_control()
         self._schedule_geometry_save()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
+        self._sync_status_control()
         self._schedule_geometry_save()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._sync_status_control()
+
+    def hideEvent(self, event) -> None:
+        self._status_control.hide()
+        super().hideEvent(event)
+
+    def closeEvent(self, event) -> None:
+        self._status_control.close()
+        super().closeEvent(event)
 
     def _schedule_geometry_save(self) -> None:
         if self._geometry_ready and self.config_manager:

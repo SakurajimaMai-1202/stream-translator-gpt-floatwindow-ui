@@ -367,6 +367,24 @@ def test_discarded_overlap_never_prints_an_untranslated_subtitle(capsys):
     ]
 
 
+def test_punctuation_only_asr_fragment_never_reaches_translation(capsys):
+    segmenter = SubtitleSegmenter(print_result=True, output_timestamps=True)
+    punctuation = _task(1)
+    punctuation.transcript = "。"
+    following = _task(2)
+    following.transcript = "新たな未来"
+    input_queue = queue.SimpleQueue()
+    output_queue = queue.SimpleQueue()
+    for task in (punctuation, following, None):
+        input_queue.put(task)
+
+    segmenter.loop(input_queue, output_queue)
+
+    assert output_queue.get() is following
+    assert output_queue.get() is None
+    assert " 。" not in capsys.readouterr().out
+
+
 def test_subtitle_assembler_merges_adjacent_incomplete_segments():
     segmenter = SubtitleSegmenter(
         deduplicate_overlap=False,

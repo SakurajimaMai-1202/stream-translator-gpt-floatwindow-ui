@@ -202,6 +202,36 @@ class AppUpdateManagerTest(unittest.TestCase):
                 self.assertEqual(manager.status()["status"], "ready", manager.status())
                 self.assertEqual(partial.read_bytes(), archive.read_bytes())
 
+    def test_download_reports_actual_size_and_digest_after_corrupt_retry(self):
+        with tempfile.TemporaryDirectory(dir=APP_DIR) as temp_dir:
+            root = Path(temp_dir)
+            _, release = self._fixture(root)
+            corrupt = b"truncated response"
+            corrupt_digest = hashlib.sha256(corrupt).hexdigest()
+
+            def write_corrupt(_downloader, _url, destination):
+                destination.write_bytes(corrupt)
+
+            with mock.patch.object(update_module, "get_app_root", return_value=root), mock.patch.object(
+                update_module, "get_packaged_runtime_profile", return_value="cuda"
+            ), mock.patch.object(update_module.settings, "APP_VERSION", "1.4.0"), mock.patch.object(
+                update_module.HttpDownloader, "download", autospec=True, side_effect=write_corrupt
+            ) as download:
+                manager = update_module.AppUpdateManager()
+                manager.check(release_api=str(release))
+                manager.start_download()
+                deadline = time.monotonic() + 30
+                while manager.status()["status"] in {"starting", "downloading", "verifying", "staging"}:
+                    self.assertLess(time.monotonic(), deadline)
+                    time.sleep(0.05)
+
+                status = manager.status()
+                self.assertEqual(status["status"], "error", status)
+                self.assertEqual(download.call_count, 2)
+                self.assertIn(f"actual={len(corrupt)}", status["error"])
+                self.assertIn(f"actual={corrupt_digest}", status["error"])
+                self.assertFalse(next((root / ".app-update" / "downloads").glob("*.part"), None))
+
     def test_downloads_verifies_and_reassembles_multipart_update(self):
         with tempfile.TemporaryDirectory(dir=APP_DIR) as temp_dir:
             root = Path(temp_dir)

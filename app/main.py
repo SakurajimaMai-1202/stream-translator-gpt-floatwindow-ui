@@ -325,7 +325,9 @@ class UI2Application:
             backend_url = f"http://127.0.0.1:{self.backend_port}"
             self.subtitle_sse_client = NativeSubtitleSseClient(backend_url, self.subtitle_window)
             self.subtitle_sse_client.taskStarted.connect(self.subtitle_window.begin_task)
+            self.subtitle_sse_client.asrReadyChanged.connect(self.subtitle_window.update_asr_ready)
             self.subtitle_sse_client.subtitleReceived.connect(self.subtitle_window.update_subtitle_json)
+            self.subtitle_window.mousePassthroughChanged.connect(self._notify_subtitle_passthrough_changed)
         created_window = self.subtitle_window
         created_client = self.subtitle_sse_client
         self.subtitle_window.destroyed.connect(
@@ -337,6 +339,13 @@ class UI2Application:
             self.subtitle_sse_client.start()
         self.subtitle_window.raise_()
         self.subtitle_window.activateWindow()
+
+    def _notify_subtitle_passthrough_changed(self, enabled: bool) -> None:
+        if self.home_window is not None:
+            value = "true" if enabled else "false"
+            self.home_window.web_view.page().runJavaScript(
+                f"window.dispatchEvent(new CustomEvent('native-subtitle-passthrough', {{detail: {value}}}));"
+            )
 
     def _subtitle_window_destroyed(self, window, client):
         # 延遲送達的 destroyed 不得清掉剛重新建立的新字幕視窗。

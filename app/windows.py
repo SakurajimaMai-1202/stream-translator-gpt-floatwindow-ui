@@ -22,6 +22,7 @@ class SubtitleBridge(QObject):
     
     openSettings = pyqtSignal()
     closeRequested = pyqtSignal()
+    mousePassthroughRequested = pyqtSignal(bool)
     
     @pyqtSlot()
     def requestOpenSettings(self):
@@ -34,6 +35,10 @@ class SubtitleBridge(QObject):
         """從 JavaScript 呼叫以關閉字幕視窗"""
         logger.info("收到關閉字幕視窗請求")
         self.closeRequested.emit()
+
+    @pyqtSlot(bool)
+    def setMousePassthrough(self, enabled: bool):
+        self.mousePassthroughRequested.emit(bool(enabled))
 
 
 class HomeBridge(QObject):
@@ -95,6 +100,29 @@ class HomeBridge(QObject):
         except Exception as e:
             logger.error(f"複製到剪貼簿失敗: {e}")
             return False
+
+    @pyqtSlot(str, str, result=str)
+    def saveTextFile(self, suggested_name: str, content: str) -> str:
+        """Open a native Save As dialog and persist UTF-8 text."""
+        safe_name = Path(str(suggested_name or "diagnostics.json")).name
+        file_path, _ = QFileDialog.getSaveFileName(
+            None,
+            "儲存診斷報告",
+            str(Path.home() / "Downloads" / safe_name),
+            "JSON 檔案 (*.json);;所有檔案 (*.*)",
+        )
+        if not file_path:
+            return ""
+        destination = Path(file_path)
+        if not destination.suffix:
+            destination = destination.with_suffix(".json")
+        try:
+            destination.write_text(content, encoding="utf-8")
+            logger.info("診斷報告已儲存: %s", destination)
+            return str(destination)
+        except Exception as exc:
+            logger.exception("儲存診斷報告失敗")
+            return f"ERROR:{exc}"
 
 
 class WebViewWindow(QMainWindow):
@@ -503,14 +531,20 @@ class FloatingSubtitleWindow(WebViewWindow):
             subtitle_config = windows_config.get('floating_subtitle', {})
             
             width = subtitle_config.get('width', 800)
-            height = subtitle_config.get('height', 200)
-            x = subtitle_config.get('x', 100)
-            y = subtitle_config.get('y', 100)
+            height = subtitle_config.get('height', 300)
             
             self.resize(width, height)
-            self.move(x, y)
+            if isinstance(subtitle_config.get('x'), (int, float)) and isinstance(subtitle_config.get('y'), (int, float)):
+                self.move(int(subtitle_config['x']), int(subtitle_config['y']))
+            else:
+                screen = QApplication.primaryScreen()
+                if screen is not None:
+                    area = screen.availableGeometry()
+                    margin = min(80, max(24, area.height() // 12))
+                    self.move(area.x() + (area.width() - width) // 2,
+                              area.y() + max(0, area.height() - height - margin))
         else:
-            self.resize(800, 200)
+            self.resize(800, 300)
         
         self.setMinimumSize(200, 100)
         self.setMouseTracking(True)
@@ -522,6 +556,8 @@ class FloatingSubtitleWindow(WebViewWindow):
             Qt.WindowType.WindowStaysOnTopHint |
             Qt.WindowType.Tool  # 工具視窗，不出現在工作列
         )
+        initial_passthrough = bool(config_manager.get_config().get('subtitle_settings', {}).get('mousePassthrough', False)) if config_manager else False
+        self.setWindowFlag(Qt.WindowType.WindowTransparentForInput, initial_passthrough)
         
         # 設定背景透明
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -561,6 +597,7 @@ class FloatingSubtitleWindow(WebViewWindow):
         # 連接橋接信號
         self.bridge.openSettings.connect(self._open_settings_window)
         self.bridge.closeRequested.connect(self._handle_close_requested)
+        self.bridge.mousePassthroughRequested.connect(self._set_mouse_passthrough)
         
         # 設定視窗引用
         self.settings_window = None
@@ -605,6 +642,14 @@ class FloatingSubtitleWindow(WebViewWindow):
         
         install_recursive(self.web_view)
         logger.info("已安裝事件過濾器到 WebView 及其子元件")
+
+    def _set_mouse_passthrough(self, enabled: bool):
+        if bool(self.windowFlags() & Qt.WindowType.WindowTransparentForInput) == enabled:
+            return
+        was_visible = self.isVisible()
+        self.setWindowFlag(Qt.WindowType.WindowTransparentForInput, enabled)
+        if was_visible:
+            self.show()
     
     def _open_settings_window(self):
         """打開設定視窗"""

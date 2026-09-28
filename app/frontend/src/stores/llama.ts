@@ -67,8 +67,9 @@ export const useLlamaStore = defineStore('llama', () => {
   // Server Config
   const serverConfig = ref<ServerConfig>({
     model_path: '',
+    server_exe: '',
     host: '127.0.0.1',
-    port: 8080,
+    port: 8081,
     n_ctx: 2048,
     n_gpu_layers: 0,
     n_threads: 4,
@@ -293,8 +294,9 @@ export const useLlamaStore = defineStore('llama', () => {
         const llamaConfig = config.llama;
         serverConfig.value = {
           model_path: llamaConfig.model_path || '',
+          server_exe: llamaConfig.server_exe || '',
           host: llamaConfig.host || '127.0.0.1',
-          port: llamaConfig.port || 8080,
+          port: llamaConfig.port || 8081,
           n_ctx: llamaConfig.n_ctx || 2048,
           n_gpu_layers: llamaConfig.n_gpu_layers || 0,
           n_threads: llamaConfig.n_threads || 4,
@@ -366,6 +368,7 @@ export const useLlamaStore = defineStore('llama', () => {
         local_llm_enabled: false,
         model_dir: modelDirectory.value,
         model_path: selectedModelPath.value,
+        server_exe: serverConfig.value.server_exe || '',
         recent_model_paths: recentModelPaths.value,
         favorite_model_paths: favoriteModelPaths.value,
         selected_preset: selectedPreset.value, // Save selected preset

@@ -16,19 +16,24 @@ const showLatency = ref(true);
 const position = ref<'top' | 'bottom'>('bottom');
 const autoScroll = ref(true);
 const maxDisplayCount = ref(5);
+const mousePassthrough = ref(false);
 
 // 顏色設定
-const textColor = ref('#FFFFFF');
+const textColor = ref('#55FFFF');
 const translatedColor = ref('#FFDD00');
-const timestampColor = ref('#888888'); // 時間碼顏色(灰色)
-const latencyColor = ref('#7DD3FC');
-const backgroundColor = ref('#000000');
-const backgroundOpacity = ref(50);
+const timestampColor = ref('#FF5500');
+const latencyColor = ref('#AAFF00');
+const backgroundColor = ref('#FFFFFF');
+const backgroundOpacity = ref(5);
 
 // BroadcastChannel 用於跨視窗通訊
 let settingsChannel: BroadcastChannel | null = null;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let isHydratingSettings = true;
+
+function onNativePassthroughChanged(event: Event) {
+  mousePassthrough.value = Boolean((event as CustomEvent<boolean>).detail);
+}
 
 function buildSettings() {
   return {
@@ -41,6 +46,7 @@ function buildSettings() {
     position: position.value,
     autoScroll: autoScroll.value,
     maxDisplayCount: maxDisplayCount.value,
+    mousePassthrough: mousePassthrough.value,
     textColor: textColor.value,
     translatedColor: translatedColor.value,
     timestampColor: timestampColor.value,
@@ -116,6 +122,7 @@ async function loadSettingsFromBackend() {
     position.value = settings.position ?? position.value;
     autoScroll.value = settings.autoScroll ?? autoScroll.value;
     maxDisplayCount.value = settings.maxDisplayCount ?? maxDisplayCount.value;
+    mousePassthrough.value = settings.mousePassthrough ?? mousePassthrough.value;
     textColor.value = settings.textColor ?? textColor.value;
     translatedColor.value = settings.translatedColor ?? translatedColor.value;
     timestampColor.value = settings.timestampColor ?? timestampColor.value;
@@ -130,6 +137,7 @@ async function loadSettingsFromBackend() {
 }
 
 onMounted(async () => {
+  window.addEventListener('native-subtitle-passthrough', onNativePassthroughChanged);
   // 初始化 BroadcastChannel
   try {
     settingsChannel = new BroadcastChannel('subtitle-settings');
@@ -153,6 +161,7 @@ onMounted(async () => {
         position.value = settings.position ?? position.value;
         autoScroll.value = settings.autoScroll ?? autoScroll.value;
         maxDisplayCount.value = settings.maxDisplayCount ?? maxDisplayCount.value;
+        mousePassthrough.value = settings.mousePassthrough ?? mousePassthrough.value;
         textColor.value = settings.textColor ?? textColor.value;
         translatedColor.value = settings.translatedColor ?? translatedColor.value;
         timestampColor.value = settings.timestampColor ?? timestampColor.value;
@@ -170,6 +179,7 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  window.removeEventListener('native-subtitle-passthrough', onNativePassthroughChanged);
   if (saveTimer !== null) {
     clearTimeout(saveTimer);
     saveTimer = null;
@@ -180,7 +190,7 @@ onUnmounted(() => {
   }
 });
 
-watch([fontSize, fontWeight, showOriginal, showTranslated, showTimestamp, showLatency, position, autoScroll, maxDisplayCount, textColor, translatedColor, timestampColor, latencyColor, backgroundColor, backgroundOpacity], () => {
+watch([fontSize, fontWeight, showOriginal, showTranslated, showTimestamp, showLatency, position, autoScroll, maxDisplayCount, mousePassthrough, textColor, translatedColor, timestampColor, latencyColor, backgroundColor, backgroundOpacity], () => {
   if (isHydratingSettings) return;
   scheduleSaveSettings();
 });
@@ -218,7 +228,8 @@ const activeTab = ref<'display' | 'color'>('display');
 
       <!-- 預覽固定在分頁內容上方，彈窗再矮也能先看到目前效果 -->
       <div class="mb-6 pb-6 border-b border-white/20">
-        <p class="text-white/90 text-sm mb-3 font-medium">即時預覽</p>
+        <p class="text-white/90 text-sm mb-1 font-medium">範例字幕預覽</p>
+        <p class="mb-3 text-sm leading-5 text-white/55">下方內容只用來調整位置、大小與透明度；不會加入字幕歷史或匯出檔。</p>
         <div
           :style="{
             fontSize: Math.min(fontSize * 0.5, 20) + 'px',
@@ -274,6 +285,10 @@ const activeTab = ref<'display' | 'color'>('display');
         </div>
 
         <!-- 顯示選項 -->
+        <label class="flex items-start gap-3 rounded-lg border border-white/10 bg-white/5 p-3 cursor-pointer">
+          <input v-model="mousePassthrough" type="checkbox" class="mt-0.5 w-5 h-5 accent-blue-500" />
+          <span><strong class="block text-white text-sm">滑鼠穿透字幕視窗</strong><small class="block mt-1 text-white/60">開啟後可點擊字幕後方的畫面；請回到這裡關閉，才能拖曳或調整字幕視窗。</small></span>
+        </label>
         <div class="space-y-3 pt-2">
           <label class="flex items-center gap-3 cursor-pointer group">
             <input v-model="showOriginal" type="checkbox" class="w-5 h-5 accent-blue-500" />

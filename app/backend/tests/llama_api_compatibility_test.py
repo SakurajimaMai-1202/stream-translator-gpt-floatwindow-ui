@@ -19,6 +19,84 @@ def test_relative_model_directory_is_resolved_from_portable_app_root(monkeypatch
     assert result[0].path == str(model_file.absolute())
 
 
+def test_configured_llama_runtime_has_priority_and_does_not_fallback(monkeypatch, tmp_path):
+    configured = tmp_path / "custom" / "llama-server.exe"
+    configured.parent.mkdir()
+    configured.write_bytes(b"runtime")
+
+    class ConfigManager:
+        def get_config(self):
+            return {"llama": {"server_exe": str(configured)}}
+
+    monkeypatch.setattr(config_api, "get_config_manager", lambda: ConfigManager())
+    assert llama._find_llama_server() == configured.resolve()
+
+    configured.unlink()
+    assert llama._find_llama_server() is None
+
+
+def test_relative_custom_runtime_is_resolved_from_app_root(monkeypatch, tmp_path):
+    monkeypatch.setattr(llama, "get_app_root", lambda: tmp_path)
+    expected = tmp_path / "tools" / "llama-server.exe"
+    assert llama._resolve_user_path("tools/llama-server.exe") == expected.resolve()
+
+
+def test_custom_runtime_directory_resolves_to_server(monkeypatch, tmp_path):
+    import asyncio
+
+    runtime_dir = tmp_path / "custom"
+    runtime_dir.mkdir()
+    executable = runtime_dir / "llama-server.exe"
+    executable.write_bytes(b"runtime")
+
+    class ConfigManager:
+        def get_config(self):
+            return {"llama": {"server_exe": str(runtime_dir)}}
+
+    monkeypatch.setattr(config_api, "get_config_manager", lambda: ConfigManager())
+    monkeypatch.setattr(
+        llama, "run_external",
+        lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="version: test\n", stderr=""),
+    )
+    assert llama._find_llama_server() == executable.resolve()
+    result = asyncio.run(llama.validate_runtime_path(llama.RuntimePathRequest(server_exe=str(runtime_dir))))
+    assert result["path"] == str(executable.resolve())
+
+
+def test_custom_runtime_directory_without_server_does_not_fallback(monkeypatch, tmp_path):
+    import asyncio
+    import pytest
+
+    runtime_dir = tmp_path / "empty"
+    runtime_dir.mkdir()
+
+    class ConfigManager:
+        def get_config(self):
+            return {"llama": {"server_exe": str(runtime_dir)}}
+
+    monkeypatch.setattr(config_api, "get_config_manager", lambda: ConfigManager())
+    assert llama._find_llama_server() is None
+    with pytest.raises(llama.HTTPException, match="llama-server.exe"):
+        asyncio.run(llama.validate_runtime_path(llama.RuntimePathRequest(server_exe=str(runtime_dir))))
+
+
+def test_validate_model_path_checks_gguf_header(tmp_path):
+    import asyncio
+    model = tmp_path / "translation.gguf"
+    model.write_bytes(b"GGUF" + b"\0" * 16)
+    result = asyncio.run(llama.validate_model_path(llama.ModelPathRequest(model_path=str(model))))
+    assert result["path"] == str(model.resolve())
+
+
+def test_validate_model_path_rejects_renamed_file(tmp_path):
+    import asyncio
+    import pytest
+    model = tmp_path / "translation.gguf"
+    model.write_bytes(b"ZIP!")
+    with pytest.raises(llama.HTTPException, match="GGUF"):
+        asyncio.run(llama.validate_model_path(llama.ModelPathRequest(model_path=str(model))))
+
+
 def test_resource_status_reuses_short_lived_cache(monkeypatch):
     calls = 0
 

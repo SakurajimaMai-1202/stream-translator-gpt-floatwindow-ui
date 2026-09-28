@@ -16,14 +16,15 @@ const showLatency = ref(true);
 const position = ref<'top' | 'bottom'>('bottom');
 const autoScroll = ref(true);
 const maxDisplayCount = ref(5);
+const mousePassthrough = ref(false);
 
 // 顏色設定
-const textColor = ref('#FFFFFF');
+const textColor = ref('#55FFFF');
 const translatedColor = ref('#FFDD00'); // 更亮一點的黃色
-const timestampColor = ref('#888888'); // 時間碼顏色(灰色)
-const latencyColor = ref('#7DD3FC');
-const backgroundColor = ref('#000000');
-const backgroundOpacity = ref(50);
+const timestampColor = ref('#FF5500');
+const latencyColor = ref('#AAFF00');
+const backgroundColor = ref('#FFFFFF');
+const backgroundOpacity = ref(5);
 const isRecording = ref(false);
 let recordingStatusTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -32,7 +33,7 @@ async function refreshRecordingStatus() {
     const response = await fetch('/api/translation/status');
     const data = await response.json();
     isRecording.value = Array.isArray(data.tasks)
-      && data.tasks.some((task: any) => task.is_running);
+      && data.tasks.some((task: any) => task.is_running && task.asr_ready);
   } catch {
     isRecording.value = false;
   }
@@ -285,6 +286,7 @@ function initQtWebChannel(): Promise<boolean> {
     try {
       new window.QWebChannel(window.qt!.webChannelTransport, (channel: any) => {
         window.bridge = channel.objects.bridge;
+        window.bridge?.setMousePassthrough?.(mousePassthrough.value);
         const connected = !!window.bridge?.requestOpenSettings;
         console.log(connected ? 'WebChannel 已連接' : 'WebChannel 缺少字幕視窗 bridge');
         resolve(connected);
@@ -315,6 +317,8 @@ function applySettings(settings: any, external = false) {
   position.value = settings.position ?? position.value;
   autoScroll.value = settings.autoScroll ?? autoScroll.value;
   maxDisplayCount.value = settings.maxDisplayCount ?? maxDisplayCount.value;
+  mousePassthrough.value = settings.mousePassthrough ?? mousePassthrough.value;
+  window.bridge?.setMousePassthrough?.(mousePassthrough.value);
   textColor.value = settings.textColor ?? textColor.value;
   translatedColor.value = settings.translatedColor ?? translatedColor.value;
   timestampColor.value = settings.timestampColor ?? timestampColor.value;
@@ -417,6 +421,7 @@ function buildSettings() {
     position: position.value,
     autoScroll: autoScroll.value,
     maxDisplayCount: maxDisplayCount.value,
+    mousePassthrough: mousePassthrough.value,
     textColor: textColor.value,
     translatedColor: translatedColor.value,
     timestampColor: timestampColor.value,
@@ -596,7 +601,7 @@ function handleStorageChange(e: StorageEvent) {
 }
 
 // 自動儲存設定（初始化完成後才觸發）
-watch([fontSize, fontWeight, opacity, showOriginal, showTranslated, showTimestamp, showLatency, position, autoScroll, maxDisplayCount, textColor, translatedColor, timestampColor, latencyColor, backgroundColor, backgroundOpacity], () => {
+watch([fontSize, fontWeight, opacity, showOriginal, showTranslated, showTimestamp, showLatency, position, autoScroll, maxDisplayCount, mousePassthrough, textColor, translatedColor, timestampColor, latencyColor, backgroundColor, backgroundOpacity], () => {
   if (!isInitializing.value && !isApplyingExternalSettings.value) {
     scheduleSaveSettings();
   }
@@ -621,6 +626,7 @@ declare global {
     bridge?: {
       requestOpenSettings: () => void;
       requestCloseWindow?: () => void;
+      setMousePassthrough?: (enabled: boolean) => void;
     };
   }
 }
@@ -679,8 +685,8 @@ async function stopTranslation() {
     <div
       class="absolute top-2 right-[19px] z-50 w-3 h-3 rounded-full border border-white/40 shadow-lg"
       :class="isRecording ? 'bg-green-500 shadow-green-500/60' : 'bg-red-500 shadow-red-500/60'"
-      :title="isRecording ? '正在收音' : '尚未收音'"
-      :aria-label="isRecording ? '正在收音' : '尚未收音'"
+      :title="isRecording ? '語音辨識已就緒' : '語音辨識尚未就緒'"
+      :aria-label="isRecording ? '語音辨識已就緒' : '語音辨識尚未就緒'"
     ></div>
     <!-- Subtitle Display -->
     <div

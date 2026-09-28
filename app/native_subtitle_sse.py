@@ -20,6 +20,7 @@ class NativeSubtitleSseClient(QObject):
 
     subtitleReceived = pyqtSignal(str)
     taskStarted = pyqtSignal(str)
+    asrReadyChanged = pyqtSignal(bool)
     connectionStateChanged = pyqtSignal(str)
 
     def __init__(self, base_url: str, parent: QObject | None = None) -> None:
@@ -29,9 +30,13 @@ class NativeSubtitleSseClient(QObject):
         self._poll_timer = QTimer(self)
         self._poll_timer.setSingleShot(True)
         self._poll_timer.timeout.connect(self._request_active_task)
+        self._readiness_timer = QTimer(self)
+        self._readiness_timer.setInterval(2000)
+        self._readiness_timer.timeout.connect(self._request_readiness)
         self._running = False
         self._request_in_flight = False
         self._active_reply: QNetworkReply | None = None
+        self._readiness_reply: QNetworkReply | None = None
         self._stream_reply: QNetworkReply | None = None
         self._parser: SseEventParser | None = None
         self._reconnect_attempt = 0
@@ -42,19 +47,23 @@ class NativeSubtitleSseClient(QObject):
             return
         self._running = True
         self._reconnect_attempt = 0
+        self._readiness_timer.start()
         self._schedule_poll(0)
 
     def stop(self) -> None:
         self._running = False
         self._poll_timer.stop()
+        self._readiness_timer.stop()
         self._request_in_flight = False
-        for reply in (self._active_reply, self._stream_reply):
+        for reply in (self._active_reply, self._stream_reply, self._readiness_reply):
             if reply is not None and reply.isRunning():
                 reply.abort()
         self._active_reply = None
+        self._readiness_reply = None
         self._stream_reply = None
         self._parser = None
         self._current_task_id = None
+        self.asrReadyChanged.emit(False)
         self.connectionStateChanged.emit("stopped")
 
     def _schedule_poll(self, delay_ms: int) -> None:
@@ -101,11 +110,38 @@ class NativeSubtitleSseClient(QObject):
 
         task_id = data.get("task_id") if data.get("success") else None
         if not task_id:
+            self._current_task_id = None
+            self.asrReadyChanged.emit(False)
             self.connectionStateChanged.emit("waiting")
             self._reconnect_attempt = 0
             self._schedule_poll(3000)
             return
         self._open_stream(str(task_id))
+
+    def _request_readiness(self) -> None:
+        task_id = self._current_task_id
+        if not self._running or not task_id or self._readiness_reply is not None:
+            return
+        reply = self._manager.get(self._request(f"/api/translation/status/{task_id}"))
+        self._readiness_reply = reply
+        reply.finished.connect(lambda current=reply, expected=task_id: self._readiness_finished(current, expected))
+
+    def _readiness_finished(self, reply: QNetworkReply, task_id: str) -> None:
+        if reply is not self._readiness_reply:
+            reply.deleteLater()
+            return
+        self._readiness_reply = None
+        payload = bytes(reply.readAll())
+        error = reply.error()
+        reply.deleteLater()
+        if not self._running or task_id != self._current_task_id or error != QNetworkReply.NetworkError.NoError:
+            return
+        try:
+            status = json.loads(payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError, TypeError):
+            return
+        if status.get("success"):
+            self.asrReadyChanged.emit(bool(status.get("is_running") and status.get("asr_ready")))
 
     def _open_stream(self, task_id: str) -> None:
         if not self._running or self._stream_reply is not None:
@@ -113,6 +149,7 @@ class NativeSubtitleSseClient(QObject):
         self.connectionStateChanged.emit("connecting")
         if self._current_task_id != task_id:
             self._current_task_id = task_id
+            self.asrReadyChanged.emit(False)
             self.taskStarted.emit(task_id)
         self._parser = SseEventParser()
         reply = self._manager.get(self._request(f"/api/translation/stream/{task_id}"))
@@ -137,7 +174,17 @@ class NativeSubtitleSseClient(QObject):
                     logger.warning("原生字幕 SSE 收到無效 JSON")
                     continue
                 self.subtitleReceived.emit(payload)
+            elif event_type == "status":
+                try:
+                    status = json.loads(payload)
+                except json.JSONDecodeError:
+                    continue
+                if "asr_ready" in status:
+                    self.asrReadyChanged.emit(bool(status["asr_ready"]))
+                elif status.get("status") in ("completed", "error", "stopped"):
+                    self.asrReadyChanged.emit(False)
             elif event_type in ("error", "completed"):
+                self.asrReadyChanged.emit(False)
                 reply.abort()
 
     def _stream_finished(self, reply: QNetworkReply) -> None:

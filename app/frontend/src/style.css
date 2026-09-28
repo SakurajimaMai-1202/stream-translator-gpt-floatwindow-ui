@@ -308,6 +308,13 @@ button:hover .source-card-icon { transform: translateY(-1px); }
   outline-offset: 2px;
 }
 
+/* First-run and modal surfaces live outside .commercial-main. Keep keyboard
+   focus visible there as well instead of relying on browser-specific defaults. */
+:is(a, button, input, textarea, select, [tabindex]):focus-visible {
+  outline: 2px solid rgba(143, 170, 255, 0.95) !important;
+  outline-offset: 3px;
+}
+
 .commercial-main :is(input, textarea)::placeholder {
   color: #66758e !important;
   opacity: 1;

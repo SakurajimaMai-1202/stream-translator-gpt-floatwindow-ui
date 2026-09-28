@@ -7,6 +7,8 @@ import asyncio
 import yaml
 import io
 import logging
+import time
+import httpx
 from backend.core.app_sync import publish_app_event
 
 router = APIRouter(prefix="/config", tags=["config"])
@@ -21,6 +23,69 @@ def get_config_manager():
     if _config_manager_instance is None:
         _config_manager_instance = ConfigManager()
     return _config_manager_instance
+
+
+@router.get("/hy-mt2-glossary-presets")
+async def get_hy_mt2_glossary_presets():
+    """Expose built-in profiles so the editor previews the runtime source of truth."""
+    from backend.core.hy_mt2_glossary_presets import PRESETS
+    return {name: dict(terms) for name, terms in PRESETS.items()}
+
+
+@router.post("/hy-mt2-health")
+async def check_hy_mt2_backend():
+    """Check the saved HY-MT2 endpoint with one short inference request."""
+    manager = get_config_manager()
+    config = manager.get_config()
+    if config.get("translation", {}).get("backend") == "none":
+        raise HTTPException(status_code=400, detail="請先選擇翻譯模型")
+    try:
+        args = manager.to_main_args(config)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    provider = args.get("translation_provider")
+    if provider not in {"openai", "openai_compatible", "lm_studio", "llama_cpp"}:
+        raise HTTPException(status_code=400, detail="此檢查僅支援 OpenAI 相容的 HY-MT2 後端")
+    base_url = str(args.get("gpt_base_url") or "").rstrip("/")
+    model = str(args.get("gpt_model") or "").strip()
+    if not base_url or not model:
+        raise HTTPException(status_code=400, detail="請填寫伺服器網址與模型 ID")
+    endpoint = f"{base_url if base_url.endswith('/v1') else base_url + '/v1'}/chat/completions"
+    headers = {"Content-Type": "application/json"}
+    api_key = str(args.get("openai_api_key") or "").strip()
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": "將「こんにちは」翻譯為繁體中文，只輸出譯文。"}],
+        "max_tokens": 32,
+        "temperature": 0.7,
+        "top_p": 0.6,
+        "stream": False,
+    }
+    started = time.perf_counter()
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.post(endpoint, headers=headers, json=payload)
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail="模型回應逾時（15 秒）") from exc
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=502, detail="無法連線到目前選擇的翻譯後端") from exc
+    if response.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"翻譯後端回傳 HTTP {response.status_code}；請檢查模型 ID 與伺服器設定")
+    try:
+        content = response.json()["choices"][0]["message"]["content"]
+    except (ValueError, KeyError, IndexError, TypeError) as exc:
+        raise HTTPException(status_code=502, detail="翻譯後端回應格式不正確") from exc
+    if not isinstance(content, str) or not content.strip():
+        raise HTTPException(status_code=502, detail="翻譯後端回傳空白結果")
+    return {
+        "success": True,
+        "provider": provider,
+        "model": model,
+        "sample": content.strip()[:120],
+        "latency_ms": round((time.perf_counter() - started) * 1000),
+    }
 
 
 @router.get("")

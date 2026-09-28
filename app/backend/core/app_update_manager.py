@@ -8,7 +8,6 @@ import os
 import shutil
 import tempfile
 import threading
-import urllib.error
 import urllib.request
 import zipfile
 from dataclasses import asdict, dataclass
@@ -16,6 +15,8 @@ from pathlib import Path
 from typing import Any
 
 from backend.config import settings
+from update_runtime_contract import validate_update_runtime
+from backend.core.http_downloader import HttpDownloader
 from backend.core.portable_paths import get_app_root, get_packaged_runtime_profile
 
 
@@ -29,8 +30,8 @@ ASSET_NAMES = {
 MINIMUM_DIRECT_UPDATE_VERSION = "1.3.11"
 UPDATE_MODES = {"app_only", "runtime_replace"}
 ALLOWED_UPDATE_NAMES = {
-    "app-update-build.json", "StreamTranslatorUpdater.exe", "diagnose_runtime.ps1",
-    "PORTABLE_GUIDE_zh-TW.txt", "smoke_sensevoice_asr.ps1", "Stream Translator.exe",
+    "app-update-build.json", "StreamTranslatorUpdater.exe",
+    "PORTABLE_GUIDE_zh-TW.txt", "Stream Translator.exe",
     "UPDATE_NOTES_zh-TW.txt", "_internal", "_js_runtime", "_runtime",
 }
 
@@ -197,37 +198,6 @@ class AppUpdateManager:
         if self._cancel.is_set():
             raise InterruptedError("Application update download cancelled")
 
-    def _download(self, url: str, destination: Path) -> None:
-        existing = destination.stat().st_size if destination.is_file() else 0
-        local = Path(os.path.expandvars(os.path.expanduser(url)))
-        headers = {"Range": f"bytes={existing}-"} if existing and not local.is_file() else None
-        try:
-            response = self._open_url(url, headers=headers)
-        except urllib.error.HTTPError as exc:
-            if exc.code == 416 and existing:
-                return
-            raise
-        with response:
-            resumed = existing > 0 and (local.is_file() or getattr(response, "status", None) == 206)
-            if resumed and local.is_file():
-                if existing <= local.stat().st_size:
-                    response.seek(existing)
-                else:
-                    resumed = False
-            downloaded = existing if resumed else 0
-            length = int(getattr(response, "headers", {}).get("Content-Length", 0) or 0)
-            total = downloaded + length if length else self._state.asset_size
-            self._set(status="downloading", message="Resuming application update" if resumed else "Downloading application update")
-            with destination.open("ab" if resumed else "wb") as output:
-                while True:
-                    self._raise_if_cancelled()
-                    block = response.read(1024 * 1024)
-                    if not block:
-                        break
-                    output.write(block)
-                    downloaded += len(block)
-                    self._set(bytes_downloaded=downloaded, bytes_total=total, progress=(downloaded / total * 0.75) if total else 0.25)
-
     @staticmethod
     def _sha256(path: Path) -> str:
         digest = hashlib.sha256()
@@ -274,6 +244,7 @@ class AppUpdateManager:
             runtime_manifest = json.loads((runtime / "runtime-version.json").read_text(encoding="utf-8"))
             if str(runtime_manifest.get("profile") or "").lower() != self._state.profile:
                 raise RuntimeError("Replacement runtime profile does not match this installation")
+        validate_update_runtime(manifest, runtime if update_mode == "runtime_replace" else get_app_root() / "_runtime")
         self._set(minimum_upgradable_version=minimum, requires_full_install=requires_full, update_mode=update_mode)
         if requires_full or (minimum and self._version_tuple(self._state.current_version) < self._version_tuple(minimum)):
             raise RuntimeError(f"此版本需要下載同 Profile Full 包安裝（最低可直接升級版本：{minimum or '不適用'}）")
@@ -297,6 +268,7 @@ class AppUpdateManager:
             completed_size = 0
             for index, asset in enumerate(assets):
                 expected_part = str(asset.get("digest") or "").removeprefix("sha256:").lower()
+                expected_size = int(asset.get("size") or 0)
                 # App Update asset names are reused across releases.  Include
                 # the expected digest in the partial filename so a complete or
                 # interrupted download from an older release can never be
@@ -305,9 +277,23 @@ class AppUpdateManager:
                 (downloads / f"{asset['name']}.part").unlink(missing_ok=True)
                 self._set(asset_url=str(asset.get("browser_download_url") or ""), asset_size=total_size)
                 for attempt in range(2):
-                    self._download(str(asset.get("browser_download_url") or ""), part)
+                    def update_progress(received: int, _part_total: int) -> None:
+                        visible = completed_size + received
+                        self._set(
+                            status="downloading",
+                            message="Downloading application update",
+                            bytes_downloaded=visible,
+                            bytes_total=total_size,
+                            progress=(visible / total_size * 0.75) if total_size else 0.25,
+                        )
+
+                    downloader = HttpDownloader(progress=update_progress, cancel_event=self._cancel)
+                    downloader.download(str(asset.get("browser_download_url") or ""), part)
+                    actual_size = part.stat().st_size
                     actual_part = self._sha256(part)
-                    if expected_part and actual_part == expected_part:
+                    size_matches = not expected_size or actual_size == expected_size
+                    digest_matches = not expected_part or actual_part == expected_part
+                    if size_matches and digest_matches:
                         break
                     part.unlink(missing_ok=True)
                     if attempt == 0:
@@ -317,7 +303,11 @@ class AppUpdateManager:
                             bytes_downloaded=completed_size,
                         )
                         continue
-                    raise RuntimeError(f"Update part SHA-256 mismatch after retry: {asset.get('name')}")
+                    raise RuntimeError(
+                        f"Update part integrity mismatch after retry: {asset.get('name')}; "
+                        f"size expected={expected_size or 'unknown'}, actual={actual_size}; "
+                        f"SHA-256 expected={expected_part or 'unknown'}, actual={actual_part}"
+                    )
                 downloaded_parts.append(part)
                 completed_size += part.stat().st_size
                 self._set(bytes_downloaded=completed_size, bytes_total=total_size, progress=(completed_size / total_size * 0.75) if total_size else 0.25)

@@ -146,6 +146,12 @@
         <h3>🧩 llama.cpp Runtime</h3>
         <p class="runtime-version">{{ llamaStore.serverStatus.runtime?.version || '讀取中…' }}</p>
         <p class="hint break-path">{{ llamaStore.serverStatus.runtime?.path || '尚未找到 llama-server' }}</p>
+        <span v-if="llamaStore.serverStatus.runtime?.source === 'custom'" class="runtime-current-badge">自訂位置</span>
+        <label class="hint" for="custom-llama-runtime">自訂 Runtime 資料夾或 llama-server.exe（留空使用程式管理版本）</label>
+        <input id="custom-llama-runtime" v-model="llamaStore.serverConfig.server_exe" type="text" class="form-input" placeholder="例如 D:\\llama.cpp" :disabled="llamaStore.isServerRunning" />
+        <button type="button" class="btn-secondary compact" :disabled="llamaStore.isServerRunning || runtimePathBusy" @click="applyCustomRuntime">
+          {{ runtimePathBusy ? '驗證中…' : '驗證並套用' }}
+        </button>
         <span v-if="runtimeReleaseLoading && !runtimeRelease" class="runtime-current-badge checking">正在核對官方最新版…</span>
         <span v-else-if="runtimeRelease?.is_latest" class="runtime-current-badge">✓ 已是最新版本 {{ runtimeRelease.tag }}</span>
         <button v-else type="button" @click="openRuntimeInstaller" class="btn-start-quick runtime-download">在此下載／更新 Runtime</button>
@@ -815,6 +821,7 @@ const runtimeRelease = ref<RuntimeReleaseInfo | null>(null);
 const selectedRuntimeVariant = ref('');
 const runtimeInstallStatus = ref<RuntimeInstallStatus | null>(null);
 const runtimeInstallNotice = ref('');
+const runtimePathBusy = ref(false);
 let runtimeCompletionNotifiedJobId = '';
 let runtimeInstallPollTimer: number | null = null;
 
@@ -838,6 +845,28 @@ function runtimeStateLabel(state: string) {
     idle: '待命', resolving: '解析版本', pending: '等待下載', downloading: '下載中',
     verifying: '驗證中', staging: '準備安裝', activating: '切換版本', completed: '完成', error: '失敗',
   } as Record<string, string>)[state] || state;
+}
+
+async function applyCustomRuntime() {
+  runtimePathBusy.value = true;
+  runtimeReleaseError.value = '';
+  runtimeInstallNotice.value = '';
+  try {
+    const value = String(llamaStore.serverConfig.server_exe || '').trim();
+    if (value) {
+      const result = await llamaApi.validateRuntime(value);
+      llamaStore.serverConfig.server_exe = result.path;
+      runtimeInstallNotice.value = `自訂 Runtime 驗證通過：${result.version}`;
+    } else {
+      runtimeInstallNotice.value = '已切回程式管理的 llama.cpp Runtime。';
+    }
+    await llamaStore.saveConfig();
+    await llamaStore.refreshServerStatus();
+  } catch (error: any) {
+    runtimeReleaseError.value = error.response?.data?.detail || error.message || 'Runtime 驗證失敗';
+  } finally {
+    runtimePathBusy.value = false;
+  }
 }
 
 async function openRuntimeInstaller() {
@@ -1196,7 +1225,7 @@ function resetServerTuning() {
   Object.assign(llamaStore.serverConfig, {
     ...DEFAULT_TUNING,
     host: llamaStore.serverConfig.host || '127.0.0.1',
-    port: llamaStore.serverConfig.port || 8080,
+    port: llamaStore.serverConfig.port || 8081,
     model_path: llamaStore.selectedModelPath
   });
   llamaStore.successMessage = '已重設 Llama 參數';

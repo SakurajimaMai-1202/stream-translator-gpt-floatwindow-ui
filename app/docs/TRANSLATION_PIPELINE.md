@@ -25,6 +25,47 @@ Provider selection is derived from the configured translation backend. API keys 
 
 Users can override auto detection because local OpenAI-compatible servers may expose generic model IDs such as `localllm`.
 
+## Optional HY-MT2 subtitle optimizer
+
+In Settings → Translation, **套用日文直播推薦設定** enables the HY-MT2
+strategy, Traditional Chinese target, the existing terminology list, three
+Japanese context sentences, and Taiwan subtitle style. It keeps the currently
+selected translation model and its provider. The panel displays the effective
+model and glossary count; advanced settings stay available under
+**後端與進階參數**. Configuration saves automatically. Start a new translation
+task to load it.
+
+**測試目前模型** saves the translation settings, then makes one short inference
+request to the selected OpenAI-compatible backend. It confirms connectivity,
+model ID, and response shape. The sample response does not score translation
+quality or exercise the full live ASR pipeline.
+
+`translation.hy_mt2_optimizer_enabled` defaults to `false`. When enabled for the
+`hy_mt2` model family, the prompt uses the existing enabled terminology glossary,
+its optional `glossary_list[].aliases`, recent Japanese source subtitles, the
+Taiwan subtitle style, and optional `hy_mt2_preferences`. No other model family
+uses this prompt. Enable the built-in glossary separately in Terminology; the
+optional JSON folder can supply terms even when that list is empty.
+
+`hy_mt2_context_window` is clamped to 0–5 (default 3),
+`hy_mt2_max_context_chars` to 0–4000 (default 1000), and `hy_mt2_max_terms`
+to 0–30 (default 10). Context forces one translation request at a time so
+the next prompt can use completed source subtitles. `hy_mt2_debug` writes the
+source, full prompt, and output to logs; leave it off when subtitle content
+should not be logged.
+
+`hy_mt2_provider` can be `existing`, `lm_studio`, or `llama_cpp`. The two local
+choices use the same OpenAI-compatible chat completion transport; set each
+server URL and exact model ID in its own fields. Changing the provider requires
+restarting the translation task, not the desktop app. A missing local model ID
+fails at configuration time instead of falling back to another provider.
+`hy_mt2_glossary_folder` optionally loads JSON files containing either
+`{"原文": "譯名"}` or records such as
+`{"星街すいせい": {"target": "Suisei", "aliases": ["すいちゃん"]}}`.
+Relative paths resolve beside the saved configuration file. Files are read when
+the translation task starts; restart the task after editing them.
+`hy_mt2_style_text` is editable in the settings page.
+
 ## Ordering
 
 Translation requests may finish out of order. `ParallelTranslator` retains input order and only commits the leading completed or timed-out task. A failed request is retried at most once. Enabling translation history forces concurrency to one.

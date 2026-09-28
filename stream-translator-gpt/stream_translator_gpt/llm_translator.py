@@ -42,6 +42,16 @@ class OpenAICompatibleProvider(OpenAIProvider):
     name = "openai_compatible"
 
 
+class LMStudioProvider(OpenAICompatibleProvider):
+    """LM Studio's OpenAI-compatible chat completions transport."""
+    name = "lm_studio"
+
+
+class LlamaCppProvider(OpenAICompatibleProvider):
+    """llama-server's OpenAI-compatible chat completions transport."""
+    name = "llama_cpp"
+
+
 class GeminiProvider(TranslationProvider):
     name = "gemini"
 
@@ -52,6 +62,8 @@ class GeminiProvider(TranslationProvider):
 _PROVIDER_TYPES = {
     "openai": OpenAIProvider,
     "openai_compatible": OpenAICompatibleProvider,
+    "lm_studio": LMStudioProvider,
+    "llama_cpp": LlamaCppProvider,
     "gemini": GeminiProvider,
 }
 
@@ -75,7 +87,18 @@ class LLMClient():
                  output_format: str = "auto",
                  max_output_tokens: int = 128,
                  provider: str | None = None,
-                 glossary_audit_enabled: bool = False) -> None:
+                 glossary_audit_enabled: bool = False,
+                 hy_mt2_optimizer_enabled: bool = False,
+                 hy_mt2_context_window: int = 3,
+                 hy_mt2_max_context_chars: int = 1000,
+                 hy_mt2_max_terms: int = 10,
+                 hy_mt2_style: bool = True,
+                 hy_mt2_style_text: str = "",
+                 hy_mt2_preferences: str = "",
+                 hy_mt2_debug: bool = False,
+                 hy_mt2_aliases: str | None = None,
+                 hy_mt2_glossary_folder: str | None = None,
+                 replay_response_hook=None) -> None:
         if llm_type not in (self.LLM_TYPE.GPT, self.LLM_TYPE.GEMINI):
             raise ValueError(f'Unknow LLM type: {llm_type}')
         print(f'{INFO}Using {model} API as translation engine.')
@@ -102,6 +125,38 @@ class LLMClient():
         requested_format = "json" if use_json_result and output_format == "auto" else output_format
         self.output_format = resolve_output_format(requested_format, self.capabilities)
         self.prompt_strategy = create_prompt_strategy(self.model_family, prompt, self.output_format)
+        self.hy_mt2_context = None
+        self.hy_mt2_debug = bool(hy_mt2_debug and hy_mt2_optimizer_enabled and self.model_family == "hy_mt2")
+        # Opt-in replay observer. Normal runtime never stores raw model content.
+        self.replay_response_hook = replay_response_hook
+        if hy_mt2_optimizer_enabled and self.model_family == "hy_mt2":
+            from .hy_mt2_context import SourceContext
+            self.hy_mt2_context = SourceContext(max(0, min(5, int(hy_mt2_context_window))))
+            if hy_mt2_glossary_folder:
+                from .hy_mt2_glossary import load_glossary_folder
+                self.glossary = dict(self.glossary)
+                for source, target in load_glossary_folder(hy_mt2_glossary_folder).items():
+                    self.glossary.setdefault(source, target)
+            if hy_mt2_aliases:
+                import json
+                try:
+                    aliases = json.loads(hy_mt2_aliases)
+                    if isinstance(aliases, dict):
+                        self.glossary = dict(self.glossary)
+                        for alias, target in aliases.items():
+                            if isinstance(alias, str) and isinstance(target, str) and alias and target:
+                                self.glossary.setdefault(alias, target)
+                except (TypeError, ValueError):
+                    pass
+            from .hy_mt2_optimizer import OptimizerSettings
+            self.prompt_strategy.optimizer_settings = OptimizerSettings(
+                context_window=max(0, min(5, int(hy_mt2_context_window))),
+                max_context_chars=max(0, min(4000, int(hy_mt2_max_context_chars))),
+                max_terms=max(0, min(30, int(hy_mt2_max_terms))),
+                style=bool(hy_mt2_style),
+                style_text=str(hy_mt2_style_text or ""),
+                preferences=str(hy_mt2_preferences or ""),
+            )
         self.max_output_tokens = max(16, int(max_output_tokens or 128))
         self.history_pairs = deque(maxlen=max(0, history_size))
         self._history_lock = threading.Lock()
@@ -122,20 +177,50 @@ class LLMClient():
 
     def _prepare_prompt(self, task: TranslationTask):
         previous_original, previous_translation = self._history_snapshot()
+        if self.hy_mt2_context is not None:
+            previous_sources = self.hy_mt2_context.snapshot()
+        else:
+            with self._history_lock:
+                previous_sources = tuple(source for source, _ in self.history_pairs)
         request = TranslationRequest(
             segment_id=task.segment_id,
             source_text=task.transcript or "",
             previous_original=previous_original,
             previous_translation=previous_translation,
             glossary=self.glossary,
+            previous_sources=previous_sources,
         )
-        return self.prompt_strategy.prepare(request)
+        prepared = self.prompt_strategy.prepare(request)
+        if self.hy_mt2_debug:
+            matched = {key: value for key, value in self.glossary.items()
+                       if key and key.lower() in request.source_text.lower()}
+            print(f'[HY-MT2 OPTIMIZER] ASR={task.transcript!r} '
+                  f'TERMS={matched!r} CONTEXT={previous_sources!r} '
+                  f'PROMPT={prepared.user_content!r}', flush=True)
+        return prepared
 
     def _append_history_message(self, source_text: str, assistant_content: str):
+        if self.hy_mt2_context is not None and source_text and assistant_content:
+            self.hy_mt2_context.append(source_text)
         if not self.history_size or not source_text or not assistant_content:
             return
         with self._history_lock:
             self.history_pairs.append((source_text, assistant_content))
+
+    def _validate_hy_mt2_output(self, task: TranslationTask) -> str | None:
+        if self.hy_mt2_context is None or not task.translation:
+            return None
+        from .hy_mt2_output_validation import repeats_previous_translation
+        with self._history_lock:
+            history = tuple(self.history_pairs)
+        if not repeats_previous_translation(task.transcript or "", task.translation, history):
+            return None
+        task.translation = ""
+        task.translation_failed = True
+        task.translation_validation_rejected = True
+        task.translation_error = "context_echo_rejected"
+        print("[HY-MT2 OUTPUT] Rejected prior-subtitle echo", flush=True)
+        return task.translation_error
 
     def _translate_by_gpt(self, translation_task: TranslationTask):
         # https://platform.openai.com/docs/api-reference/chat/create?lang=python
@@ -192,21 +277,52 @@ class LLMClient():
                 
                 completion = client.chat.completions.create(**create_params)
 
-            translation_task.translation = parse_translation_output(
-                completion.choices[0].message.content,
+            raw_content = completion.choices[0].message.content
+            parsed_translation = parse_translation_output(
+                raw_content,
                 prepared.output_format,
             )
+            translation_task.translation = parsed_translation
+            validation_reason = self._validate_hy_mt2_output(translation_task)
+            if self.replay_response_hook is not None:
+                try:
+                    self.replay_response_hook(translation_task, {
+                        "request_id": getattr(completion, "id", None),
+                        "provider": self.provider,
+                        "model": self.model,
+                        "raw_model_response": raw_content,
+                        "parsed_translation": parsed_translation,
+                        "parsing_failure_reason": None if parsed_translation else "empty_parsed_translation",
+                        "output_validation_reason": validation_reason,
+                        "latency_ms": (time.perf_counter() - translation_task._llm_latency_started_at) * 1000,
+                    })
+                except Exception:
+                    pass  # Replay storage must never change translation outcome.
             usage = getattr(completion, "usage", None)
             if usage is not None:
                 translation_task.translation_prompt_tokens = getattr(usage, "prompt_tokens", None)
                 translation_task.translation_completion_tokens = getattr(usage, "completion_tokens", None)
             
             # 調試：顯示翻譯結果
-            print(f'[DEBUG] GPT 響應: {translation_task.translation[:100] if translation_task.translation else "空"}', flush=True)
+            if self.model_family != "hy_mt2" or self.hy_mt2_debug:
+                print(f'[DEBUG] GPT 響應: {translation_task.translation[:100] if translation_task.translation else "空"}', flush=True)
             
         except Exception as e:
             translation_task.translation_failed = True
             translation_task.translation_error = str(e)
+            if self.replay_response_hook is not None:
+                try:
+                    self.replay_response_hook(translation_task, {
+                        "request_id": getattr(locals().get("completion"), "id", None),
+                        "provider": self.provider, "model": self.model,
+                        "raw_model_response": locals().get("raw_content"),
+                        "parsed_translation": None,
+                        "parsing_failure_reason": str(e) if "raw_content" in locals() else None,
+                        "request_failure_reason": str(e) if "raw_content" not in locals() else None,
+                        "latency_ms": (time.perf_counter() - translation_task._llm_latency_started_at) * 1000,
+                    })
+                except Exception:
+                    pass
             print(f'[ERROR] GPT 翻譯錯誤: {e}', flush=True)
             return
         self._append_history_message(translation_task.transcript, translation_task.translation)
@@ -249,6 +365,7 @@ class LLMClient():
         try:
             response = client.models.generate_content(model=self.model, contents=messages, config=config)
             translation_task.translation = parse_translation_output(response.text, prepared.output_format)
+            self._validate_hy_mt2_output(translation_task)
         except Exception as e:
             translation_task.translation_failed = True
             translation_task.translation_error = str(e)
@@ -268,6 +385,10 @@ class LLMClient():
             ) * 1000
         try:
             self.provider_adapter.translate(self, translation_task)
+        except Exception as exc:
+            translation_task.translation_failed = True
+            translation_task.translation_error = str(exc)
+            print(f'[ERROR] Translation pipeline: {exc}', flush=True)
         finally:
             translation_task.latency_trace.translation_finished_at = time.perf_counter()
             translation_task.llm_latency_ms = (translation_task.latency_trace.translation_finished_at - llm_started_at) * 1000
@@ -285,6 +406,8 @@ class LLMClient():
                 completion_tokens=translation_task.translation_completion_tokens,
                 error=translation_task.translation_error,
             )
+            if self.hy_mt2_debug:
+                print(f'[HY-MT2 OPTIMIZER] OUTPUT={translation_task.translation!r}', flush=True)
             if translation_task.translation:
                 try:
                     self.glossary_auditor.audit(translation_task)
@@ -337,6 +460,7 @@ class ParallelTranslator(LoopWorkerBase):
             if (
                 task.translation_failed
                 and not task._translation_inflight
+                and not task.translation_validation_rejected
                 and task._translation_attempts < 2
                 and not _is_task_timeout(task, self.timeout)
             ):
@@ -356,6 +480,8 @@ class ParallelTranslator(LoopWorkerBase):
                     self.processing_queue[0].translation_failed
                     and self.processing_queue[0].llm_latency_ms is not None
                     and (
+                        self.processing_queue[0].translation_validation_rejected
+                        or
                         not self.retry_if_translation_fails
                         or self.processing_queue[0]._translation_attempts >= 2
                     )
@@ -474,7 +600,7 @@ class SerialTranslator(LoopWorkerBase):
                             print(f'Translation timeout: {current_task.transcript}')
                         else:
                             print(f'Translation failed: {current_task.transcript}')
-                            if self.retry_if_translation_fails:
+                            if self.retry_if_translation_fails and not current_task.translation_validation_rejected:
                                 self._trigger(current_task)
                                 time.sleep(1)
                                 continue

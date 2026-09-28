@@ -58,6 +58,7 @@ function subtitleTimesNearlyMatch(left: string, right: string): boolean {
 export const useTranslationStore = defineStore('translation', () => {
   // State
   const isRunning = ref(false);
+  const asrReady = ref(false);
   const currentUrl = ref('');
   const currentTaskId = ref('');
   const subtitles = ref<SubtitleLine[]>([]);
@@ -210,6 +211,7 @@ export const useTranslationStore = defineStore('translation', () => {
       currentUrl.value = url;
       currentTaskId.value = response.task_id;
       isRunning.value = true;
+      asrReady.value = false;
       subtitles.value = [];
       errorMessage.value = '';
 
@@ -218,6 +220,7 @@ export const useTranslationStore = defineStore('translation', () => {
     } catch (error: any) {
       errorMessage.value = `啟動失敗: ${error.message}`;
       isRunning.value = false;
+      asrReady.value = false;
     }
   }
 
@@ -237,6 +240,7 @@ export const useTranslationStore = defineStore('translation', () => {
       // 無論 API 調用成功與否,都要重置本地狀態
       disconnectEventSource();
       isRunning.value = false;
+      asrReady.value = false;
       currentUrl.value = '';
       currentTaskId.value = '';
       statusMessage.value = '';
@@ -262,6 +266,7 @@ export const useTranslationStore = defineStore('translation', () => {
 
       if (runningTask) {
         isRunning.value = true;
+        asrReady.value = !!runningTask.asr_ready;
         currentTaskId.value = runningTask.task_id || '';
         currentUrl.value = runningTask.url || currentUrl.value;
 
@@ -270,6 +275,7 @@ export const useTranslationStore = defineStore('translation', () => {
         }
       } else {
         isRunning.value = false;
+        asrReady.value = false;
         currentUrl.value = '';
         currentTaskId.value = '';
         if (connectedTaskId) {
@@ -304,6 +310,7 @@ export const useTranslationStore = defineStore('translation', () => {
     };
 
     eventSource.addEventListener('subtitle', (event: MessageEvent) => {
+      const frontendReceivedAt = performance.now();
       try {
         console.log('[SSE] Received subtitle event:', event.data);
         const data = JSON.parse(event.data);
@@ -378,6 +385,17 @@ export const useTranslationStore = defineStore('translation', () => {
         if (subtitles.value.length > 100) {
           subtitles.value.shift();
         }
+        const traceId = data.latency_trace?.trace_id;
+        if (traceId) {
+          requestAnimationFrame(() => {
+            const target = subtitles.value.find((item) => item.latency_trace?.trace_id === traceId);
+            if (!target?.latency_trace) return;
+            target.latency_trace.frontend_receipt_to_render_ms = Number((performance.now() - frontendReceivedAt).toFixed(3));
+            // This is a timestamp from the browser's own monotonic clock. It is
+            // intentionally not subtracted from backend perf_counter values.
+            target.latency_trace.frontend_render_confirmed_at = Number(performance.now().toFixed(3));
+          });
+        }
       } catch (err) {
         console.error('解析字幕事件失敗:', err);
       }
@@ -388,6 +406,11 @@ export const useTranslationStore = defineStore('translation', () => {
         console.log('[SSE] Received status event:', event.data);
         const data = JSON.parse(event.data);
         statusMessage.value = data.message || '';
+        if (typeof data.asr_ready === 'boolean') {
+          asrReady.value = data.asr_ready;
+        } else if (['completed', 'error', 'stopped'].includes(data.status)) {
+          asrReady.value = false;
+        }
       } catch (err) {
         console.error('解析狀態事件失敗:', err);
       }
@@ -409,6 +432,7 @@ export const useTranslationStore = defineStore('translation', () => {
       if (isRunning.value) {
         errorMessage.value = 'SSE 連接中斷';
         isRunning.value = false;
+        asrReady.value = false;
       }
     };
   }
@@ -436,6 +460,7 @@ export const useTranslationStore = defineStore('translation', () => {
   return {
     // State
     isRunning,
+    asrReady,
     currentUrl,
     currentTaskId,
     subtitles,

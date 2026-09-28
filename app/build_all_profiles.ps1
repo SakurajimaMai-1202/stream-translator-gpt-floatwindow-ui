@@ -1,6 +1,6 @@
 #!/usr/bin/env pwsh
 param(
-    [string]$Version = "1.4.9",
+    [string]$Version = "1.4.10",
     [ValidateSet("Quick", "Final")][string]$Mode = "Quick",
     [switch]$ReuseRuntimeCache,
     [switch]$ReuseSharedGui,
@@ -10,6 +10,7 @@ param(
     [ValidateRange(64, 2047)][int]$SplitSizeMiB = 1900,
     [ValidateRange(1, 128)][int]$CopyThreads = 16,
     [switch]$IncludeCpuAsrSidecar = $true,
+    [string]$MinimumRuntimeVersion = "1.4.9",
     [ValidateSet("app_only", "runtime_replace")][string]$UpdateMode = "app_only"
 )
 
@@ -91,10 +92,10 @@ foreach ($profile in $profiles) {
         CompressionLevel = $effectiveCompressionLevel
         CopyThreads = $CopyThreads
         UpdateMode = $UpdateMode
+        MinimumRuntimeVersion = $MinimumRuntimeVersion
     }
     if ($reuseValidatedRuntimeCaches) { $releaseArgs.ReuseRuntimeCache = $true }
     if ($Mode -eq "Quick") { $releaseArgs.SkipFullZip = $true }
-    if ($Mode -eq "Quick") { $releaseArgs.SkipRuntimeDependenciesInAppUpdate = $true }
     if ($profile -ne "cpu") { $releaseArgs.IncludeCpuAsrSidecar = [bool]$IncludeCpuAsrSidecar }
 
     if ($ReuseProfileArtifacts) {
@@ -136,9 +137,16 @@ foreach ($profile in $profiles) {
     $appUpdateBuildInfoPath = Join-Path $distDir "App-Update\app-update-build.json"
     $appUpdateDependencyMode = if (Test-Path -LiteralPath $appUpdateBuildInfoPath) {
         $appUpdateBuildInfo = Get-Content -LiteralPath $appUpdateBuildInfoPath -Raw -Encoding utf8 | ConvertFrom-Json
+        if ($appUpdateBuildInfo.update_mode -ne $UpdateMode -or
+            $appUpdateBuildInfo.version -ne $Version -or
+            $appUpdateBuildInfo.profile -ne $profile -or
+            $appUpdateBuildInfo.minimum_runtime_version -ne $MinimumRuntimeVersion -or
+            [bool]$appUpdateBuildInfo.runtime_dependencies_included -ne ($UpdateMode -eq "runtime_replace")) {
+            throw "Reused $profile App Update does not match the requested version/runtime contract; rebuild it."
+        }
         if ([bool]$appUpdateBuildInfo.runtime_dependencies_included) { "included" } else { "omitted" }
     } else {
-        "unknown-reused-artifact"
+        throw "App Update manifest missing for $profile; rebuild it."
     }
 
     $profileResults += [pscustomobject]@{

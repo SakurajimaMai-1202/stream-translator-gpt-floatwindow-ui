@@ -17,12 +17,14 @@ from functools import lru_cache
 from typing import Dict, Any, AsyncGenerator, Optional, List, FrozenSet
 from pathlib import Path
 from backend.config import settings
+from backend.core.external_process import popen_external
 from backend.core.logging_setup import resolve_log_dir, resolve_log_file
 from backend.core.portable_paths import apply_model_cache_environment
 
 logger = logging.getLogger(__name__)
 
 _SUBTITLE_EVENT_PREFIX = "__ST_SUBTITLE_EVENT__"
+_ASR_READY_EVENT = "__ST_ASR_READY__"
 
 _SENSITIVE_ARG_NAMES = {
     "--openai_api_key",
@@ -233,6 +235,7 @@ class TranslationContext:
         self.task_id = task_id
         self.process = None
         self.running = False
+        self.asr_ready = False
         self.stop_requested = False
         self._subscribers: set = set()  # 每個 SSE 連線各有自己的 Queue
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -244,6 +247,7 @@ class TranslationContext:
             return
             
         self.running = True
+        self.asr_ready = False
         self.stop_requested = False
         self._loop = asyncio.get_running_loop()
         
@@ -352,6 +356,12 @@ class TranslationContext:
             'translation_timeout', 'gpt_base_url', 'gemini_base_url', 'processing_proxy',
             'translation_model_family', 'translation_output_format',
             'translation_max_concurrency', 'translation_max_output_tokens',
+            'hy_mt2_optimizer_enabled', 'hy_mt2_context_window',
+            'hy_mt2_max_context_chars', 'hy_mt2_max_terms', 'hy_mt2_style', 'hy_mt2_debug',
+            'hy_mt2_aliases',
+            'hy_mt2_preferences',
+            'hy_mt2_style_text',
+            'hy_mt2_glossary_folder',
             'disable_paired_subtitle_mode', 'translation_provider',
             'disable_asr_overlap_deduplication', 'disable_subtitle_assembler',
             'subtitle_assembler_wait_ms', 'subtitle_assembler_max_duration',
@@ -413,16 +423,17 @@ class TranslationContext:
         url = config_copy.pop('url', '')
         
         # 添加所有配置參數
+        zero_allowed_args = {'hy_mt2_context_window', 'hy_mt2_max_context_chars', 'hy_mt2_max_terms'}
         for key, value in sorted(config_copy.items()):
             if key not in allowed_args:
                 logger.warning(f"Skipping unsupported CLI arg: {key}")
                 continue
             # 跳過空值
-            if value is None or value == '' or value == [] or value == 0:
+            if value is None or value == '' or value == [] or (value == 0 and key not in zero_allowed_args):
                 continue
             
             # 特殊處理：如果是數字 0 但不是布爾值，則跳過（例如 chat_id=0）
-            if isinstance(value, (int, float)) and value == 0 and not isinstance(value, bool):
+            if isinstance(value, (int, float)) and value == 0 and not isinstance(value, bool) and key not in zero_allowed_args:
                 continue
             
             # Convert arg name
@@ -541,7 +552,12 @@ class TranslationContext:
                     creationflags = 0
                     if os.name == 'nt':
                         creationflags = subprocess.CREATE_NO_WINDOW | 0x00000200 # CREATE_NEW_PROCESS_GROUP
-                    self.process = subprocess.Popen(
+                    # The frozen GUI pins its bundled Qt directory with both
+                    # PATH and SetDllDirectoryW.  Do not pass those DLL search
+                    # overrides to the separate Python/ASR runtime: PyTorch can
+                    # otherwise resolve an incompatible bundled DLL and fail
+                    # while importing c10.dll (WinError 1114).
+                    self.process = popen_external(
                         cmd,
                         stdin=subprocess.PIPE,  # 必須開啟 stdin 以寫入後續的 URL
                         stdout=subprocess.PIPE,
@@ -618,6 +634,12 @@ class TranslationContext:
                         
                         # 移除 ANSI 顏色碼
                         clean_line = re.sub(r'\x1b\[[0-9;]*m', '', line)
+
+                        if _ASR_READY_EVENT in clean_line or "Initialization complete, starting up" in clean_line:
+                            self.asr_ready = True
+                            self._broadcast({"type": "status", "data": {"asr_ready": True}})
+                            if _ASR_READY_EVENT in clean_line:
+                                continue
 
                         if clean_line.startswith(_SUBTITLE_EVENT_PREFIX):
                             try:
@@ -771,6 +793,7 @@ class TranslationContext:
                             "data": {"status": status, "code": return_code}
                         })
                         self.running = False
+                        self.asr_ready = False
                         break
                     
                     time.sleep(0.5)
@@ -787,6 +810,7 @@ class TranslationContext:
                 "data": {"message": f"{type(e).__name__}: {e}"}
             })
             self.running = False
+            self.asr_ready = False
 
     async def _process_subtitle_buffer(self, buffer: List[dict]):
         """處理字幕緩存
@@ -857,6 +881,7 @@ class TranslationContext:
         event_count = 0
         my_queue = self._subscribe()
         try:
+            yield {"type": "status", "data": {"asr_ready": self.running and self.asr_ready}}
             while True:
                 # 檢查是否停止且建件为空
                 if (not self.running or self.stop_requested) and my_queue.empty():
@@ -884,6 +909,7 @@ class TranslationContext:
         """停止任務 - 直接終止子進程確保完全停止"""
         self.stop_requested = True
         self.running = False
+        self.asr_ready = False
         
         global persistent_process, persistent_config_args
         

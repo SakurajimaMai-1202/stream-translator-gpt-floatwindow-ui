@@ -44,7 +44,7 @@ export interface ServerStatus {
   pid: number | null;
   resources: Record<string, any>;
   performance: Record<string, any>;
-  runtime: { installed: boolean; path: string; version: string; download_url: string };
+  runtime: { installed: boolean; path: string; version: string; download_url: string; source?: 'custom' | 'managed' };
 }
 
 export interface InferenceRequest {
@@ -175,6 +175,14 @@ export const llamaApi = {
     const response = await axios.get(`${API_BASE}/runtime/install/status`);
     return response.data;
   },
+  async validateRuntime(serverExe: string): Promise<{ success: boolean; path: string; version: string }> {
+    const response = await axios.post(`${API_BASE}/runtime/validate`, { server_exe: serverExe });
+    return response.data;
+  },
+  async validateModel(modelPath: string): Promise<{ success: boolean; path: string; size: number }> {
+    const response = await axios.post(`${API_BASE}/model/validate`, { model_path: modelPath });
+    return response.data;
+  },
   async installSimpleModel(modelId: string): Promise<{ success: boolean; message: string; job_id: string }> {
     const response = await axios.post(`${API_BASE}/model/install`, { model_id: modelId });
     return response.data;
@@ -215,7 +223,7 @@ export const llamaApi = {
     const response = await axios.get(`${API_BASE}/server/status`);
     return response.data;
   },
-  async getAvailablePort(preferred = 8080): Promise<number> {
+  async getAvailablePort(preferred = 8081): Promise<number> {
     const response = await axios.get(`${API_BASE}/server/available-port`, { params: { preferred } });
     return response.data.port;
   },

@@ -7,7 +7,7 @@ import { useInterfaceModeStore } from '../stores/interfaceMode';
 import { simpleAsrModel, simpleAsrLanguages } from '../utils/simpleAsr';
 import { sameLanguage } from '../utils/languageIdentity';
 import { useModelDownloadStore } from '../stores/modelDownload';
-import { translationApi, configApi, runtimeApi, serverApi, systemApi, type AppUpdateStatus, type AudioSource, type AudioDevice, type Config, type FfmpegCheckResult, type ModelComputeBackend, type ModelEngine } from '../services/api';
+import { translationApi, configApi, readinessApi, runtimeApi, serverApi, systemApi, type AppUpdateStatus, type AudioSource, type AudioDevice, type Config, type FfmpegCheckResult, type ModelComputeBackend, type ModelEngine, type SourceCheckResult } from '../services/api';
 import UiSelect, { type UiSelectOption } from '../components/UiSelect.vue';
 import AppIcon from '../components/AppIcon.vue';
 import { useAppSyncEvents } from '../composables/useAppSyncEvents';
@@ -22,6 +22,14 @@ const interfaceMode = useInterfaceModeStore();
 const store = useTranslationStore();
 const llamaStore = useLlamaStore();
 const modelDownloadStore = useModelDownloadStore();
+const latestQueueTrace = computed(() => store.latestSubtitle?.latency_trace);
+const queueStatusText = computed(() => {
+  const trace = latestQueueTrace.value;
+  if (!trace || trace.asr_queue_depth == null) return '佇列未知';
+  const seconds = Number(trace.asr_queue_audio_seconds || 0).toFixed(1);
+  const wait = Math.round(trace.asr_queue_oldest_wait_ms || 0);
+  return `ASR 佇列 ${trace.asr_queue_depth} 段 · ${seconds}s 音訊 · 最舊 ${wait}ms`;
+});
 
 // 公開端口（分享用）
 const publicPort = ref(8765);
@@ -205,9 +213,9 @@ const isPreparingAsrModel = ref(false);
 const showAdvancedConfig = ref(true);
 
 watch(
-  () => store.isRunning,
-  (isRunning) => {
-    (window as WindowWithPyQt).pyqt?.updateNativeRecordingState?.(isRunning);
+  () => store.isRunning && store.asrReady,
+  (ready) => {
+    (window as WindowWithPyQt).pyqt?.updateNativeRecordingState?.(ready);
   },
   { immediate: true }
 );
@@ -217,6 +225,29 @@ const audioSource = ref<AudioSource>('url');
 const availableDevices = ref<AudioDevice[]>([]);
 const selectedDeviceIndex = ref<number | null>(null);
 const isLoadingDevices = ref(false);
+const sourceCheck = ref<SourceCheckResult | null>(null);
+const isCheckingSource = ref(false);
+
+async function runSourceCheck() {
+  if (isCheckingSource.value || store.isRunning) return;
+  isCheckingSource.value = true;
+  sourceCheck.value = null;
+  try {
+    sourceCheck.value = await readinessApi.checkSource({
+      source: audioSource.value,
+      value: (audioSource.value === 'url' || audioSource.value === 'file') ? urlInput.value.trim() : '',
+      device_index: selectedDeviceIndex.value,
+      duration_seconds: 1,
+    });
+    addLog(`[來源檢查 ${sourceCheck.value.trace_id.slice(0, 8)}] ${sourceCheck.value.message} (${sourceCheck.value.elapsed_ms}ms)`);
+  } catch (error: any) {
+    sourceCheck.value = {
+      source: audioSource.value, status: 'error', stage: 'request', trace_id: '', elapsed_ms: 0,
+      message: error?.response?.data?.detail || error?.message || '來源檢查失敗',
+      recovery: '確認後端仍在執行後重試。', details: {},
+    };
+  } finally { isCheckingSource.value = false; }
+}
 
 function chooseLocalFile() {
   const bridge = (window as WindowWithPyQt).pyqt;
@@ -461,6 +492,11 @@ const selectedAsrModelDownloaded = computed(() => !selectedDownloadEngine.value 
   selectedAsrModelId.value,
   selectedModelComputeBackend.value,
 ));
+const readinessItems = computed(() => [
+  { label: '音訊來源', status: sourceCheck.value?.status || 'unknown', detail: sourceCheck.value?.message || '請先選擇來源並執行來源測試' },
+  { label: '語音辨識', status: selectedAsrModelDownloaded.value ? 'ready' : (selectedAsrDownloadTask.value?.status === 'failed' ? 'error' : 'unknown'), detail: selectedAsrModelDownloaded.value ? '辨識模型已準備完成' : '請先完成辨識模型設定' },
+]);
+const showReadinessChecklist = computed(() => readinessItems.value.some(item => item.status !== 'ready'));
 
 const localLlmStatusLabel = computed(() => {
   if (llamaStore.isLoading) return llamaStore.localLlmEnabled ? '正在啟動' : '正在停止';
@@ -816,6 +852,7 @@ async function loadDevices() {
 
 // 當音訊來源改變時
 async function onAudioSourceChange() {
+  sourceCheck.value = null;
   selectedDeviceIndex.value = null;
   availableDevices.value = [];
   
@@ -1038,7 +1075,7 @@ onMounted(async () => {
 
   await store.syncRunningState();
   applySimpleAsr();
-  (window as WindowWithPyQt).pyqt?.updateNativeRecordingState?.(store.isRunning);
+  (window as WindowWithPyQt).pyqt?.updateNativeRecordingState?.(store.isRunning && store.asrReady);
 
   // 初始化完成後，延後建立 watch 避免初始化誤觸發自動保存
   await nextTick();
@@ -1211,6 +1248,7 @@ async function handleStart() {
     
     // 更新 store 狀態
     store.isRunning = true;
+    store.asrReady = false;
     store.currentTaskId = result.task_id;
     if (audioSource.value === 'url' || audioSource.value === 'file') {
       store.currentUrl = urlInput.value;
@@ -1340,6 +1378,7 @@ function clearLogs() {
               {{ hasErrors ? '配置錯誤' : (configWarnings.length > 0 ? '配置警告' : '配置正常') }}
             </span>
           </div>
+          <div v-if="store.isRunning" class="mt-2 text-xs text-cyan-200/80" role="status">{{ queueStatusText }}</div>
         </div>
         </div>
         <div class="flex min-w-0 items-center gap-2 max-md:w-full max-md:justify-between">
@@ -1377,6 +1416,30 @@ function clearLogs() {
         </div>
         <button @click="ffmpegWarningDismissed = true" class="text-yellow-400/60 hover:text-white transition font-bold text-lg leading-none p-1">✕</button>
       </div>
+
+      <section v-if="showReadinessChecklist" class="mb-4 rounded-xl border border-white/10 bg-slate-950/70 p-4" aria-labelledby="readiness-title">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <h2 id="readiness-title" class="text-base font-bold text-white">開始前確認</h2>
+            <p class="mt-1 text-sm text-white/55">確認音訊來源和語音辨識準備完成後，就可以開始使用。</p>
+          </div>
+          <button type="button" class="rounded-lg border border-white/15 px-3 py-2 text-sm text-white/75 hover:bg-white/5" @click="interfaceMode.mode = null; interfaceMode.pendingMode = null; interfaceMode.onboardingStep = 'mode'">繼續設定</button>
+        </div>
+        <div class="mt-3 grid gap-2 sm:grid-cols-2">
+          <div v-for="item in readinessItems" :key="item.label" class="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+            <p class="text-sm font-bold text-white"><span :class="item.status === 'ready' ? 'text-emerald-300' : item.status === 'error' ? 'text-red-300' : 'text-amber-300'">{{ item.status === 'ready' ? '已完成' : item.status === 'error' ? '需要處理' : '待確認' }}</span> · {{ item.label }}</p>
+            <p class="mt-1 text-sm leading-5 text-white/55">{{ item.detail }}</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="mb-4 flex flex-col gap-3 rounded-xl border border-indigo-400/20 bg-indigo-500/5 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 class="text-base font-bold text-white">預覽字幕樣式</h2>
+          <p class="mt-1 text-sm leading-5 text-white/60">用範例字幕調整位置、字級、顏色和背景透明度。範例內容不會保留。</p>
+        </div>
+        <button type="button" class="shrink-0 rounded-lg bg-indigo-500 px-4 py-2.5 text-sm font-bold text-white hover:bg-indigo-400" @click="router.push('/subtitle-style')">預覽字幕樣式</button>
+      </section>
 
       <!-- 配置警告面板 (僅在有警告/錯誤時動態顯示) -->
       <div v-if="configWarnings.length > 0" class="mb-4 p-4 rounded-xl bg-slate-950/90 border"
@@ -1557,6 +1620,28 @@ function clearLogs() {
                 ✓ 偵測到 {{ availableDevices.length }} 個音訊裝置
               </p>
             </div>
+
+            <section class="mb-5 rounded-xl border border-white/10 bg-white/[0.03] p-4" aria-labelledby="source-check-title">
+              <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 id="source-check-title" class="text-base font-bold text-white">先測試這個來源</h2>
+                  <p class="mt-1 text-sm leading-6 text-white/60">
+                    {{ audioSource === 'url' ? '解析網址並確認有音訊串流。' : audioSource === 'file' ? '檢查檔案可讀、含音軌且可解碼。' : '開啟裝置一秒並量測是否收到聲音；不會保存音訊或呼叫翻譯。' }}
+                  </p>
+                </div>
+                <button type="button" :disabled="store.isRunning || isCheckingSource || ((audioSource === 'url' || audioSource === 'file') && !urlInput.trim())"
+                  class="shrink-0 rounded-lg border border-cyan-400/40 bg-cyan-500/10 px-4 py-2.5 text-sm font-bold text-cyan-100 disabled:opacity-40"
+                  @click="runSourceCheck">
+                  {{ isCheckingSource ? '檢查中…' : (audioSource === 'microphone' || audioSource === 'system_audio' ? '開始收音測試' : '檢查來源') }}
+                </button>
+              </div>
+              <div v-if="sourceCheck" class="mt-3 rounded-lg border p-3 text-sm" role="status"
+                :class="sourceCheck.status === 'ready' ? 'border-emerald-400/30 bg-emerald-500/10 text-emerald-100' : sourceCheck.status === 'error' ? 'border-red-400/30 bg-red-500/10 text-red-100' : 'border-amber-400/30 bg-amber-500/10 text-amber-100'">
+                <p class="font-bold">{{ sourceCheck.status === 'ready' ? '已就緒' : sourceCheck.status === 'error' ? '需要處理' : '狀態未知' }} · {{ sourceCheck.message }}</p>
+                <p v-if="sourceCheck.recovery" class="mt-1 leading-6">下一步：{{ sourceCheck.recovery }}</p>
+                <p class="mt-1 text-xs opacity-65">階段 {{ sourceCheck.stage }} · {{ sourceCheck.elapsed_ms }} ms<span v-if="sourceCheck.trace_id"> · 追蹤 {{ sourceCheck.trace_id.slice(0, 8) }}</span></p>
+              </div>
+            </section>
 
             <!-- 快速設定 (輸入語言, 啟用翻譯, 目標語言) -->
             <p v-if="interfaceMode.isSimple" class="mb-3 text-xs text-indigo-200" role="status">

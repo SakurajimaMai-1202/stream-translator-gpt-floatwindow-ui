@@ -3,12 +3,18 @@ from __future__ import annotations
 import queue
 import re
 import time
+import unicodedata
 
 from .common import LoopWorkerBase, TranslationTask, sec2str
 
 
 _SENTENCE_END_RE = re.compile(r"[。！？!?…．.][」』”’）)\]]?$")
 _CJK_RE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]")
+
+
+def is_punctuation_only(text: str) -> bool:
+    text = str(text or "").strip()
+    return bool(text) and all(unicodedata.category(char)[0] in {"P", "Z"} for char in text)
 
 
 def remove_text_overlap(previous: str, current: str, minimum_chars: int = 4) -> str:
@@ -70,7 +76,7 @@ class SubtitleSegmenter(LoopWorkerBase):
         transcript = str(task.transcript or "").strip()
         if self.deduplicate_overlap:
             transcript = remove_text_overlap(self.previous_transcript, transcript)
-        if not transcript:
+        if not transcript or is_punctuation_only(transcript):
             return None
         self.previous_transcript = _join_text(self.previous_transcript, transcript)[-500:]
         task.transcript = transcript

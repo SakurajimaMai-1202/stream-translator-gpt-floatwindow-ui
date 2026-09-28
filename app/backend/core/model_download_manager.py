@@ -13,6 +13,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from threading import Lock
+from threading import Event
 from typing import Dict, List, Literal, Optional
 
 from backend.core.http_downloader import HttpDownloader
@@ -102,6 +103,8 @@ class ModelDownloadManager:
 
     def __init__(self):
         self._tasks: Dict[str, ModelDownloadTask] = {}
+        self._workers: Dict[str, asyncio.Task] = {}
+        self._cancel_events: Dict[str, Event] = {}
         self._lock = Lock()
 
     def _now(self) -> datetime:
@@ -157,7 +160,7 @@ class ModelDownloadManager:
         self,
         task_id: str,
         *,
-        status: Optional[Literal["pending", "downloading", "completed", "failed"]] = None,
+        status: Optional[Literal["pending", "downloading", "cancelling", "cancelled", "completed", "failed"]] = None,
         progress: Optional[float] = None,
         downloaded_bytes: Optional[int] = None,
         total_bytes: Optional[int] = None,
@@ -254,10 +257,14 @@ class ModelDownloadManager:
         with self._lock:
             self._tasks[task_id] = task
 
-        asyncio.create_task(self._run_download_task(task_id, engine, normalized_model_id, compute_backend))
+        cancel_event = Event()
+        worker = asyncio.create_task(self._run_download_task(task_id, engine, normalized_model_id, compute_backend, cancel_event))
+        with self._lock:
+            self._cancel_events[task_id] = cancel_event
+            self._workers[task_id] = worker
         return task_id
 
-    async def _run_download_task(self, task_id: str, engine: str, model_id: str, compute_backend: ModelComputeBackend) -> None:
+    async def _run_download_task(self, task_id: str, engine: str, model_id: str, compute_backend: ModelComputeBackend, cancel_event: Event) -> None:
         """執行單一下載任務"""
         download_logger = configure_dedicated_file_logger("model.download", "model_download")
         source = (SHERPA_RELEASE_ROOT if compute_backend == "cpu" and model_id not in SHERPA_HF_REPOS
@@ -268,21 +275,30 @@ class ModelDownloadManager:
         try:
             self._update_task(task_id, status="downloading", progress=0.05, message="準備下載")
             if compute_backend == "cpu":
-                await self._download_sherpa_archive(task_id, model_id)
+                await self._download_sherpa_archive(task_id, model_id, cancel_event)
             elif engine == "sensevoice":
                 await self._download_sensevoice_from_modelscope(task_id, model_id)
             else:
                 repo_id = self._normalize_repo_id(engine, model_id)
-                await self._download_from_hf(task_id, repo_id)
+                await self._download_from_hf(task_id, repo_id, cancel_event)
+            if cancel_event.is_set():
+                raise asyncio.CancelledError
             self._update_task(task_id, status="completed", progress=1.0, message="下載完成")
             download_logger.info("Completed task=%s model=%s", task_id, model_id)
+        except (asyncio.CancelledError, InterruptedError):
+            self._update_task(task_id, status="cancelled", message="下載已取消", error=None)
+            download_logger.info("Cancelled task=%s model=%s", task_id, model_id)
         except Exception as e:
             logger.exception("模型下載失敗 task_id=%s", task_id)
             download_logger.exception("Failed task=%s backend=%s model=%s source=%s",
                                       task_id, compute_backend, model_id, source)
             self._update_task(task_id, status="failed", message="下載失敗", error=str(e))
+        finally:
+            with self._lock:
+                self._workers.pop(task_id, None)
+                self._cancel_events.pop(task_id, None)
 
-    async def _download_sherpa_archive(self, task_id: str, model_id: str) -> None:
+    async def _download_sherpa_archive(self, task_id: str, model_id: str, cancel_event: Event) -> None:
         bundle, required_paths = SHERPA_CPU_BUNDLES[model_id]
         model_root = ensure_model_storage() / "sherpa-onnx"
         target = (model_root / bundle).resolve()
@@ -337,7 +353,8 @@ class ModelDownloadManager:
                 return
             partial = archive.with_name(archive.name + '.part')
             HttpDownloader(
-                progress=lambda done, total: self._update_byte_progress(task_id, done, total, "下載中（4 連線）")
+                progress=lambda done, total: self._update_byte_progress(task_id, done, total, "下載中（4 連線）"),
+                cancel_event=cancel_event,
             ).download(f"{SHERPA_RELEASE_ROOT}/{archive.name}", partial)
             partial.replace(archive)
             with tarfile.open(archive, "r:bz2") as model_archive:
@@ -359,7 +376,7 @@ class ModelDownloadManager:
         await asyncio.to_thread(blocking_download)
         self._update_task(task_id, progress=0.95, message=f"sherpa-onnx model ready: {target}")
 
-    async def _download_from_hf(self, task_id: str, repo_id: str) -> None:
+    async def _download_from_hf(self, task_id: str, repo_id: str, cancel_event: Event) -> None:
         """Download a Hugging Face model with byte-based progress."""
         self._update_task(task_id, progress=0.15, message="初始化 HuggingFace 下載")
         state = {"total": 0, "blob_dir": None}
@@ -384,6 +401,8 @@ class ModelDownloadManager:
 
         download = asyncio.create_task(asyncio.to_thread(blocking_download))
         while not download.done():
+            if cancel_event.is_set():
+                raise asyncio.CancelledError
             total = state["total"]
             blob_dir = state["blob_dir"]
             if total > 0 and isinstance(blob_dir, Path):
@@ -392,6 +411,24 @@ class ModelDownloadManager:
             await asyncio.sleep(0.5)
         path = await download
         self._update_task(task_id, progress=0.95, message=f"模型已快取至 {path}")
+
+    def cancel(self, task_id: str) -> ModelDownloadTask:
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if not task:
+                raise KeyError(task_id)
+            if task.status not in {"pending", "downloading", "cancelling"}:
+                return copy.deepcopy(task)
+            task.status = "cancelling"
+            task.message = "正在取消下載"
+            task.updated_at = self._now()
+            event = self._cancel_events.get(task_id)
+            worker = self._workers.get(task_id)
+            if event:
+                event.set()
+            if worker:
+                worker.cancel()
+            return copy.deepcopy(task)
 
     async def _download_sensevoice_from_modelscope(self, task_id: str, model_id: str) -> None:
         self._update_task(task_id, progress=0.15, message="Preparing ModelScope download")

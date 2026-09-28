@@ -4,7 +4,7 @@ import queue
 from types import SimpleNamespace
 import numpy as np
 
-from stream_translator_gpt.common import AUDIO_STREAM_GAP, LatencyTrace, TranslationTask
+from stream_translator_gpt.common import AUDIO_STREAM_GAP, LatencyTrace, ObservableTaskQueue, TranslationTask
 from stream_translator_gpt.audio_slicer import AudioSlicer
 from stream_translator_gpt.latency_stats import LatencyWindow
 from stream_translator_gpt.result_exporter import ResultExporter, SUBTITLE_EVENT_PREFIX
@@ -21,6 +21,7 @@ def test_audio_slicer_creates_latency_trace_when_vad_is_disabled():
         vad_threshold=0.5,
         dynamic_vad_threshold=False,
         disable_vad=True,
+        slicing_mode="legacy",
     )
     frame = np.zeros(round(16000 * 0.032), dtype=np.float32)
     slicer.put(frame)
@@ -45,6 +46,7 @@ def test_audio_slicer_flushes_buffered_speech_at_stream_gap():
         vad_threshold=0.5,
         dynamic_vad_threshold=False,
         disable_vad=True,
+        slicing_mode="legacy",
     )
     input_queue = queue.SimpleQueue()
     output_queue = queue.SimpleQueue()
@@ -88,6 +90,7 @@ def test_audio_slicer_does_not_discard_valid_weak_speech(monkeypatch):
         vad_threshold=0.5,
         dynamic_vad_threshold=False,
         disable_vad=False,
+        slicing_mode="legacy",
     )
     input_queue = queue.SimpleQueue()
     output_queue = queue.SimpleQueue()
@@ -239,6 +242,7 @@ def test_latency_trace_calculates_pipeline_metrics():
         trace_id="trace-1",
         audio_duration_ms=2000.0,
         capture_started_at=1.0,
+        first_speech_at=1.5,
         last_speech_at=2.0,
         slice_emitted_at=2.3,
         asr_queued_at=2.3,
@@ -262,6 +266,8 @@ def test_latency_trace_calculates_pipeline_metrics():
     assert metrics["translation_inference_ms"] == pytest.approx(600.0)
     assert metrics["delivery_ms"] == pytest.approx(50.0)
     assert metrics["end_to_end_ms"] == pytest.approx(1850.0)
+    assert metrics["first_speech_to_delivery_ms"] == pytest.approx(2350.0)
+    assert metrics["speech_end_to_final_delivery_ms"] == pytest.approx(1850.0)
 
 
 def test_latency_trace_merge_preserves_full_subtitle_span():
@@ -289,6 +295,20 @@ def test_latency_window_reports_recent_p50_and_p95_only():
     assert snapshot["metrics"]["end_to_end_ms"]["latest"] == 40.0
     assert snapshot["metrics"]["end_to_end_ms"]["p50"] == 30.0
     assert snapshot["metrics"]["end_to_end_ms"]["p95"] == pytest.approx(39.0)
+
+
+def test_observable_task_queue_reports_audio_backlog_without_content():
+    backlog = ObservableTaskQueue()
+    first = TranslationTask(np.zeros(16000, dtype=np.float32), (0.0, 1.0))
+    second = TranslationTask(np.zeros(8000, dtype=np.float32), (1.0, 1.5))
+    first.created_at_monotonic -= 0.2
+    backlog.put(first)
+    backlog.put(second)
+    snapshot = backlog.snapshot()
+    assert snapshot["depth"] == 2
+    assert snapshot["audio_seconds"] == pytest.approx(1.5)
+    assert snapshot["oldest_wait_ms"] >= 190
+    assert set(snapshot) == {"depth", "audio_seconds", "oldest_wait_ms"}
 
 
 def test_result_exporter_emits_trace_and_window(capsys):

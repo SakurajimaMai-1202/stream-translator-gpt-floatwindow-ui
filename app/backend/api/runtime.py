@@ -1,5 +1,6 @@
 ﻿from fastapi import APIRouter, HTTPException
 import asyncio
+from pydantic import BaseModel
 
 from backend.api.config import get_config_manager
 from backend.core.runtime_status import build_runtime_status
@@ -8,6 +9,10 @@ from backend.core.app_update_manager import app_update_manager
 
 
 router = APIRouter(prefix="/runtime", tags=["runtime"])
+
+
+class CpuAsrSidecarImportRequest(BaseModel):
+    archive_path: str
 
 
 @router.get("/status")
@@ -42,6 +47,43 @@ async def install_cpu_asr_sidecar():
 @router.post("/cpu-asr-sidecar/cancel")
 async def cancel_cpu_asr_sidecar_install():
     return {"success": True, "data": cpu_asr_sidecar_manager.cancel()}
+
+
+@router.post("/cpu-asr-sidecar/import")
+async def import_cpu_asr_sidecar(request: CpuAsrSidecarImportRequest):
+    try:
+        data = await asyncio.to_thread(cpu_asr_sidecar_manager.import_archive, request.archive_path)
+        return {"success": True, "data": data}
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/diagnostics")
+async def export_runtime_diagnostics():
+    """Return a support-safe snapshot without secrets or transcript data."""
+    try:
+        config = get_config_manager().get_config()
+        runtime = await asyncio.to_thread(build_runtime_status, config)
+        from backend.api.llama import _get_llama_runtime_info
+        from backend.config import settings
+        llama = await asyncio.to_thread(_get_llama_runtime_info)
+        return {"success": True, "data": {
+            "app_version": settings.APP_VERSION,
+            "runtime": runtime,
+            "resources": {
+                "model_storage_path": str(config.get("models", {}).get("storage_path", "") or ""),
+                "llama_server_exe": str(config.get("llama", {}).get("server_exe", "") or ""),
+                "llama_model_path": str(config.get("llama", {}).get("model_path", "") or ""),
+                "llama_runtime": llama,
+                "cpu_asr_sidecar": cpu_asr_sidecar_manager.status(),
+            },
+        }}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.get("/app-update")

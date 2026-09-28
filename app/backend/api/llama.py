@@ -124,7 +124,7 @@ def _no_mmap_args(server_exe: str) -> List[str]:
 async def probe_existing_llama_server() -> bool:
     """
     啟動時探測是否有現有的 llama.cpp 伺服器在執行中。
-    讀取設定的 host/port（預設 127.0.0.1:8080），嘗試連線 /health。
+    讀取設定的 host/port（預設 127.0.0.1:8081），嘗試連線 /health。
     若成功，進一步查詢 /props 或 /v1/models 取得模型名稱，並更新 llama_state。
     """
     if llama_state.is_running:
@@ -136,10 +136,10 @@ async def probe_existing_llama_server() -> bool:
         cfg = get_config_manager().get_config()
         llama_cfg = cfg.get('llama', {})
         host = llama_cfg.get('host', '127.0.0.1')
-        port = int(llama_cfg.get('port', 8080))
+        port = int(llama_cfg.get('port', 8081))
     except Exception:
         host = '127.0.0.1'
-        port = 8080
+        port = 8081
 
     url = f"http://{host}:{port}"
 
@@ -205,7 +205,7 @@ class ServerConfig(BaseModel):
     """伺服器配置"""
     model_path: str = ""
     host: str = "127.0.0.1"
-    port: int = 8080
+    port: int = 8081
     n_ctx: int = 2048
     n_gpu_layers: int = 0
     n_threads: int = 4
@@ -257,6 +257,12 @@ class RuntimeInstallRequest(BaseModel):
 
 class ModelInstallRequest(BaseModel):
     model_id: str
+
+class RuntimePathRequest(BaseModel):
+    server_exe: str
+
+class ModelPathRequest(BaseModel):
+    model_path: str
 
 # ==================== API 端點 ====================
 
@@ -321,7 +327,9 @@ async def start_server(config: ServerConfig, background_tasks: BackgroundTasks):
     
     # 尋找 llama-server 執行檔
     if config.server_exe:
-        server_exe = Path(config.server_exe)
+        server_exe = _resolve_custom_runtime(config.server_exe)
+        if not server_exe.is_file():
+            raise HTTPException(status_code=400, detail=f"自訂 llama Runtime 不存在: {server_exe}")
     else:
         # 預設路徑
         possible_paths = [
@@ -509,7 +517,7 @@ async def get_server_status():
 
 
 @router.get("/server/available-port")
-async def get_available_port(preferred: int = 8080):
+async def get_available_port(preferred: int = 8081):
     for port in range(max(1024, preferred), min(65535, preferred + 100)):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
             probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -577,7 +585,31 @@ async def install_model(request: ModelInstallRequest, background_tasks: Backgrou
     return {"success": True, "message": "已開始下載翻譯模型", "job_id": job_id}
 
 
+def _resolve_user_path(value: str) -> Path:
+    path = Path(os.path.expandvars(os.path.expanduser(str(value).strip())))
+    if not path.is_absolute():
+        path = get_app_root() / path
+    return path.resolve()
+
+
+def _resolve_custom_runtime(value: str) -> Path:
+    path = _resolve_user_path(value)
+    return path / "llama-server.exe" if path.is_dir() else path
+
+
+def _configured_llama_server() -> tuple[Optional[Path], bool]:
+    try:
+        from backend.api.config import get_config_manager
+        configured = str(get_config_manager().get_config().get("llama", {}).get("server_exe", "") or "").strip()
+    except Exception:
+        configured = ""
+    return (_resolve_custom_runtime(configured), True) if configured else (None, False)
+
+
 def _find_llama_server() -> Optional[Path]:
+    configured, explicit = _configured_llama_server()
+    if explicit:
+        return configured if configured and configured.is_file() else None
     active_runtime = active_runtime_executable()
     candidates = [
         active_runtime,
@@ -591,21 +623,59 @@ def _find_llama_server() -> Optional[Path]:
     return next((path.resolve() for path in candidates if path and path.exists()), None)
 
 
+@router.post("/runtime/validate")
+async def validate_runtime_path(request: RuntimePathRequest):
+    executable = _resolve_custom_runtime(request.server_exe)
+    if executable.name.lower() != "llama-server.exe" or not executable.is_file():
+        raise HTTPException(status_code=400, detail=f"找不到 llama-server.exe: {executable}")
+    try:
+        result = await asyncio.to_thread(
+            run_external, [str(executable), "--version"], capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=5,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"llama Runtime 無法執行: {exc}") from exc
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "未知錯誤").strip()[-500:]
+        raise HTTPException(status_code=400, detail=f"llama Runtime 驗證失敗: {detail}")
+    output = (result.stdout + "\n" + result.stderr).strip()
+    return {"success": True, "path": str(executable), "version": output.splitlines()[0] if output else "未知版本"}
+
+
+@router.post("/model/validate")
+async def validate_model_path(request: ModelPathRequest):
+    model = _resolve_user_path(request.model_path)
+    if model.suffix.lower() != ".gguf" or not model.is_file():
+        raise HTTPException(status_code=400, detail=f"找不到 GGUF 翻譯模型: {model}")
+    try:
+        with model.open("rb") as stream:
+            magic = stream.read(4)
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=f"無法讀取 GGUF 翻譯模型: {exc}") from exc
+    if magic != b"GGUF":
+        raise HTTPException(status_code=400, detail=f"檔案不是有效的 GGUF 模型: {model}")
+    return {"success": True, "path": str(model), "size": model.stat().st_size}
+
+
 _runtime_info_cache: Dict[str, Any] = {}
 _runtime_info_cache_at = 0.0
+_runtime_info_cache_key = ""
 _runtime_info_cache_lock = threading.Lock()
 _RUNTIME_INFO_CACHE_SECONDS = 10.0
 
 
 def _get_llama_runtime_info() -> Dict[str, Any]:
-    global _runtime_info_cache, _runtime_info_cache_at
+    global _runtime_info_cache, _runtime_info_cache_at, _runtime_info_cache_key
     now = time.monotonic()
+    configured, explicit = _configured_llama_server()
+    cache_key = str(configured) if explicit and configured else "managed"
     with _runtime_info_cache_lock:
-        if _runtime_info_cache and now - _runtime_info_cache_at < _RUNTIME_INFO_CACHE_SECONDS:
+        if _runtime_info_cache and cache_key == _runtime_info_cache_key and now - _runtime_info_cache_at < _RUNTIME_INFO_CACHE_SECONDS:
             return dict(_runtime_info_cache)
 
     executable = _find_llama_server()
-    version = "未安裝"
+    version = "自訂 Runtime 不存在" if explicit else "未安裝"
     if executable:
         try:
             result = run_external(
@@ -619,13 +689,15 @@ def _get_llama_runtime_info() -> Dict[str, Any]:
             version = "無法讀取版本"
     info = {
         "installed": executable is not None,
-        "path": str(executable) if executable else "",
+        "path": str(executable or configured or ""),
         "version": version,
         "download_url": "https://github.com/ggml-org/llama.cpp/releases/latest",
+        "source": "custom" if explicit else "managed",
     }
     with _runtime_info_cache_lock:
         _runtime_info_cache = info
         _runtime_info_cache_at = time.monotonic()
+        _runtime_info_cache_key = cache_key
     return dict(info)
 
 

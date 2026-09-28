@@ -2,14 +2,14 @@
 
 Windows 即時語音辨識、翻譯與浮動字幕工具。它能擷取直播網址、系統聲音、麥克風或本機影音，先以本機／雲端 ASR 轉成文字，再交由 OpenAI、Google Gemini 或本機 LLM 翻譯，最後輸出成桌面字幕、區網字幕頁或字幕檔。
 
-[下載最新版](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest) · [v1.4.9 更新說明](app/docs/RELEASE_NOTES_v1.4.9_zh-TW.md) · [回報問題](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/issues)
+[下載最新版](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest) · [v1.4.10 更新說明](app/docs/RELEASE_NOTES_v1.4.10_zh-TW.md) · [回報問題](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/issues)
 
 
 ![Windows](https://img.shields.io/badge/platform-Windows-lightgrey)
 ![NVIDIA CUDA](https://img.shields.io/badge/GPU-NVIDIA%20CUDA-green)
 ![AMD ROCm](https://img.shields.io/badge/GPU-AMD%20ROCm%20Experimental-orange)
 ![CPU sherpa-onnx](https://img.shields.io/badge/CPU-sherpa--onnx-blueviolet)
-![Release](https://img.shields.io/badge/release-v1.4.9-blue)
+![Release](https://img.shields.io/badge/release-v1.4.10-blue)
 
 <img width="2381" height="1058" alt="Stream Translator FloatWindow" src="https://github.com/user-attachments/assets/0a663535-dd94-40a6-8444-3c00844bc563" />
 
@@ -57,49 +57,34 @@ Windows 即時語音辨識、翻譯與浮動字幕工具。它能擷取直播網
 
 > v1.3.11 起，術語表與 ASR 修正規則的 CSV／TSV 匯入支援引號、欄位內逗號、Tab、換行與 UTF-8 BOM；匯出使用 UTF-8 BOM 與 CRLF，方便 Excel 正確辨識繁體中文。
 
-## v1.4.9 更新重點
+## v1.4.10 更新重點
 
-- 新安裝預設採用 OmniStreamVAD 原生事件切段：語音閾值 0.35、原生最長切片 6 秒，其他 frame 設定依介面截圖；已保存的個人設定不變。
-- 桌面視窗的外部連結改由系統瀏覽器開啟，首次模式選擇補上 WARP 下載與連線步驟。
-- 改善 Windows App Update 等待後端關閉與失敗回復、即時字幕重疊去除、簡單模式初始語言與 GPU 顯存偵測。
-- v1.4.9 App Update 會一併更新相同 Profile 的完整 Runtime，確保新的原生 VAD 程式碼與依賴確實進入既有安裝。
+- 首次啟動可先進入程式；可匯入本機 ASR、llama-server 與 GGUF 資源，CUDA／ROCm 也可使用離線 CPU ASR sidecar。
+- 簡單模式只準備所選語言需要的 ASR 模型，並可取消下載；下載失敗時保留 TLS 憑證驗證。
+- 新增 URL、影音檔、系統音訊與麥克風的來源檢查，以及不會保存內容的字幕樣式預覽。
+- 改善打包版 CUDA ASR 子程序的 DLL 隔離；新增 ASR 佇列與字幕延遲資訊。
+- 新安裝的字幕與本機服務設定更完整；Full package 不再附帶大型模型或 llama.cpp Runtime。
 
-CUDA 的 v1.4.9 App Update 超過單一資產大小限制，分成 `StreamTranslator-CUDA-App-Update.zip.part01` 和 `.part02`；先用同目錄的 `merge-full-package.bat` 合併，再依更新流程使用。CPU 與 ROCm App Update 是單一 ZIP。
-
-完整內容見 [v1.4.9 更新說明](app/docs/RELEASE_NOTES_v1.4.9_zh-TW.md)。下載檔案與檢查碼請見 [v1.4.9 Release](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/tag/v1.4.9)。
-
-## v1.4.8 已發布版本更新重點
-
-v1.4.8 的重點包括：
-
-- 簡單模式會偵測 GPU 與 VRAM，自動選擇 NVIDIA CUDA／AMD HIP Runtime 及合適的 Hy-MT2 量化模型。
-- 首次導引只會下載、驗證並設定 Runtime 與模型；本地 LLM 保持關閉，進入首頁後由使用者手動啟動。
-- 修正 Hugging Face 模型檔案大小與 SHA-256 讀取，避免首次設定誤報模型缺少驗證資訊。
-- llama.cpp 的 CUDA、ROCm、SYCL 與 Vulkan 套件會依應用 Profile 與硬體正確配對，並隔離 Qt／PyInstaller DLL 環境，修正 `0xC0000005` 啟動失敗。
-- Runtime 安裝與首次準備畫面顯示實際百分比；llama.cpp 記錄獨立輸出，Flash Attention 提供 `on | off | auto`。
-- 浮動字幕改善小高度排列、自然向上捲動、完整保留翻譯行、控制按鈕自動隱藏及時間軸顏色套用。
-
-完整內容請見 [v1.4.8 更新說明](app/docs/RELEASE_NOTES_v1.4.8_zh-TW.md)。
+完整內容請見 [v1.4.10 更新說明](app/docs/RELEASE_NOTES_v1.4.10_zh-TW.md)。
 
 ## 下載：先選對執行版本
 
-請從 [GitHub Releases v1.4.9](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/tag/v1.4.9) 下載。GitHub 自動提供的 `Source code (zip)` 不是可直接執行的 Windows 完整包。
+請從 [GitHub Releases v1.4.10](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/tag/v1.4.10) 下載。GitHub 自動提供的 `Source code (zip)` 不是可直接執行的 Windows 完整包。
 
 | 版本 | 適用硬體 | 本機 ASR 路徑 | Full package |
 |---|---|---|---|
-| CUDA | NVIDIA CUDA 相容獨立顯示卡 | CUDA 原生 ASR；亦含 sherpa-onnx CPU sidecar | `StreamTranslator-win64-CUDA-Full.zip.part01`～`.part03` |
+| CUDA | NVIDIA CUDA 相容獨立顯示卡 | CUDA 原生 ASR；可另匯入 sherpa-onnx CPU sidecar | `StreamTranslator-win64-CUDA-Full.zip.part01`～`.part03` |
 | CPU | 無獨立顯示卡、相容性優先 | sherpa-onnx／ONNX Runtime，不包含 PyTorch | `StreamTranslator-win64-CPU-Full.zip`（可直接解壓） |
-| ROCm Experimental | 支援 Windows ROCm／HIP 的 AMD 獨立顯示卡 | ROCm 原生 ASR；亦含 sherpa-onnx CPU sidecar | `StreamTranslator-win64-ROCm-Experimental-Full.zip`（可直接解壓） |
+| ROCm Experimental | 支援 Windows ROCm／HIP 的 AMD 獨立顯示卡 | ROCm 原生 ASR；可另匯入 sherpa-onnx CPU sidecar | `StreamTranslator-win64-ROCm-Experimental-Full.zip`（可直接解壓） |
 
 ROCm 版本仍屬實驗性支援，能否使用取決於顯示卡、驅動程式與 Windows ROCm Runtime 相容性。若不確定，先使用 CPU 版。
 
 ### 合併與安裝 Full package
 
-1. CPU／ROCm 使用者可直接下載並解壓對應的 Full ZIP；CUDA 使用者請下載 `.part01`～`.part03` 與 `merge-full-package.bat`。
-2. CUDA 使用者將四個檔案放在同一資料夾，雙擊 `merge-full-package.bat`。
-3. 以 `SHA256SUMS-v1.4.9.txt` 驗證合併後的 ZIP。
-4. 解壓到一般可寫入路徑，例如 `D:\Apps\StreamTranslator`。
-5. 執行 `Stream Translator.exe`。
+1. CPU／ROCm 使用者下載對應的 Full ZIP；CUDA 使用者下載 `.part01`～`.part03` 與 `merge-full-package.bat`，將檔案放在同一資料夾後執行合併。
+2. 以 Release 附帶的 `SHA256SUMS-v1.4.10.txt` 驗證 Full ZIP。
+3. 解壓到一般可寫入路徑，例如 `D:\Apps\StreamTranslator`。
+4. 執行 `Stream Translator.exe`。
 
 不要直接解壓 `.part01`；CUDA 完整包必須先透過 `merge-full-package.bat` 產生 ZIP。
 
@@ -107,19 +92,19 @@ ROCm 版本仍屬實驗性支援，能否使用取決於顯示卡、驅動程式
 
 同一 Profile 的舊版可使用對應 App Update：
 
-- `StreamTranslator-CUDA-App-Update.zip.part01` 和 `.part02`（先用 `merge-full-package.bat` 合併）
+- `StreamTranslator-CUDA-App-Update.zip.part01`～`.part02`（先用 `merge-full-package.bat` 合併）
 - `StreamTranslator-CPU-App-Update.zip`
 - `StreamTranslator-ROCm-Experimental-App-Update.zip`
 
 更新器會在套用前備份 `config.yaml`、自訂術語、ASR 修正規則與 Cookies，最多保留五份。App Update 只能套用相同 Profile，不要以 CUDA 更新包更新 CPU 或 ROCm 安裝。
 
-v1.4.9 更新包使用 `runtime_replace`，包含完整 Runtime，並會在啟動失敗時回復舊 Runtime。低於最低可直接升級版本的安裝會在下載前提示改用同 Profile Full package。
+v1.4.10 更新包使用 `runtime_replace`，包含完整 Runtime，並會在啟動失敗時嘗試回復舊 Runtime。v1.3.11 以下或無法識別的安裝請改用同 Profile Full package。
 
 從 v1.4.0 起，上述流程已整合到「設定 → 一般設定」。從更舊版本首次升級到 v1.4.0 時，請完整解壓相同 Profile 的 App Update；更新包已包含 `StreamTranslatorUpdater.exe`，不需另外下載。
 
-CUDA／ROCm 使用者若缺少 CPU ASR sidecar，可在首次模式準備流程自動安裝，或下載 `StreamTranslator-CPU-ASR-Sidecar-v1.4.9.zip`。Sidecar 只含 CPU ASR Runtime；首次模式準備流程會再下載三個推薦模型。
+CUDA／ROCm 使用者若缺少 CPU ASR sidecar，可下載 `StreamTranslator-CPU-ASR-Sidecar-v1.4.10.zip` 並匯入；sidecar 只含 CPU ASR Runtime，模型可在模型管理頁按需準備。
 
-v1.4.9 的 Full package 不包含 `llama` 資料夾。若使用 API 翻譯，不需要本機 LLM；簡單模式選擇本機翻譯時會依 GPU 自動下載 GGUF 與相符的 llama.cpp Runtime，完成後仍需在首頁手動開啟本地 LLM。
+v1.4.10 的 Full package 不包含大型 ASR／GGUF 模型或 llama.cpp Runtime。若使用 API 翻譯，不需要本機 LLM；選擇本機翻譯時，請匯入或按需準備 GGUF 與相符的 llama.cpp Runtime。
 
 ## 第一次使用教學
 
@@ -288,7 +273,7 @@ ASR 決定「聽到了什麼」。選型時依序考慮：硬體與 Runtime、�
 
 ## 媒體輸入注意事項
 
-- v1.4.9 Full package 內含 Node.js 22+，供 yt-dlp 處理需要 JavaScript Runtime 的來源。
+- v1.4.10 Full package 內含 Node.js 22+，供 yt-dlp 處理需要 JavaScript Runtime 的來源。
 - 部分 YouTube／Twitch 內容可能需要登入、地區權限或 cookies；請匯出 Netscape 格式 `cookies.txt`。
 - Chromium 的 App-Bound Encryption 可能阻止直接讀取瀏覽器 cookies，匯出檔通常較穩定。
 - 系統音訊請選擇實際播放裝置；無聲時先確認 Windows 音量混音器與輸出裝置。
@@ -353,11 +338,11 @@ python .\main.py
 cd .\app
 
 # 快速驗證
-.\build_all_profiles.ps1 -Version 1.4.9 -Mode Quick -ReuseRuntimeCache
+.\build_all_profiles.ps1 -Version 1.4.10 -Mode Quick -ReuseRuntimeCache
 
 # 正式發佈
 .\build_all_profiles.ps1 `
-  -Version 1.4.9 `
+  -Version 1.4.10 `
   -Mode Final `
   -ReuseRuntimeCache `
   -CompressionLevel 7 `
@@ -365,7 +350,7 @@ cd .\app
   -CopyThreads 8
 ```
 
-v1.4.9 發布資產包含 App Update、Full package 分割檔、manifest 與 SHA-256 清單；檔名及使用方式以上方下載說明為準。
+v1.4.10 發布資產包含 App Update、Full package、manifest 與 SHA-256 清單；分割方式依各資產大小而異，請以 GitHub Release 資產清單為準。
 
 ## 專案來源
 

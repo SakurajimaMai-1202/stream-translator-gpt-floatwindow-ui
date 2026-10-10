@@ -37,7 +37,7 @@ Thumbs.db
 frontend/dist/
 frontend/scratch/
 backend/static/
-models/
+/models/
 cookies/
 output/
 tests/.tmp-*/

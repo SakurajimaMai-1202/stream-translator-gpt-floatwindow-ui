@@ -1,16 +1,23 @@
-Stream Translator v1.4.10 更新說明
-==============================================
+Stream Translator v1.5.0 更新摘要
+整理日期：2026-10-10
 
-主要更新
---------
-- 首次啟動可稍後設定或使用本機已有的 ASR、llama.cpp、GGUF 與離線 CPU ASR Runtime，不再因下載失敗卡住。
-- 簡單模式只準備目前來源與語言需要的一個 ASR 模型，模型下載可以取消。
-- 首頁加入網址、影音檔、系統音訊與麥克風的個別來源測試，以及範例字幕樣式預覽。
-- 修正打包版 CUDA ASR 可能受到 Qt DLL 路徑影響而無法載入 GPU Runtime 的問題。
-- 加入 ASR 佇列與字幕延遲追蹤，並改善鍵盤焦點及首頁提示文字。
+新增功能：
+- 全站統一深色介面、卡片、按鈕、表單與選單；Llama、ASR 模型管理及翻譯設定集中常用操作，進階設定可展開。
+- llama.cpp 支援手動選擇單張顯卡，區分指定顯卡與實際卸載確認；自動選擇預設排除內顯。
+- NVIDIA 優先 CUDA；AMD／Intel Arc 獨顯推薦 Vulkan。ASR 套件類型依原配置使用。
+- 加入 Index-Translate-2B／9B 官方 GGUF 推薦、量化大小、顯存估算及部署參數。
+- 修正 temperature=0、top_k=0 等合法零值的保存與載入。
+- 新增指定應用程式音訊，提供視窗選擇、收音測試及目標退出提示；瀏覽器共用程序不保證分頁隔離。
 
-更新方式
---------
-- v1.4.10 App Update 包含完整且與 Profile 相符的 Runtime；CUDA、CPU、ROCm 不可交叉套用。
-- 套用前請關閉程式並備份 config.yaml。若使用自訂模型或 Runtime，更新不會刪除外部檔案。
-- 完整內容見 RELEASE_NOTES_v1.4.10_zh-TW.md。
+其他重點更新：
+- 首次設定依來源及語言準備入門 ASR 模型；首頁顯示來源與 ASR 準備狀態。
+- 直播網址、影音檔、系統音訊與麥克風提供來源測試與恢復提示。
+- HY-MT2／Index 獨立保存設定；改善相容 API 回覆、試譯錯誤及外部端點行為。
+- 繁體中文送出前統一經 OpenCC 轉換；改善詞庫、上下文、ASR 未完句及字幕清理。
+- 修正 CPU 打包版啟動；手動更新支援 App Update ZIP／分割包及雜湊檢查，保留模型、設定與輸出檔案。
+- 內附 yt-dlp nightly 2026.9.27.232945.dev0、yt-dlp-ejs 0.8.0、Node.js 24.14.0；App Update 替換完整 Runtime。
+
+CPU、CUDA、ROCm Experimental Full／App Update 已於 2026-10-10 重新建置並完成 ZIP 完整性檢查，包含上述更新。尚未完成 AMD／Intel 雙顯卡、Index 模型推論、長時間直播及新版套件完整安裝／更新驗收。
+更新前備份 config.yaml、Cookies、術語與自訂規則。App Update 須對應原安裝 CPU／CUDA／ROCm 類型；新安裝或切換類型使用 Full。
+CUDA Full 三段、App Update 兩段；保存全部分段及 SHA256SUMS-v1.5.0.txt。ROCm 為實驗性套件。
+完整說明：RELEASE_NOTES_v1.5.0_zh-TW.md。

@@ -822,7 +822,7 @@ async function stopTranslation() {
     <!-- Settings Panel -->
     <div
       v-show="showSettings"
-      class="absolute top-12 right-4 bg-gray-900/95 backdrop-blur-xl rounded-2xl shadow-2xl p-6 w-80 max-h-[calc(100vh-80px)] overflow-y-auto z-40 border border-white/20"
+      class="subtitle-settings-panel absolute top-12 right-4 bg-gray-900/95 backdrop-blur-xl rounded-2xl shadow-2xl p-6 w-80 max-h-[calc(100vh-80px)] overflow-y-auto z-40 border border-white/20"
     >
       <div class="flex justify-between items-center mb-4">
         <h3 class="text-xl font-bold text-white">字幕設定</h3>
@@ -1070,4 +1070,14 @@ async function stopTranslation() {
     z-index: -1;
   }
 }
+
+.subtitle-settings-panel { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft JhengHei", sans-serif; background: var(--fw-surface, #101a2a); border-color: var(--fw-border, #273249); border-radius: var(--fw-radius-lg, .75rem); max-width: calc(100vw - 2rem); }
+.subtitle-settings-panel h3 { font-size: 1.25rem; font-weight: 650; letter-spacing: -.025em; }
+.subtitle-settings-panel button { min-height: 2.75rem; }
+.subtitle-floating-controls button { min-width: 2.75rem; min-height: 2.75rem; border-radius: .75rem; transform: none; display: grid; place-items: center; touch-action: manipulation; }
+:is(.subtitle-floating-controls,.subtitle-settings-panel) button:active { transform: scale(.97); }
+:is(.subtitle-floating-controls,.subtitle-settings-panel) button:focus-visible { outline: 2px solid var(--fw-primary, #7297f5); outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) { .typing-cursor { animation: none; } .subtitle-flow-enter-from,.subtitle-flow-leave-to { transform: none; } .subtitle-floating-controls button,.subtitle-settings-panel button { transform: none; transition: none; } }
+@media (prefers-reduced-transparency: reduce) { .subtitle-settings-panel { backdrop-filter: none; } .subtitle-floating-controls button { background: #101a2a; backdrop-filter: none; } }
+
 </style>

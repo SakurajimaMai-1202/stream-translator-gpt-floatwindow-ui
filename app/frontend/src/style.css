@@ -5,35 +5,39 @@
 /* Native form controls compatibility (QWebEngine / Chromium popup rendering) */
 :root {
   color-scheme: dark;
-  --fw-bg: #080d17;
-  --fw-sidebar: #0c1220;
-  --fw-surface: #101a2a;
-  --fw-surface-raised: #152033;
-  --fw-surface-subtle: #0c1524;
-  --fw-border: #273249;
-  --fw-border-strong: #34415a;
-  --fw-text: #e9edf5;
-  --fw-text-secondary: #a5b4cb;
-  --fw-text-muted: #7f8ca4;
-  --fw-primary: #7297f5;
-  --fw-primary-soft: #1d3154;
+  --fw-bg: #0c111b;
+  --fw-sidebar: #101722;
+  --fw-surface: #17202d;
+  --fw-surface-raised: #1e2939;
+  --fw-surface-subtle: #101824;
+  --fw-border: #ffffff1a;
+  --fw-border-strong: #ffffff29;
+  --fw-text: #eef2f7;
+  --fw-text-secondary: #aab6c8;
+  --fw-text-muted: #94a2b7;
+  --fw-primary: #3479d9;
+  --fw-primary-soft: #243c5d;
+  --fw-surface-secondary: var(--fw-surface-raised);
+  --fw-muted: var(--fw-text-secondary);
+  --fw-accent: var(--fw-primary);
+  --fw-focus: #86b5ff;
   --fw-success: #7ad6b2;
   --fw-warning: #f1c878;
   --fw-danger: #f08a91;
-  --fw-radius-sm: 0.375rem;
-  --fw-radius-md: 0.5rem;
-  --fw-radius-lg: 0.75rem;
+  --fw-radius-sm: 0.625rem;
+  --fw-radius-md: 0.75rem;
+  --fw-radius-lg: 1rem;
 }
 
 :root:not(.transparent-page) {
-  background: #0f172a;
+  background: var(--fw-bg);
 }
 
 html:not(.transparent-page),
 body:not(.transparent-page),
 #app:not(.transparent-page) {
   min-height: 100%;
-  background: #0f172a;
+  background: var(--fw-bg);
 }
 
 html.transparent-page,
@@ -45,7 +49,8 @@ html.transparent-page #app {
 body {
   overflow: hidden;
   text-rendering: optimizeLegibility;
-  font-family: "Segoe UI", "Microsoft JhengHei UI", "Microsoft JhengHei", sans-serif;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft JhengHei UI", sans-serif;
+  font-optical-sizing: auto;
 }
 
 #app {
@@ -120,7 +125,7 @@ body {
 }
 
 .commercial-navigation button {
-  min-height: 2.35rem;
+  min-height: 2.75rem;
   border: 0 !important;
   border-left: 3px solid transparent !important;
   border-radius: var(--fw-radius-md) !important;
@@ -184,13 +189,13 @@ body {
   border: 1px solid var(--fw-primary);
   border-radius: var(--fw-radius-md);
   background: var(--fw-primary);
-  color: #07142f;
+  color: #fff;
   transition: background-color 150ms ease, border-color 150ms ease;
 }
 
 .commercial-primary-action:hover {
-  border-color: #8caaf8;
-  background: #8caaf8;
+  border-color: #478be9;
+  background: #478be9;
 }
 
 .commercial-section-title {
@@ -204,10 +209,9 @@ body {
   display: block;
   margin-bottom: 0.625rem;
   color: var(--fw-text-secondary);
-  font-size: 0.75rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0;
 }
 
 .source-card-icon {
@@ -225,7 +229,7 @@ button:hover .source-card-icon { transform: translateY(-1px); }
 }
 
 .commercial-main :is(button, a)[class*="px-"] {
-  min-height: 2.5rem;
+  min-height: 2.75rem;
 }
 
 @media (max-width: 640px) {
@@ -280,7 +284,7 @@ button:hover .source-card-icon { transform: translateY(-1px); }
 }
 
 .commercial-main [class*="fixed"][class*="inset-0"] {
-  backdrop-filter: none !important;
+  backdrop-filter: blur(6px);
 }
 
 .commercial-settings > :is([class*="from-slate-950"], [class*="bg-slate-950/95"]),
@@ -358,7 +362,7 @@ button:hover .source-card-icon { transform: translateY(-1px); }
   line-height: 1.45 !important;
 }
 
-.commercial-main .bg-gradient-to-r:not([class*="progress"]),
+.commercial-main .bg-gradient-to-r:not([class*="progress"]):not([role="progressbar"]),
 .commercial-main .bg-gradient-to-br,
 .commercial-main .bg-gradient-to-b {
   background-image: none !important;
@@ -369,7 +373,7 @@ button:hover .source-card-icon { transform: translateY(-1px); }
 .commercial-main a[class*="from-blue-600"] {
   border-color: var(--fw-primary) !important;
   background: var(--fw-primary) !important;
-  color: #07142f !important;
+  color: #fff !important;
 }
 
 .commercial-main button:disabled {
@@ -427,4 +431,52 @@ select optgroup {
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.5);
+}
+
+/* Shared application language: subtitle canvases stay outside this scope. */
+:is(.commercial-shell, .fw-onboarding) {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft JhengHei UI", sans-serif;
+  color: var(--fw-text);
+  line-height: 1.55;
+  font-optical-sizing: auto;
+}
+.fw-onboarding { background: var(--fw-bg); }
+.fw-onboarding button { border-color: var(--fw-border-strong); border-radius: var(--fw-radius-md); background: var(--fw-surface-raised); }
+.fw-onboarding button:hover:not(:disabled) { background: #29384b; }
+.fw-onboarding button[class*="bg-blue-600"] { background: var(--fw-primary); color: #fff; }
+.fw-onboarding :is(.text-slate-300, .text-slate-400) { color: var(--fw-text-secondary); }
+.fw-onboarding > section { border: 1px solid var(--fw-border); border-radius: var(--fw-radius-lg); background: var(--fw-surface); padding: clamp(1.25rem, 4vw, 2rem); }
+:is(.commercial-shell, .fw-onboarding) :is(button, summary, a[role="button"]) { min-height: 2.75rem; touch-action: manipulation; }
+:is(.commercial-shell, .fw-onboarding) button { transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease; }
+:is(.commercial-shell, .fw-onboarding) button:active:not(:disabled) { filter: brightness(1.12); }
+.commercial-main :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]), select) { min-height: 2.75rem; }
+.commercial-main :is(input[type="checkbox"], input[type="radio"], progress) { accent-color: var(--fw-primary); }
+.commercial-main textarea { line-height: 1.6; resize: vertical; }
+.commercial-main :is(h1, h2) { font-weight: 650; line-height: 1.25; letter-spacing: -.025em; }
+.commercial-main h3 { font-weight: 600; line-height: 1.4; }
+.fw-page { width: 100%; min-width: 0; padding: clamp(1rem, 2.5vw, 2rem); }
+.fw-page-header { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1.5rem; }
+.fw-page-header :is(h1, h2) { color: var(--fw-text); font-size: clamp(1.5rem, 2.5vw, 1.75rem); }
+.fw-page-header p { color: var(--fw-text-secondary); font-size: .875rem; margin-top: .5rem; }
+:is(.fw-panel, .fw-card) { border: 1px solid var(--fw-border); border-radius: var(--fw-radius-lg); background: var(--fw-surface); box-shadow: none; }
+.fw-section-title { color: var(--fw-text); font-size: 1rem; font-weight: 600; }
+.fw-disclosure { background: var(--fw-surface); border: 1px solid var(--fw-border); border-radius: var(--fw-radius-lg); }
+.fw-disclosure > summary { padding: 1rem 1.25rem; cursor: pointer; font-weight: 600; }
+.fw-disclosure[open] > summary { border-bottom: 1px solid var(--fw-border); }
+.commercial-sidebar { backdrop-filter: blur(20px); }
+.commercial-navigation button { padding: .65rem .75rem; border-left: 0 !important; font-size: .8125rem !important; }
+.commercial-navigation button[aria-current="page"] { background: var(--fw-primary-soft) !important; color: var(--fw-text) !important; }
+.commercial-navigation button[aria-current="page"] .app-icon { color: #9ec3ff; }
+.commercial-navigation > div > div:first-child { font-size: .6875rem !important; letter-spacing: .025em !important; }
+@media (prefers-reduced-motion: reduce) {
+  :is(.commercial-shell, .fw-onboarding) *, :is(.commercial-shell, .fw-onboarding) *::before, :is(.commercial-shell, .fw-onboarding) *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
+  :is(.commercial-shell, .fw-onboarding) button:active { transform: none !important; }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .commercial-sidebar, .commercial-mobile-header { background: var(--fw-sidebar) !important; backdrop-filter: none !important; }
+  .commercial-main [class*="fixed"][class*="inset-0"] { backdrop-filter: none !important; }
+}
+@media (prefers-contrast: more) {
+  :root { --fw-border: #8799b3; --fw-border-strong: #a9b9d0; --fw-text-secondary: #dae3ef; --fw-text-muted: #c0cfdf; }
+  :is(.commercial-sidebar, .commercial-mobile-header) { backdrop-filter: none !important; }
 }

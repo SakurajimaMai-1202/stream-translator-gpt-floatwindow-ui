@@ -960,4 +960,16 @@ function latencyLabel(sub: DesktopSubtitle): string {
     bottom: max(16px, env(safe-area-inset-bottom));
   }
 }
+
+/* Only toolbar and settings chrome are shared with the app design. */
+.top-bar, .settings-aside { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft JhengHei", sans-serif; }
+.icon-btn, .close-btn { width: 2.75rem; height: 2.75rem; border-radius: .65rem; touch-action: manipulation; }
+.layout-btn { min-height: 2.75rem; }
+.aside-title { font-weight: 650; letter-spacing: -.02em; }
+:is(.icon-btn,.close-btn,.layout-btn):focus-visible { outline: 2px solid var(--fw-primary, #7297f5); outline-offset: 3px; }
+:is(.icon-btn,.close-btn,.layout-btn):active { transform: scale(.97); }
+@media (max-width: 520px) { .top-bar { gap: .5rem; padding-inline: .75rem; } .brand-name { display: none; } .toolbar { gap: .25rem; } }
+@media (prefers-reduced-motion: reduce) { .status-indicator .dot, .spinner { animation: none !important; } .icon-btn,.close-btn,.layout-btn { transition: none; transform: none; } }
+@media (prefers-reduced-transparency: reduce) { .settings-aside { backdrop-filter: none; background: var(--bg); } }
+
 </style>

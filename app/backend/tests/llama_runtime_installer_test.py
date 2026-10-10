@@ -96,7 +96,7 @@ def test_latest_runtime_variants_pair_cuda_runtime_and_recommend_hardware(monkey
     assert next(item for item in release["variants"] if item["id"] == "cpu")["recommended"] is False
 
 
-def test_rocm_profile_recommends_hip(monkeypatch):
+def test_amd_recommends_vulkan_and_keeps_hip_available(monkeypatch):
     monkeypatch.setattr(runtime, "_release_json", lambda: {
         "tag_name": "b9999",
         "assets": [
@@ -108,8 +108,8 @@ def test_rocm_profile_recommends_hip(monkeypatch):
         "cpu",
         [GpuDevice(0, "AMD Radeon RX 7900 XTX", "amd", "unknown", 24576, False)],
     )["variants"]
-    assert next(item for item in variants if item["id"] == "hip")["recommended"] is True
-    assert next(item for item in variants if item["id"] == "vulkan")["recommended"] is False
+    assert next(item for item in variants if item["id"] == "hip")["recommended"] is False
+    assert next(item for item in variants if item["id"] == "vulkan")["recommended"] is True
 
 
 def test_cpu_profile_recommends_discrete_nvidia_runtime():
@@ -131,14 +131,14 @@ def test_cuda_profile_stays_on_cuda_without_hardware_detection():
     assert "固定" in reason
 
 
-def test_rocm_profile_stays_on_rocm_without_hardware_detection():
+def test_rocm_profile_defaults_to_vulkan_without_hardware_detection():
     variant, reason = runtime._recommend_variant_for_hardware(
         "rocm",
         [{"id": item} for item in ("cpu", "cuda12", "hip", "sycl", "vulkan")],
         [GpuDevice(0, "NVIDIA RTX 4090", "nvidia", "cuda", 24576, False)],
     )
-    assert variant == "hip"
-    assert "固定" in reason
+    assert variant == "vulkan"
+    assert "HIP" in reason
 
 
 def test_cpu_profile_recommends_discrete_amd_runtime():
@@ -147,7 +147,7 @@ def test_cpu_profile_recommends_discrete_amd_runtime():
         [{"id": item} for item in ("cpu", "hip", "vulkan")],
         [GpuDevice(0, "AMD Radeon RX 7900 XTX", "amd", "unknown", 24576, False)],
     )
-    assert variant == "hip"
+    assert variant == "vulkan"
 
 
 def test_sub_four_gb_nvidia_still_uses_gpu_runtime():
@@ -160,13 +160,13 @@ def test_sub_four_gb_nvidia_still_uses_gpu_runtime():
     assert "未滿 4 GB" in reason
 
 
-def test_four_to_eight_gb_amd_uses_hip_runtime():
+def test_four_to_eight_gb_amd_uses_vulkan_runtime():
     variant, reason = runtime._recommend_variant_for_hardware(
         "cpu",
         [{"id": item} for item in ("cpu", "hip", "vulkan")],
         [GpuDevice(0, "AMD Radeon RX", "amd", "unknown", 6144, False)],
     )
-    assert variant == "hip"
+    assert variant == "vulkan"
     assert "4 GB–未滿 8 GB" in reason
 
 
@@ -245,8 +245,32 @@ def test_current_windows_rocm_and_sycl_assets_are_exposed(monkeypatch):
     assert rocm["backend"] == "hip"
     assert rocm["runtime_version"] == "10.0"
     assert sycl["backend"] == "sycl"
-    assert sycl["recommended"] is True
-    assert variants["recommended_variant"] == "sycl"
+    assert sycl["recommended"] is False
+    assert variants["recommended_variant"] == ""
+
+
+@pytest.mark.parametrize("integrated_name", [
+    "Intel(R) Arc(TM) Graphics", "Intel Arc 140V GPU", "AMD Radeon 780M Graphics",
+])
+def test_dual_gpu_ignores_integrated_shared_memory(integrated_name):
+    from backend.core.hardware_detector import classify_vendor, is_integrated_gpu_name
+    devices = [
+        GpuDevice(0, integrated_name, classify_vendor(integrated_name), "unknown",
+                  32768, is_integrated_gpu_name(integrated_name)),
+        GpuDevice(1, "NVIDIA RTX 4060 Laptop GPU", "nvidia", "cuda", 8192, False),
+    ]
+    variant, _ = runtime._recommend_variant_for_hardware(
+        "cpu", [{"id": item} for item in ("cpu", "cuda12", "vulkan")], devices,
+    )
+    assert variant == "cuda12"
+
+
+def test_arc_discrete_defaults_to_vulkan():
+    variant, _ = runtime._recommend_variant_for_hardware(
+        "cpu", [{"id": item} for item in ("cpu", "sycl", "vulkan")],
+        [GpuDevice(0, "Intel Arc B580", "intel", "sycl", 12288, False)],
+    )
+    assert variant == "vulkan"
 
 
 def test_unknown_hardware_does_not_silently_recommend_cpu(monkeypatch):

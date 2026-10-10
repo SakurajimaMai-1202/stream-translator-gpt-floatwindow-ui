@@ -4,6 +4,66 @@ from backend.api import llama
 from backend.api import config as config_api
 
 
+def test_failed_server_reports_missing_tensor_instead_of_exit_summary(monkeypatch, tmp_path):
+    import asyncio
+    import io
+    import threading
+
+    model = tmp_path / "Index-Translate-9B.gguf"
+    runtime = tmp_path / "llama-server.exe"
+    model.write_bytes(b"GGUF")
+    runtime.write_bytes(b"runtime")
+    root_cause = "llama_model_load: error loading model: missing tensor 'blk.32.ssm_conv1d.weight'"
+    process = SimpleNamespace(
+        pid=123,
+        stdout=io.StringIO(""),
+        stderr=io.StringIO("\n".join([
+            root_cause,
+            "llama_model_load_from_file_impl: failed to load model",
+            f"common_init_from_params: failed to load model '{model}'",
+            "main: exiting due to model loading error",
+        ]) + "\n"),
+        wait=lambda: 1,
+    )
+    pending = []
+    original_thread = threading.Thread
+
+    class DeferredThread:
+        def __new__(cls, target, args=(), **kwargs):
+            if target.__name__ not in {"log_output", "monitor_process"}:
+                return original_thread(target=target, args=args, **kwargs)
+            return super().__new__(cls)
+
+        def __init__(self, target, args=(), **kwargs):
+            self.target, self.args = target, args
+
+        def start(self):
+            pending.append(lambda: self.target(*self.args))
+
+    monkeypatch.setattr(llama, "llama_state", llama.LlamaState())
+    monkeypatch.setattr(llama, "popen_external", lambda *args, **kwargs: process)
+    monkeypatch.setattr(llama, "_flash_attn_args", lambda *args: [])
+    monkeypatch.setattr(threading, "Thread", DeferredThread)
+    monkeypatch.setattr(llama, "configure_dedicated_file_logger", lambda *args: llama.logger)
+
+    asyncio.run(llama.start_server(
+        llama.ServerConfig(model_path=str(model), server_exe=str(runtime)),
+        llama.BackgroundTasks(),
+    ))
+    for run in pending:
+        run()
+
+    assert llama.llama_state.last_error == root_cause
+    assert llama.llama_state.is_running is False
+    assert llama.llama_state.server_process is None
+
+
+def test_server_error_can_replace_generic_exit_with_delayed_root_cause():
+    root_cause = "llama_model_load: error loading model: missing tensor 'blk.32.ssm_conv1d.weight'"
+    assert llama._select_server_error("llama-server exited with code 1", root_cause) == root_cause
+    assert llama._select_server_error(root_cause, "load_tensors: loading model tensors...") == root_cause
+
+
 def test_relative_model_directory_is_resolved_from_portable_app_root(monkeypatch, tmp_path):
     app_root = tmp_path / "portable"
     model_dir = app_root / "models"

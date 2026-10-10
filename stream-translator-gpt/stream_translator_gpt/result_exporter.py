@@ -98,6 +98,7 @@ class ResultExporter(LoopWorkerBase):
         self.discord_queue = None
         self.telegram_queue = None
         self.file_queue = None
+        self._file_thread = None
         self.subtitle_share_queue = None
         self.subtitle_share_push_url = normalize_subtitle_share_push_url(subtitle_share_push_url)
         self.subtitle_share_token = subtitle_share_token
@@ -125,7 +126,7 @@ class ResultExporter(LoopWorkerBase):
         if output_file_path:
             self.file_queue = queue.SimpleQueue()
             self._file_counter = 0
-            start_daemon_thread(self._write_message_to_file, file_path=output_file_path)
+            self._file_thread = start_daemon_thread(self._write_message_to_file, file_path=output_file_path)
         if subtitle_share_push_url and subtitle_share_token:
             self.subtitle_share_queue = queue.SimpleQueue()
             start_daemon_thread(self._send_event_to_subtitle_share)
@@ -197,19 +198,46 @@ class ResultExporter(LoopWorkerBase):
 
     def _write_message_to_file(self, file_path: str):
         is_srt = file_path.lower().endswith('.srt')
-        if file_path:
-            if os.path.exists(file_path):
-                os.remove(file_path)
+        # Initialize once per task; a retry must never truncate saved subtitles.
+        while True:
+            try:
+                with open(file_path, 'wb'):
+                    pass
+                break
+            except OSError as exc:
+                print(f'{WARNING}Subtitle file unavailable; retrying in 1s: {exc}', flush=True)
+                time.sleep(1)
         while True:
             text = self.file_queue.get()
             if text is None:
                 break
-            with open(file_path, 'a', encoding='utf-8') as f:
-                if is_srt:
-                    self._file_counter += 1
-                    f.write(f'{self._file_counter}\n{text}\n\n')
-                else:
-                    f.write(text + '\n\n')
+            counter = self._file_counter + 1 if is_srt else 0
+            payload = (f'{counter}\n{text}\n\n' if is_srt else text + '\n\n').encode('utf-8')
+            offset = None
+            # Keep the current cue until it is committed, preserving order and
+            # numbering even if Windows temporarily denies access to the file.
+            while True:
+                try:
+                    with open(file_path, 'r+b') as f:
+                        if offset is None:
+                            f.seek(0, os.SEEK_END)
+                            offset = f.tell()
+                        else:
+                            f.seek(offset)
+                            f.truncate()
+                        try:
+                            f.write(payload)
+                            f.flush()
+                        except OSError:
+                            f.seek(offset)
+                            f.truncate()
+                            raise
+                    if is_srt:
+                        self._file_counter = counter
+                    break
+                except OSError as exc:
+                    print(f'{WARNING}Subtitle file write failed; retaining cue and retrying in 1s: {exc}', flush=True)
+                    time.sleep(1)
 
     def _send_event_to_subtitle_share(self):
         headers = {'Authorization': f'Bearer {self.subtitle_share_token}'}
@@ -238,11 +266,16 @@ class ResultExporter(LoopWorkerBase):
                     self.telegram_queue.put(None)
                 if self.file_queue:
                     self.file_queue.put(None)
+                    if self._file_thread is not None:
+                        self._file_thread.join()
                 if self.subtitle_share_queue:
                     self.subtitle_share_queue.put({"event": "status", "data": {"status": "completed", "code": 0}})
                     self.subtitle_share_queue.put(None)
                 break
 
+            from .qwen3_asr_postprocess import strip_unknown_token
+            task.transcript = strip_unknown_token(task.transcript)
+            task.translation = strip_unknown_token(task.translation)
             if self.require_translation and not task.translation:
                 print(
                     f"{WARNING}Skipping paired subtitle {task.segment_id}: translation unavailable",
@@ -299,7 +332,9 @@ class ResultExporter(LoopWorkerBase):
             latency_log = _format_latency_log(task) if self.show_latency_log else ""
 
             if task.translation:
-                text_to_print = task.translation
+                # Legacy stdout is line framed; preserve full text in JSON/files
+                # while preventing continuation lines from becoming new subtitles.
+                text_to_print = ' '.join(task.translation.splitlines())
                 if self.output_timestamps:
                     text_to_print = timestamp_text + ' ' + text_to_print
                 text_to_print += latency_log

@@ -35,6 +35,23 @@ from PyQt6.QtGui import QIcon
 if "--update-health-check" in sys.argv:
     from PyQt6.QtWebEngineCore import QWebEngineProfile  # noqa: F401
     from PyQt6.QtWebEngineWidgets import QWebEngineView  # noqa: F401
+    import copy
+    from backend.core.config_manager import ConfigManager
+    from opencc import OpenCC
+
+    # Verify the dictionary/config resources, not only the Python module.
+    if OpenCC("s2twp").convert("软件") != "軟體":
+        raise RuntimeError("Packaged OpenCC Traditional Chinese conversion failed")
+
+    # Exercise the packaged API's configuration path without audio, model
+    # downloads, or writes to the user's config file.
+    manager = ConfigManager.__new__(ConfigManager)
+    manager.config_path = Path(sys.executable).parent / "config.yaml"
+    probe_config = copy.deepcopy(ConfigManager.DEFAULT_CONFIG)
+    probe_config["runtime"]["profile"] = "cpu"
+    probe_config["transcription"]["backend"] = "parakeet-ctc-ja"
+    probe_config["translation"]["backend"] = "none"
+    manager.to_main_args(probe_config)
     sys.exit(0)
 
 from backend.core.logging_setup import configure_logging

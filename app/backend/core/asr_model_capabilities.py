@@ -52,7 +52,7 @@ def _entry(
         "supports_auto_language": language_mode == "multilingual",
         "supports_language_hint": True,
         "supports_context": supports_context,
-        "supported_sources": ["url", "file", "system_audio", "microphone"],
+        "supported_sources": ["url", "file", "system_audio", "microphone", "process_audio"],
         "streaming_behavior": "vad_sliced",
     }
 

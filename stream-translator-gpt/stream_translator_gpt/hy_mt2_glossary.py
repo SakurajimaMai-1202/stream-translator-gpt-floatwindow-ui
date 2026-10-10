@@ -13,6 +13,10 @@ def load_glossary_folder(folder: str | None) -> dict[str, str]:
     if not directory.is_dir():
         raise ValueError(f"HY-MT2 glossary folder does not exist: {directory}")
     glossary: dict[str, str] = {}
+    def add(source: str, target: str) -> None:
+        if source in glossary and glossary[source] != target:
+            raise ValueError(f"Conflicting glossary translations for {source!r}; resolve the selected scope first")
+        glossary[source] = target
     for path in sorted(directory.glob("*.json")):
         try:
             entries = json.loads(path.read_text(encoding="utf-8"))
@@ -29,9 +33,9 @@ def load_glossary_folder(folder: str | None) -> dict[str, str]:
                 continue
             if not isinstance(source, str) or not isinstance(target, str) or not source or not target:
                 continue
-            glossary.setdefault(source, target)
+            add(source, target)
             if isinstance(aliases, list):
                 for alias in aliases:
                     if isinstance(alias, str) and alias.strip():
-                        glossary.setdefault(alias.strip(), target)
+                        add(alias.strip(), target)
     return glossary

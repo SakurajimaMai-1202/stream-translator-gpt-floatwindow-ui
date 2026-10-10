@@ -8,6 +8,7 @@ class AudioSource(str, Enum):
     FILE = "file"
     MICROPHONE = "microphone"
     SYSTEM_AUDIO = "system_audio"
+    PROCESS_AUDIO = "process_audio"
 
 class StartTranslationRequest(BaseModel):
     """啟動翻譯請求模型"""
@@ -15,6 +16,11 @@ class StartTranslationRequest(BaseModel):
     audio_source: AudioSource = Field(AudioSource.URL, description="音訊來源類型")
     url: Optional[str] = Field(None, description="直播網址或檔案路徑 (當 audio_source 為 url 或 file 時)")
     device_index: Optional[int] = Field(None, description="設備索引 (當 audio_source 為 microphone 或 system_audio 時，null=自動選擇)")
+    process_id: Optional[int] = Field(None, gt=0, description="要擷取的程序 PID")
+    process_start_time: str = Field("", description="程序建立時間 FILETIME 十進位字串，用於避免 PID 重用")
+    window_handle: str = ""
+    process_name: str = ""
+    title: str = ""
     
     # 轉錄相關
     model: str = Field("base", description="Whisper 模型大小")

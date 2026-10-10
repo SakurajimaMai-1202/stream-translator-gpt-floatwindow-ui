@@ -1,6 +1,6 @@
 #!/usr/bin/env pwsh
 param(
-    [string]$Version = "1.4.8",
+    [string]$Version = "1.5.0",
     [string]$SevenZipPath = "",
     [ValidateRange(0, 9)][int]$CompressionLevel = 7,
     [ValidateRange(1, 128)][int]$CopyThreads = 16
@@ -18,6 +18,7 @@ $assetName = "StreamTranslator-CPU-ASR-Sidecar-v$Version.zip"
 $assetPath = Join-Path $outputDir $assetName
 
 . (Join-Path $packagingDir "release_build_tools.ps1")
+. (Join-Path $packagingDir 'ensure_process_audio_capture.ps1')
 $sevenZipExe = Resolve-SevenZipPath -RequestedPath $SevenZipPath
 
 if (-not (Test-Path -LiteralPath (Join-Path $runtimeCache "python.exe"))) {

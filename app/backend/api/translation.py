@@ -3,16 +3,23 @@ from fastapi.responses import StreamingResponse
 import json
 import asyncio
 import copy
+import logging
 from backend.models.translation import StartTranslationRequest, TranslationTaskResponse, DeviceListResponse, AudioDevice
 from backend.core.translator import active_translations, create_task, get_task, remove_task
 from backend.core.runtime_profiles import get_runtime_capabilities
 from backend.core.config_manager import ConfigManager, normalize_transcription_engine_flags
 from backend.core.app_sync import publish_app_event
 from backend.core.language_identity import same_language
+from backend.core.process_audio import list_process_audio_targets, validate_process_target
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/translation", tags=["translation"])
 from backend.api.config import get_config_manager
+
+
+@router.get("/process-audio-targets")
+async def process_audio_targets():
+    return {"success": True, "data": await asyncio.to_thread(list_process_audio_targets)}
 
 SENSEVOICE_MODEL_IDS = {"iic/SenseVoiceSmall"}
 FUN_ASR_MODEL_IDS = {"FunAudioLLM/Fun-ASR-Nano-2512", "FunAudioLLM/Fun-ASR-MLT-Nano-2512"}
@@ -50,6 +57,95 @@ async def test_gemini(request: GeminiConnectionTest):
         raise HTTPException(status_code=502, detail=f"無法連線 Google AI Studio：{exc}") from exc
 
 
+class PreviewContext(BaseModel):
+    source: str = ""
+    target: str = ""
+
+
+class FamilyPreviewRequest(BaseModel):
+    text: str = "こんにちは"
+    context: list[PreviewContext] = []
+    config: dict = {}
+
+
+def _resolve_preview_args(request: FamilyPreviewRequest):
+    if not request.text.strip() or len(request.text) > 4000:
+        raise HTTPException(status_code=400, detail="請輸入 1–4000 字的原文")
+    if len(request.context) > 5 or sum(len(c.source) + len(c.target) for c in request.context) > 4000:
+        raise HTTPException(status_code=400, detail="前文最多 5 句、4000 字")
+    if len(json.dumps(request.config, ensure_ascii=False)) > 200000:
+        raise HTTPException(status_code=400, detail="設定資料過大")
+    manager = get_config_manager()
+    config = copy.deepcopy(manager.get_config())
+    for section in ('translation', 'terminology', 'transcription'):
+        value = request.config.get(section)
+        if isinstance(value, dict):
+            config.setdefault(section, {}).update(value)
+    if config.get('translation', {}).get('backend') == 'none':
+        raise HTTPException(status_code=400, detail="請先選擇翻譯模型")
+    try:
+        args = manager.to_main_args(config)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail="請檢查端點、模型 ID 與翻譯設定") from exc
+    if args.get('translation_provider') not in {'openai', 'openai_compatible', 'lm_studio', 'llama_cpp'}:
+        raise HTTPException(status_code=400, detail="試譯需要 OpenAI 相容 API 端點")
+    # Collect complete optional data even when the saved optimizer switch is off.
+    # Lock the already selected endpoint/model before enabling comparison data.
+    from stream_translator_gpt.translation_policy import resolve_model_family
+    family = resolve_model_family(args.get('translation_model_family'), args.get('gpt_model'),
+                                  args.get('translation_provider'))
+    if family in {'hy_mt2', 'index_translate'}:
+        config['translation']['translation_model_family'] = family
+        config['translation'][f'{family}_optimizer_enabled'] = True
+        enriched = manager.to_main_args(config)
+        for key, value in enriched.items():
+            if key.startswith(f'{family}_'):
+                args[key] = value
+    return args
+
+
+@router.post("/preview")
+async def preview_translation(request: FamilyPreviewRequest):
+    from backend.core.llm_translator import create_family_preview_client
+    args = _resolve_preview_args(request)
+    context = [item.model_dump() for item in request.context]
+    try:
+        results = {}
+        # Sequential requests avoid competing for the same local GPU.
+        for name, optimized in (('basic', False), ('optimized', True)):
+            client = create_family_preview_client(args, optimized)
+            try:
+                results[name] = await asyncio.to_thread(client.translate_preview, request.text, context,
+                    json.loads(args['translation_glossary']) if args.get('translation_glossary') else {})
+            finally:
+                client.close()
+            if results[name].get('error'):
+                results[name]['error'] = '翻譯失敗或驗證未通過；請檢查服務與設定'
+        return {'family': client.model_family, 'model': args.get('gpt_model'),
+                'provider': args.get('translation_provider'), **results}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="試譯失敗；請檢查服務連線、模型 ID 與 API 相容性") from exc
+
+
+@router.post("/health")
+async def test_translation_family(request: FamilyPreviewRequest):
+    from backend.core.llm_translator import create_family_preview_client
+    args = _resolve_preview_args(request)
+    try:
+        client = create_family_preview_client(args, False)
+        try:
+            result = await asyncio.to_thread(client.translate_preview, 'こんにちは', [])
+        finally:
+            client.close()
+        if not result.get('translation'):
+            raise ValueError('empty result')
+        return {'success': True, 'provider': args.get('translation_provider'),
+                'family': client.model_family, 'model': args.get('gpt_model'),
+                'sample': result['translation'][:120], 'latency_ms': result['latency_ms']}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="模型連線測試失敗；請檢查服務與模型 ID") from exc
+
+
 @router.post("/start", response_model=TranslationTaskResponse)
 async def start_translation(request: StartTranslationRequest, http_request: Request):
     """啟動翻譯任務"""
@@ -68,6 +164,8 @@ async def start_translation(request: StartTranslationRequest, http_request: Requ
             current_config['input']['audio_source'] = request.audio_source.value
         # device_index = None 代表使用系統預設設備，直接傳入底層
         current_config['input']['device_index'] = request.device_index
+        for key in ('process_id', 'process_start_time', 'window_handle', 'process_name', 'title'):
+            current_config['input'][key] = getattr(request, key)
         
         # 輸入覆蓋
         if request.url:
@@ -176,6 +274,21 @@ async def start_translation(request: StartTranslationRequest, http_request: Requ
             current_config['transcription'].pop('nemo_asr_dtype', None)
 
         cli_args = get_config_manager().to_main_args(current_config)
+        process_source = cli_args.get('url') == 'process_audio'
+        if process_source:
+            target = current_config['input']
+            try:
+                await asyncio.to_thread(validate_process_target, target.get('process_id'),
+                                        target.get('process_start_time'), target.get('window_handle') or None)
+                from backend.core.translator import TranslationContext
+                await asyncio.to_thread(TranslationContext(cli_args, 'preflight')._build_command)
+            except (ValueError, RuntimeError, OSError) as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        # Process capture uses the existing one-source pipeline. Avoid starting a
+        # second task against shared subtitle/model state while this source is active.
+        running = [task for task in active_translations.values() if task.running]
+        if running and (process_source or any(task.config.get('url') == 'process_audio' for task in running)):
+            raise HTTPException(status_code=409, detail='請先停止目前的翻譯任務，再切換指定程式收音。')
         
         # 4. 創建並啟動任務
         task_id = create_task(cli_args)
@@ -196,7 +309,10 @@ async def start_translation(request: StartTranslationRequest, http_request: Requ
             "source_client_id": http_request.headers.get("X-Client-Id", ""),
         })
         return response
+    except HTTPException:
+        raise
     except Exception as e:
+        logging.getLogger(__name__).exception("Failed to start translation task")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/stream/{task_id}")

@@ -6,8 +6,9 @@ import { useLlamaStore } from '../stores/llama';
 import { useInterfaceModeStore } from '../stores/interfaceMode';
 import { simpleAsrModel, simpleAsrLanguages } from '../utils/simpleAsr';
 import { sameLanguage } from '../utils/languageIdentity';
+import { usesExternalFamilyEndpoint } from '../utils/translationFamily';
 import { useModelDownloadStore } from '../stores/modelDownload';
-import { translationApi, configApi, readinessApi, runtimeApi, serverApi, systemApi, type AppUpdateStatus, type AudioSource, type AudioDevice, type Config, type FfmpegCheckResult, type ModelComputeBackend, type ModelEngine, type SourceCheckResult } from '../services/api';
+import { translationApi, configApi, readinessApi, runtimeApi, serverApi, systemApi, type AppUpdateStatus, type AudioSource, type AudioDevice, type ProcessAudioTarget, type Config, type FfmpegCheckResult, type ModelComputeBackend, type ModelEngine, type SourceCheckResult } from '../services/api';
 import UiSelect, { type UiSelectOption } from '../components/UiSelect.vue';
 import AppIcon from '../components/AppIcon.vue';
 import { useAppSyncEvents } from '../composables/useAppSyncEvents';
@@ -227,9 +228,40 @@ const selectedDeviceIndex = ref<number | null>(null);
 const isLoadingDevices = ref(false);
 const sourceCheck = ref<SourceCheckResult | null>(null);
 const isCheckingSource = ref(false);
+const sourceControlsLocked = computed(() => store.isRunning || isLoading.value || isPreparingAsrModel.value || isCheckingSource.value);
+const processAudioTargets = ref<ProcessAudioTarget[]>([]);
+const selectedProcessTargetKey = ref<string | number | null>(null);
+const processAudioSupported = ref(false);
+const processAudioMessage = ref('請重新整理視窗清單。');
+const isLoadingProcessTargets = ref(false);
+const processTargetKey = (target: ProcessAudioTarget) => `${target.window_handle}:${target.process_id}:${target.process_start_time}`;
+const selectedProcessTarget = computed(() => processAudioTargets.value.find(target => processTargetKey(target) === selectedProcessTargetKey.value));
+const processTargetOptions = computed<UiSelectOption[]>(() => processAudioTargets.value.map(target => ({
+  value: processTargetKey(target), label: `${target.process_name} — ${target.title}`,
+})));
+
+async function loadProcessAudioTargets() {
+  if (store.isRunning || isLoadingProcessTargets.value) return;
+  isLoadingProcessTargets.value = true;
+  try {
+    const result = await readinessApi.getProcessAudioTargets();
+    processAudioSupported.value = result.supported;
+    processAudioMessage.value = result.message;
+    processAudioTargets.value = result.supported ? result.targets : [];
+    if (!selectedProcessTarget.value) selectedProcessTargetKey.value = null;
+  } catch (error: any) {
+    processAudioSupported.value = false;
+    processAudioTargets.value = [];
+    selectedProcessTargetKey.value = null;
+    processAudioMessage.value = error?.response?.data?.detail || error?.message || '無法讀取視窗清單，請重新整理。';
+  } finally { isLoadingProcessTargets.value = false; }
+}
+
+watch(selectedProcessTargetKey, () => { sourceCheck.value = null; });
 
 async function runSourceCheck() {
-  if (isCheckingSource.value || store.isRunning) return;
+  if (isCheckingSource.value || store.isRunning || isLoading.value || isPreparingAsrModel.value) return;
+  if (audioSource.value === 'process_audio' && (!processAudioSupported.value || !selectedProcessTarget.value)) return;
   isCheckingSource.value = true;
   sourceCheck.value = null;
   try {
@@ -237,6 +269,11 @@ async function runSourceCheck() {
       source: audioSource.value,
       value: (audioSource.value === 'url' || audioSource.value === 'file') ? urlInput.value.trim() : '',
       device_index: selectedDeviceIndex.value,
+      ...(audioSource.value === 'process_audio' && selectedProcessTarget.value ? {
+        process_id: selectedProcessTarget.value.process_id,
+        process_start_time: selectedProcessTarget.value.process_start_time,
+        window_handle: selectedProcessTarget.value.window_handle,
+      } : {}),
       duration_seconds: 1,
     });
     addLog(`[來源檢查 ${sourceCheck.value.trace_id.slice(0, 8)}] ${sourceCheck.value.message} (${sourceCheck.value.elapsed_ms}ms)`);
@@ -460,6 +497,9 @@ const selectedParakeetModel = ref('nvidia/parakeet-tdt_ctc-0.6b-ja');
 const selectedInputLanguage = ref('auto');
 const selectedOutputLanguage = ref('Traditional Chinese');
 const selectedBackend = ref('gpt');
+const externalFamilyEndpoint = computed(() => usesExternalFamilyEndpoint({
+  ...store.config.translation, backend: selectedBackend.value,
+}));
 const translationEnabled = ref(true);  // 🔧 新增: 翻譯開關
 const sameLanguageSelected = computed(() => sameLanguage(
   !interfaceMode.isSimple && selectedTranscriptionEngine.value === 'parakeet-ctc-ja'
@@ -742,7 +782,7 @@ const configWarnings = computed<ConfigWarning[]>(() => {
   const warnings: ConfigWarning[] = [];
   const config = store.config;
   if (!config) return warnings;
-  
+
   const requiresUrlInput = audioSource.value === 'url' || audioSource.value === 'file';
   if (requiresUrlInput && !(urlInput.value || '').trim()) {
     warnings.push({
@@ -769,22 +809,22 @@ const configWarnings = computed<ConfigWarning[]>(() => {
     });
   }
 
-  if (effectiveTranslationEnabled.value && selectedBackend.value === 'gpt' && !config.translation?.openai_api_key) {
+  if (effectiveTranslationEnabled.value && !externalFamilyEndpoint.value && selectedBackend.value === 'gpt' && !config.translation?.openai_api_key) {
     warnings.push({
       level: 'error',
       message: 'OpenAI API Key 未設定',
       page: 'translation'
     });
   }
-  
-  if (effectiveTranslationEnabled.value && selectedBackend.value === 'gemini' && !config.translation?.google_api_key) {
+
+  if (effectiveTranslationEnabled.value && !externalFamilyEndpoint.value && selectedBackend.value === 'gemini' && !config.translation?.google_api_key) {
     warnings.push({
       level: 'error',
       message: 'Google API Key 未設定',
       page: 'translation'
     });
   }
-  
+
   return warnings;
 });
 
@@ -799,6 +839,8 @@ const isConfigReady = computed(() => {
   if (audioSource.value === 'microphone' || audioSource.value === 'system_audio') {
     return true; // null = 使用系統預設設備，視為有效
   }
+
+  if (audioSource.value === 'process_audio') return processAudioSupported.value && !!selectedProcessTarget.value && !isLoadingProcessTargets.value;
 
   return false;
 });
@@ -825,7 +867,7 @@ async function loadDevices() {
   if (audioSource.value !== 'microphone' && audioSource.value !== 'system_audio') {
     return;
   }
-  
+
   isLoadingDevices.value = true;
   try {
     const result = await translationApi.getDevices();
@@ -855,7 +897,9 @@ async function onAudioSourceChange() {
   sourceCheck.value = null;
   selectedDeviceIndex.value = null;
   availableDevices.value = [];
-  
+  selectedProcessTargetKey.value = null;
+  if (audioSource.value === 'process_audio') await loadProcessAudioTargets();
+
   if (audioSource.value === 'microphone' || audioSource.value === 'system_audio') {
     await loadDevices();
   }
@@ -867,6 +911,8 @@ async function applyConfigToRefs(cfg: Config) {
   try {
     urlInput.value = cfg.input?.url || '';
     audioSource.value = cfg.input?.audio_source || 'url';
+    selectedProcessTargetKey.value = null;
+    if (audioSource.value === 'process_audio') await loadProcessAudioTargets();
     selectedDeviceIndex.value = cfg.input?.device_index ?? null;
     selectedAsrComputeBackend.value = cfg.transcription?.asr_compute_backend || 'auto';
     selectedWhisperModel.value = cfg.transcription?.model || 'base';
@@ -1132,6 +1178,13 @@ onBeforeUnmount(() => {
 });
 
 async function handleStart() {
+  if (audioSource.value === 'process_audio') {
+    await loadProcessAudioTargets();
+    if (!processAudioSupported.value || !selectedProcessTarget.value) {
+      store.errorMessage = !processAudioSupported.value ? processAudioMessage.value : '請從目前視窗清單重新選擇應用程式。';
+      return;
+    }
+  }
   if (interfaceMode.isSimple) {
     if (!simpleAsrModel(selectedInputLanguage.value)) {
       store.errorMessage = '請選擇簡單模式支援的輸入語言；韓文等未列出的語言請使用進階模式。';
@@ -1191,6 +1244,8 @@ async function handleStart() {
   addLog(`音訊來源: ${audioSource.value}`);
   if (audioSource.value === 'url' || audioSource.value === 'file') {
     addLog(`URL: ${urlInput.value}`);
+  } else if (audioSource.value === 'process_audio') {
+    addLog(`目標: ${selectedProcessTarget.value?.process_name} — ${selectedProcessTarget.value?.title}`);
   } else {
     addLog(`設備: ${selectedDeviceIndex.value === null ? '自動選擇' : selectedDeviceIndex.value}`);
   }
@@ -1199,9 +1254,9 @@ async function handleStart() {
   addLog(`輸入語言: ${selectedInputLanguage.value}`);
   addLog(`翻譯後端: ${selectedBackend.value}`);
   addLog(`目標語言: ${selectedOutputLanguage.value}`);
-  
+
   try {
-    if (effectiveTranslationEnabled.value && llamaStore.localLlmEnabled && !llamaStore.isServerReady) {
+    if (effectiveTranslationEnabled.value && !externalFamilyEndpoint.value && llamaStore.localLlmEnabled && !llamaStore.isServerReady) {
       addLog('🦙 正在啟動本地 LLM...');
       await llamaStore.startServer();
       addLog('✅ 本地 LLM 已就緒');
@@ -1209,9 +1264,16 @@ async function handleStart() {
     // 使用新的 API 格式
     const result = await translationApi.start({
       audio_source: audioSource.value,
+      ...(audioSource.value === 'process_audio' && selectedProcessTarget.value ? {
+        process_id: selectedProcessTarget.value.process_id,
+        process_start_time: selectedProcessTarget.value.process_start_time,
+        window_handle: selectedProcessTarget.value.window_handle,
+        process_name: selectedProcessTarget.value.process_name,
+        title: selectedProcessTarget.value.title,
+      } : {}),
       url: (audioSource.value === 'url' || audioSource.value === 'file') ? urlInput.value : undefined,
-      device_index: (audioSource.value === 'microphone' || audioSource.value === 'system_audio') 
-        ? (selectedDeviceIndex.value ?? undefined) 
+      device_index: (audioSource.value === 'microphone' || audioSource.value === 'system_audio')
+        ? (selectedDeviceIndex.value ?? undefined)
         : undefined,
       model: selectedTranscriptionEngine.value === 'qwen3-asr'
         ? selectedQwen3AsrModel.value
@@ -1233,9 +1295,9 @@ async function handleStart() {
         ? selectedParakeetModel.value : undefined,
       nemo_asr_dtype: selectedTranscriptionEngine.value === 'parakeet-ctc-ja'
         ? (store.config.transcription?.nemo_asr_dtype || 'bfloat16') : undefined,
-      qwen3_flash_attention: selectedTranscriptionEngine.value === 'qwen3-asr' 
+      qwen3_flash_attention: selectedTranscriptionEngine.value === 'qwen3-asr'
         ? store.config.transcription?.qwen3_flash_attention : undefined,
-      qwen3_dtype: selectedTranscriptionEngine.value === 'qwen3-asr' 
+      qwen3_dtype: selectedTranscriptionEngine.value === 'qwen3-asr'
         ? store.config.transcription?.qwen3_dtype : undefined,
       input_language: !interfaceMode.isSimple && selectedTranscriptionEngine.value === 'parakeet-ctc-ja'
         ? parakeetLanguageForModel(selectedParakeetModel.value)
@@ -1245,7 +1307,7 @@ async function handleStart() {
       translation_backend: translationEnabled.value ? selectedBackend.value : undefined,
       translation_enabled: effectiveTranslationEnabled.value
     });
-    
+
     // 更新 store 狀態
     store.isRunning = true;
     store.asrReady = false;
@@ -1253,22 +1315,23 @@ async function handleStart() {
     if (audioSource.value === 'url' || audioSource.value === 'file') {
       store.currentUrl = urlInput.value;
     } else {
-      store.currentUrl = `${audioSource.value}${selectedDeviceIndex.value !== null ? ` (設備 ${selectedDeviceIndex.value})` : ''}`;
+      store.currentUrl = audioSource.value === 'process_audio' ? `${selectedProcessTarget.value?.process_name} — ${selectedProcessTarget.value?.title}` : `${audioSource.value}${selectedDeviceIndex.value !== null ? ` (設備 ${selectedDeviceIndex.value})` : ''}`;
     }
-    
+
     // 清空字幕歷史
     store.subtitles = [];
-    
+
     // 🔧 重要: 連接 SSE 以接收字幕事件
     store.connectEventSource(result.task_id);
-    
+
     addLog('✅ 翻譯系統已啟動');
     addLog(`Task ID: ${result.task_id}`);
     addLog('📡 SSE 連接已建立');
     await store.syncRunningState();
   } catch (error: any) {
-    addLog(`❌ 啟動失敗: ${error.message}`);
-    store.errorMessage = error.message;
+    const message = error.response?.data?.detail || error.message || '啟動失敗';
+    addLog(`❌ 啟動失敗: ${message}`);
+    store.errorMessage = message;
   } finally {
     isLoading.value = false;
   }
@@ -1307,7 +1370,7 @@ async function downloadSelectedAsrModel() {
 async function handleStop() {
   isLoading.value = true;
   addLog('停止翻譯系統...');
-  
+
   try {
     await store.stopTranslation();
     addLog('✅ 翻譯系統已停止');
@@ -1347,14 +1410,14 @@ function clearLogs() {
 </script>
 
 <template>
-  <div class="commercial-page commercial-home mx-auto flex min-h-full max-w-7xl flex-col justify-between p-3 sm:p-5">
+  <div class="fw-page commercial-page commercial-home mx-auto flex min-h-full max-w-7xl flex-col justify-between p-3 sm:p-5">
     <div>
       <!-- Header Status Bar -->
-      <div class="commercial-page-header mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-white/5 pb-2.5 sm:gap-3">
+      <div class="fw-page-header commercial-page-header mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-white/5 pb-2.5 sm:gap-3">
         <div class="min-w-0">
-          <div class="mb-2 flex flex-wrap items-center gap-2 sm:gap-3">
+          <div class="mb-3">
             <h1 class="text-xl font-bold text-white sm:text-2xl">即時轉譯</h1>
-            <span class="text-xs text-white/40">選擇音訊來源，讓翻譯隨畫面同行。</span>
+            <p>選擇音訊來源，讓翻譯隨畫面同行。</p>
           </div>
           <div class="flex flex-wrap items-center gap-2 sm:gap-3">
           <!-- Status dot -->
@@ -1386,7 +1449,7 @@ function clearLogs() {
             {{ store.currentUrl }}
           </div>
           <button type="button" class="rounded-lg border border-cyan-400/20 bg-cyan-400/10 px-2.5 py-1 text-[10px] font-bold text-cyan-200 transition hover:bg-cyan-400/20" @click="router.push('/guide')">
-            ？ 使用教學
+            使用教學
           </button>
         </div>
       </div>
@@ -1395,7 +1458,7 @@ function clearLogs() {
       <div v-if="availableAppUpdate && !appUpdateNoticeDismissed" class="mb-4 rounded-xl border border-cyan-400/30 bg-cyan-950/70 p-3.5 text-cyan-100 shadow-lg shadow-cyan-950/20">
         <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div class="min-w-0">
-            <div class="text-sm font-bold">✨ Stream Translator v{{ availableAppUpdate.latest_version }} 已可更新</div>
+            <div class="text-sm font-bold">Stream Translator v{{ availableAppUpdate.latest_version }} 已可更新</div>
             <p class="mt-1 text-xs leading-relaxed text-cyan-100/65">
               目前版本 v{{ availableAppUpdate.current_version }}。程式只會通知，不會自動下載或安裝。
             </p>
@@ -1433,12 +1496,12 @@ function clearLogs() {
         </div>
       </section>
 
-      <section class="mb-4 flex flex-col gap-3 rounded-xl border border-indigo-400/20 bg-indigo-500/5 p-4 sm:flex-row sm:items-center sm:justify-between">
+      <section class="mb-4 flex flex-col gap-3 rounded-xl border border-white/10 bg-white/5 p-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 class="text-base font-bold text-white">預覽字幕樣式</h2>
           <p class="mt-1 text-sm leading-5 text-white/60">用範例字幕調整位置、字級、顏色和背景透明度。範例內容不會保留。</p>
         </div>
-        <button type="button" class="shrink-0 rounded-lg bg-indigo-500 px-4 py-2.5 text-sm font-bold text-white hover:bg-indigo-400" @click="router.push('/subtitle-style')">預覽字幕樣式</button>
+        <button type="button" class="shrink-0 rounded-lg bg-white/10 px-4 py-2.5 text-sm font-bold text-white hover:bg-white/15" @click="router.push('/subtitle-style')">預覽字幕樣式</button>
       </section>
 
       <!-- 配置警告面板 (僅在有警告/錯誤時動態顯示) -->
@@ -1449,7 +1512,7 @@ function clearLogs() {
           <span class="font-bold text-white text-xs tracking-wider uppercase">配置檢查</span>
         </div>
         <ul class="space-y-1.5">
-          <li v-for="(warning, idx) in configWarnings" :key="idx" 
+          <li v-for="(warning, idx) in configWarnings" :key="idx"
             class="flex items-center justify-between text-xs"
             :class="warning.level === 'error' ? 'text-red-300/90' : 'text-yellow-300/90'">
             <span class="flex items-center gap-2">
@@ -1477,80 +1540,87 @@ function clearLogs() {
 
       <!-- Dashboard Grid Layout -->
       <div class="grid grid-cols-1 items-start gap-6 lg:grid-cols-12 lg:items-stretch">
-        
+
         <!-- Left Column: Controls & Configuration (col-span-7 or 8) -->
         <div class="lg:col-span-7 xl:col-span-8 space-y-6">
-          
+
           <!-- Main Control Card -->
-          <div class="rounded-2xl border border-white/10 bg-slate-950/90 p-4 shadow-2xl sm:p-5">
-            
+          <div class="fw-panel rounded-2xl border border-white/10 bg-slate-950/90 p-4 shadow-sm sm:p-5">
+
             <!-- 音訊來源選擇 -->
             <div class="mb-5">
               <label class="commercial-field-label">音訊來源</label>
-              <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
                 <button
                   @click="audioSource = 'url'; onAudioSourceChange()"
-                  :disabled="store.isRunning"
+                  :disabled="sourceControlsLocked"
                   type="button"
                   :class="[
                     'flex flex-col items-center justify-center p-3 rounded-xl border text-center transition-all duration-200 group relative overflow-hidden',
-                    audioSource === 'url' 
-                      ? 'border-blue-500/80 bg-gradient-to-b from-blue-500/20 to-blue-500/5 text-white shadow-lg shadow-blue-500/10' 
+                    audioSource === 'url'
+                      ? 'border-blue-400/50 bg-blue-500/15 text-white'
                       : 'bg-white/5 border-white/10 hover:border-white/20 text-white/70 hover:text-white',
-                    store.isRunning ? 'opacity-50 cursor-not-allowed' : 'hover:scale-[1.02] active:scale-[0.98]'
+                    sourceControlsLocked ? 'opacity-50 cursor-not-allowed' : 'active:scale-[0.98]'
                   ]"
                 >
                   <AppIcon name="url" class="source-card-icon" />
                   <span class="font-bold text-xs">URL 串流</span>
-                  <span class="text-[9px] text-white/40 mt-1 hidden sm:inline-block leading-tight">播放網路直播流</span>
+                  <span class="text-[11px] text-white/40 mt-1 hidden sm:inline-block leading-tight">播放網路直播流</span>
                 </button>
                 <button
                   @click="audioSource = 'file'; onAudioSourceChange()"
-                  :disabled="store.isRunning"
+                  :disabled="sourceControlsLocked"
                   type="button"
                   :class="[
                     'flex flex-col items-center justify-center p-3 rounded-xl border text-center transition-all duration-200 group relative overflow-hidden',
-                    audioSource === 'file' 
-                      ? 'border-blue-500/80 bg-gradient-to-b from-blue-500/20 to-blue-500/5 text-white shadow-lg shadow-blue-500/10' 
+                    audioSource === 'file'
+                      ? 'border-blue-400/50 bg-blue-500/15 text-white'
                       : 'bg-white/5 border-white/10 hover:border-white/20 text-white/70 hover:text-white',
-                    store.isRunning ? 'opacity-50 cursor-not-allowed' : 'hover:scale-[1.02] active:scale-[0.98]'
+                    sourceControlsLocked ? 'opacity-50 cursor-not-allowed' : 'active:scale-[0.98]'
                   ]"
                 >
                   <AppIcon name="file" class="source-card-icon" />
                   <span class="font-bold text-xs"><span class="md:hidden">電腦</span>本地檔案</span>
-                  <span class="text-[9px] text-white/40 mt-1 hidden sm:inline-block leading-tight">轉譯本機影音檔</span>
+                  <span class="text-[11px] text-white/40 mt-1 hidden sm:inline-block leading-tight">轉譯本機影音檔</span>
                 </button>
                 <button
                   @click="audioSource = 'microphone'; onAudioSourceChange()"
-                  :disabled="store.isRunning"
+                  :disabled="sourceControlsLocked"
                   type="button"
                   :class="[
                     'flex flex-col items-center justify-center p-3 rounded-xl border text-center transition-all duration-200 group relative overflow-hidden',
-                    audioSource === 'microphone' 
-                      ? 'border-blue-500/80 bg-gradient-to-b from-blue-500/20 to-blue-500/5 text-white shadow-lg shadow-blue-500/10' 
+                    audioSource === 'microphone'
+                      ? 'border-blue-400/50 bg-blue-500/15 text-white'
                       : 'bg-white/5 border-white/10 hover:border-white/20 text-white/70 hover:text-white',
-                    store.isRunning ? 'opacity-50 cursor-not-allowed' : 'hover:scale-[1.02] active:scale-[0.98]'
+                    sourceControlsLocked ? 'opacity-50 cursor-not-allowed' : 'active:scale-[0.98]'
                   ]"
                 >
                   <AppIcon name="microphone" class="source-card-icon" />
                   <span class="font-bold text-xs"><span class="md:hidden">電腦</span>麥克風</span>
-                  <span class="text-[9px] text-white/40 mt-1 hidden sm:inline-block leading-tight">錄製麥克風輸入</span>
+                  <span class="text-[11px] text-white/40 mt-1 hidden sm:inline-block leading-tight">錄製麥克風輸入</span>
                 </button>
                 <button
                   @click="audioSource = 'system_audio'; onAudioSourceChange()"
-                  :disabled="store.isRunning"
+                  :disabled="sourceControlsLocked"
                   type="button"
                   :class="[
                     'flex flex-col items-center justify-center p-3 rounded-xl border text-center transition-all duration-200 group relative overflow-hidden',
-                    audioSource === 'system_audio' 
-                      ? 'border-blue-500/80 bg-gradient-to-b from-blue-500/20 to-blue-500/5 text-white shadow-lg shadow-blue-500/10' 
+                    audioSource === 'system_audio'
+                      ? 'border-blue-400/50 bg-blue-500/15 text-white'
                       : 'bg-white/5 border-white/10 hover:border-white/20 text-white/70 hover:text-white',
-                    store.isRunning ? 'opacity-50 cursor-not-allowed' : 'hover:scale-[1.02] active:scale-[0.98]'
+                    sourceControlsLocked ? 'opacity-50 cursor-not-allowed' : 'active:scale-[0.98]'
                   ]"
                 >
                   <AppIcon name="system-audio" class="source-card-icon" />
                   <span class="font-bold text-xs"><span class="md:hidden">電腦</span>系統音訊</span>
-                  <span class="text-[9px] text-white/40 mt-1 hidden sm:inline-block leading-tight">捕獲系統播放音</span>
+                  <span class="text-[11px] text-white/40 mt-1 hidden sm:inline-block leading-tight">捕獲系統播放音</span>
+                </button>
+                <button type="button" @click="audioSource = 'process_audio'; onAudioSourceChange()"
+                  :disabled="sourceControlsLocked"
+                  :class="['flex flex-col items-center justify-center p-3 rounded-xl border text-center transition-colors', audioSource === 'process_audio' ? 'border-blue-500/80 bg-blue-500/10 text-white' : 'bg-white/5 border-white/10 text-white/70 hover:bg-white/10', sourceControlsLocked ? 'opacity-50 cursor-not-allowed' : '']">
+                  <AppIcon name="system-audio" class="source-card-icon" />
+                  <span class="font-bold text-xs">指定應用程式音訊</span>
+                  <span class="text-[11px] text-white/40 mt-1 hidden sm:inline-block leading-tight">選擇要收音的視窗</span>
                 </button>
               </div>
             </div>
@@ -1567,14 +1637,14 @@ function clearLogs() {
                   type="text"
                   spellcheck="false"
                   :placeholder="audioSource === 'url' ? '貼上 YouTube Live、Twitch、X、TikTok 等直播網址' : 'C:\\path\\to\\video.mp4'"
-                  :disabled="store.isRunning"
+                  :disabled="sourceControlsLocked"
                   class="flex-1 min-w-0 px-4 py-2.5 bg-white/5 border border-white/15 rounded-xl text-white placeholder-white/30 focus:outline-none focus:border-blue-500/80 focus:ring-1 focus:ring-blue-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition duration-200 text-sm"
                 />
                 <button
                   v-if="audioSource === 'file'"
                   type="button"
                   @click="chooseLocalFile"
-                  :disabled="store.isRunning"
+                  :disabled="sourceControlsLocked"
                   class="shrink-0 px-4 py-2.5 bg-blue-600/90 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl transition border border-blue-400/40 text-sm font-semibold whitespace-nowrap"
                   title="開啟檔案選擇器"
                 >
@@ -1594,6 +1664,23 @@ function clearLogs() {
               </p>
             </div>
 
+            <div v-if="audioSource === 'process_audio'" class="mb-5">
+              <label class="commercial-field-label">選擇應用程式視窗</label>
+              <div class="flex gap-2">
+                <UiSelect v-model="selectedProcessTargetKey" :options="processTargetOptions" searchable
+                  placeholder="請選擇目前開啟的視窗" aria-label="應用程式視窗"
+                  :disabled="sourceControlsLocked || isLoadingProcessTargets || !processAudioSupported"
+                  class="flex-1 min-w-0" />
+                <button type="button" @click="loadProcessAudioTargets" :disabled="sourceControlsLocked || isLoadingProcessTargets"
+                  class="px-4 py-2.5 bg-white/5 hover:bg-white/10 rounded-xl border border-white/15 text-sm disabled:opacity-50"
+                  title="重新整理視窗清單" aria-label="重新整理視窗清單">
+                  <AppIcon name="refresh" :class="['h-4 w-4', isLoadingProcessTargets ? 'animate-spin' : '']" />
+                </button>
+              </div>
+              <p class="mt-2 text-sm leading-6" :class="processAudioSupported ? 'text-white/60' : 'text-amber-200'" role="status">{{ processAudioMessage }}</p>
+              <p class="mt-1 text-xs leading-6 text-white/60">擷取所選程序及其子程序；同一瀏覽器的其他視窗或分頁可能一起被擷取。目標關閉後需重新選擇，開始後請先停止再切換。</p>
+            </div>
+
             <!-- 設備選擇 -->
             <div v-if="audioSource === 'microphone' || audioSource === 'system_audio'" class="mb-5">
               <label class="block text-white/80 font-bold mb-1.5 text-xs tracking-wider uppercase">
@@ -1603,13 +1690,13 @@ function clearLogs() {
                 <UiSelect
                   v-model="selectedDeviceIndex"
                   :options="deviceOptions"
-                  :disabled="store.isRunning || isLoadingDevices"
+                  :disabled="sourceControlsLocked || isLoadingDevices"
                   class="flex-1 min-w-0"
                   button-class="flex-1 px-4 py-2.5 bg-white/5 border border-white/15 rounded-xl text-sm text-left hover:bg-white/10 transition"
                 />
                 <button
                   @click="loadDevices()"
-                  :disabled="store.isRunning || isLoadingDevices"
+                  :disabled="sourceControlsLocked || isLoadingDevices"
                   class="px-4 py-2.5 bg-white/5 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl transition border border-white/15 text-sm flex items-center justify-center min-w-[46px]"
                   title="重新整理設備列表"
                 >
@@ -1626,18 +1713,19 @@ function clearLogs() {
                 <div>
                   <h2 id="source-check-title" class="text-base font-bold text-white">先測試這個來源</h2>
                   <p class="mt-1 text-sm leading-6 text-white/60">
-                    {{ audioSource === 'url' ? '解析網址並確認有音訊串流。' : audioSource === 'file' ? '檢查檔案可讀、含音軌且可解碼。' : '開啟裝置一秒並量測是否收到聲音；不會保存音訊或呼叫翻譯。' }}
+                    {{ audioSource === 'url' ? '解析網址並確認有音訊串流。' : audioSource === 'file' ? '檢查檔案可讀、含音軌且可解碼。' : audioSource === 'process_audio' ? '開啟所選應用程式一秒並量測聲音；不會保存音訊或呼叫翻譯。' : '開啟裝置一秒並量測是否收到聲音；不會保存音訊或呼叫翻譯。' }}
                   </p>
                 </div>
-                <button type="button" :disabled="store.isRunning || isCheckingSource || ((audioSource === 'url' || audioSource === 'file') && !urlInput.trim())"
+                <button type="button" :disabled="sourceControlsLocked || (audioSource === 'process_audio' && (!selectedProcessTarget || !processAudioSupported || isLoadingProcessTargets)) || ((audioSource === 'url' || audioSource === 'file') && !urlInput.trim())"
                   class="shrink-0 rounded-lg border border-cyan-400/40 bg-cyan-500/10 px-4 py-2.5 text-sm font-bold text-cyan-100 disabled:opacity-40"
                   @click="runSourceCheck">
-                  {{ isCheckingSource ? '檢查中…' : (audioSource === 'microphone' || audioSource === 'system_audio' ? '開始收音測試' : '檢查來源') }}
+                  {{ isCheckingSource ? '檢查中…' : (audioSource === 'microphone' || audioSource === 'system_audio' || audioSource === 'process_audio' ? '開始收音測試' : '檢查來源') }}
                 </button>
               </div>
               <div v-if="sourceCheck" class="mt-3 rounded-lg border p-3 text-sm" role="status"
                 :class="sourceCheck.status === 'ready' ? 'border-emerald-400/30 bg-emerald-500/10 text-emerald-100' : sourceCheck.status === 'error' ? 'border-red-400/30 bg-red-500/10 text-red-100' : 'border-amber-400/30 bg-amber-500/10 text-amber-100'">
                 <p class="font-bold">{{ sourceCheck.status === 'ready' ? '已就緒' : sourceCheck.status === 'error' ? '需要處理' : '狀態未知' }} · {{ sourceCheck.message }}</p>
+                <p v-if="audioSource === 'process_audio' && typeof sourceCheck.details.peak_dbfs === 'number'" class="mt-1 text-xs opacity-80">測試音量峰值：{{ sourceCheck.details.peak_dbfs.toFixed(1) }} dBFS</p>
                 <p v-if="sourceCheck.recovery" class="mt-1 leading-6">下一步：{{ sourceCheck.recovery }}</p>
                 <p class="mt-1 text-xs opacity-65">階段 {{ sourceCheck.stage }} · {{ sourceCheck.elapsed_ms }} ms<span v-if="sourceCheck.trace_id"> · 追蹤 {{ sourceCheck.trace_id.slice(0, 8) }}</span></p>
               </div>
@@ -1658,7 +1746,7 @@ function clearLogs() {
                   :disabled="store.isRunning || isInputLanguageLocked"
                   button-class="bg-white/5 border border-white/15 hover:bg-white/10 text-xs rounded-xl"
                 />
-                <p v-if="isInputLanguageLocked" class="text-amber-300/80 text-[9px] mt-1">
+                <p v-if="isInputLanguageLocked" class="text-amber-300/80 text-[11px] mt-1">
                   此模型為專用語言模型，輸入語言已自動鎖定。
                 </p>
               </div>
@@ -1700,16 +1788,16 @@ function clearLogs() {
               <button
                 @click="showAdvancedConfig = !showAdvancedConfig"
                 type="button"
-                class="flex min-h-10 w-full items-center justify-between gap-2 rounded-xl border border-indigo-400/15 bg-indigo-400/5 px-3 text-left text-[10px] font-semibold text-indigo-300 transition hover:bg-indigo-400/10 md:min-h-0 md:w-auto md:border-0 md:bg-transparent md:px-0 md:text-indigo-400"
+                class="flex min-h-10 w-full items-center justify-between gap-2 rounded-xl border border-indigo-400/15 bg-indigo-400/5 px-3 text-left text-[10px] font-semibold text-indigo-300 transition hover:bg-white/15/10 md:min-h-0 md:w-auto md:border-0 md:bg-transparent md:px-0 md:text-indigo-400"
               >
                 <span>{{ showAdvancedConfig ? '▼ 收起進階配置' : '▶ 展開進階配置（引擎與模型）' }}</span>
-                <span v-if="!showAdvancedConfig" class="truncate text-[9px] text-white/40 md:hidden">{{ selectedTranscriptionEngine }}</span>
+                <span v-if="!showAdvancedConfig" class="truncate text-[11px] text-white/40 md:hidden">{{ selectedTranscriptionEngine }}</span>
               </button>
 
               <Transition name="fade-slide">
                 <div v-show="showAdvancedConfig" class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-3 p-3 bg-white/5 rounded-xl border border-white/5">
                   <div class="flex flex-col">
-                    <label class="text-white/50 text-[9px] font-bold tracking-wider mb-1">ASR 運算模式</label>
+                    <label class="text-white/50 text-[11px] font-bold tracking-wider mb-1">ASR 運算模式</label>
                     <UiSelect
                       v-model="selectedAsrComputeBackend"
                       :options="asrComputeBackendOptions"
@@ -1719,7 +1807,7 @@ function clearLogs() {
                   </div>
                   <!-- 轉錄引擎 -->
                   <div class="flex flex-col">
-                    <label class="text-white/50 text-[9px] font-bold tracking-wider mb-1">轉錄引擎</label>
+                    <label class="text-white/50 text-[11px] font-bold tracking-wider mb-1">轉錄引擎</label>
                     <UiSelect
                       v-model="selectedTranscriptionEngine"
                       :options="transcriptionEngineOptions"
@@ -1730,7 +1818,7 @@ function clearLogs() {
 
                   <!-- 模型選擇 -->
                   <div class="flex flex-col">
-                    <label class="text-white/50 text-[9px] font-bold tracking-wider mb-1">模型選擇</label>
+                    <label class="text-white/50 text-[11px] font-bold tracking-wider mb-1">模型選擇</label>
                     <UiSelect
                       v-if="selectedTranscriptionEngine === 'faster-whisper' || selectedTranscriptionEngine === 'simul-streaming' || selectedTranscriptionEngine === 'faster-whisper-simul'"
                       v-model="selectedWhisperModel"
@@ -1766,7 +1854,7 @@ function clearLogs() {
                       :disabled="store.isRunning"
                       button-class="bg-white/5 border border-white/10 text-[10px] rounded-lg"
                     />
-                    <input v-else-if="selectedTranscriptionEngine === 'openai-api'" 
+                    <input v-else-if="selectedTranscriptionEngine === 'openai-api'"
                       value="whisper-1" disabled
                       class="w-full px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-white/40 cursor-not-allowed text-[10px]"
                     />
@@ -1781,7 +1869,7 @@ function clearLogs() {
                       :disabled="store.isRunning || !translationEnabled"
                       button-class="bg-white/5 border border-white/10 text-[10px] rounded-lg disabled:opacity-40"
                     />
-                    <p class="mt-1 text-[9px] text-cyan-200/55">翻譯開關開啟後，ASR 只負責把聲音轉成文字；這裡的模型才負責翻譯成目標語言。</p>
+                    <p class="mt-1 text-[11px] text-cyan-200/55">翻譯開關開啟後，ASR 只負責把聲音轉成文字；這裡的模型才負責翻譯成目標語言。</p>
                   </div>
                 </div>
               </Transition>
@@ -1802,7 +1890,7 @@ function clearLogs() {
                     </span>
                   </div>
                   <p class="mt-1 truncate text-[11px] font-semibold text-white/80">{{ selectedAsrModelId }}</p>
-                  <p class="mt-0.5 text-[9px] text-white/40">
+                  <p class="mt-0.5 text-[11px] text-white/40">
                     {{ selectedAsrDownloadTask?.error || selectedAsrDownloadTask?.message || '開始轉譯時會提醒並可自動下載，完成後接續啟動。' }}
                   </p>
                 </div>
@@ -1818,7 +1906,7 @@ function clearLogs() {
               </div>
               <div v-if="selectedAsrDownloadTask && ['pending', 'downloading'].includes(selectedAsrDownloadTask.status)" class="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
                 <div
-                  class="h-full rounded-full bg-gradient-to-r from-cyan-500 to-emerald-400 transition-all duration-500"
+                  class="h-full rounded-full bg-blue-500 transition-all duration-500"
                   :style="{ width: `${Math.max(3, modelDownloadStore.displayProgress(selectedAsrDownloadTask) * 100)}%` }"
                 ></div>
               </div>
@@ -1831,7 +1919,7 @@ function clearLogs() {
                 v-if="!store.isRunning"
                 @click="handleStart"
                 :disabled="isLoading || isPreparingAsrModel || !isConfigReady"
-                class="flex-1 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:via-indigo-500 hover:to-purple-500 disabled:from-slate-800 disabled:to-slate-900 disabled:text-white/40 disabled:border-white/5 disabled:shadow-none text-white font-bold py-3.5 px-5 rounded-xl transition-all duration-200 active:scale-[0.98] shadow-lg shadow-indigo-600/20 flex items-center justify-center gap-2"
+                class="flex-1 home-primary-action bg-blue-600 hover:bg-blue-500 disabled:from-slate-800 disabled:to-slate-900 disabled:text-white/40 disabled:border-white/5 disabled:shadow-none text-white font-bold py-3.5 px-5 rounded-xl transition-all duration-200 active:scale-[0.98] shadow-lg shadow-indigo-600/20 flex items-center justify-center gap-2"
               >
                 <AppIcon :name="isPreparingAsrModel ? 'download' : 'play'" class="h-4 w-4" />
                 <span class="text-sm font-semibold">{{ isPreparingAsrModel ? '正在下載 ASR 模型…' : isLoading ? '啟動中…' : '啟動即時轉譯' }}</span>
@@ -1841,7 +1929,7 @@ function clearLogs() {
                 v-else
                 @click="handleStop"
                 :disabled="isLoading"
-                class="flex-1 bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 disabled:from-slate-800 disabled:to-slate-900 disabled:text-white/40 disabled:border-white/5 disabled:shadow-none text-white font-bold py-3.5 px-5 rounded-xl transition-all duration-200 active:scale-[0.98] shadow-lg shadow-red-600/20 flex items-center justify-center gap-2"
+                class="flex-1 home-stop-action bg-red-600 hover:bg-red-500 disabled:from-slate-800 disabled:to-slate-900 disabled:text-white/40 disabled:border-white/5 disabled:shadow-none text-white font-bold py-3.5 px-5 rounded-xl transition-all duration-200 active:scale-[0.98] shadow-lg shadow-red-600/20 flex items-center justify-center gap-2"
               >
                 <AppIcon name="stop" class="h-4 w-4" />
                 <span class="text-sm font-semibold">{{ isLoading ? '停止中…' : '停止即時轉譯' }}</span>
@@ -1850,7 +1938,7 @@ function clearLogs() {
               <!-- 字幕視窗按鈕 -->
               <button
                 @click="openSubtitleWindow"
-                class="home-inline-subtitle-button px-5 py-3.5 bg-gradient-to-r from-cyan-600/90 to-teal-600/90 hover:from-cyan-500 hover:to-teal-500 text-white font-semibold rounded-xl transition-all shadow-md shadow-cyan-600/10 flex items-center justify-center gap-1.5 text-sm"
+                class="home-inline-subtitle-button px-5 py-3.5 bg-white/10 hover:bg-white/15 text-white font-semibold rounded-xl transition-all shadow-md shadow-cyan-600/10 flex items-center justify-center gap-1.5 text-sm"
                 title="開啟字幕懸浮視窗"
               >
                 🪟 <span class="hidden sm:inline">字幕視窗</span>
@@ -1863,10 +1951,10 @@ function clearLogs() {
           <div
             class="relative overflow-hidden rounded-2xl border p-4 transition-all duration-300"
             :class="llamaStore.localLlmEnabled
-              ? 'border-emerald-400/25 bg-gradient-to-r from-emerald-950/35 via-slate-950/95 to-cyan-950/25 shadow-lg shadow-emerald-950/20'
+              ? 'border-emerald-400/25 bg-slate-950/90'
               : 'border-white/5 bg-slate-950/90'"
           >
-            <div v-if="llamaStore.localLlmEnabled" class="pointer-events-none absolute inset-y-0 left-0 w-1 bg-gradient-to-b from-emerald-400 to-cyan-500"></div>
+            <div v-if="llamaStore.localLlmEnabled" class="pointer-events-none absolute inset-y-0 left-0 w-1 bg-emerald-400/60"></div>
             <div class="flex items-center justify-between gap-4">
               <div class="flex min-w-0 items-center gap-3">
                 <div
@@ -1879,7 +1967,7 @@ function clearLogs() {
                   <div class="mb-1 flex flex-wrap items-center gap-2">
                     <h3 class="text-xs font-bold tracking-wide text-white">本地 LLM 翻譯</h3>
                     <span
-                      class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[9px] font-bold"
+                      class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold"
                       :class="llamaStore.isServerReady
                         ? 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300'
                         : llamaStore.isServerRunning || llamaStore.isLoading
@@ -1896,7 +1984,7 @@ function clearLogs() {
                   <p class="truncate text-[11px] font-semibold" :class="llamaStore.selectedModelPath ? 'text-cyan-200/90' : 'text-amber-300/80'">
                     {{ localLlmModelName }}
                   </p>
-                  <p class="mt-0.5 max-w-[560px] truncate text-[9px] text-white/35" :title="localLlmStatusDescription">
+                  <p class="mt-0.5 max-w-[560px] truncate text-[11px] text-white/35" :title="localLlmStatusDescription">
                     {{ localLlmStatusDescription }}
                   </p>
                 </div>
@@ -1931,7 +2019,7 @@ function clearLogs() {
         <div class="home-monitoring flex min-w-0 flex-col gap-6 lg:col-span-5 xl:col-span-4">
 
           <!-- Floating subtitle window control -->
-          <div class="home-subtitle-control rounded-2xl border border-white/10 bg-slate-950/90 p-4">
+          <div class="home-subtitle-control fw-panel rounded-2xl border border-white/10 bg-slate-950/90 p-4">
             <div class="mb-3 flex items-start justify-between gap-3">
               <div>
                 <h2 class="text-sm font-bold text-white">浮動字幕窗</h2>
@@ -1956,15 +2044,15 @@ function clearLogs() {
               <span class="text-blue-300">字幕外觀 →</span>
             </button>
           </div>
-          
+
           <!-- 執行日誌 -->
-          <div v-if="!interfaceMode.isSimple" class="home-log-panel flex h-[240px] min-h-0 flex-col rounded-2xl border border-white/10 bg-slate-950/90 p-4 shadow-2xl">
+          <div v-if="!interfaceMode.isSimple" class="home-log-panel flex h-[240px] min-h-0 flex-col fw-panel rounded-2xl border border-white/10 bg-slate-950/90 p-4 shadow-sm">
             <div class="flex items-center justify-between mb-2.5">
               <h2 class="text-xs font-bold text-white tracking-widest uppercase flex items-center gap-1.5">
                 <span class="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
                 <AppIcon name="log" class="h-4 w-4" /> 系統執行日誌
               </h2>
-              <button 
+              <button
                 @click="clearLogs"
                 class="text-[10px] text-white/40 hover:text-white/80 transition-colors flex items-center gap-1 px-2.5 py-1 bg-white/5 hover:bg-white/10 rounded-lg border border-white/5"
               >
@@ -1978,7 +2066,7 @@ function clearLogs() {
           </div>
 
           <!-- 🌐 公開分享連結 -->
-          <div v-if="!interfaceMode.isSimple" class="home-sharing-panel bg-slate-950/90 rounded-2xl border border-indigo-500/20 shadow-2xl p-4">
+          <div v-if="!interfaceMode.isSimple" class="fw-panel home-sharing-panel bg-slate-950/90 rounded-2xl border border-indigo-500/20 shadow-sm p-4">
             <div class="flex items-center justify-between mb-2.5">
               <h2 class="text-xs font-bold text-white tracking-widest uppercase flex items-center gap-1.5">
                 <span class="w-1.5 h-1.5 rounded-full bg-indigo-400"></span>
@@ -1998,28 +2086,28 @@ function clearLogs() {
             </div>
 
             <div v-else-if="subtitleSharingEnabled" class="space-y-2.5">
-              <p class="text-white/40 text-[9px] leading-tight">廣播服務已運行於連接埠 {{ publicPort }}。此連結僅顯示字幕，無設定權限。</p>
-              
+              <p class="text-white/40 text-[11px] leading-tight">廣播服務已運行於連接埠 {{ publicPort }}。此連結僅顯示字幕，無設定權限。</p>
+
               <div class="space-y-2">
                 <!-- 電腦版 -->
                 <div class="flex items-center gap-2.5 bg-white/5 rounded-xl p-2.5 border border-white/5 group hover:bg-white/10 transition duration-200">
                   <AppIcon name="desktop" class="h-5 w-5 text-blue-300" />
                   <div class="flex-1 min-w-0">
                     <div class="text-white/60 text-[10px] font-bold">電腦端字幕</div>
-                    <div class="text-white/35 text-[9px] truncate font-mono mt-0.5">{{ getPublicBase() }}/desktop</div>
+                    <div class="text-white/35 text-[11px] truncate font-mono mt-0.5">{{ getPublicBase() }}/desktop</div>
                   </div>
                   <button @click="copyLink('/desktop')"
                     class="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs rounded-lg transition-all font-semibold shadow-sm shadow-indigo-600/10">
                     {{ activeCopyPath === '/desktop' ? '✓' : '複製' }}
                   </button>
                 </div>
-                
+
                 <!-- 手機版 -->
                 <div class="flex items-center gap-2.5 bg-white/5 rounded-xl p-2.5 border border-white/5 group hover:bg-white/10 transition duration-200">
                   <AppIcon name="mobile" class="h-5 w-5 text-blue-300" />
                   <div class="flex-1 min-w-0">
                     <div class="text-white/60 text-[10px] font-bold">行動端字幕</div>
-                    <div class="text-white/35 text-[9px] truncate font-mono mt-0.5">{{ getPublicBase() }}/mobile</div>
+                    <div class="text-white/35 text-[11px] truncate font-mono mt-0.5">{{ getPublicBase() }}/mobile</div>
                   </div>
                   <button @click="copyLink('/mobile')"
                     class="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs rounded-lg transition-all font-semibold shadow-sm shadow-indigo-600/10">
@@ -2027,9 +2115,9 @@ function clearLogs() {
                   </button>
                 </div>
               </div>
-              <p class="text-white/30 text-[9px] text-center tracking-wide mt-1">請確保本機防火牆允許對外存取此連接埠</p>
+              <p class="text-white/30 text-[11px] text-center tracking-wide mt-1">請確保本機防火牆允許對外存取此連接埠</p>
             </div>
-            
+
             <div v-else class="p-3 rounded-xl border border-rose-500/20 bg-rose-500/5 text-rose-300 text-[10px] leading-relaxed text-center">
               🚫 字幕廣播服務目前已關閉，外部裝置將無法存取字幕網頁。
             </div>
@@ -2051,14 +2139,14 @@ function clearLogs() {
             <span :class="store.isRunning ? 'text-green-400' : 'text-slate-500'">●</span>
             <span>{{ store.isRunning ? '即時轉譯中' : '準備啟動' }}</span>
           </div>
-          <p class="mt-0.5 truncate text-[9px] text-white/40">
+          <p class="mt-0.5 truncate text-[11px] text-white/40">
             {{ selectedInputLanguage }} → {{ translationEnabled ? selectedOutputLanguage : '僅轉錄' }}
           </p>
         </div>
         <button
           v-if="!store.isRunning"
           type="button"
-          class="min-h-12 min-w-[9.5rem] rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 px-4 text-sm font-bold text-white shadow-lg shadow-indigo-600/25 transition active:scale-[0.98] disabled:from-slate-800 disabled:to-slate-900 disabled:text-white/40 disabled:shadow-none"
+          class="min-h-12 min-w-[9.5rem] rounded-xl home-primary-action bg-blue-600 px-4 text-sm font-bold text-white shadow-lg shadow-indigo-600/25 transition active:scale-[0.98] disabled:from-slate-800 disabled:to-slate-900 disabled:text-white/40 disabled:shadow-none"
           :disabled="isLoading || isPreparingAsrModel || !isConfigReady"
           @click="handleStart"
         >
@@ -2067,7 +2155,7 @@ function clearLogs() {
         <button
           v-else
           type="button"
-          class="min-h-12 min-w-[9.5rem] rounded-xl bg-gradient-to-r from-rose-600 to-red-600 px-4 text-sm font-bold text-white shadow-lg shadow-red-600/25 transition active:scale-[0.98] disabled:from-slate-800 disabled:to-slate-900 disabled:text-white/40 disabled:shadow-none"
+          class="min-h-12 min-w-[9.5rem] rounded-xl home-stop-action bg-red-600 px-4 text-sm font-bold text-white shadow-lg shadow-red-600/25 transition active:scale-[0.98] disabled:from-slate-800 disabled:to-slate-900 disabled:text-white/40 disabled:shadow-none"
           :disabled="isLoading"
           @click="handleStop"
         >
@@ -2116,5 +2204,18 @@ function clearLogs() {
 
 .mobile-action-spacer {
   height: calc(9rem + env(safe-area-inset-bottom));
+}
+
+.commercial-home .fw-panel { background: var(--fw-surface, #17202d); border-color: var(--fw-border, rgba(255,255,255,.1)); box-shadow: none; }
+.home-primary-action { background: var(--fw-accent, #3479d9); box-shadow: none; }
+.home-primary-action:hover { background: #4287e7; }
+.home-primary-action:disabled, .home-stop-action:disabled { background: var(--fw-surface-secondary, #202b3a); color: var(--fw-muted, #9ba8ba); }
+.home-stop-action { background: #b84249; box-shadow: none; }
+.commercial-home button { min-height: 44px; }
+.commercial-home button:focus-visible { outline: 2px solid var(--fw-accent, #3479d9); outline-offset: 3px; }
+.commercial-home .source-card-icon { opacity: .85; }
+@media (prefers-reduced-motion: reduce) {
+  .fade-slide-enter-active, .fade-slide-leave-active { transition: opacity .1s; }
+  .fade-slide-enter-from, .fade-slide-leave-to { transform: none; }
 }
 </style>

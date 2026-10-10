@@ -10,4 +10,5 @@ python-dotenv>=1.0.1
 
 # LLM 翻譯支援
 openai>=1.12.0
+opencc-python-reimplemented>=0.1.7,<0.2
 google-generativeai>=0.3.0

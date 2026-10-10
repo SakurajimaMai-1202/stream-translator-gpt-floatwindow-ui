@@ -303,6 +303,7 @@ export const useTranslationStore = defineStore('translation', () => {
     console.log('[SSE] Creating EventSource for task:', taskId);
     eventSource = translationApi.createEventSource(taskId);
     connectedTaskId = taskId;
+    const source = eventSource;
     console.log('[SSE] EventSource created, readyState:', eventSource.readyState);
 
     eventSource.onopen = () => {
@@ -402,14 +403,21 @@ export const useTranslationStore = defineStore('translation', () => {
     });
 
     eventSource.addEventListener('status', (event: MessageEvent) => {
+      if (eventSource !== source) return;
       try {
         console.log('[SSE] Received status event:', event.data);
         const data = JSON.parse(event.data);
         statusMessage.value = data.message || '';
         if (typeof data.asr_ready === 'boolean') {
           asrReady.value = data.asr_ready;
-        } else if (['completed', 'error', 'stopped'].includes(data.status)) {
+        }
+        if (['completed', 'error', 'stopped'].includes(data.status)) {
+          isRunning.value = false;
           asrReady.value = false;
+          if (data.status === 'error' && !errorMessage.value) {
+            errorMessage.value = data.message || '未知錯誤';
+          }
+          disconnectEventSource();
         }
       } catch (err) {
         console.error('解析狀態事件失敗:', err);
@@ -417,20 +425,26 @@ export const useTranslationStore = defineStore('translation', () => {
     });
 
     eventSource.addEventListener('error', (event: MessageEvent) => {
+      // Named server errors and transport errors share the same event name.
+      if (!('data' in event) || eventSource !== source) return;
       try {
         const data = JSON.parse(event.data);
         errorMessage.value = data.message || '未知錯誤';
       } catch (err) {
-        errorMessage.value = 'SSE 連接錯誤';
+        errorMessage.value = '無法解析伺服器錯誤訊息';
       }
+      isRunning.value = false;
+      asrReady.value = false;
+      disconnectEventSource();
     });
 
     eventSource.onerror = (error) => {
+      if ('data' in error || eventSource !== source) return;
       console.error('[SSE] EventSource error:', error);
       console.error('[SSE] EventSource readyState:', eventSource?.readyState);
       disconnectEventSource();
       if (isRunning.value) {
-        errorMessage.value = 'SSE 連接中斷';
+        if (!errorMessage.value) errorMessage.value = 'SSE 連接中斷';
         isRunning.value = false;
         asrReady.value = false;
       }

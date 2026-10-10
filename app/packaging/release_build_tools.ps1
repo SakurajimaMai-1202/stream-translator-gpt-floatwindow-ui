@@ -13,7 +13,7 @@ function Update-YtDlpPackage {
     if ($LASTEXITCODE -ne 0) { $before = "not installed" }
     Write-Host "Updating yt-dlp in $Label (current: $before)..." -ForegroundColor Yellow
 
-    & $PythonExe -m pip install --upgrade --disable-pip-version-check yt-dlp
+    & $PythonExe (Join-Path $PSScriptRoot "update_ytdlp.py")
     if ($LASTEXITCODE -ne 0) {
         throw "yt-dlp update failed in $Label; packaging stopped to avoid shipping an outdated version"
     }
@@ -92,7 +92,9 @@ function Remove-BuildDirectoryFast {
     $emptyDir = Join-Path $resolvedRoot (".empty-build-" + [Guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Path $emptyDir -Force | Out-Null
     try {
-        & robocopy.exe $emptyDir $resolvedPath /MIR /R:0 /W:0 /NFL /NDL /NP /NJH /NJS
+        # /MIR can still print every removed "extra" file despite /NFL /NDL.
+        # Avoid routing hundreds of thousands of cleanup lines through PowerShell.
+        & robocopy.exe $emptyDir $resolvedPath /MIR /R:0 /W:0 /NFL /NDL /NP /NJH /NJS /LOG:NUL *> $null
         $robocopyExitCode = $LASTEXITCODE
         if ($robocopyExitCode -ge 8) {
             throw "Robocopy cleanup failed with exit code $robocopyExitCode`: $resolvedPath"
@@ -164,28 +166,56 @@ function Compress-ReleaseDirectory {
         [switch]$ArchiveRootContents
     )
 
-    if (-not (Test-Path -LiteralPath (Join-Path $WorkingDirectory $ItemName))) {
-        throw "Archive input not found: $(Join-Path $WorkingDirectory $ItemName)"
+    $inputPath = Join-Path $WorkingDirectory $ItemName
+    if (-not (Test-Path -LiteralPath $inputPath -PathType Container)) {
+        throw "Archive input directory not found: $inputPath"
     }
-    if (Test-Path -LiteralPath $Destination) {
-        Remove-Item -LiteralPath $Destination -Force
+    $destinationPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Destination)
+    $stagingRoot = [IO.Path]::GetFullPath((Join-Path ([IO.Path]::GetTempPath()) "StreamTranslator-ReleaseArchive-v150")).TrimEnd('\')
+    $stagingDirectory = Join-Path $stagingRoot ([Guid]::NewGuid().ToString("N"))
+    $stagingInput = [IO.Path]::GetFullPath((Join-Path $stagingDirectory $ItemName))
+    if (-not $stagingInput.StartsWith($stagingDirectory + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Archive item escapes staging directory: $ItemName"
     }
-
-    $archiveWorkingDirectory = $WorkingDirectory
+    New-Item -ItemType Directory -Path $stagingDirectory -Force | Out-Null
+    $stagingZip = Join-Path $stagingDirectory "archive.zip"
+    $archiveWorkingDirectory = $stagingDirectory
     $archiveItem = $ItemName
     if ($ArchiveRootContents) {
-        $archiveWorkingDirectory = Join-Path $WorkingDirectory $ItemName
+        $archiveWorkingDirectory = $stagingInput
         $archiveItem = ".\*"
     }
-
-    Push-Location $archiveWorkingDirectory
+    $completed = $false
     try {
-        & $SevenZipPath a -tzip -mm=Deflate "-mx=$CompressionLevel" -mmt=on $Destination $archiveItem | Out-Host
-        if ($LASTEXITCODE -ne 0) {
-            throw "7-Zip compression failed with exit code $LASTEXITCODE`: $Destination"
+        Write-Host "Staging archive input on local TEMP storage: $stagingDirectory" -ForegroundColor DarkYellow
+        Invoke-FastDirectoryCopy -Source $inputPath -Destination $stagingInput -Threads 16
+        Push-Location $archiveWorkingDirectory
+        try {
+            & $SevenZipPath a -tzip -mm=Deflate "-mx=$CompressionLevel" -mmt=on $stagingZip $archiveItem | Out-Host
+            if ($LASTEXITCODE -ne 0) {
+                throw "7-Zip compression failed with exit code $LASTEXITCODE`: $stagingZip"
+            }
+        } finally {
+            Pop-Location
         }
+        Test-ReleaseZip -SevenZipPath $SevenZipPath -Path $stagingZip
+        if (Test-Path -LiteralPath $destinationPath) {
+            Remove-Item -LiteralPath $destinationPath -Force
+        }
+        Copy-Item -LiteralPath $stagingZip -Destination $destinationPath -Force
+        $completed = $true
+    } catch {
+        Write-Warning "Archive staging retained for diagnostics: $stagingDirectory"
+        throw
     } finally {
-        Pop-Location
+        if ($completed) {
+            $resolvedRoot = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $stagingRoot).Path).TrimEnd('\')
+            $resolvedStaging = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $stagingDirectory).Path).TrimEnd('\')
+            if (-not $resolvedStaging.StartsWith($resolvedRoot + '\', [StringComparison]::OrdinalIgnoreCase)) {
+                throw "Refusing to clear archive staging outside intended root: $resolvedStaging"
+            }
+            Remove-Item -LiteralPath $resolvedStaging -Recurse -Force
+        }
     }
 }
 

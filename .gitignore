@@ -90,6 +90,8 @@ version_info.txt
 
 # ── 執行檔 ────────────────────────────────────────────────────
 *.exe
+# Generated shared WASAPI component; built from checked-in native source.
+stream-translator-gpt/stream_translator_gpt/native/*.dll
 # （llama/ 底下的 llama-server.exe 等二進位也會一起被排除）
 
 # ── 敏感設定（API key / 密碼）────────────────────────────────

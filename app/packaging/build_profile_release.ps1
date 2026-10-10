@@ -2,7 +2,7 @@
 param(
     [ValidateSet("cuda", "cpu", "rocm")]
     [string]$Profile = "cuda",
-    [string]$Version = "1.4.10",
+    [string]$Version = "1.5.0",
     [switch]$ForceRuntime,
     [switch]$ReuseRuntimeCache,
     [switch]$SkipFullZip,
@@ -13,10 +13,10 @@ param(
     [switch]$SkipRuntimeDependenciesInAppUpdate,
     [switch]$IncludeCpuAsrSidecar = $true,
     [string]$MinimumUpgradableVersion = "1.3.11",
-    [string]$MinimumRuntimeVersion = "1.4.9",
+    [string]$MinimumRuntimeVersion = "1.5.0",
     [switch]$RequiresFullInstall,
     [ValidateSet("app_only", "runtime_replace")]
-    [string]$UpdateMode = "app_only"
+    [string]$UpdateMode = "runtime_replace"
 )
 
 $ErrorActionPreference = "Stop"
@@ -36,6 +36,7 @@ $projectRoot = Split-Path -Parent $scriptDir
 $frontendDir = Join-Path $scriptDir "frontend"
 . (Join-Path $packagingDir "runtime_profile_packaging.ps1")
 . (Join-Path $packagingDir "release_build_tools.ps1")
+. (Join-Path $packagingDir 'ensure_process_audio_capture.ps1')
 
 $packageInfo = Get-RuntimeProfilePackageInfo -RuntimeProfile $Profile
 $profileLabel = $packageInfo.Label
@@ -214,6 +215,15 @@ Remove-BuildDirectoryFast -Path $distDir -AllowedRoot $scriptDir
 New-Item $distDir -ItemType Directory -Force | Out-Null
 $updateRoot = Join-Path $distDir "App-Update"
 Invoke-FastDirectoryCopy -Source $builtApp -Destination $updateRoot -Threads $CopyThreads
+# GUI health checks may create an output directory. It is user data and must
+# never be shipped or replaced by an App Update.
+$updateOutput = Join-Path $updateRoot "output"
+if (Test-Path -LiteralPath $updateOutput) {
+    if (@(Get-ChildItem -LiteralPath $updateOutput -Force).Count -ne 0) {
+        throw "App Update contains unexpected output data: $updateOutput"
+    }
+    Remove-Item -LiteralPath $updateOutput -Force
+}
 Copy-PortableJsRuntime -DestinationRoot $updateRoot
 if ($UpdateMode -eq "runtime_replace") {
     Remove-BuildDirectoryFast -Path (Join-Path $updateRoot "_runtime") -AllowedRoot $distDir
@@ -241,6 +251,12 @@ $appUpdateBuildInfo = [ordered]@{
     [Text.UTF8Encoding]::new($false)
 )
 Write-RuntimeProfileDocs -Destination $updateRoot -RuntimeProfile $Profile -Version $Version
+$allowedUpdateItems = @("app-update-build.json", "StreamTranslatorUpdater.exe", "PORTABLE_GUIDE_zh-TW.txt", "Stream Translator.exe", "UPDATE_NOTES_zh-TW.txt", "_internal", "_js_runtime", "_runtime")
+foreach ($updateItem in Get-ChildItem -LiteralPath $updateRoot -Force) {
+    if ($updateItem.Name -notin $allowedUpdateItems) {
+        throw "App Update contains an item rejected by the updater: $($updateItem.Name)"
+    }
+}
 $appUpdateZipPath = Join-Path $distDir $packageInfo.AppUpdateZip
 Compress-ReleaseDirectory `
     -SevenZipPath $sevenZipExe `

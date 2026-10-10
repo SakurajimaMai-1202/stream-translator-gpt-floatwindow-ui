@@ -200,29 +200,29 @@ const activeTab = ref<'display' | 'color'>('display');
 
 <template>
   <div :class="[
-    'commercial-page commercial-subtitle-settings',
+    'fw-page commercial-page commercial-subtitle-settings',
     isStandalone ? 'h-screen bg-slate-950 p-4 sm:p-6 overflow-y-auto' : 'p-4 sm:p-5 max-w-3xl mx-auto'
   ]">
     <!-- Header -->
-    <div class="flex items-center justify-between mb-5 border-b border-white/5 pb-2.5">
-      <h1 class="text-base font-bold text-white tracking-wide">字幕外觀設定</h1>
+    <div class="fw-page-header flex items-center justify-between mb-5 border-b border-white/5 pb-2.5">
+      <h1 class="text-xl font-semibold text-white tracking-tight">字幕外觀設定</h1>
     </div>
 
     <!-- Content Card -->
-    <div v-if="!settingsReady" class="commercial-panel p-6 min-h-[460px]" aria-busy="true">
+    <div v-if="!settingsReady" class="fw-panel commercial-panel p-6 min-h-[460px]" aria-busy="true">
       <div class="animate-pulse space-y-6"><div class="h-9 rounded-lg bg-white/10"></div><div class="h-4 w-40 rounded bg-white/10"></div><div class="h-12 rounded-lg bg-white/5"></div><div class="h-40 rounded-xl bg-white/5"></div></div>
       <p class="text-white/40 text-sm mt-6">正在讀取字幕外觀…</p>
     </div>
-    <div v-else class="commercial-panel p-6">
+    <div v-else class="fw-panel commercial-panel p-6">
       <!-- 分頁標籤 -->
-      <div class="flex border-b border-white/10 mb-6">
+      <div class="subtitle-settings-tabs flex border-b border-white/10 mb-6">
         <button
           @click="activeTab = 'display'"
-          :class="['flex-1 py-2 text-xs font-semibold transition', activeTab === 'display' ? 'text-blue-400 border-b-2 border-blue-400 font-bold' : 'text-white/60 hover:text-white']"
+          :class="['flex-1 min-h-11 py-2 text-sm font-semibold transition', activeTab === 'display' ? 'text-blue-400 border-b-2 border-blue-400 font-bold' : 'text-white/60 hover:text-white']"
         >顯示配置</button>
         <button
           @click="activeTab = 'color'"
-          :class="['flex-1 py-2 text-xs font-semibold transition', activeTab === 'color' ? 'text-blue-400 border-b-2 border-blue-400 font-bold' : 'text-white/60 hover:text-white']"
+          :class="['flex-1 min-h-11 py-2 text-sm font-semibold transition', activeTab === 'color' ? 'text-blue-400 border-b-2 border-blue-400 font-bold' : 'text-white/60 hover:text-white']"
         >色彩與預覽</button>
       </div>
 
@@ -254,13 +254,13 @@ const activeTab = ref<'display' | 'color'>('display');
         <!-- 字體大小 -->
         <div>
           <label class="block text-white/90 text-sm mb-2 font-medium">字體大小: {{ fontSize }}px</label>
-          <input v-model.number="fontSize" type="range" min="16" max="80" class="w-full accent-blue-500 h-2" />
+          <input v-model.number="fontSize" type="range" min="16" max="80" class="subtitle-settings-range w-full accent-blue-500 h-2" />
         </div>
 
         <!-- 字體粗細 -->
         <div>
           <label class="block text-white/90 text-sm mb-2 font-medium">字體粗細: {{ fontWeight }}</label>
-          <input v-model.number="fontWeight" type="range" min="300" max="900" step="100" class="w-full accent-blue-500 h-2" />
+          <input v-model.number="fontWeight" type="range" min="300" max="900" step="100" class="subtitle-settings-range w-full accent-blue-500 h-2" />
         </div>
 
         <!-- 位置 -->
@@ -281,7 +281,7 @@ const activeTab = ref<'display' | 'color'>('display');
         <!-- 顯示數量 -->
         <div>
           <label class="block text-white/90 text-sm mb-2 font-medium">顯示字幕數量: {{ maxDisplayCount }}</label>
-          <input v-model.number="maxDisplayCount" type="range" min="1" max="100" class="w-full accent-blue-500 h-2" />
+          <input v-model.number="maxDisplayCount" type="range" min="1" max="100" class="subtitle-settings-range w-full accent-blue-500 h-2" />
         </div>
 
         <!-- 顯示選項 -->
@@ -346,7 +346,7 @@ const activeTab = ref<'display' | 'color'>('display');
 
         <div>
           <label class="block text-white/90 text-sm mb-2 font-medium">背景透明度: {{ backgroundOpacity }}%</label>
-          <input v-model.number="backgroundOpacity" type="range" min="0" max="100" class="w-full accent-blue-500 h-2" />
+          <input v-model.number="backgroundOpacity" type="range" min="0" max="100" class="subtitle-settings-range w-full accent-blue-500 h-2" />
         </div>
 
       </div>
@@ -354,3 +354,16 @@ const activeTab = ref<'display' | 'color'>('display');
     </div>
   </div>
 </template>
+
+<style scoped>
+.commercial-subtitle-settings { color:var(--fw-text); }
+.commercial-subtitle-settings .fw-panel { background:var(--fw-surface); border:1px solid var(--fw-border); border-radius:16px; }
+.commercial-subtitle-settings button { min-height:44px; }
+.commercial-subtitle-settings button:active { opacity:.8; }
+.commercial-subtitle-settings :is(button,input):focus-visible { outline:2px solid var(--fw-accent); outline-offset:3px; }
+.commercial-subtitle-settings label:has(input[type="checkbox"]) { min-height:44px; }
+.subtitle-settings-tabs button { border-radius:8px 8px 0 0; }
+.subtitle-settings-range { min-height:32px; cursor:pointer; }
+@media (max-width:480px) { .commercial-subtitle-settings .fw-panel { padding:18px; } }
+@media (prefers-reduced-motion:reduce) { .commercial-subtitle-settings * { transition:none !important; animation:none !important; } }
+</style>

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import ctypes
 import shutil
 import subprocess
@@ -35,7 +36,6 @@ DISCRETE_NAME_MARKERS = (
     "amd radeon rx",
     "amd radeon pro",
     "amd instinct",
-    "intel arc",
 )
 
 _GPU_CACHE_LOCK = threading.Lock()
@@ -79,7 +79,9 @@ class AcceleratorSelection:
 
 
 def normalize_gpu_name(name: str | None) -> str:
-    return " ".join(str(name or "").strip().lower().split())
+    normalized = str(name or "").strip().lower()
+    normalized = re.sub(r"\((?:r|tm|c)\)|[®™©]", "", normalized)
+    return " ".join(normalized.split())
 
 
 def classify_vendor(name: str | None) -> str:
@@ -97,9 +99,25 @@ def is_integrated_gpu_name(name: str | None) -> bool:
     normalized = normalize_gpu_name(name)
     if not normalized:
         return False
+    # Arc also names Core Ultra integrated graphics (Arc Graphics / 140V).
+    # Only the explicit A/B series model names identify discrete Arc cards.
+    if re.search(r"\barc\s+(?:pro\s+)?[ab]\d{2,3}\b", normalized):
+        return False
+    if re.search(r"\bradeon\s+\d{3,4}m\b", normalized):
+        return True
     if any(marker in normalized for marker in DISCRETE_NAME_MARKERS):
         return False
     return any(marker in normalized for marker in INTEGRATED_NAME_MARKERS)
+
+
+def is_integrated_gpu_adapter(
+    name: str | None, dedicated_memory_bytes: int, shared_memory_bytes: int
+) -> bool:
+    """Combine adapter identity with DXGI memory for unnamed UMA adapters."""
+    return is_integrated_gpu_name(name) or (
+        dedicated_memory_bytes == 0 and shared_memory_bytes > 0
+        and classify_vendor(name) in {"intel", "amd"}
+    )
 
 
 def backend_for_vendor(vendor: str, torch_hip_version: str | None = None) -> str:
@@ -286,8 +304,12 @@ def detect_windows_dxgi_adapters() -> list[GpuDevice]:
                 vendor = classify_vendor(name)
                 devices.append(GpuDevice(
                     index=index, name=name, vendor=vendor, backend=backend_for_vendor(vendor),
-                    memory_mb=memory_mb, is_integrated=is_integrated_gpu_name(name), source="dxgi",
-                    raw={"vendor_id": desc.vendor_id, "device_id": desc.device_id},
+                    memory_mb=memory_mb, is_integrated=is_integrated_gpu_adapter(
+                        name, desc.dedicated_video_memory, desc.shared_system_memory
+                    ), source="dxgi",
+                    raw={"vendor_id": desc.vendor_id, "device_id": desc.device_id,
+                         "dedicated_video_memory": int(desc.dedicated_video_memory),
+                         "shared_system_memory": int(desc.shared_system_memory)},
                 ))
             finally:
                 if adapter.value:

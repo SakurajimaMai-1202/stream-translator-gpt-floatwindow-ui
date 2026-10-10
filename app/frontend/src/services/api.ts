@@ -358,7 +358,21 @@ export interface CpuAsrSidecarInstallStatus {
   asset_name: string;
 }
 
-export type AudioSource = 'url' | 'file' | 'microphone' | 'system_audio';
+export type AudioSource = 'url' | 'file' | 'microphone' | 'system_audio' | 'process_audio';
+
+export interface ProcessAudioTarget {
+  window_handle: string;
+  process_id: number;
+  process_start_time: string;
+  process_name: string;
+  title: string;
+}
+
+export interface ProcessAudioTargetsResult {
+  supported: boolean;
+  message: string;
+  targets: ProcessAudioTarget[];
+}
 
 export interface SourceCheckResult {
   source: AudioSource;
@@ -376,7 +390,11 @@ export const readinessApi = {
     const response = await axios.get(`${API_BASE}/readiness`);
     return response.data.data || response.data;
   },
-  async checkSource(payload: { source: AudioSource; value?: string; device_index?: number | null; duration_seconds?: number }): Promise<SourceCheckResult> {
+  async getProcessAudioTargets(): Promise<ProcessAudioTargetsResult> {
+    const response = await axios.get(`${API_BASE}/readiness/process-audio-targets`);
+    return response.data.data || response.data;
+  },
+  async checkSource(payload: { source: AudioSource; value?: string; device_index?: number | null; process_id?: number; process_start_time?: string; window_handle?: string; duration_seconds?: number }): Promise<SourceCheckResult> {
     const response = await axios.post(`${API_BASE}/readiness/source-check`, payload);
     return response.data.data || response.data;
   },
@@ -399,6 +417,11 @@ export interface DeviceListResponse {
 
 export interface StartTranslationRequest {
   audio_source?: AudioSource;
+  process_id?: number;
+  process_start_time?: string;
+  window_handle?: string;
+  process_name?: string;
+  title?: string;
   url?: string;
   device_index?: number;
   model?: string;

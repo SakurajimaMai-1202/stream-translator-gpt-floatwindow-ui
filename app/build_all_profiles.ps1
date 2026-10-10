@@ -1,6 +1,6 @@
 #!/usr/bin/env pwsh
 param(
-    [string]$Version = "1.4.10",
+    [string]$Version = "1.5.0",
     [ValidateSet("Quick", "Final")][string]$Mode = "Quick",
     [switch]$ReuseRuntimeCache,
     [switch]$ReuseSharedGui,
@@ -10,8 +10,8 @@ param(
     [ValidateRange(64, 2047)][int]$SplitSizeMiB = 1900,
     [ValidateRange(1, 128)][int]$CopyThreads = 16,
     [switch]$IncludeCpuAsrSidecar = $true,
-    [string]$MinimumRuntimeVersion = "1.4.9",
-    [ValidateSet("app_only", "runtime_replace")][string]$UpdateMode = "app_only"
+    [string]$MinimumRuntimeVersion = "1.5.0",
+    [ValidateSet("app_only", "runtime_replace")][string]$UpdateMode = "runtime_replace"
 )
 
 $ErrorActionPreference = "Stop"
@@ -35,7 +35,7 @@ $overallTimer = [Diagnostics.Stopwatch]::StartNew()
 $stepTimings = [ordered]@{}
 
 if ($ReuseSharedGui) {
-    throw "ReuseSharedGui is disabled for release packaging because yt-dlp must be updated and frozen into every new GUI build"
+    throw "ReuseSharedGui is disabled for release packaging; rebuild the current GUI source and validate the updated runtime dependencies"
 }
 
 $cpuRuntimeRoot = Join-Path $appDir "build-runtime-cache\cpu-runtime"
@@ -254,6 +254,7 @@ $manifest = [ordered]@{
     schema = 1
     version = $Version
     mode = $Mode.ToLowerInvariant()
+    yt_dlp_version = $env:STREAM_TRANSLATOR_YTDLP_VERSION
     created_at = (Get-Date).ToString("o")
     compression = [ordered]@{
         format = "zip"

@@ -2,7 +2,7 @@
 param(
     [ValidateSet("cuda", "cpu", "rocm")]
     [string]$Profile = "cuda",
-    [string]$Version = "1.4.10",
+    [string]$Version = "1.5.0",
     [switch]$ForceRuntime,
     [switch]$ReuseRuntimeCache,
     [switch]$SkipFullZip,
@@ -12,8 +12,8 @@ param(
     [ValidateRange(1, 128)][int]$CopyThreads = 16,
     [switch]$SkipRuntimeDependenciesInAppUpdate,
     [switch]$IncludeCpuAsrSidecar = $true,
-    [string]$MinimumRuntimeVersion = "1.4.9",
-    [ValidateSet("app_only", "runtime_replace")][string]$UpdateMode = "app_only"
+    [string]$MinimumRuntimeVersion = "1.5.0",
+    [ValidateSet("app_only", "runtime_replace")][string]$UpdateMode = "runtime_replace"
 )
 
 $releaseArgs = @{

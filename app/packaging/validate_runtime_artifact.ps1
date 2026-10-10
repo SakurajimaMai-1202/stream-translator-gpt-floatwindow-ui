@@ -12,6 +12,12 @@ $packagingDir = $PSScriptRoot
 $scriptDir = Split-Path -Parent $packagingDir
 . (Join-Path $packagingDir "runtime_profile_packaging.ps1")
 
+function Test-ProcessAudioCaptureRuntime {
+    param([string]$PythonExe, [string]$Label)
+    & $PythonExe -I -c "from stream_translator_gpt.process_audio_capture import _load_library; _load_library(); print('Process audio capture DLL OK')"
+    if ($LASTEXITCODE -ne 0) { throw "$Label process audio capture DLL validation failed" }
+}
+
 function Test-YtDlpRuntimeResolution {
     param(
         [Parameter(Mandatory = $true)][string]$PythonExe,
@@ -20,15 +26,28 @@ function Test-YtDlpRuntimeResolution {
 
     $probe = @"
 import importlib.metadata
+import os
+import yt_dlp.version
+import yt_dlp_ejs
+from packaging.version import Version
 from pathlib import Path
 import sys
-from stream_translator_gpt.audio_getter import _resolve_ytdlp_command
+from stream_translator_gpt.audio_getter import _resolve_ytdlp_command, _resolve_js_runtime_arg
 
 command = _resolve_ytdlp_command()
 actual = str(Path(command[0]).resolve()).casefold()
 expected = str(Path(sys.executable).resolve()).casefold()
 assert actual == expected and command[1:] == ['-m', 'yt_dlp'], command
-print(importlib.metadata.version('yt-dlp'))
+version = importlib.metadata.version('yt-dlp')
+assert Version(yt_dlp.version.__version__).release == Version(version).release
+expected_version = os.environ.get('STREAM_TRANSLATOR_YTDLP_VERSION')
+if expected_version:
+    assert version == expected_version, (version, expected_version)
+runtime_root = Path(sys.executable).resolve().parent
+bundled_nodes = [root / '_js_runtime' / 'node.exe' for root in (runtime_root, runtime_root.parent)]
+bundled_node = next(path for path in bundled_nodes if path.is_file())
+assert _resolve_js_runtime_arg() == 'node:' + str(bundled_node.resolve())
+print('yt-dlp', version, 'EJS', importlib.metadata.version('yt-dlp-ejs'))
 "@
     & $PythonExe -I -c $probe
     if ($LASTEXITCODE -ne 0) {
@@ -99,12 +118,13 @@ if ($Profile -eq "cpu" -and -not $manifest.sherpa_onnx) {
     throw "CPU artifact manifest missing sherpa-onnx version: $runtimeManifestPath"
 }
 & $runtimePython -I -c "import opencc, stream_translator_gpt.main; print('ASR script normalization dependencies OK')"
-& $runtimePython -I -c "import omnivad; print('Native VAD dependency OK')"
-if ($LASTEXITCODE -ne 0) { throw "$Profile runtime is missing omnivad required by the default VAD mode" }
 if ($LASTEXITCODE -ne 0) {
     throw "Runtime is missing OpenCC ASR script normalization support: $runtimePath"
 }
+& $runtimePython -I -c "import omnivad; print('Native VAD dependency OK')"
+if ($LASTEXITCODE -ne 0) { throw "$Profile runtime is missing omnivad required by the default VAD mode" }
 Test-YtDlpRuntimeResolution -PythonExe $runtimePython -Label "$Profile runtime"
+Test-ProcessAudioCaptureRuntime -PythonExe $runtimePython -Label "$Profile runtime"
 if ((& $nodeRuntimePath --version) -notmatch '^v(2[2-9]|[3-9][0-9])\.') {
     throw "Packaged Node.js runtime must be version 22 or newer: $nodeRuntimePath"
 }
@@ -130,6 +150,7 @@ if ($Profile -ne "cpu") {
         & $cpuAsrPython -I -c "import glob, pathlib, importlib.util, opencc, sherpa_onnx, stream_translator_gpt.main, sys; from pathlib import Path; root=Path(sys.executable).resolve().parent; paths=[Path(pathlib.__file__).resolve(), Path(glob.__file__).resolve()]; assert all(root == p.parent or root in p.parents for p in paths), paths; assert importlib.util.find_spec('torch') is None, 'CPU ASR sidecar must not include torch'; print(sherpa_onnx.__version__)"
         if ($LASTEXITCODE -ne 0) { throw "CPU ASR sidecar runtime validation failed: $cpuAsrRuntimePath" }
         Test-YtDlpRuntimeResolution -PythonExe $cpuAsrPython -Label "CPU ASR sidecar runtime"
+        Test-ProcessAudioCaptureRuntime -PythonExe $cpuAsrPython -Label "CPU ASR sidecar runtime"
         $cpuAsrSidecar = $cpuAsrManifest.sherpa_onnx
     }
 }

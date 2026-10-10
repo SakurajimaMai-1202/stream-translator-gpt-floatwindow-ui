@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import os
 import queue
 import shutil
@@ -180,14 +181,16 @@ def _resolve_js_runtime_arg() -> str | None:
     local_app_data = Path(os.environ.get('LOCALAPPDATA', '')) if os.environ.get('LOCALAPPDATA') else None
 
     node_candidates = [
-        shutil.which('node'),
-        shutil.which('node.exe'),
-        executable_dir / 'node.exe',
+        # Release-bundled Node is verified with yt-dlp; a user's older PATH
+        # installation must not override it.
         executable_dir / '_js_runtime' / 'node.exe',
-        executable_dir.parent / 'node.exe',
         executable_dir.parent / '_js_runtime' / 'node.exe',
+        executable_dir / 'node.exe',
+        executable_dir.parent / 'node.exe',
         app_root / 'node' / 'node.exe',
         app_root / 'runtime' / 'node.exe',
+        shutil.which('node'),
+        shutil.which('node.exe'),
         program_files / 'nodejs' / 'node.exe',
         local_app_data / 'Programs' / 'nodejs' / 'node.exe' if local_app_data else None,
     ]
@@ -215,7 +218,7 @@ def _resolve_js_runtime_arg() -> str | None:
 
 
 def _transport(ytdlp_proc, ffmpeg_proc):
-    while (ytdlp_proc.poll() is None) and (ffmpeg_proc.poll() is None):
+    while ffmpeg_proc.poll() is None:
         try:
             chunk = ytdlp_proc.stdout.read(1024)
             if not chunk:
@@ -239,7 +242,6 @@ def _transport(ytdlp_proc, ffmpeg_proc):
             ytdlp_proc.kill()
 
     if ffmpeg_proc.poll() is None:
-        ffmpeg_proc.terminate()
         try:
             ffmpeg_proc.wait(timeout=2)
         except Exception:
@@ -300,6 +302,30 @@ class StreamAudioGetter(LoopWorkerBase):
     STREAM_READ_TIMEOUT_SECONDS = 8.0
     YOUTUBE_RECONNECT_DELAY_SECONDS = 1.0
 
+    def _source_status(self):
+        """Return live, finite, ended, or unknown; transport EOF is not proof."""
+        cmd = _build_ytdlp_command(
+            self.url, self.format, self.cookies, self.proxy,
+            ffmpeg_dir=_resolve_ffmpeg_dir(), js_runtime_arg=_resolve_js_runtime_arg())
+        cmd.extend(['--skip-download', '--dump-single-json', '--no-playlist'])
+        # Metadata is bounded and must not inherit infinite fragment retries.
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True,
+                                    encoding='utf-8', timeout=15)
+            if result.returncode:
+                return 'unknown'
+            info = json.loads(result.stdout)
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            return 'unknown'
+        status = info.get('live_status')
+        if status in ('post_live', 'was_live'):
+            return 'ended'
+        if info.get('is_live') or status in ('is_live', 'is_upcoming'):
+            return 'live'
+        if status == 'not_live' or info.get('is_live') is False:
+            return 'finite'
+        return 'unknown'
+
     def __init__(self, url: str, format: str, cookies: str, proxy: str, realtime_throttle: bool = False) -> None:
         self.url = url
         self.format = format
@@ -351,7 +377,7 @@ class StreamAudioGetter(LoopWorkerBase):
 
         def reader():
             try:
-                while self.running and process and process.poll() is None:
+                while self.running and process:
                     chunk = process.stdout.read(self.byte_size)
                     if not chunk:
                         break
@@ -394,14 +420,15 @@ class StreamAudioGetter(LoopWorkerBase):
     def loop(self, output_queue: queue.SimpleQueue[np.array]):
         frame_count = 0
         start_time = time.monotonic()
-        reconnectable = _is_youtube_url(self.url)
+        source_status = self._source_status()
         while self.running:
             print(f'{INFO}Opening stream: {self.url}')
-            self.ffmpeg_process, self.ytdlp_process = _open_stream(
-                self.url, self.format, self.cookies, self.proxy, self.temp_dir
-            )
             stalled = False
+            stream_failed = False
             try:
+                self.ffmpeg_process, self.ytdlp_process = _open_stream(
+                    self.url, self.format, self.cookies, self.proxy, self.temp_dir
+                )
                 for in_bytes in self._read_stream_frames():
                     if not self.running:
                         break
@@ -414,6 +441,10 @@ class StreamAudioGetter(LoopWorkerBase):
                             time.sleep(sleep_time)
                     frame_count += 1
                     output_queue.put(audio)
+                stream_failed = any(
+                    process and process.poll() not in (None, 0)
+                    for process in (self.ffmpeg_process, self.ytdlp_process)
+                )
             except TimeoutError as exc:
                 stalled = True
                 print(f'{WARNING}{exc}')
@@ -421,12 +452,33 @@ class StreamAudioGetter(LoopWorkerBase):
                 # this marker AudioSlicer can only discover the boundary when
                 # the first post-reconnect frame arrives.
                 output_queue.put(AUDIO_STREAM_GAP)
+            except (OSError, RuntimeError) as exc:
+                if source_status in ('finite', 'ended'):
+                    raise
+                print(f'{WARNING}串流連線失敗，稍後重試：{exc}')
             finally:
                 self._close_stream()
 
-            if not self.running or not (reconnectable and stalled):
+            if self.running and source_status in ('finite', 'ended') and (stalled or stream_failed):
+                raise RuntimeError('有限音訊來源讀取失敗；未確認正常結束，無法安全從頭重播。')
+            if not self.running or source_status in ('finite', 'ended'):
                 break
-            print(f'{WARNING}YouTube 音訊串流停滯，正在重新連線…')
+            # Unknown metadata is not permission to replay a possible VOD.
+            # Keep the task open while checking; reopen only a confirmed live.
+            while self.running:
+                source_status = self._source_status()
+                if source_status != 'unknown':
+                    break
+                print(f'{WARNING}無法確認來源狀態，等待後重新確認…')
+                if self._stop_event.wait(self.YOUTUBE_RECONNECT_DELAY_SECONDS):
+                    break
+            if not self.running:
+                break
+            if source_status in ('finite', 'ended'):
+                break
+            if not stalled:
+                output_queue.put(AUDIO_STREAM_GAP)
+            print(f'{WARNING}來源尚未確認結束，正在重新連線…')
             if self._stop_event.wait(self.YOUTUBE_RECONNECT_DELAY_SECONDS):
                 break
 

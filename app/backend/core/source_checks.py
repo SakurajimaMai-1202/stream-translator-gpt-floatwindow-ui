@@ -4,6 +4,7 @@ import json
 import math
 import shutil
 import subprocess
+import sys
 import time
 import uuid
 from dataclasses import asdict, dataclass
@@ -11,8 +12,11 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlparse
 
+from backend.core.cookie_manager import _resolve_runtime_python
+from backend.core.external_process import run_external
 
-SourceKind = Literal["url", "file", "microphone", "system_audio"]
+
+SourceKind = Literal["url", "file", "microphone", "system_audio", "process_audio"]
 
 
 @dataclass
@@ -75,19 +79,39 @@ def check_file(path_text: str) -> SourceCheckResult:
                    audio_streams=audio)
 
 
+def _resolve_url_command() -> list[str] | None:
+    try:
+        runtime_python = _resolve_runtime_python()
+    except RuntimeError:
+        runtime_python = None
+    if runtime_python and not (
+        getattr(sys, "frozen", False)
+        and runtime_python.resolve() == Path(sys.executable).resolve()
+    ):
+        command = [str(runtime_python), "-I", "-m", "yt_dlp"]
+        for root in (runtime_python.parent, runtime_python.parent.parent):
+            node = root / "_js_runtime" / "node.exe"
+            if node.is_file():
+                command.extend(["--js-runtimes", f"node:{node}"])
+                break
+        return command
+    executable = shutil.which("yt-dlp") or shutil.which("yt-dlp.exe")
+    return [executable] if executable else None
+
+
 def check_url(url: str) -> SourceCheckResult:
     started = time.perf_counter()
     parsed = urlparse(url.strip())
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return _result("url", started, "error", "url_format", "直播網址格式無效",
                        "請貼上以 http:// 或 https:// 開頭的完整網址。")
-    executable = shutil.which("yt-dlp") or shutil.which("yt-dlp.exe")
-    if not executable:
+    command = _resolve_url_command()
+    if not command:
         return _result("url", started, "unknown", "resolver", "尚未能解析網址：找不到 yt-dlp",
                        "在進階設定檢查執行環境，或直接啟動後查看取得串流的錯誤。", host=parsed.netloc)
-    command = [executable, "--no-playlist", "--skip-download", "--dump-single-json", url.strip()]
+    command.extend(["--no-playlist", "--skip-download", "--dump-single-json", url.strip()])
     try:
-        completed = subprocess.run(command, capture_output=True, text=True, timeout=20, check=False,
+        completed = run_external(command, capture_output=True, text=True, timeout=20, check=False,
                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except subprocess.TimeoutExpired:
         return _result("url", started, "error", "resolve", "網址解析逾時",
@@ -106,6 +130,58 @@ def check_url(url: str) -> SourceCheckResult:
     return _result("url", started, "ready", "stream", "網址已解析並找到音訊串流",
                    title=payload.get("title"), live_status=payload.get("live_status"),
                    audio_format_count=len(audio_formats))
+
+
+def _process_audio_probe_command(process_id: int, process_start_time: str, duration_seconds: float) -> list[str]:
+    # Resolve the same profile/CPU sidecar and workspace source as a real task.
+    from backend.api.config import get_config_manager
+    from backend.core.translator import TranslationContext
+    manager = get_config_manager()
+    config = manager.get_config()
+    import copy
+    config = copy.deepcopy(config)
+    config['input'].update(audio_source='process_audio', process_id=process_id,
+                           process_start_time=process_start_time)
+    command = TranslationContext(manager.to_main_args(config), 'source-probe')._build_command()
+    if '-c' in command:
+        index = command.index('-c')
+        prefix = command[:index + 1] + [command[index + 1].replace(
+            "run_module('stream_translator_gpt',", "run_module('stream_translator_gpt.process_audio_capture',")]
+    else:
+        index = command.index('-m')
+        prefix = command[:index + 1] + ['stream_translator_gpt.process_audio_capture']
+    return prefix + ['--probe', '--process-id', str(process_id), '--process-start-time', process_start_time,
+                     '--duration', str(duration_seconds)]
+
+
+def check_process_audio(process_id: int | None, process_start_time: str,
+                        duration_seconds: float = 1.0, window_handle: str = '') -> SourceCheckResult:
+    started = time.perf_counter()
+    source = 'process_audio'
+    recovery = '重新選擇正在播放聲音的程式，再測試一次。'
+    from backend.core.process_audio import validate_process_target
+    try:
+        validate_process_target(process_id, process_start_time, window_handle or None)
+    except (ValueError, RuntimeError, OSError) as exc:
+        return _result(source, started, 'error', 'target', str(exc), recovery)
+    try:
+        duration = min(max(float(duration_seconds), 0.2), 3.0)
+        command = _process_audio_probe_command(process_id, process_start_time, duration)
+        completed = run_external(command, capture_output=True, text=True, timeout=duration + 15,
+                                 check=False, encoding='utf-8', errors='replace',
+                                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        payload = json.loads(completed.stdout.strip().splitlines()[-1])
+        if completed.returncode or payload.get('error'):
+            return _result(source, started, 'error', 'capture',
+                           str(payload.get('error') or payload.get('message') or '指定程式收音失敗'), recovery)
+        received = bool(payload.get('received_audio'))
+        return _result(source, started, 'ready' if received else 'unknown', 'capture',
+                       '已收到指定程式的音訊' if received else '程式已開啟，但測試期間未收到明顯聲音',
+                       '' if received else recovery, received_audio=received, detected_speech=None,
+                       peak=payload.get('peak', 0), peak_dbfs=payload.get('peak_dbfs'))
+    except (ValueError, RuntimeError, OSError, subprocess.TimeoutExpired, IndexError) as exc:
+        return _result(source, started, 'error', 'capture', '無法完成指定程式收音測試', recovery,
+                       technical_detail=str(exc))
 
 
 def check_device(source: SourceKind, device_index: int | None, duration_seconds: float = 1.0) -> SourceCheckResult:

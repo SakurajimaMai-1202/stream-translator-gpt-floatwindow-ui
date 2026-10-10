@@ -2,22 +2,22 @@
 
 Windows 即時語音辨識、翻譯與浮動字幕工具。它能擷取直播網址、系統聲音、麥克風或本機影音，先以本機／雲端 ASR 轉成文字，再交由 OpenAI、Google Gemini 或本機 LLM 翻譯，最後輸出成桌面字幕、區網字幕頁或字幕檔。
 
-[下載最新版](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest) · [v1.4.10 更新說明](app/docs/RELEASE_NOTES_v1.4.10_zh-TW.md) · [回報問題](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/issues)
+[下載最新版](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest) · [V1.5.0 更新說明](app/docs/RELEASE_NOTES_v1.5.0_zh-TW.md) · [回報問題](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/issues)
 
 
 ![Windows](https://img.shields.io/badge/platform-Windows-lightgrey)
 ![NVIDIA CUDA](https://img.shields.io/badge/GPU-NVIDIA%20CUDA-green)
 ![AMD ROCm](https://img.shields.io/badge/GPU-AMD%20ROCm%20Experimental-orange)
 ![CPU sherpa-onnx](https://img.shields.io/badge/CPU-sherpa--onnx-blueviolet)
-![Release](https://img.shields.io/badge/release-v1.4.10-blue)
+![Version](https://img.shields.io/badge/version-v1.5.0-blue)
 
-<img width="2381" height="1058" alt="Stream Translator FloatWindow" src="https://github.com/user-attachments/assets/0a663535-dd94-40a6-8444-3c00844bc563" />
+> **目前版本：V1.5.0（2026-10-10 重建）。** CPU、CUDA 與 ROCm Experimental 完整包及更新包已包含最新介面、顯卡選擇、Index 模型推薦與指定應用程式音訊。請使用 GitHub Releases 的對應資產與 SHA-256 清單。
 
 ## 新手最簡單的安裝方式
 
 > **直接下載 `StreamTranslator-win64-CPU-Full.zip`，使用內建 CPU ASR，再接 OpenAI、Gemini 或 OpenAI-compatible API 翻譯。**
 
-這個組合不需要 NVIDIA／AMD 獨立顯示卡，也不必另外安裝 CPU ASR sidecar 或本機翻譯模型。解壓 CPU Full 包、執行 `Stream Translator.exe`、首次選擇「簡單模式」，再於首頁選擇 API 翻譯後端並填入 API Key 即可。程式會預先準備中文 SenseVoice、日文 Parakeet 與多語 Parakeet v3；已下載的模型會略過。
+這個組合不需要 NVIDIA／AMD 獨立顯示卡，也不必另外安裝 CPU ASR sidecar 或本機翻譯模型。解壓 CPU Full 包、執行 `Stream Translator.exe`、首次選擇「簡單模式」，再於首頁選擇 API 翻譯後端並填入 API Key 即可。程式依辨識語言準備對應入門模型，例如中文 SenseVoice、日文 Parakeet 或多語 Parakeet v3；已下載的模型會略過。
 
 ## 演示影片
 
@@ -42,7 +42,7 @@ Windows 即時語音辨識、翻譯與浮動字幕工具。它能擷取直播網
 
 | 功能 | 說明 |
 |---|---|
-| 多種音源 | 支援直播 URL、本機影音、麥克風與 Windows 系統音訊（WASAPI Loopback）。URL 來源透過 yt-dlp 處理，支援範圍取決於網站與 yt-dlp。 |
+| 多種音源 | 支援直播 URL、本機影音、麥克風與 Windows 系統音訊（WASAPI Loopback）；V1.5.0 新增指定應用程式音訊。URL 來源透過 yt-dlp 處理，支援範圍取決於網站與 yt-dlp。 |
 | 本機與雲端 ASR | 提供 Qwen3-ASR、Fun-ASR、SenseVoice、NVIDIA Parakeet、faster-whisper 與 OpenAI Whisper API；實際選項會依 Runtime Profile 顯示。 |
 | Runtime Profile | 提供 CUDA、CPU、ROCm Experimental 三種打包版。CUDA／ROCm Full 包也可透過獨立 sherpa-onnx CPU sidecar 切換到 CPU ASR。 |
 | VAD 與即時處理 | 新安裝預設採用 **FireRed OmniStreamVAD 原生事件切段**，語音閾值 0.35、原生最長切片 6 秒；也保留傳統 FireRedVAD 與 Silero VAD 選項。可調整偵測門檻、切段長度與語音／靜音 frame。既有 `config.yaml` 的設定不會被預設值覆蓋。 |
@@ -57,19 +57,20 @@ Windows 即時語音辨識、翻譯與浮動字幕工具。它能擷取直播網
 
 > v1.3.11 起，術語表與 ASR 修正規則的 CSV／TSV 匯入支援引號、欄位內逗號、Tab、換行與 UTF-8 BOM；匯出使用 UTF-8 BOM 與 CRLF，方便 Excel 正確辨識繁體中文。
 
-## v1.4.10 更新重點
+## V1.5.0 更新重點
 
-- 首次啟動可先進入程式；可匯入本機 ASR、llama-server 與 GGUF 資源，CUDA／ROCm 也可使用離線 CPU ASR sidecar。
-- 簡單模式只準備所選語言需要的 ASR 模型，並可取消下載；下載失敗時保留 TLS 憑證驗證。
-- 新增 URL、影音檔、系統音訊與麥克風的來源檢查，以及不會保存內容的字幕樣式預覽。
-- 改善打包版 CUDA ASR 子程序的 DLL 隔離；新增 ASR 佇列與字幕延遲資訊。
-- 新安裝的字幕與本機服務設定更完整；Full package 不再附帶大型模型或 llama.cpp Runtime。
+- **全站介面統一**：首頁、教學、所有設定分頁、ASR／LLM 模型管理與字幕控制採一致的深色配色、字級、卡片、按鈕及鍵盤焦點；進階設定可展開，字幕自訂外觀保留。
+- **本機翻譯顯卡選擇**：支援手動選卡，區分下次啟動選擇與實際使用的顯卡；預設排除內顯，NVIDIA 建議 CUDA、AMD／Intel 建議 Vulkan。
+- **Index 翻譯模型**：推薦頁加入 Index-Translate 2B、9B 官方 GGUF、量化大小與顯存估算；修正 temperature=0、top_k=0 重新載入被覆蓋的問題。
+- **指定應用程式音訊**：可選擇要收音的應用程式，減少其他程式聲音混入；需要支援 Process Loopback 的 Windows build 20348 以上環境。
+- **翻譯與字幕穩定性**：HY-MT2／Index 設定分開保存，繁體中文統一經 OpenCC 轉換，改善空回覆、字幕組句與輸出檢查。
+- **更新與首次設定**：依來源／語言準備入門 ASR 模型，提供來源測試；手動更新支援 App Update ZIP／分割包及相容性檢查。
 
-完整內容請見 [v1.4.10 更新說明](app/docs/RELEASE_NOTES_v1.4.10_zh-TW.md)。
+完整功能、套件選擇、更新步驟與實測範圍，請見 [V1.5.0 更新說明](app/docs/RELEASE_NOTES_v1.5.0_zh-TW.md)。三種 Profile 的建置與套件檢查通過；各顯卡、模型及長時間直播的實際表現仍依使用環境而異。
 
 ## 下載：先選對執行版本
 
-請從 [GitHub Releases v1.4.10](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/tag/v1.4.10) 下載。GitHub 自動提供的 `Source code (zip)` 不是可直接執行的 Windows 完整包。
+請從 [GitHub Releases](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases) 選擇已公開的版本與對應套件。GitHub 自動提供的 `Source code (zip)` 不是可直接執行的 Windows 完整包。
 
 | 版本 | 適用硬體 | 本機 ASR 路徑 | Full package |
 |---|---|---|---|
@@ -82,7 +83,7 @@ ROCm 版本仍屬實驗性支援，能否使用取決於顯示卡、驅動程式
 ### 合併與安裝 Full package
 
 1. CPU／ROCm 使用者下載對應的 Full ZIP；CUDA 使用者下載 `.part01`～`.part03` 與 `merge-full-package.bat`，將檔案放在同一資料夾後執行合併。
-2. 以 Release 附帶的 `SHA256SUMS-v1.4.10.txt` 驗證 Full ZIP。
+2. 以 Release 附帶的 `SHA256SUMS-<版本>.txt` 驗證 Full ZIP。
 3. 解壓到一般可寫入路徑，例如 `D:\Apps\StreamTranslator`。
 4. 執行 `Stream Translator.exe`。
 
@@ -92,19 +93,19 @@ ROCm 版本仍屬實驗性支援，能否使用取決於顯示卡、驅動程式
 
 同一 Profile 的舊版可使用對應 App Update：
 
-- `StreamTranslator-CUDA-App-Update.zip.part01`～`.part02`（先用 `merge-full-package.bat` 合併）
+- `StreamTranslator-CUDA-App-Update.zip.part01`～`.part02`（下載全部分段後，可在手動更新器直接選擇 `.part01`，或先用 `merge-full-package.bat` 合併）
 - `StreamTranslator-CPU-App-Update.zip`
 - `StreamTranslator-ROCm-Experimental-App-Update.zip`
 
 更新器會在套用前備份 `config.yaml`、自訂術語、ASR 修正規則與 Cookies，最多保留五份。App Update 只能套用相同 Profile，不要以 CUDA 更新包更新 CPU 或 ROCm 安裝。
 
-v1.4.10 更新包使用 `runtime_replace`，包含完整 Runtime，並會在啟動失敗時嘗試回復舊 Runtime。v1.3.11 以下或無法識別的安裝請改用同 Profile Full package。
+V1.5.0 更新包使用 `runtime_replace`，包含完整 Runtime，並會在啟動失敗時嘗試回復舊 Runtime。v1.3.11 以下或無法識別的安裝請改用同 Profile Full package。
 
 從 v1.4.0 起，上述流程已整合到「設定 → 一般設定」。從更舊版本首次升級到 v1.4.0 時，請完整解壓相同 Profile 的 App Update；更新包已包含 `StreamTranslatorUpdater.exe`，不需另外下載。
 
-CUDA／ROCm 使用者若缺少 CPU ASR sidecar，可下載 `StreamTranslator-CPU-ASR-Sidecar-v1.4.10.zip` 並匯入；sidecar 只含 CPU ASR Runtime，模型可在模型管理頁按需準備。
+CUDA／ROCm 使用者若缺少 CPU ASR sidecar，可下載與安裝版本相符的 `StreamTranslator-CPU-ASR-Sidecar-v1.5.0.zip` 並匯入；sidecar 只含 CPU ASR Runtime，模型可在模型管理頁按需準備。
 
-v1.4.10 的 Full package 不包含大型 ASR／GGUF 模型或 llama.cpp Runtime。若使用 API 翻譯，不需要本機 LLM；選擇本機翻譯時，請匯入或按需準備 GGUF 與相符的 llama.cpp Runtime。
+目前 Full package 不包含大型 ASR／GGUF 模型或 llama.cpp Runtime。若使用 API 翻譯，不需要本機 LLM；選擇本機翻譯時，請匯入或按需準備 GGUF 與相符的 llama.cpp Runtime。
 
 ## 第一次使用教學
 
@@ -123,6 +124,7 @@ v1.4.10 的 Full package 不包含大型 ASR／GGUF 模型或 llama.cpp Runtime�
 | 系統音訊 | 遊戲、瀏覽器、播放器、會議軟體 | 選擇正在播放聲音的輸出裝置。建議避免同時開啟多個回授裝置。 |
 | 麥克風 | 口譯、會議、現場發言 | 選擇麥克風，先觀察音量與 VAD 是否正常觸發。 |
 | 本機檔案 | 測試模型、轉錄已下載影音 | 選擇檔案後執行；適合先比較不同模型結果。 |
+| 指定應用程式音訊 | 只收取指定播放器、遊戲或瀏覽器的聲音 | 選擇應用程式並執行來源測試；同一瀏覽器的分頁不保證可分開。 |
 
 ### 3. 下載並選擇 ASR 模型
 
@@ -197,7 +199,7 @@ ASR 決定「聽到了什麼」。選型時依序考慮：硬體與 Runtime、�
 - 1.7B 不一定在所有硬體上都比 0.6B 更適合；字幕落後太多時，較小模型的整體體驗可能更好。
 - Whisper／faster-whisper 的初始提示詞可協助提供上下文；Parakeet 的現行路徑不使用這個提示詞。
 - 人名或作品名被穩定誤辨時，使用 ASR 修正規則；它會在翻譯之前修正文句。
-- VAD 可選 FireRedVAD 或 Silero VAD。FireRedVAD 是目前介面預設，透過 OmniVAD 載入；模型路徑留空或填 `auto` 時使用內建模型，也可指定 `.omnivad` 模型。
+- 新安裝 VAD 預設使用 FireRed OmniStreamVAD 原生事件切段，也可選傳統 FireRedVAD 或 Silero VAD；既有設定保留。模型路徑留空或填 `auto` 時使用內建模型。
 - 辨識句子過碎或延遲太高時，再調整 VAD 門檻與最短／目標／最長切片。提高 `VAD 計算頻率`欄位的間隔值可降低 CPU 使用量，但會增加語音偵測延遲；VAD、ASR 與翻譯都會影響端到端延遲。
 
 ## 翻譯後端與模型選擇指南
@@ -213,15 +215,16 @@ ASR 決定「聽到了什麼」。選型時依序考慮：硬體與 Runtime、�
 | llama.cpp | 希望離線、資料留在本機 | 程式可管理 GGUF、Runtime 與伺服器 | 速度與品質取決於 GGUF、量化、RAM／VRAM、GPU layers 和 context。 |
 | LM Studio／其他 OpenAI-compatible API | 已有本機模型伺服器 | 管理與切換模型方便 | Base URL、model id 與伺服器實際回傳值必須一致。 |
 
-常見端點：OpenAI 為 `https://api.openai.com/v1`、程式管理的 llama.cpp 為 `http://127.0.0.1:8080/v1`、LM Studio 常見為 `http://127.0.0.1:1234/v1`。
+常見端點：OpenAI 為 `https://api.openai.com/v1`、程式管理的 llama.cpp 為 `http://127.0.0.1:8081/v1`、LM Studio 常見為 `http://127.0.0.1:1234/v1`。
 
 ### 本機翻譯模型怎麼選
 
-以下沿用舊版 README 的選型方向，模型名稱與授權仍應以模型發布頁為準。
+推薦頁提供模型下載、量化大小、顯存估算與部署參數。顯存建議需另留 ASR 餘量；模型品質應使用自己的音源試譯比較。
 
 | 模型系列 | 建議用途 | 選擇方向 |
 |---|---|---|
 | Hy-MT2 | 多語翻譯、日常直播字幕 | 1.8B Q4 較省資源、適合長時間運行；7B Q4 品質取向，通常需要更多 RAM／VRAM。 |
+| Index-Translate | 多語翻譯、術語及格式要求 | 官方 2B／9B GGUF；Q4_K_M 約 1.31／5.78 GB，推薦頁估算分別需 4／8 GB VRAM。 |
 | Sakura | 日文到中文、Galgame、輕小說語氣 | 7B 適合中階硬體，14B 適合品質優先；許多 Sakura 模型有非商用限制，使用前務必查閱授權。 |
 | Gemma 等泛用模型 | 翻譯兼一般文字理解 | 提示詞遵循能力通常較彈性，但專門翻譯語氣應以實際內容測試。 |
 
@@ -239,11 +242,20 @@ ASR 決定「聽到了什麼」。選型時依序考慮：硬體與 Runtime、�
 | NVIDIA 16GB+ | Qwen3-ASR 1.7B＋Hy-MT2 7B 較高量化，或 Sakura 14B Q4。 |
 | AMD ROCm | 先確認 ASR 穩定；翻譯可使用獨立 llama.cpp Runtime 或雲端 API，不要假設 PyTorch ROCm 與 llama.cpp 使用相同後端。 |
 
+### 本機翻譯顯卡與 Runtime
+
+ASR 的 CPU／CUDA／ROCm Profile 與 llama.cpp 翻譯 Runtime 分開管理。CPU Full 使用者也能以 CPU ASR 搭配 GPU 本機翻譯。
+
+- NVIDIA：預設推薦 CUDA；AMD／Intel：預設推薦 Vulkan。
+- 到「Llama 執行設定」選擇顯卡；自動模式選擇單張獨顯，預設排除內顯，可手動允許。
+- 頁面分別顯示下次啟動選擇與模型啟動後的實際使用顯卡；GPU layers 為 0 時使用 CPU。
+- 雙顯卡筆電請依實際偵測結果選卡。這是翻譯模型的選卡設定，不會改變 ASR 運算模式。
+
 ### 翻譯品質調整順序
 
 1. 先確認原文 ASR 正確；錯字應在 ASR 階段處理。
 2. 確認來源語言、目標語言與模型名稱。
-3. 保持「模型翻譯策略」為 `auto`；只有本機模型名稱無法識別時才手動指定 Hy-MT2 等策略。
+3. 保持「模型翻譯策略」為 `auto`；只有模型名稱無法識別時才手動指定 HY-MT2 或 Index-Translate。兩者端點、金鑰、提示詞與優化設定分開保存。
 4. 使用翻譯術語表固定角色名、地名與專業術語。術語表不會修正 ASR 原文。
 5. 再依需求調整提示詞、輸出長度、context 與並行數。即時字幕通常重視短回應與穩定延遲，不宜盲目提高輸出上限。
 
@@ -253,9 +265,9 @@ ASR 決定「聽到了什麼」。選型時依序考慮：硬體與 Runtime、�
 
 1. 在「LLM 模型管理」下載或匯入 `hy-mt2-7b-IQ4.gguf`。
 2. 在「Llama 執行設定」下載與硬體相符的 llama.cpp Runtime。GGUF 是模型，Runtime 是執行模型的程式，兩者缺一不可。
-3. 選擇模型後設定 Host `127.0.0.1`、Port `8080`、Context 先用 `4096`，GPU layers 使用 `auto` 或依顯存調低。
+3. 選擇模型後設定 Host `127.0.0.1`、Port `8081`、Context 先用 `4096`，GPU layers 使用介面建議值或依顯存調低，並確認實際使用的顯卡。
 4. 啟動伺服器，確認狀態為 Running，再執行「測試翻譯」。
-5. 到「翻譯選項」選擇本機 LLM／OpenAI-compatible，Base URL 填 `http://127.0.0.1:8080/v1`。
+5. 到「翻譯選項」選擇本機 LLM／OpenAI-compatible，Base URL 填 `http://127.0.0.1:8081/v1`。
 6. Model 填伺服器 `/v1/models` 回傳的 model id；未啟用驗證的 llama.cpp 可使用任意非空 API Key。
 
 若模型載入失敗，先檢查 GGUF 路徑與 Runtime 架構；若顯存不足，降低 GPU layers、context 或改用較小／較低量化模型。CPU ASR sidecar 與 llama.cpp Runtime 是兩套獨立元件，安裝其中一個不會自動提供另一個。
@@ -273,7 +285,7 @@ ASR 決定「聽到了什麼」。選型時依序考慮：硬體與 Runtime、�
 
 ## 媒體輸入注意事項
 
-- v1.4.10 Full package 內含 Node.js 22+，供 yt-dlp 處理需要 JavaScript Runtime 的來源。
+- V1.5.0 套件包含可攜式 Node.js 與 yt-dlp-ejs，供 yt-dlp 處理 JavaScript challenge；元件版本見更新說明。
 - 部分 YouTube／Twitch 內容可能需要登入、地區權限或 cookies；請匯出 Netscape 格式 `cookies.txt`。
 - Chromium 的 App-Bound Encryption 可能阻止直接讀取瀏覽器 cookies，匯出檔通常較穩定。
 - 系統音訊請選擇實際播放裝置；無聲時先確認 Windows 音量混音器與輸出裝置。
@@ -295,7 +307,7 @@ ASR 決定「聽到了什麼」。選型時依序考慮：硬體與 Runtime、�
 
 ### 翻譯沒有回應
 
-先用設定頁測試連線。檢查 API Key、Base URL 與 model id；本機伺服器可測試 `/v1/models`。`127.0.0.1:8080` 與 `127.0.0.1:8080/v1` 用途不同，翻譯 Base URL 通常需要 `/v1`。
+先用設定頁測試連線。檢查 API Key、Base URL 與 model id；本機伺服器可測試 `/v1/models`。`127.0.0.1:8081` 與 `127.0.0.1:8081/v1` 用途不同，翻譯 Base URL 通常需要 `/v1`，埠號以實際服務設定為準。
 
 ### 原文錯、譯文也跟著錯
 
@@ -325,7 +337,9 @@ npm install
 npm run build
 cd ..\..
 
-Copy-Item .\app\config.example.yaml .\app\config.yaml
+if (-not (Test-Path .\app\config.yaml)) {
+  Copy-Item .\app\config.example.yaml .\app\config.yaml
+}
 cd .\app
 python .\main.py
 ```
@@ -338,11 +352,11 @@ python .\main.py
 cd .\app
 
 # 快速驗證
-.\build_all_profiles.ps1 -Version 1.4.10 -Mode Quick -ReuseRuntimeCache
+.\build_all_profiles.ps1 -Version 1.5.0 -Mode Quick -ReuseRuntimeCache
 
 # 正式發佈
 .\build_all_profiles.ps1 `
-  -Version 1.4.10 `
+  -Version 1.5.0 `
   -Mode Final `
   -ReuseRuntimeCache `
   -CompressionLevel 7 `
@@ -350,7 +364,7 @@ cd .\app
   -CopyThreads 8
 ```
 
-v1.4.10 發布資產包含 App Update、Full package、manifest 與 SHA-256 清單；分割方式依各資產大小而異，請以 GitHub Release 資產清單為準。
+V1.5.0 打包輸出包含 App Update、Full package、manifest 與 SHA-256 清單；分割方式依各資產大小而異，請以 GitHub Release 資產清單為準。
 
 ## 專案來源
 

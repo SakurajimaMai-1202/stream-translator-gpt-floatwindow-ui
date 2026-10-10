@@ -288,9 +288,9 @@ def _recommend_variant_for_hardware(
                 return candidate, "CUDA 版本固定使用 NVIDIA CUDA llama runtime。"
         return "", "官方 Release 沒有可用的 NVIDIA CUDA llama runtime。"
     if profile == "rocm":
-        if "hip" in available:
-            return "hip", "ROCm 版本固定使用 AMD ROCm llama runtime。"
-        return "", "官方 Release 沒有可用的 AMD ROCm llama runtime。"
+        if "vulkan" in available:
+            return "vulkan", "ROCm 套件的 llama.cpp 預設使用 Vulkan；HIP 仍可手動選擇。"
+        return "", "官方 Release 沒有可用的 Vulkan llama runtime，請手動選擇。"
 
     # The CPU application has no preselected GPU ecosystem, so it detects the
     # installed display adapter and recommends a matching standalone runtime.
@@ -307,15 +307,15 @@ def _recommend_variant_for_hardware(
             if candidate in available:
                 return candidate, f"偵測到 NVIDIA 獨立 GPU（{tier_label}），推薦 CUDA llama runtime。"
     if amd:
-        for candidate in ("hip", "vulkan"):
-            if candidate in available:
-                return candidate, f"偵測到 AMD 獨立 GPU（{tier_label}），推薦 HIP llama runtime。"
+        if "vulkan" in available:
+            return "vulkan", f"偵測到 AMD 獨立 GPU（{tier_label}），推薦 Vulkan llama runtime。"
     if intel:
-        for candidate in ("sycl", "vulkan"):
-            if candidate in available:
-                return candidate, f"偵測到 Intel Arc（{tier_label}），推薦 SYCL llama runtime。"
+        if "vulkan" in available:
+            return "vulkan", f"偵測到 Intel Arc（{tier_label}），推薦 Vulkan llama runtime。"
     if discrete and "vulkan" in available:
         return "vulkan", "偵測到獨立 GPU，但沒有可用的原生 CUDA/ROCm/SYCL runtime，推薦 Vulkan。"
+    if discrete:
+        return "", "沒有可用的推薦 GPU runtime，請手動選擇 llama.cpp Runtime。"
     if not detected:
         return "", "無法確認本機 GPU，請手動選擇 llama.cpp Runtime。"
     if "cpu" in available:

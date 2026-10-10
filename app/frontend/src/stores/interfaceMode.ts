@@ -26,7 +26,7 @@ export const useInterfaceModeStore = defineStore('interfaceMode', () => {
   const downloads = useModelDownloadStore();
   const preparingModels = ref(false);
   const onboardingStep = ref<'mode' | 'purpose' | 'translation' | 'local' | 'preparing'>('mode');
-  const selectedSource = ref<'url' | 'file' | 'system_audio' | 'microphone'>('system_audio');
+  const selectedSource = ref<'url' | 'file' | 'system_audio' | 'microphone' | 'process_audio'>('system_audio');
   const selectedLanguage = ref('ja');
   const translationChoice = ref<'local' | 'cloud' | null>(null);
   const googleApiKey = ref('');

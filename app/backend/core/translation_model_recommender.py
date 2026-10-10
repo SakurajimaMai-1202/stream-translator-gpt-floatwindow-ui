@@ -8,11 +8,50 @@ from .hardware_detector import GpuDevice, vram_tier
 VRAM_TIERS_GB = (4, 6, 8, 10, 12, 16, 24, 32, 48)
 
 
+def _supports_local_setup(device: GpuDevice) -> bool:
+    return not device.is_integrated and (
+        device.vendor in {"nvidia", "amd"}
+        or (device.vendor == "intel" and "arc" in device.name.lower())
+    )
+
+
 def _next_vram_tier(required_gb: float) -> int:
     return next((tier for tier in VRAM_TIERS_GB if tier >= required_gb), int(required_gb + 0.999))
 
 
 MODEL_CATALOG: tuple[dict[str, Any], ...] = (
+    {
+        "id": "index-translate-2b",
+        "name": "Index-Translate 2B",
+        "repo": "IndexTeam/Index-Translate-2B-GGUF",
+        "url": "https://huggingface.co/IndexTeam/Index-Translate-2B-GGUF/tree/main",
+        "recommended_quant": "Q4_K_M",
+        "model_size_gb": 1.31,
+        "minimum_quant": "Q2_K",
+        "minimum_size_gb": 0.99,
+        "category": "translation",
+        "summary": "輕量多語翻譯模型，支援翻譯指令、術語與格式要求；較小檔案方便為 ASR 預留顯存。",
+        "languages": ["150 語"],
+        "deployment_config": {"temp": 0.0, "top_p": 1.0, "top_k": 0, "repeat_penalty": 1.0, "n_ctx": 4096, "n_predict": 1024},
+        "parameter_source": "官方 client 使用 temperature=0、max_tokens=1024；其餘採樣停用、4096 上下文為本程式短句翻譯設定",
+        "runtime_note": "請使用支援 Qwen3.5 的近期 llama.cpp；文字翻譯無需 mmproj。Q2_K 僅供顯存受限時嘗試，品質可能明顯下降。本程式尚未實測此模型推論。",
+    },
+    {
+        "id": "index-translate-9b",
+        "name": "Index-Translate 9B",
+        "repo": "IndexTeam/Index-Translate-9B-GGUF",
+        "url": "https://huggingface.co/IndexTeam/Index-Translate-9B-GGUF/tree/main",
+        "recommended_quant": "Q4_K_M",
+        "model_size_gb": 5.78,
+        "minimum_quant": "Q2_K",
+        "minimum_size_gb": 3.91,
+        "category": "translation",
+        "summary": "9B 多語翻譯模型，支援翻譯指令、術語與格式要求；建議量化需較多顯存，與 ASR 共用 GPU 時請預留餘量。",
+        "languages": ["150 語"],
+        "deployment_config": {"temp": 0.0, "top_p": 1.0, "top_k": 0, "repeat_penalty": 1.0, "n_ctx": 4096, "n_predict": 1024},
+        "parameter_source": "官方 client 使用 temperature=0、max_tokens=1024；其餘採樣停用、4096 上下文為本程式短句翻譯設定",
+        "runtime_note": "請使用支援 Qwen3.5 的近期 llama.cpp；文字翻譯無需 mmproj。Q2_K 僅供顯存受限時嘗試，品質可能明顯下降。本程式尚未實測此模型推論。",
+    },
     {
         "id": "gemma-4-e2b-qat",
         "name": "Gemma 4 E2B IT QAT",
@@ -102,7 +141,7 @@ def build_translation_model_recommendations(devices: Iterable[GpuDevice]) -> dic
     usable = [device for device in discrete if device.memory_mb]
     selected = max(usable, key=lambda device: int(device.memory_mb or 0), default=None)
     if selected is None:
-        selected = next((device for device in discrete if device.vendor in {"nvidia", "amd"}), None)
+        selected = next((device for device in discrete if _supports_local_setup(device)), None)
     vram_gb = round(selected.memory_mb / 1024, 1) if selected and selected.memory_mb else None
     tier_id, tier_label = vram_tier(selected.memory_mb if selected else None)
 
@@ -139,26 +178,26 @@ def build_translation_model_recommendations(devices: Iterable[GpuDevice]) -> dic
         item["comfortable_vram_gb"],
         item["catalog_order"],
     ))
-    vendor = selected.vendor if selected else "unknown"
-    if selected and vendor in {"nvidia", "amd"} and tier_id == "unknown":
+    supported_gpu = bool(selected and _supports_local_setup(selected))
+    if supported_gpu and tier_id == "unknown":
         simple_setup = {
             "supported": True, "model_id": "hy-mt2-iq3-xxs",
             "filename": "Hy-MT2-7B.i1-IQ3_XXS.gguf", "quant": "i1-IQ3_XXS",
             "reason": f"偵測到 {selected.name}，但無法可靠讀取 VRAM；先使用較小量化。",
         }
-    elif selected and vendor in {"nvidia", "amd"} and tier_id == "8gb_plus":
+    elif supported_gpu and tier_id == "8gb_plus":
         simple_setup = {
             "supported": True, "model_id": "hy-mt2-q6-k",
             "filename": "Hy-MT2-7B.i1-Q6_K.gguf", "quant": "i1-Q6_K",
             "reason": f"偵測到 {selected.name}，屬於 {tier_label}，使用高品質量化。",
         }
-    elif selected and vendor in {"nvidia", "amd"} and tier_id == "4_to_8gb":
+    elif supported_gpu and tier_id == "4_to_8gb":
         simple_setup = {
             "supported": True, "model_id": "hy-mt2-iq4-nl",
             "filename": "Hy-MT2-7B.i1-IQ4_NL.gguf", "quant": "i1-IQ4_NL",
             "reason": f"偵測到 {selected.name}，屬於 {tier_label}，使用兼顧品質與顯存的量化。",
         }
-    elif selected and vendor in {"nvidia", "amd"} and tier_id == "under_4gb":
+    elif supported_gpu and tier_id == "under_4gb":
         simple_setup = {
             "supported": True, "model_id": "hy-mt2-iq3-xxs",
             "filename": "Hy-MT2-7B.i1-IQ3_XXS.gguf", "quant": "i1-IQ3_XXS",
@@ -167,7 +206,7 @@ def build_translation_model_recommendations(devices: Iterable[GpuDevice]) -> dic
     else:
         simple_setup = {
             "supported": False, "model_id": "", "filename": "", "quant": "",
-            "reason": "無法可靠讀取 NVIDIA／AMD 獨立顯卡與 VRAM，建議使用 Gemini，或到進階模式手動設定。",
+            "reason": "未偵測到可自動設定的 NVIDIA／AMD／Intel Arc 獨立顯卡，建議使用 Gemini，或到進階模式手動設定。",
         }
 
     return {

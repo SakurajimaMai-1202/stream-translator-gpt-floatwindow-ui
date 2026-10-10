@@ -72,6 +72,9 @@ export const useLlamaStore = defineStore('llama', () => {
     port: 8081,
     n_ctx: 2048,
     n_gpu_layers: 0,
+    gpu_device: 'auto',
+    gpu_device_name: '',
+    allow_integrated_gpu: false,
     n_threads: 4,
     n_parallel: 1,
     // 進階生成參數
@@ -296,16 +299,19 @@ export const useLlamaStore = defineStore('llama', () => {
           model_path: llamaConfig.model_path || '',
           server_exe: llamaConfig.server_exe || '',
           host: llamaConfig.host || '127.0.0.1',
-          port: llamaConfig.port || 8081,
-          n_ctx: llamaConfig.n_ctx || 2048,
-          n_gpu_layers: llamaConfig.n_gpu_layers || 0,
-          n_threads: llamaConfig.n_threads || 4,
-          n_parallel: llamaConfig.n_parallel || 1,
-          top_k: llamaConfig.top_k || 40,
-          top_p: llamaConfig.top_p || 0.95,
-          temp: llamaConfig.temp || 0.8,
-          repeat_penalty: llamaConfig.repeat_penalty || 1.1,
-          n_predict: llamaConfig.n_predict || 512,
+          port: llamaConfig.port ?? 8081,
+          n_ctx: llamaConfig.n_ctx ?? 2048,
+          n_gpu_layers: llamaConfig.n_gpu_layers ?? 0,
+          gpu_device: llamaConfig.gpu_device || 'auto',
+          gpu_device_name: llamaConfig.gpu_device_name || '',
+          allow_integrated_gpu: llamaConfig.allow_integrated_gpu === true,
+          n_threads: llamaConfig.n_threads ?? 4,
+          n_parallel: llamaConfig.n_parallel ?? 1,
+          top_k: llamaConfig.top_k ?? 40,
+          top_p: llamaConfig.top_p ?? 0.95,
+          temp: llamaConfig.temp ?? 0.8,
+          repeat_penalty: llamaConfig.repeat_penalty ?? 1.1,
+          n_predict: llamaConfig.n_predict ?? 512,
           flash_attn: llamaConfig.flash_attn === true
             ? 'on'
             : llamaConfig.flash_attn === false
@@ -377,6 +383,9 @@ export const useLlamaStore = defineStore('llama', () => {
         port: serverConfig.value.port,
         n_ctx: serverConfig.value.n_ctx,
         n_gpu_layers: serverConfig.value.n_gpu_layers,
+        gpu_device: serverConfig.value.gpu_device || 'auto',
+        gpu_device_name: serverConfig.value.gpu_device_name || '',
+        allow_integrated_gpu: serverConfig.value.allow_integrated_gpu === true,
         n_threads: serverConfig.value.n_threads,
         n_parallel: serverConfig.value.n_parallel,
         top_k: serverConfig.value.top_k,
@@ -540,7 +549,7 @@ export const useLlamaStore = defineStore('llama', () => {
     const keysToCompare: (keyof ServerConfig)[] = [
       'model_path', 'n_ctx', 'n_gpu_layers', 'n_threads', 'n_parallel',
       'temp', 'top_p', 'top_k', 'repeat_penalty', 'n_predict',
-      'flash_attn', 'no_mmap'
+      'flash_attn', 'no_mmap', 'gpu_device', 'gpu_device_name', 'allow_integrated_gpu'
     ];
 
     for (const key of keysToCompare) {

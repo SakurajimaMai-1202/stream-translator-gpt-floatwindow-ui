@@ -162,7 +162,9 @@ class AudioSlicer(LoopWorkerBase):
                  slicing_mode: str = 'omnivad_native', omnivad_smooth_window_size: int = 5,
                  omnivad_pad_start_frame: int = 5, omnivad_min_speech_frame: int = 8,
                  omnivad_max_speech_frame: int = 2000, omnivad_min_silence_frame: int = 20,
-                 omnivad_threshold: float = 0.35):
+                 omnivad_threshold: float = 0.35,
+                 native_short_segment_target: float = 0.0,
+                 native_short_segment_wait: float = 0.35):
         self.min_audio_length = min_audio_length
         self.max_audio_length = max_audio_length
         self.prefix_retention_count = max(0, round(prefix_retention_length / FRAME_DURATION))
@@ -191,6 +193,10 @@ class AudioSlicer(LoopWorkerBase):
             raise ValueError('OmniVAD native slicing requires enabled FireRed VAD.')
         self._native_active = False
         self._native_end_pending = False
+        self._native_end_sample = None
+        self.native_short_segment_target = max(0.0, min(1.5, float(native_short_segment_target)))
+        self.native_short_segment_wait = max(0.0, min(0.35, float(native_short_segment_wait)))
+        self.last_slice_boundary = None
         self._native_total_samples = 0
         self._native_prefix_frames = max(0, math.ceil(prefix_retention_length * SAMPLE_RATE /
                                                        FIRERED_FRAME_LENGTH))
@@ -285,6 +291,7 @@ class AudioSlicer(LoopWorkerBase):
             if event is not None and event.is_speech_start:
                 self._native_active = True
                 self._native_end_pending = False
+                self._native_end_sample = None
                 self.speech_count = max(1, self.speech_count)
                 if self.first_speech_at is None:
                     self.first_speech_at = frame_received_at
@@ -296,6 +303,7 @@ class AudioSlicer(LoopWorkerBase):
             if event is not None and event.is_speech_end:
                 self._native_active = False
                 self._native_end_pending = True
+                self._native_end_sample = self._native_total_samples
 
             if self.speech_count == 0:
                 if len(self.audio_buffer) > self._native_prefix_frames:
@@ -311,7 +319,14 @@ class AudioSlicer(LoopWorkerBase):
         if audio_length > self.max_audio_length:
             return True
         if self.slicing_mode == 'omnivad_native':
-            return self.speech_count > 0 and self._native_end_pending
+            if not (self.speech_count > 0 and self._native_end_pending):
+                return False
+            if self._native_end_sample is not None and self.native_short_segment_target:
+                tail = (self._native_total_samples-self._native_end_sample)/SAMPLE_RATE
+                speech_duration = audio_length-tail
+                if speech_duration < self.native_short_segment_target and tail < self.native_short_segment_wait:
+                    return False
+            return True
         if self.dynamic_no_speech_threshold:
             no_speech_threshold = _get_dynamic_no_speech_threshold(audio_length, self.initial_no_speech_threshold,
                                                                    self.target_audio_length)
@@ -328,6 +343,10 @@ class AudioSlicer(LoopWorkerBase):
 
     def slice(self):
         slice_emitted_at = time.perf_counter()
+        self.last_slice_boundary = (
+            'max_length' if self.slicing_mode == 'omnivad_native'
+            and self._native_active and self._buffer_duration() > self.max_audio_length else 'speech_end'
+        )
         concatenate_buffer = self.prefix_audio_buffer + self.audio_buffer
         concatenate_audio = np.concatenate(concatenate_buffer)
         self.audio_buffer = []
@@ -357,6 +376,7 @@ class AudioSlicer(LoopWorkerBase):
         last_slice_second = self.last_slice_second
         self.last_slice_second = slice_second
         self._native_end_pending = False
+        self._native_end_sample = None
         if self.slicing_mode == 'omnivad_native' and self._native_active:
             # A max-length guard may split an active native speech segment. Keep
             # accepting the continuation because no second START event will occur.
@@ -400,6 +420,7 @@ class AudioSlicer(LoopWorkerBase):
             if self.should_slice():
                 sliced_audio, time_range = self.slice()
                 task = TranslationTask(sliced_audio, time_range, latency_trace=self.last_latency_trace)
+                task.audio_boundary = self.last_slice_boundary
                 output_queue.put(task)
             if (not self.disable_vad and self.slicing_mode == 'legacy'
                     and self.counter % vad_reset_interval == 0):

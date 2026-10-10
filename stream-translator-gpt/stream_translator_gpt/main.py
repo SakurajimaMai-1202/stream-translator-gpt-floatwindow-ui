@@ -31,6 +31,8 @@ from .result_exporter import ResultExporter
 from .subtitle_sharing import DEFAULT_PUBLIC_HOST, DEFAULT_PUBLIC_PORT, SubtitleShareServer, create_task_id
 from .asr_preload import PreloadedTranscriberManager, build_asr_config
 from .pipeline_runner import PipelineController, run_inprocess_pipeline
+from .process_audio_capture import ProcessAudioGetter, capture_capabilities
+from .process_audio_targets import validate_process_target
 from .runtime_accelerator import resolve_qwen3_device_map
 from .sherpa_onnx_transcriber import SherpaOnnxTranscriber
 from . import __version__
@@ -40,6 +42,15 @@ def main(url, **kwargs):
     configure_utf8_stdio()
     # Extract args
     loopback = kwargs.get('loopback', False)
+    process_id = kwargs.get('process_id')
+    process_start_time = kwargs.get('process_start_time')
+    if url.lower() == 'process_audio':
+        validate_process_target(process_id, process_start_time)
+        capabilities = capture_capabilities()
+        if not capabilities['supported']:
+            raise RuntimeError(capabilities['message'])
+        if loopback:
+            raise ValueError('指定應用程式音訊不可與系統音訊同時啟用。')
     device_index = kwargs.get('device_index')
     device_recording_interval = kwargs.get('device_recording_interval', 0.1)
     format = kwargs.get('format', 'ba/wa*')
@@ -186,6 +197,16 @@ def main(url, **kwargs):
     hy_mt2_debug = kwargs.get('hy_mt2_debug', False)
     hy_mt2_aliases = kwargs.get('hy_mt2_aliases')
     hy_mt2_glossary_folder = kwargs.get('hy_mt2_glossary_folder')
+    index_translate_optimizer_enabled = kwargs.get('index_translate_optimizer_enabled', False)
+    index_translate_context_window = kwargs.get('index_translate_context_window', 3)
+    index_translate_max_context_chars = kwargs.get('index_translate_max_context_chars', 1000)
+    index_translate_max_terms = kwargs.get('index_translate_max_terms', 10)
+    index_translate_style = kwargs.get('index_translate_style', True)
+    index_translate_style_text = kwargs.get('index_translate_style_text', '')
+    index_translate_preferences = kwargs.get('index_translate_preferences', '')
+    index_translate_debug = kwargs.get('index_translate_debug', False)
+    index_translate_aliases = kwargs.get('index_translate_aliases')
+    index_translate_glossary_folder = kwargs.get('index_translate_glossary_folder')
     paired_subtitle_mode = not kwargs.get('disable_paired_subtitle_mode', False)
     translation_provider = kwargs.get('translation_provider', 'auto')
     deduplicate_asr_overlap = not kwargs.get('disable_asr_overlap_deduplication', False)
@@ -233,6 +254,8 @@ def main(url, **kwargs):
     with ThreadPoolExecutor() as executor:
 
         def init_audio_getter():
+            if url.lower() == 'process_audio':
+                return ProcessAudioGetter(process_id, process_start_time)
             # 自動模式
             if loopback or url.lower() == 'loopback':
                 import sys
@@ -286,6 +309,7 @@ def main(url, **kwargs):
             omnivad_max_speech_frame=omnivad_max_speech_frame,
             omnivad_min_silence_frame=omnivad_min_silence_frame,
             omnivad_threshold=omnivad_threshold,
+            native_short_segment_target=1.5 if use_qwen3_asr and language == 'ja' else 0.0,
         )
 
         def init_transcriber():
@@ -425,7 +449,8 @@ def main(url, **kwargs):
             )
             capabilities = get_capabilities(model_family)
             optimizer_active = hy_mt2_optimizer_enabled and model_family == 'hy_mt2'
-            effective_history_size = max(translation_history_size, max(0, min(5, hy_mt2_context_window))) if optimizer_active else translation_history_size
+            index_active = index_translate_optimizer_enabled and model_family == 'index_translate'
+            effective_history_size = max(translation_history_size, max(0, min(5, hy_mt2_context_window if optimizer_active else index_translate_context_window))) if optimizer_active or index_active else translation_history_size
             max_concurrency = int(translation_max_concurrency or 0)
             max_concurrency = max_concurrency or capabilities.default_max_concurrency
             if effective_history_size:
@@ -435,6 +460,7 @@ def main(url, **kwargs):
                     llm_type=LLMClient.LLM_TYPE.GEMINI,
                     model=gemini_model,
                     prompt=translation_prompt,
+                    translation_target_language=kwargs.get("translation_target_language"),
                     history_size=effective_history_size,
                     proxy=processing_proxy,
                     use_json_result=use_json_result,
@@ -455,12 +481,26 @@ def main(url, **kwargs):
                     hy_mt2_debug=hy_mt2_debug,
                     hy_mt2_aliases=hy_mt2_aliases,
                     hy_mt2_glossary_folder=hy_mt2_glossary_folder,
+                    index_translate_optimizer_enabled=index_translate_optimizer_enabled,
+                    index_translate_context_window=index_translate_context_window,
+                    index_translate_max_context_chars=index_translate_max_context_chars,
+                    index_translate_max_terms=index_translate_max_terms,
+                    index_translate_style=index_translate_style,
+                    index_translate_style_text=index_translate_style_text,
+                    index_translate_preferences=index_translate_preferences,
+                    index_translate_debug=index_translate_debug,
+                    index_translate_aliases=index_translate_aliases,
+                    index_translate_glossary_folder=index_translate_glossary_folder,
                 )
             else:
                 llm_client = LLMClient(
                     llm_type=LLMClient.LLM_TYPE.GPT,
+                    api_key=openai_api_key,
+                    base_url=gpt_base_url,
+                    request_timeout=max(1.0, float(translation_timeout or 30)),
                     model=gpt_model,
                     prompt=translation_prompt,
+                    translation_target_language=kwargs.get("translation_target_language"),
                     history_size=effective_history_size,
                     proxy=processing_proxy,
                     use_json_result=use_json_result,
@@ -480,6 +520,16 @@ def main(url, **kwargs):
                     hy_mt2_debug=hy_mt2_debug,
                     hy_mt2_aliases=hy_mt2_aliases,
                     hy_mt2_glossary_folder=hy_mt2_glossary_folder,
+                    index_translate_optimizer_enabled=index_translate_optimizer_enabled,
+                    index_translate_context_window=index_translate_context_window,
+                    index_translate_max_context_chars=index_translate_max_context_chars,
+                    index_translate_max_terms=index_translate_max_terms,
+                    index_translate_style=index_translate_style,
+                    index_translate_style_text=index_translate_style_text,
+                    index_translate_preferences=index_translate_preferences,
+                    index_translate_debug=index_translate_debug,
+                    index_translate_aliases=index_translate_aliases,
+                    index_translate_glossary_folder=index_translate_glossary_folder,
                 )
             return ParallelTranslator(
                 llm_client=llm_client,
@@ -508,10 +558,15 @@ def main(url, **kwargs):
         )
 
         audio_getter = audio_getter_future.result()
-        slicer = slicer_future.result()
-        transcriber = transcriber_future.result()
-        translator = translator_future.result()
-        exporter = exporter_future.result()
+        try:
+            slicer = slicer_future.result()
+            transcriber = transcriber_future.result()
+            translator = translator_future.result()
+            exporter = exporter_future.result()
+        except BaseException:
+            if isinstance(audio_getter, ProcessAudioGetter):
+                audio_getter.close()
+            raise
         segmenter = SubtitleSegmenter(
             deduplicate_overlap=deduplicate_asr_overlap,
             assembler_enabled=subtitle_assembler_enabled,
@@ -755,6 +810,8 @@ def cli():
     parser.add_argument('--list_devices', action='store_true', help='Print all audio devices info then exit.')
     parser.add_argument('--mic', action='store_true', help='Use microphone instead of system audio (loopback).')
     parser.add_argument('--loopback', action='store_true', help='Directly capture system audio output (Windows WASAPI loopback).')
+    parser.add_argument('--process_id', type=int, default=None, help='Target PID for process_audio source (Windows process tree).')
+    parser.add_argument('--process_start_time', type=str, default=None, help='Target process creation FILETIME; prevents PID reuse.')
 
     parser.add_argument('--min_audio_length', type=float, default=0.7, help='Minimum slice audio length in seconds.')
     parser.add_argument('--max_audio_length', type=float, default=6.0, help='Maximum slice audio length in seconds.')
@@ -923,6 +980,8 @@ def cli():
                         type=str,
                         default='gemini-2.5-flash-lite',
                         help='Google\'s Gemini model name, gemini-2.0-flash / gemini-2.5-flash / gemini-2.5-flash-lite')
+    parser.add_argument('--translation_target_language', default=None,
+                        help='Target language used for deterministic Chinese script conversion.')
     parser.add_argument(
         '--translation_prompt',
         type=str,
@@ -955,7 +1014,7 @@ def cli():
         help='If the GPT / Gemini translation exceeds this number of seconds, the translation will be discarded.')
     parser.add_argument(
         '--translation_model_family',
-        choices=['auto', 'hy_mt2', 'generic_chat', 'structured_api'],
+        choices=['auto', 'hy_mt2', 'index_translate', 'generic_chat', 'structured_api'],
         default='auto',
         help='Prompt and output policy used for the selected translation model.')
     parser.add_argument(
@@ -988,6 +1047,16 @@ def cli():
     parser.add_argument('--hy_mt2_debug', action='store_true')
     parser.add_argument('--hy_mt2_aliases', type=str, default=None)
     parser.add_argument('--hy_mt2_glossary_folder', type=str, default=None)
+    parser.add_argument('--index_translate_optimizer_enabled', action='store_true')
+    parser.add_argument('--index_translate_context_window', type=int, default=3)
+    parser.add_argument('--index_translate_max_context_chars', type=int, default=1000)
+    parser.add_argument('--index_translate_max_terms', type=int, default=10)
+    parser.add_argument('--index_translate_style', action='store_true')
+    parser.add_argument('--index_translate_style_text', type=str, default='')
+    parser.add_argument('--index_translate_preferences', type=str, default='')
+    parser.add_argument('--index_translate_debug', action='store_true')
+    parser.add_argument('--index_translate_aliases', type=str, default=None)
+    parser.add_argument('--index_translate_glossary_folder', type=str, default=None)
     parser.add_argument(
         '--disable_paired_subtitle_mode',
         action='store_true',
@@ -1089,7 +1158,20 @@ def cli():
     url = args.pop('URL')
     loopback = args.pop('loopback', False)
 
-    if url.lower() != 'device' and loopback is False and url.lower() != 'loopback' and not shutil.which('ffmpeg'):
+    if url.lower() == 'process_audio':
+        try:
+            if loopback:
+                raise ValueError('指定應用程式音訊不可與系統音訊同時啟用。')
+            validate_process_target(args.get('process_id'), args.get('process_start_time'))
+            capabilities = capture_capabilities()
+            if not capabilities['supported']:
+                raise RuntimeError(capabilities['message'])
+        except (ValueError, RuntimeError) as exc:
+            parser.error(str(exc))
+    elif args.get('process_id') is not None or args.get('process_start_time') is not None:
+        parser.error('程序目標參數只可搭配 process_audio 來源。')
+
+    if url.lower() not in ('device', 'loopback', 'process_audio') and loopback is False and not shutil.which('ffmpeg'):
         if platform.system() == 'Windows':
             print(f'{ERROR}ffmpeg not found. Please install it with: winget install ffmpeg')
         else:

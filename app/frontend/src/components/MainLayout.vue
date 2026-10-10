@@ -87,7 +87,7 @@ watch(() => route.fullPath, () => {
 </script>
 
 <template>
-  <div v-if="!interfaceMode.loaded || !interfaceMode.mode || interfaceMode.pendingMode" class="flex min-h-screen items-center justify-center bg-slate-950 p-6 text-white">
+  <div v-if="!interfaceMode.loaded || !interfaceMode.mode || interfaceMode.pendingMode" class="fw-onboarding flex min-h-screen items-center justify-center bg-slate-950 p-6 text-white">
     <section class="w-full max-w-2xl space-y-6" aria-labelledby="interface-mode-title">
       <template v-if="interfaceMode.onboardingStep === 'mode'">
       <h1 id="interface-mode-title" class="text-2xl font-bold">第一次使用，選擇操作方式</h1>
@@ -123,6 +123,7 @@ watch(() => route.fullPath, () => {
           <div class="grid gap-3 sm:grid-cols-2">
             <label v-for="item in [
               { value: 'system_audio', label: '電腦播放的聲音' },
+              { value: 'process_audio', label: '指定應用程式音訊' },
               { value: 'microphone', label: '麥克風' },
               { value: 'file', label: '影音檔案' },
               { value: 'url', label: '直播網址' },
@@ -258,7 +259,7 @@ watch(() => route.fullPath, () => {
       </div>
       <button
         type="button"
-        class="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-lg text-white transition active:scale-95 active:bg-white/10"
+        class="flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-lg text-white transition active:scale-95 active:bg-white/10"
         :aria-expanded="isMobileMenuOpen"
         aria-label="開啟導覽選單"
         @click="isMobileMenuOpen = true"
@@ -295,7 +296,7 @@ watch(() => route.fullPath, () => {
           </div>
           <button
             type="button"
-            class="ml-auto flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-white/70 md:hidden"
+            class="ml-auto flex h-11 w-11 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-white/70 md:hidden"
             aria-label="關閉導覽選單"
             @click="isMobileMenuOpen = false"
           >
@@ -312,6 +313,7 @@ watch(() => route.fullPath, () => {
               <button
                 v-for="item in primaryNavigation"
                 :key="item.id"
+                :aria-current="route.path === item.path ? 'page' : undefined"
                 @click="navigateTo(item.path)"
                 :class="[
                   'w-full flex items-center py-2 px-2.5 font-semibold text-left transition-all duration-200 rounded-lg text-xs',
@@ -333,6 +335,7 @@ watch(() => route.fullPath, () => {
               <button
                 v-for="tab in group.items"
                 :key="tab.id"
+                :aria-current="isTabActive(tab.id) ? 'page' : undefined"
                 @click="tab.path ? navigateTo(tab.path) : navigateTo('/settings', tab.id)"
                 :class="[
                   'w-full flex items-center py-2 px-2.5 font-semibold text-left transition-all duration-200 rounded-lg text-xs',

@@ -9,16 +9,25 @@ from pydantic import BaseModel, Field
 from backend.api.config import get_config_manager
 from backend.core.asr_model_capabilities import list_asr_model_capabilities
 from backend.core.runtime_status import build_runtime_status
-from backend.core.source_checks import check_device, check_file, check_url
+from backend.core.source_checks import check_device, check_file, check_url, check_process_audio
 
 
 router = APIRouter(prefix="/readiness", tags=["readiness"])
 
 
+@router.get('/process-audio-targets')
+async def process_audio_targets():
+    from backend.core.process_audio import list_process_audio_targets
+    return {'success': True, 'data': await asyncio.to_thread(list_process_audio_targets)}
+
+
 class SourceCheckRequest(BaseModel):
-    source: Literal["url", "file", "microphone", "system_audio"]
+    source: Literal["url", "file", "microphone", "system_audio", "process_audio"]
     value: str = ""
     device_index: int | None = None
+    process_id: int | None = Field(default=None, gt=0)
+    process_start_time: str = ""
+    window_handle: str = ""
     duration_seconds: float = Field(default=1.0, ge=0.2, le=3.0)
 
 
@@ -35,6 +44,7 @@ async def readiness():
             "file": {"status": "unknown", "action": "check_file"},
             "microphone": {"status": "unknown", "action": "capture_test"},
             "system_audio": {"status": "unknown", "action": "capture_test"},
+            "process_audio": {"status": "unknown", "action": "capture_test"},
         },
     }}
 
@@ -46,6 +56,10 @@ async def source_check(request: SourceCheckRequest):
             result = await asyncio.to_thread(check_url, request.value)
         elif request.source == "file":
             result = await asyncio.to_thread(check_file, request.value)
+        elif request.source == "process_audio":
+            result = await asyncio.to_thread(check_process_audio, request.process_id,
+                                            request.process_start_time, request.duration_seconds,
+                                            request.window_handle)
         else:
             result = await asyncio.to_thread(
                 check_device, request.source, request.device_index, request.duration_seconds

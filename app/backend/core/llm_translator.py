@@ -152,13 +152,15 @@ class LLMTranslator:
         
         try:
             if self.engine == TranslationEngine.GPT:
-                return await self._translate_with_gpt(text, source_lang, target_lang, context)
+                translated = await self._translate_with_gpt(text, source_lang, target_lang, context)
             elif self.engine == TranslationEngine.GEMINI:
-                return await self._translate_with_gemini(text, source_lang, target_lang, context)
+                translated = await self._translate_with_gemini(text, source_lang, target_lang, context)
             elif self.engine == TranslationEngine.LLAMA:
-                return await self._translate_with_llama(text, source_lang, target_lang, context)
+                translated = await self._translate_with_llama(text, source_lang, target_lang, context)
             else:
                 raise ValueError(f"不支援的翻譯引擎: {self.engine}")
+            from stream_translator_gpt.llm_translator import normalize_translation_output
+            return normalize_translation_output(translated, target_lang)
                 
         except Exception as e:
             logger.error(f"翻譯失敗 ({self.engine}): {e}")
@@ -172,6 +174,29 @@ class LLMTranslator:
         context: Optional[str]
     ) -> str:
         """使用 GPT 翻譯"""
+        from stream_translator_gpt.translation_policy import resolve_model_family
+        family = resolve_model_family(self.kwargs.get('translation_model_family', 'auto'), self.model,
+                                      self.kwargs.get('translation_provider', 'openai'))
+        if family in {'hy_mt2', 'index_translate'}:
+            import asyncio
+            args = dict(self.kwargs)
+            args.update(gpt_model=self.model, translation_prompt=self.prompt,
+                        translation_model_family=family, translation_target_language=target_lang,
+                        gpt_base_url=self.kwargs.get('base_url'),
+                        openai_api_key=self.kwargs.get('api_key'))
+            optimized = bool(args.get(f'{family}_optimizer_enabled', False))
+            family_client = create_family_preview_client(args, optimized)
+            prior = getattr(self, '_family_context', [])
+            if context:
+                prior = [{'source': context, 'target': ''}, *prior][-5:]
+            try:
+                result = await asyncio.to_thread(family_client.translate_preview, text, prior)
+            finally:
+                family_client.close()
+            if result.get('error') or not result.get('translation'):
+                raise RuntimeError('Family translation failed validation or transport')
+            self._family_context = [*prior, {'source': text, 'target': result['translation']}][-5:]
+            return result['translation']
         messages = [{"role": "system", "content": self.prompt}]
         
         # 添加歷史訊息
@@ -250,6 +275,7 @@ class LLMTranslator:
     def clear_history(self):
         """清空歷史訊息"""
         self.history_messages.clear()
+        self._family_context = []
     
     def get_info(self) -> Dict[str, Any]:
         """獲取翻譯器資訊"""
@@ -278,8 +304,14 @@ def create_translator(config: Dict[str, Any]) -> LLMTranslator:
     Returns:
         LLMTranslator 實例
     """
-    # 判斷使用哪種引擎
-    if config.get('use_llama', False):
+    # Translation model families always use the selected OpenAI-compatible API.
+    from stream_translator_gpt.translation_policy import resolve_model_family
+    family = resolve_model_family(config.get('translation_model_family', 'auto'),
+                                  config.get('gpt_model'), config.get('translation_provider'))
+    if family in {'hy_mt2', 'index_translate'}:
+        engine = TranslationEngine.GPT
+        model = config.get('gpt_model')
+    elif config.get('use_llama', False):
         engine = TranslationEngine.LLAMA
         model = config.get('llama_model', 'default')
     elif config.get('gemini_model'):
@@ -297,5 +329,38 @@ def create_translator(config: Dict[str, Any]) -> LLMTranslator:
         use_json_result=config.get('use_json_result', False),
         proxy=config.get('proxy'),
         api_key=config.get('openai_api_key') or config.get('google_api_key'),
-        base_url=config.get('gpt_base_url') or config.get('gemini_base_url')
+        base_url=config.get('gpt_base_url') or config.get('gemini_base_url'),
+        **{key: value for key, value in config.items()
+           if key.startswith(('hy_mt2_', 'index_translate_'))
+           or key in {'translation_model_family', 'translation_provider', 'translation_glossary',
+                      'translation_max_output_tokens', 'translation_timeout'}}
     )
+
+
+def create_family_preview_client(args: Dict[str, Any], optimized: bool):
+    """Build an isolated live-policy client; never change process API environment."""
+    import json
+    from stream_translator_gpt.llm_translator import LLMClient
+    options = {}
+    for family in ('hy_mt2', 'index_translate'):
+        for field in ('context_window', 'max_context_chars', 'max_terms', 'style', 'style_text',
+                      'preferences', 'debug', 'aliases', 'glossary_folder'):
+            key = f'{family}_{field}'
+            if key in args:
+                options[key] = args[key]
+        options[f'{family}_optimizer_enabled'] = optimized
+        options[f'{family}_debug'] = False
+    # Match live basic policy: legacy HY keeps its selected glossary; Index
+    # strategy controls optional enrichment itself when its optimizer is disabled.
+    return LLMClient(
+        llm_type=LLMClient.LLM_TYPE.GPT, model=args.get('gpt_model'),
+        prompt=args.get('translation_prompt') or '',
+        translation_target_language=args.get('translation_target_language'),
+        history_size=int(args.get('translation_history_size') or 0), proxy=args.get('processing_proxy') or None,
+        use_json_result=False, model_family=args.get('translation_model_family', 'auto'),
+        output_format='text', provider=args.get('translation_provider'),
+        max_output_tokens=args.get('translation_max_output_tokens', 128),
+        glossary=json.loads(args['translation_glossary']) if args.get('translation_glossary') else {},
+        api_key=args.get('openai_api_key') or '114514', base_url=args.get('gpt_base_url') or None,
+        request_timeout=min(30.0, max(1.0, float(args.get('translation_timeout') or 10))),
+        **options)

@@ -13,24 +13,24 @@ function goToHome() {
 </script>
 
 <template>
-  <div class="commercial-page commercial-guide mx-auto max-w-6xl p-5 pb-12 sm:p-8">
-    <div class="mb-7 flex flex-wrap items-end justify-between gap-4">
+  <div class="fw-page commercial-page commercial-guide mx-auto max-w-6xl p-5 pb-12 sm:p-8">
+    <div class="fw-page-header mb-7 flex flex-wrap items-end justify-between gap-4">
       <div>
-        <p class="mb-2 text-[10px] font-bold uppercase tracking-[0.25em] text-cyan-300">Stream Translator</p>
-        <h1 class="text-2xl font-black tracking-tight text-white sm:text-3xl">使用教學</h1>
+
+        <h1 class="text-2xl font-semibold tracking-tight text-white sm:text-3xl">使用教學</h1>
         <p class="mt-2 max-w-2xl text-sm leading-relaxed text-white/55">第一次使用只要準備 ASR 語音模型，再選擇翻譯模型。一般情況下，主畫面會在啟動時自動檢查並提示你。</p>
       </div>
-      <button type="button" class="rounded-xl bg-cyan-500 px-4 py-2.5 text-xs font-bold text-slate-950 shadow-lg shadow-cyan-950/30 transition hover:bg-cyan-400" @click="goToHome">回到即時轉譯</button>
+      <button type="button" class="rounded-xl guide-action mt-0 px-4 py-2.5" @click="goToHome">回到即時轉譯</button>
     </div>
 
     <div class="mb-7 grid gap-3 md:grid-cols-4">
-      <a href="#quick-start" class="guide-summary-card border-cyan-400/20 bg-cyan-950/20"><span>01</span><strong>快速開始</strong><small>貼網址並啟動翻譯</small></a>
-      <a href="#asr" class="guide-summary-card border-indigo-400/20 bg-indigo-950/20"><span>02</span><strong>ASR 模型</strong><small>選擇、下載與用途</small></a>
-      <a href="#gemini" class="guide-summary-card border-blue-400/20 bg-blue-950/20"><span>03</span><strong>Gemini API</strong><small>API Key 與雲端翻譯</small></a>
-      <a href="#llama" class="guide-summary-card border-emerald-400/20 bg-emerald-950/20"><span>04</span><strong>本地 LLM</strong><small>llama.cpp 與 GGUF 設定</small></a>
+      <a href="#quick-start" class="guide-summary-card"><span>01</span><strong>快速開始</strong><small>貼網址並啟動翻譯</small></a>
+      <a href="#asr" class="guide-summary-card"><span>02</span><strong>ASR 模型</strong><small>選擇、下載與用途</small></a>
+      <a href="#gemini" class="guide-summary-card"><span>03</span><strong>Gemini API</strong><small>API Key 與雲端翻譯</small></a>
+      <a href="#llama" class="guide-summary-card"><span>04</span><strong>本地 LLM</strong><small>llama.cpp 與 GGUF 設定</small></a>
     </div>
 
-    <section id="quick-start" class="guide-section">
+    <section id="quick-start" class="fw-panel guide-section">
       <div class="guide-section-heading"><span class="guide-number">01</span><div><h2>快速開始</h2><p>最簡單的使用流程</p></div></div>
       <div class="grid gap-4 md:grid-cols-3">
         <div class="guide-step"><b>1. 選擇音訊來源</b><p>在即時轉譯頁選「URL 串流」，貼上 YouTube Live、Twitch、X、TikTok 或其他支援平台的直播網址。</p></div>
@@ -40,7 +40,7 @@ function goToHome() {
       <div class="guide-note">提示：ASR 是「語音轉文字」，翻譯模型是「文字轉成目標語言」。兩者是不同模型，缺一不可。</div>
     </section>
 
-    <section id="asr" class="guide-section">
+    <section id="asr" class="fw-panel guide-section">
       <div class="guide-section-heading"><span class="guide-number">02</span><div><h2>ASR 模型怎麼選</h2><p>ASR = Automatic Speech Recognition，負責把聲音轉成文字</p></div></div>
       <div class="overflow-x-auto rounded-xl border border-white/10">
         <table class="w-full min-w-[680px] text-left text-xs">
@@ -61,7 +61,7 @@ function goToHome() {
       <button type="button" class="guide-action" @click="goToSettings('model_management')">前往 ASR 模型管理</button>
     </section>
 
-    <section id="gemini" class="guide-section">
+    <section id="gemini" class="fw-panel guide-section">
       <div class="guide-section-heading"><span class="guide-number">03</span><div><h2>使用 Gemini API 翻譯</h2><p>用 Google AI Studio 的 API Key 進行雲端翻譯</p></div></div>
       <div class="grid gap-4 md:grid-cols-2">
         <div class="guide-card">
@@ -95,7 +95,7 @@ function goToHome() {
       <button type="button" class="guide-action" @click="goToSettings('translation')">前往 Gemini 翻譯設定</button>
     </section>
 
-    <section id="llama" class="guide-section">
+    <section id="llama" class="fw-panel guide-section">
       <div class="guide-section-heading"><span class="guide-number">04</span><div><h2>本地 LLM／llama.cpp 怎麼設定</h2><p>本地 LLM 負責翻譯，不負責語音辨識</p></div></div>
       <div class="grid gap-4 md:grid-cols-2">
         <div class="guide-card"><h3>A. 先準備 llama.cpp Runtime</h3><ol><li>到左側「Llama 執行設定」。</li><li>Runtime 區會自動核對目前版本與官方最新版。</li><li>如果已是最新版本，畫面會顯示「已是最新版本」，不需要再下載。</li><li>如果有新版，選擇依硬體推薦的 CUDA、HIP、Vulkan 或 CPU Runtime。</li><li>等待下載、驗證、安裝完成通知。</li></ol><p class="guide-muted">NVIDIA 通常選 CUDA；AMD 可選 HIP；不確定時使用畫面上的硬體推薦。</p></div>
@@ -106,38 +106,41 @@ function goToHome() {
       <button type="button" class="guide-action secondary" @click="router.push('/llm-models')">前往 LLM 模型管理</button>
     </section>
 
-    <section class="guide-section"><div class="guide-section-heading"><span class="guide-number">05</span><div><h2>常見問題</h2><p>遇到問題時先看這裡</p></div></div><div class="grid gap-3 md:grid-cols-2"><details class="guide-faq"><summary>按開始後為什麼要下載模型？</summary><p>模型沒有預先下載時，程式會先建立下載任務。看到進度完成後會自動接續啟動，不需要手動重開。</p></details><details class="guide-faq"><summary>ASR 有了，為什麼沒有翻譯？</summary><p>請確認「翻譯」勾選、目標語言已選擇，並且翻譯後端已設定。使用本地 LLM 時還要確認 llama.cpp 顯示服務已就緒。</p></details><details class="guide-faq"><summary>Gemini 測試連線失敗怎麼辦？</summary><p>回到「設定 → 翻譯選項」，確認後端是 Google Gemini、API Key 沒有多餘空白，模型名稱是帳戶目前可用的模型，再按一次「測試連線」。</p></details><details class="guide-faq"><summary>本地 LLM 啟動失敗怎麼辦？</summary><p>先確認 Runtime 已安裝、GGUF 模型路徑正確，再到 Llama 執行設定按測試。NVIDIA 優先選 CUDA Runtime。</p></details><details class="guide-faq"><summary>模型該選大還是小？</summary><p>先用較小模型確認流程正常，再依 VRAM／RAM 增加模型大小。即時翻譯通常要在品質與延遲之間取平衡。</p></details></div></section>
+    <section class="fw-panel guide-section"><div class="guide-section-heading"><span class="guide-number">05</span><div><h2>常見問題</h2><p>遇到問題時先看這裡</p></div></div><div class="grid gap-3 md:grid-cols-2"><details class="guide-faq"><summary>按開始後為什麼要下載模型？</summary><p>模型沒有預先下載時，程式會先建立下載任務。看到進度完成後會自動接續啟動，不需要手動重開。</p></details><details class="guide-faq"><summary>ASR 有了，為什麼沒有翻譯？</summary><p>請確認「翻譯」勾選、目標語言已選擇，並且翻譯後端已設定。使用本地 LLM 時還要確認 llama.cpp 顯示服務已就緒。</p></details><details class="guide-faq"><summary>Gemini 測試連線失敗怎麼辦？</summary><p>回到「設定 → 翻譯選項」，確認後端是 Google Gemini、API Key 沒有多餘空白，模型名稱是帳戶目前可用的模型，再按一次「測試連線」。</p></details><details class="guide-faq"><summary>本地 LLM 啟動失敗怎麼辦？</summary><p>先確認 Runtime 已安裝、GGUF 模型路徑正確，再到 Llama 執行設定按測試。NVIDIA 優先選 CUDA Runtime。</p></details><details class="guide-faq"><summary>模型該選大還是小？</summary><p>先用較小模型確認流程正常，再依 VRAM／RAM 增加模型大小。即時翻譯通常要在品質與延遲之間取平衡。</p></details></div></section>
   </div>
 </template>
 
 <style scoped>
-.guide-summary-card { display: grid; gap: 2px; border-width: 1px; border-radius: 16px; padding: 16px; transition: transform .2s, background .2s; }
-.guide-summary-card:hover { transform: translateY(-2px); background-color: rgba(255,255,255,.08); }
-.guide-summary-card span { color: rgba(255,255,255,.4); font-size: 10px; font-weight: 800; letter-spacing: .12em; }
-.guide-summary-card strong { color: white; font-size: 15px; }
-.guide-summary-card small { color: rgba(255,255,255,.45); font-size: 11px; }
-.guide-section { margin-top: 22px; border: 1px solid rgba(255,255,255,.09); border-radius: 20px; background: rgba(2,6,23,.72); padding: 20px; box-shadow: 0 18px 50px rgba(2,6,23,.18); }
-.guide-section-heading { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
-.guide-section-heading h2 { color: white; font-size: 18px; font-weight: 800; }
-.guide-section-heading p { color: rgba(255,255,255,.42); font-size: 11px; margin-top: 3px; }
-.guide-number { display: inline-flex; width: 34px; height: 34px; align-items: center; justify-content: center; border-radius: 11px; background: rgba(34,211,238,.12); color: #67e8f9; font-size: 11px; font-weight: 900; }
-.guide-step, .guide-card { border: 1px solid rgba(255,255,255,.08); border-radius: 14px; background: rgba(255,255,255,.035); padding: 15px; }
-.guide-step b, .guide-card h3 { color: rgba(255,255,255,.9); font-size: 13px; }
-.guide-step p, .guide-card p, .guide-card li { color: rgba(255,255,255,.58); font-size: 11px; line-height: 1.75; }
-.guide-card h3 { margin-bottom: 9px; }
-.guide-card ol, .guide-card ul { padding-left: 18px; list-style: decimal; }
-.guide-card ul { list-style: disc; }
-.guide-card li::marker { color: #67e8f9; }
-.guide-muted { margin-top: 10px; color: rgba(103,232,249,.65) !important; }
-.guide-note, .guide-warning { margin-top: 16px; border-radius: 12px; background: rgba(34,211,238,.08); padding: 12px 14px; color: rgba(165,243,252,.8); font-size: 11px; line-height: 1.7; }
-.guide-warning { background: rgba(251,191,36,.08); color: rgba(253,230,138,.8); }
-.guide-action { margin-top: 16px; border-radius: 10px; background: #06b6d4; padding: 10px 14px; color: #082f49; font-size: 11px; font-weight: 800; transition: background .2s; }
-.guide-action:hover { background: #22d3ee; }
-.guide-action.secondary { margin-left: 8px; background: rgba(255,255,255,.1); color: rgba(255,255,255,.75); }
-.guide-action.secondary:hover { background: rgba(255,255,255,.16); }
-.guide-link { color: #67e8f9; text-decoration: underline; text-underline-offset: 2px; }
-.guide-link:hover { color: #a5f3fc; }
-.guide-faq { border: 1px solid rgba(255,255,255,.08); border-radius: 13px; background: rgba(255,255,255,.035); padding: 13px 15px; }
-.guide-faq summary { cursor: pointer; color: rgba(255,255,255,.85); font-size: 12px; font-weight: 700; }
-.guide-faq p { margin-top: 9px; color: rgba(255,255,255,.55); font-size: 11px; line-height: 1.7; }
+.guide-summary-card { display:grid; gap:4px; border:1px solid var(--fw-border); border-radius:14px; padding:18px; background:var(--fw-surface); transition:background .15s; }
+.guide-summary-card:hover { background:var(--fw-surface-secondary); }
+.guide-summary-card span { color:var(--fw-muted); font-size:.75rem; font-weight:600; }
+.guide-summary-card strong { color:var(--fw-text); font-size:1rem; font-weight:600; }
+.guide-summary-card small { color:var(--fw-muted); font-size:.8125rem; }
+.guide-section { margin-top:24px; padding:24px; scroll-margin-top:24px; }
+.guide-section-heading { display:flex; align-items:center; gap:12px; margin-bottom:20px; }
+.guide-section-heading h2 { color:var(--fw-text); font-size:1.125rem; font-weight:600; letter-spacing:-.015em; }
+.guide-section-heading p { color:var(--fw-muted); font-size:.8125rem; margin-top:4px; }
+.guide-number { display:inline-flex; width:36px; height:36px; align-items:center; justify-content:center; border-radius:10px; background:var(--fw-surface-secondary); color:var(--fw-muted); font-size:.75rem; font-weight:600; }
+.guide-step, .guide-card { border:1px solid var(--fw-border); border-radius:12px; background:var(--fw-surface-secondary); padding:18px; min-width:0; }
+.guide-step b, .guide-card h3 { color:var(--fw-text); font-size:.9375rem; font-weight:600; }
+.guide-step p, .guide-card p, .guide-card li { color:var(--fw-muted); font-size:.875rem; line-height:1.7; overflow-wrap:anywhere; }
+.guide-card h3 { margin-bottom:10px; }
+.guide-card ol, .guide-card ul { padding-left:20px; list-style:decimal; }
+.guide-card ul { list-style:disc; }
+.guide-card li::marker { color:var(--fw-muted); }
+.guide-muted { margin-top:12px; }
+.guide-note, .guide-warning { margin-top:18px; border-radius:12px; background:var(--fw-surface-secondary); padding:14px 16px; color:var(--fw-muted); font-size:.875rem; line-height:1.7; }
+.guide-warning { background:rgba(251,191,36,.08); color:#e7c87b; }
+.guide-action { min-height:44px; margin-top:18px; border-radius:10px; background:var(--fw-accent); padding:10px 16px; color:white; font-size:.875rem; font-weight:600; transition:background .15s; }
+.guide-action:hover { background:#4287e7; }
+.fw-page-header .guide-action { margin-top:0; }
+.guide-action.secondary { margin-left:8px; background:var(--fw-surface-secondary); color:var(--fw-text); border:1px solid var(--fw-border); }
+.guide-link { color:#82b5fa; text-decoration:underline; text-underline-offset:3px; }
+.guide-faq { border:1px solid var(--fw-border); border-radius:12px; background:var(--fw-surface-secondary); padding:0 18px; }
+.guide-faq summary { cursor:pointer; color:var(--fw-text); font-size:.9375rem; font-weight:600; padding:14px 0; min-height:48px; }
+.guide-faq p { padding-bottom:16px; color:var(--fw-muted); font-size:.875rem; line-height:1.7; }
+.commercial-guide :is(button,a,summary):focus-visible { outline:2px solid var(--fw-accent); outline-offset:3px; }
+.guide-action:active, .guide-summary-card:active { opacity:.8; }
+@media (max-width:640px) { .guide-section { padding:18px; } .guide-action.secondary { margin-left:0; margin-right:8px; } }
+@media (prefers-reduced-motion:reduce) { .guide-summary-card, .guide-action { transition:none; } }
 </style>

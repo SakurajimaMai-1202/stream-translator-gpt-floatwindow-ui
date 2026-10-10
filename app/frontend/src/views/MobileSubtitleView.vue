@@ -789,4 +789,14 @@ onUnmounted(() => {
 }
 .theme-btn.active { background: #6366f1; border-color: #6366f1; color: #fff; }
 .theme-btn:hover:not(.active) { background: var(--card-bg-latest); }
+
+/* Control chrome follows the app; subtitle presentation keeps its own theme. */
+.status-bar, .settings-panel { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft JhengHei", sans-serif; }
+.settings-btn, .theme-btn, .panel-close { min-width: 2.75rem; min-height: 2.75rem; border-radius: .65rem; touch-action: manipulation; }
+.panel-title { font-weight: 650; letter-spacing: -.025em; }
+:is(.settings-btn,.theme-btn,.panel-close):focus-visible { outline: 2px solid var(--fw-primary, #7297f5); outline-offset: 3px; }
+:is(.settings-btn,.theme-btn,.panel-close):active { transform: scale(.97); }
+@media (prefers-reduced-motion: reduce) { .status-dot, .spinner { animation: none !important; } .settings-btn,.theme-btn,.panel-close { transition: none; transform: none; } }
+@media (prefers-reduced-transparency: reduce) { .settings-panel { backdrop-filter: none; background: var(--bg); } }
+
 </style>

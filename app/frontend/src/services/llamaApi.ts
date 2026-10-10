@@ -19,6 +19,9 @@ export interface ServerConfig {
   port?: number;
   n_ctx?: number;
   n_gpu_layers?: number;
+  gpu_device?: string;
+  gpu_device_name?: string;
+  allow_integrated_gpu?: boolean;
   n_threads?: number;
   n_parallel?: number;
   server_exe?: string;
@@ -36,6 +39,13 @@ export interface ServerConfig {
 }
 
 export interface ServerStatus {
+  gpu_selection?: {
+    mode: 'cpu' | 'gpu' | 'external' | 'unknown';
+    selected_device: RuntimeDevice | null;
+    confirmed: boolean;
+    offloaded_layers: number | null;
+    evidence: string | null;
+  };
   is_running: boolean;
   is_ready: boolean;
   server_url: string | null;
@@ -86,6 +96,15 @@ export interface RuntimeVariant {
     digest: string;
     role: 'runtime' | 'dependency';
   }>;
+}
+
+export interface RuntimeDevice {
+  id: string;
+  name: string;
+  memory_mb: number | null;
+  free_memory_mb?: number | null;
+  is_integrated: boolean;
+  eligible: boolean;
 }
 
 export interface RuntimeReleaseInfo {
@@ -157,6 +176,12 @@ export interface ModelInstallStatus {
 }
 
 export const llamaApi = {
+  async getRuntimeDevices(serverExe = '', allowIntegratedGpu = false): Promise<{ devices: RuntimeDevice[]; error: string | null; server_exe: string }> {
+    const response = await axios.get(`${API_BASE}/runtime/devices`, {
+      params: { server_exe: serverExe, allow_integrated_gpu: allowIntegratedGpu },
+    });
+    return response.data;
+  },
   async getModelRecommendations(refresh = false): Promise<TranslationModelRecommendationInfo> {
     const response = await axios.get(`${API_BASE}/model-recommendations`, { params: { refresh } });
     return response.data;

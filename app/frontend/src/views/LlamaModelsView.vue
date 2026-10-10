@@ -29,23 +29,23 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="commercial-page commercial-models p-5 max-w-7xl mx-auto space-y-5">
+  <div class="commercial-page commercial-models model-library p-5 max-w-7xl mx-auto space-y-5">
     <header class="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-white/10 pb-4">
       <div><h1 class="flex items-center gap-2 text-xl font-bold"><AppIcon name="llm-models" class="h-5 w-5 text-blue-300" />LLM 模型管理</h1><p class="text-white/50 text-sm mt-1">掃描及選擇 GGUF；模型不會在選取瞬間中斷目前服務。</p></div>
-      <button @click="router.push({ path: '/settings', query: { tab: 'llama' } })" class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 font-semibold">前往執行設定</button>
+      <button @click="router.push({ path: '/settings', query: { tab: 'llama' } })" class="model-secondary-action px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 font-semibold">前往執行設定</button>
     </header>
     <div v-if="store.errorMessage" class="p-3 rounded-lg bg-red-500/15 border border-red-500/30 text-red-200">{{ store.errorMessage }}</div>
-    <section class="rounded-2xl bg-slate-950/70 border border-white/10 p-5 space-y-4">
+    <section class="model-scan-panel rounded-2xl bg-slate-950/70 border border-white/10 p-5 space-y-4">
       <div class="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-3">
-        <input v-model="modelDirectory" class="px-4 py-2.5 rounded-lg bg-white/5 border border-white/15" placeholder="GGUF 模型目錄，例如 D:\\Models" />
-        <button @click="scan" :disabled="store.isLoading" class="px-5 py-2 rounded-lg bg-blue-600 disabled:opacity-40 font-semibold">{{ store.isLoading ? '掃描中…' : '掃描 GGUF' }}</button>
+        <input v-model="modelDirectory" aria-label="GGUF 模型目錄" class="px-4 py-2.5 rounded-lg bg-white/5 border border-white/15" placeholder="GGUF 模型目錄，例如 D:\\Models" />
+        <button @click="scan" :disabled="store.isLoading" class="model-primary-action px-5 py-2 rounded-lg bg-blue-600 disabled:opacity-40 font-semibold">{{ store.isLoading ? '掃描中…' : '掃描 GGUF' }}</button>
       </div>
-      <input v-model="search" class="w-full px-4 py-2 rounded-lg bg-white/5 border border-white/15" placeholder="搜尋模型名稱" />
+      <input v-model="search" aria-label="搜尋模型名稱" class="w-full px-4 py-2 rounded-lg bg-white/5 border border-white/15" placeholder="搜尋模型名稱" />
       <p class="text-xs text-white/45">選擇後請到「Llama 執行設定」按「套用並重啟」。</p>
     </section>
     <section class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
       <button v-for="model in filteredModels" :key="model.path" @click="selectModel(model.path)"
-        :class="['text-left rounded-xl border p-4 transition', store.selectedModelPath === model.path ? 'border-cyan-400 bg-cyan-500/10' : 'border-white/10 bg-white/5 hover:bg-white/10']">
+        :class="['model-option text-left rounded-xl border p-4 transition', store.selectedModelPath === model.path ? 'model-option-selected border-cyan-400 bg-cyan-500/10' : 'border-white/10 bg-white/5 hover:bg-white/10']">
         <div class="font-semibold break-words">{{ model.name }}</div><div class="text-sm text-white/50 mt-2">{{ model.size_mb.toFixed(0) }} MB</div>
         <div class="text-xs text-white/35 mt-2 break-all">{{ model.path }}</div>
         <div v-if="store.selectedModelPath === model.path" class="text-cyan-300 text-sm mt-3">✓ 已選為下次載入模型</div>
@@ -54,3 +54,19 @@ onMounted(async () => {
     <div v-if="!store.isLoading && filteredModels.length === 0" class="text-center text-white/45 py-16">尚未找到 GGUF 模型</div>
   </div>
 </template>
+
+<style scoped>
+.model-library { color: var(--fw-text); }
+.model-library header h1 { font-size: 1.5rem; font-weight: 650; letter-spacing: -.025em; }
+.model-scan-panel, .model-option { border-color: var(--fw-border); background: var(--fw-surface); border-radius: var(--fw-radius-lg); }
+.model-option { overflow-wrap: anywhere; transition: background-color 140ms ease, border-color 140ms ease; }
+.model-option:hover { background: var(--fw-surface-raised); }
+.model-option-selected { border-color: var(--fw-primary); background: var(--fw-primary-soft); }
+.model-library input, .model-library button { min-height: 2.75rem; }
+.model-library input { color: var(--fw-text); background: var(--fw-surface-subtle); border-color: var(--fw-border-strong); }
+.model-primary-action { background: var(--fw-primary); color: #081325; }
+.model-secondary-action { border: 1px solid var(--fw-border-strong); background: var(--fw-surface-raised); color: var(--fw-text); }
+.model-library button:active { transform: scale(.985); }
+.model-library :is(button,input):focus-visible { outline: 2px solid var(--fw-primary); outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) { .model-library button { transform: none; transition: none; } }
+</style>

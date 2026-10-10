@@ -4,6 +4,7 @@ import threading
 import time
 
 from .audio_getter import StreamAudioGetter, LocalFileAudioGetter, DeviceAudioGetter
+from .process_audio_capture import ProcessAudioGetter
 from .audio_slicer import AudioSlicer
 from .common import ClientPool, INFO, is_url, ObservableTaskQueue, PipelineWorkers
 from .result_exporter import ResultExporter
@@ -32,6 +33,10 @@ class PipelineController:
 
 
 def create_audio_getter(url: str, options: dict):
+    if url.lower() == 'process_audio':
+        if options.get('loopback'):
+            raise ValueError('指定應用程式音訊不可與系統音訊同時啟用。')
+        return ProcessAudioGetter(options.get('process_id'), options.get('process_start_time'))
     if options.get("loopback") or url.lower() == "loopback":
         return DeviceAudioGetter(
             device_index=options.get("device_index"),
@@ -75,6 +80,7 @@ def create_slicer(options: dict):
         omnivad_max_speech_frame=options.get("omnivad_max_speech_frame", 2000),
         omnivad_min_silence_frame=options.get("omnivad_min_silence_frame", 20),
         omnivad_threshold=options.get("omnivad_threshold", 0.35),
+        native_short_segment_target=1.5 if options.get('use_qwen3_asr') and options.get('language') == 'ja' else 0.0,
     )
 
 
@@ -108,8 +114,10 @@ def create_translator(options: dict):
     capabilities = get_capabilities(model_family)
     optimizer_active = bool(options.get("hy_mt2_optimizer_enabled")) and model_family == "hy_mt2"
     history_size = int(options.get("translation_history_size", 0))
-    if optimizer_active:
-        history_size = max(history_size, max(0, min(5, int(options.get("hy_mt2_context_window", 3)))))
+    index_active = bool(options.get("index_translate_optimizer_enabled")) and model_family == "index_translate"
+    if optimizer_active or index_active:
+        context_key = "hy_mt2_context_window" if optimizer_active else "index_translate_context_window"
+        history_size = max(history_size, max(0, min(5, int(options.get(context_key, 3)))))
     requested_concurrency = int(options.get("translation_max_concurrency") or 0)
     max_concurrency = requested_concurrency or capabilities.default_max_concurrency
     if history_size:
@@ -120,6 +128,7 @@ def create_translator(options: dict):
             llm_type=LLMClient.LLM_TYPE.GEMINI,
             model=options.get("gemini_model"),
             prompt=options.get("translation_prompt"),
+            translation_target_language=options.get("translation_target_language"),
             history_size=history_size,
             proxy=options.get("processing_proxy"),
             use_json_result=options.get("use_json_result"),
@@ -139,12 +148,26 @@ def create_translator(options: dict):
             hy_mt2_debug=options.get("hy_mt2_debug", False),
             hy_mt2_aliases=options.get("hy_mt2_aliases"),
             hy_mt2_glossary_folder=options.get("hy_mt2_glossary_folder"),
+            index_translate_optimizer_enabled=bool(options.get("index_translate_optimizer_enabled")),
+            index_translate_context_window=options.get("index_translate_context_window", 3),
+            index_translate_max_context_chars=options.get("index_translate_max_context_chars", 1000),
+            index_translate_max_terms=options.get("index_translate_max_terms", 10),
+            index_translate_style=options.get("index_translate_style", True),
+            index_translate_style_text=options.get("index_translate_style_text", ""),
+            index_translate_preferences=options.get("index_translate_preferences", ""),
+            index_translate_debug=options.get("index_translate_debug", False),
+            index_translate_aliases=options.get("index_translate_aliases"),
+            index_translate_glossary_folder=options.get("index_translate_glossary_folder"),
         )
     else:
         llm_client = LLMClient(
             llm_type=LLMClient.LLM_TYPE.GPT,
+            api_key=options.get("openai_api_key"),
+            base_url=options.get("gpt_base_url") or options.get("openai_base_url"),
+            request_timeout=max(1.0, float(options.get("translation_timeout") or 30)),
             model=options.get("gpt_model"),
             prompt=options.get("translation_prompt"),
+            translation_target_language=options.get("translation_target_language"),
             history_size=history_size,
             proxy=options.get("processing_proxy"),
             use_json_result=options.get("use_json_result"),
@@ -163,6 +186,16 @@ def create_translator(options: dict):
             hy_mt2_debug=options.get("hy_mt2_debug", False),
             hy_mt2_aliases=options.get("hy_mt2_aliases"),
             hy_mt2_glossary_folder=options.get("hy_mt2_glossary_folder"),
+            index_translate_optimizer_enabled=bool(options.get("index_translate_optimizer_enabled")),
+            index_translate_context_window=options.get("index_translate_context_window", 3),
+            index_translate_max_context_chars=options.get("index_translate_max_context_chars", 1000),
+            index_translate_max_terms=options.get("index_translate_max_terms", 10),
+            index_translate_style=options.get("index_translate_style", True),
+            index_translate_style_text=options.get("index_translate_style_text", ""),
+            index_translate_preferences=options.get("index_translate_preferences", ""),
+            index_translate_debug=options.get("index_translate_debug", False),
+            index_translate_aliases=options.get("index_translate_aliases"),
+            index_translate_glossary_folder=options.get("index_translate_glossary_folder"),
         )
 
     return ParallelTranslator(
@@ -233,10 +266,6 @@ def run_inprocess_pipeline(url: str,
     segmenter_to_translator_queue = queue.SimpleQueue()
     translator_to_exporter_queue = queue.SimpleQueue() if options.get("translation_prompt") else segmenter_to_translator_queue
 
-    audio_getter = create_audio_getter(url, options)
-    if controller is not None:
-        controller.set_audio_getter(audio_getter)
-
     slicer = create_slicer(options)
     translator = create_translator(options)
     segmenter = create_subtitle_segmenter(options)
@@ -244,6 +273,11 @@ def run_inprocess_pipeline(url: str,
     # Printing earlier leaves untranslated rows behind for discarded overlaps.
     transcriber.print_result = False
     exporter = create_exporter(options, subtitle_share_push_url, subtitle_share_token)
+
+    # Open native capture only after the other stages initialize successfully.
+    audio_getter = create_audio_getter(url, options)
+    if controller is not None:
+        controller.set_audio_getter(audio_getter)
 
     workers = PipelineWorkers()
     print(f"{INFO}Initialization complete, starting up...")

@@ -224,6 +224,9 @@ llama:
   port: 8081
   n_ctx: 2048
   n_gpu_layers: 0
+  gpu_device: auto
+  gpu_device_name: ''
+  allow_integrated_gpu: false
   n_threads: 8
   n_parallel: 1
   top_k: 40

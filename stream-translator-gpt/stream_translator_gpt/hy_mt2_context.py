@@ -19,3 +19,7 @@ class SourceContext:
         if source:
             with self._lock:
                 self._sources.append(source)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._sources.clear()

@@ -76,6 +76,11 @@ class ConfigManager:
             'device_recording_interval': 0.1,
             'audio_source': 'url',
             'device_index': None,
+            'process_id': None,
+            'process_start_time': '',
+            'window_handle': '',
+            'process_name': '',
+            'title': '',
         },
         'audio_slicing_vad': {
             'min_audio_length': 0.7,
@@ -167,10 +172,30 @@ class ConfigManager:
             'hy_mt2_provider': 'existing',
             'hy_mt2_lm_studio_url': 'http://127.0.0.1:1234/v1',
             'hy_mt2_lm_studio_model': '',
+            'hy_mt2_lm_studio_api_key': '',
             'hy_mt2_llama_cpp_url': 'http://127.0.0.1:8081/v1',
             'hy_mt2_llama_cpp_model': '',
+            'hy_mt2_llama_cpp_api_key': '',
             'hy_mt2_glossary_folder': '',
             'hy_mt2_glossary_preset': '',
+            'index_translate_optimizer_enabled': False,
+            'index_translate_context_window': 3,
+            'index_translate_max_context_chars': 1000,
+            'index_translate_max_terms': 10,
+            'index_translate_style': True,
+            'index_translate_style_text': '使用自然、簡潔的台灣繁體中文直播字幕；保留原文語氣，不要補充原文沒有的資訊；只輸出譯文。',
+            'index_translate_preferences': '',
+            'index_translate_debug': False,
+            'index_translate_provider': 'existing',
+            'index_translate_lm_studio_url': 'http://127.0.0.1:1234/v1',
+            'index_translate_lm_studio_model': '',
+            'index_translate_lm_studio_api_key': '',
+            'index_translate_llama_cpp_url': 'http://127.0.0.1:8081/v1',
+            'index_translate_llama_cpp_model': '',
+            'index_translate_llama_cpp_api_key': '',
+            'index_translate_glossary_folder': '',
+            'index_translate_glossary_preset': '',
+            'translation_glossary_scope': None,
             'paired_subtitle_mode': True,
             'deduplicate_asr_overlap': True,
             'subtitle_assembler_enabled': True,
@@ -273,6 +298,9 @@ class ConfigManager:
             'port': 8081,
             'n_ctx': 2048,
             'n_gpu_layers': 0,
+            'gpu_device': 'auto',
+            'gpu_device_name': '',
+            'allow_integrated_gpu': False,
             'n_threads': 4,
             'n_parallel': 1,
             'top_k': 40,
@@ -735,6 +763,8 @@ class ConfigManager:
         elif audio_source == 'microphone':
             url = 'device'
             use_loopback = False
+        elif audio_source == 'process_audio':
+            url = 'process_audio'
         elif audio_source in ['url', 'file']:
             url = input_config.get('url', '')
         else:
@@ -847,6 +877,8 @@ class ConfigManager:
             'cookies': resolve_cookie_path(url, input_config),
             'input_proxy': input_config.get('proxy', ''),
             'device_index': input_config.get('device_index'),
+            'process_id': input_config.get('process_id') if audio_source == 'process_audio' else None,
+            'process_start_time': str(input_config.get('process_start_time') or '') if audio_source == 'process_audio' else '',
             'device_recording_interval': input_config.get('device_recording_interval', 0.1),
             'runtime_profile': runtime_capabilities.profile,
             'asr_compute_backend': configured_asr_compute_backend,
@@ -960,6 +992,8 @@ class ConfigManager:
         translation_config = config.get('translation', {})
         resolved_api_keys = self._resolve_translation_api_keys(config)
 
+        args['translation_target_language'] = config['translation'].get('target_language') or 'Traditional Chinese'
+
         # 翻譯提示詞邏輯 (保留原版智慧判斷)
         if config['translation'].get('backend') != 'none':
             # 檢查是否使用智能提示詞
@@ -1005,7 +1039,7 @@ class ConfigManager:
                 terminology_config = config.get('terminology', {})
                 from backend.core.hy_mt2_glossary_presets import effective_user_glossary
                 glossary = effective_user_glossary(
-                    terminology_config, str(translation_config.get('hy_mt2_glossary_preset', '')))
+                    terminology_config, str(translation_config.get('translation_glossary_scope') if translation_config.get('translation_glossary_scope') is not None else translation_config.get('hy_mt2_glossary_preset', '')))
                 
                 if use_glossary and glossary:
                     import json as _json
@@ -1020,7 +1054,7 @@ class ConfigManager:
                 terminology_config = config.get('terminology', {})
                 from backend.core.hy_mt2_glossary_presets import effective_user_glossary
                 glossary = effective_user_glossary(
-                    terminology_config, str(translation_config.get('hy_mt2_glossary_preset', '')))
+                    terminology_config, str(translation_config.get('translation_glossary_scope') if translation_config.get('translation_glossary_scope') is not None else translation_config.get('hy_mt2_glossary_preset', '')))
                 if terminology_config.get('use_terminology_glossary', False) and glossary:
                     args['translation_glossary'] = json.dumps(glossary, ensure_ascii=False)
                 else:
@@ -1054,6 +1088,14 @@ class ConfigManager:
             'hy_mt2_style_text': translation_config.get('hy_mt2_style_text', ''),
             'hy_mt2_preferences': translation_config.get('hy_mt2_preferences', ''),
             'hy_mt2_debug': translation_config.get('hy_mt2_debug', False),
+            'index_translate_optimizer_enabled': translation_config.get('index_translate_optimizer_enabled', False),
+            'index_translate_context_window': translation_config.get('index_translate_context_window', 3),
+            'index_translate_max_context_chars': translation_config.get('index_translate_max_context_chars', 1000),
+            'index_translate_max_terms': translation_config.get('index_translate_max_terms', 10),
+            'index_translate_style': translation_config.get('index_translate_style', True),
+            'index_translate_style_text': translation_config.get('index_translate_style_text', ''),
+            'index_translate_preferences': translation_config.get('index_translate_preferences', ''),
+            'index_translate_debug': translation_config.get('index_translate_debug', False),
             'disable_paired_subtitle_mode': not translation_config.get('paired_subtitle_mode', True),
             'disable_asr_overlap_deduplication': not translation_config.get('deduplicate_asr_overlap', True),
             'disable_subtitle_assembler': not translation_config.get('subtitle_assembler_enabled', True),
@@ -1074,7 +1116,7 @@ class ConfigManager:
                 from backend.core.hy_mt2_glossary_presets import active_user_terms
                 for item in active_user_terms(
                         config.get('terminology', {}),
-                        str(translation_config.get('hy_mt2_glossary_preset', ''))):
+                        str(translation_config.get('translation_glossary_scope') if translation_config.get('translation_glossary_scope') is not None else translation_config.get('hy_mt2_glossary_preset', ''))):
                     target = item.get('translated')
                     names = item.get('aliases', [])
                     if isinstance(names, str):
@@ -1084,7 +1126,7 @@ class ConfigManager:
                             if isinstance(name, str) and name.strip():
                                 aliases[name.strip()] = target
             from backend.core.hy_mt2_glossary_presets import get_preset_terms
-            for source, target in get_preset_terms(str(translation_config.get('hy_mt2_glossary_preset', ''))).items():
+            for source, target in get_preset_terms(str(translation_config.get('translation_glossary_scope') if translation_config.get('translation_glossary_scope') is not None else translation_config.get('hy_mt2_glossary_preset', ''))).items():
                 aliases.setdefault(source, target)
             if aliases:
                 args['hy_mt2_aliases'] = json.dumps(aliases, ensure_ascii=False)
@@ -1095,6 +1137,33 @@ class ConfigManager:
                 folder_path = self.config_path.parent / folder_path
             args['hy_mt2_glossary_folder'] = str(folder_path)
         
+        if translation_config.get('index_translate_optimizer_enabled', False):
+            aliases = {}
+            if args.get('translation_glossary'):
+                from backend.core.hy_mt2_glossary_presets import active_user_terms
+                for item in active_user_terms(
+                        config.get('terminology', {}),
+                        str(translation_config.get('translation_glossary_scope') if translation_config.get('translation_glossary_scope') is not None else translation_config.get('hy_mt2_glossary_preset', ''))):
+                    target = item.get('translated')
+                    names = item.get('aliases', [])
+                    if isinstance(names, str):
+                        names = names.split(',')
+                    if target and isinstance(names, list):
+                        for name in names:
+                            if isinstance(name, str) and name.strip():
+                                aliases[name.strip()] = target
+            from backend.core.hy_mt2_glossary_presets import get_preset_terms
+            for source, target in get_preset_terms(str(translation_config.get('translation_glossary_scope') if translation_config.get('translation_glossary_scope') is not None else translation_config.get('hy_mt2_glossary_preset', ''))).items():
+                aliases.setdefault(source, target)
+            if aliases:
+                args['index_translate_aliases'] = json.dumps(aliases, ensure_ascii=False)
+        glossary_folder = str(translation_config.get('index_translate_glossary_folder', '') or '').strip()
+        if glossary_folder and translation_config.get('index_translate_optimizer_enabled', False):
+            folder_path = Path(glossary_folder)
+            if not folder_path.is_absolute():
+                folder_path = self.config_path.parent / folder_path
+            args['index_translate_glossary_folder'] = str(folder_path)
+
         # 後端模型邏輯
         backend = config['translation'].get('backend', '')
         gpt_model = config['translation'].get('gpt_model', 'gpt-4o-mini')
@@ -1137,20 +1206,30 @@ class ConfigManager:
             args['openai_api_key'] = resolved_api_keys.get('openai_api_key', '')
         # Both local servers use the same OpenAI-compatible request path. Only
         # endpoint identity changes; glossary, context and prompt stay upstream.
-        if translation_config.get('hy_mt2_optimizer_enabled', False) and backend != 'none':
-            local_provider = translation_config.get('hy_mt2_provider', 'existing')
+        # Explicit family wins over stale optimizer/provider settings from another family.
+        from stream_translator_gpt.translation_policy import resolve_model_family
+        requested_family = translation_config.get('translation_model_family', 'auto')
+        family = resolve_model_family(requested_family, args.get('gpt_model'), args.get('translation_provider'))
+        if (str(requested_family or 'auto').lower() == 'auto'
+                and family not in {'hy_mt2', 'index_translate'}
+                and translation_config.get('hy_mt2_optimizer_enabled')
+                and translation_config.get('hy_mt2_provider') in {'lm_studio', 'llama_cpp'}):
+            # Preserve old local HY configs predating an explicit family selector.
+            family = 'hy_mt2'
+        if family in {'hy_mt2', 'index_translate'} and backend != 'none':
+            local_provider = translation_config.get(f'{family}_provider', 'existing')
             if local_provider in {'lm_studio', 'llama_cpp'}:
-                prefix = 'hy_mt2_lm_studio' if local_provider == 'lm_studio' else 'hy_mt2_llama_cpp'
+                prefix = f'{family}_{local_provider}'
                 endpoint = str(translation_config.get(f'{prefix}_url', '') or '').strip()
                 model_id = str(translation_config.get(f'{prefix}_model', '') or '').strip()
                 if not endpoint or not model_id:
                     raise ValueError(f'{local_provider} requires a server URL and model ID')
                 args['translation_provider'] = local_provider
-                args['translation_model_family'] = 'hy_mt2'
+                args['translation_model_family'] = family
                 args['gpt_base_url'] = endpoint
                 args['gpt_model'] = model_id
-                args['openai_api_key'] = '114514'
-        
+                args['openai_api_key'] = str(translation_config.get(f'{prefix}_api_key', '') or '').strip() or '114514'
+
         args['google_api_key'] = resolved_api_keys.get('google_api_key', '')
         args['openai_transcription_api_key'] = str(
             config.get('transcription', {}).get('openai_api_key', '')

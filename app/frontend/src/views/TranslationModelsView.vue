@@ -38,14 +38,14 @@ onMounted(() => load(false));
 </script>
 
 <template>
-  <div class="commercial-page commercial-models mx-auto max-w-7xl space-y-5 p-5">
+  <div class="commercial-page commercial-models model-recommendations mx-auto max-w-7xl space-y-5 p-5">
     <header class="flex flex-col gap-3 border-b border-white/10 pb-4 lg:flex-row lg:items-end lg:justify-between">
       <div>
-        <p class="text-xs font-bold uppercase tracking-[0.18em] text-cyan-300">Local translation model finder</p>
+        <p class="model-eyebrow text-xs font-semibold">本地翻譯</p>
         <h1 class="mt-1 text-2xl font-bold">推薦翻譯模型下載</h1>
         <p class="mt-1 text-sm text-white/50">依顯卡型號與 VRAM 自動排序 GGUF 建議，下載後放入模型目錄再到 LLM 模型管理掃描。</p>
       </div>
-      <button class="rounded-lg border border-cyan-400/30 bg-cyan-500/10 px-4 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-500/20 disabled:opacity-50" :disabled="loading" @click="load(true)">
+      <button class="model-secondary-action rounded-lg border border-cyan-400/30 bg-cyan-500/10 px-4 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-500/20 disabled:opacity-50" :disabled="loading" @click="load(true)">
         {{ loading ? '偵測中…' : '重新偵測硬體' }}
       </button>
     </header>
@@ -68,7 +68,7 @@ onMounted(() => load(false));
           <p class="mt-2 text-sm text-amber-200">仍可瀏覽模型；請按模型容量與系統記憶體手動選擇。</p>
         </template>
       </div>
-      <div class="rounded-2xl border border-white/10 bg-white/5 p-5 text-sm text-white/60">
+      <div class="model-notice rounded-2xl border border-white/10 bg-white/5 p-5 text-sm text-white/60">
         <p class="font-semibold text-white">判斷方式</p>
         <p class="mt-2 leading-6">{{ data?.notice || '正在讀取硬體資訊…' }}</p>
         <p v-if="data && data.detected_gpus.length > 1" class="mt-2 text-xs text-white/40">偵測到 {{ data.detected_gpus.length }} 張顯示裝置，已使用 VRAM 最大的獨立顯卡評估。</p>
@@ -76,10 +76,10 @@ onMounted(() => load(false));
       </div>
     </section>
 
-    <div class="flex flex-wrap gap-2">
+    <div class="model-filters flex flex-wrap gap-2" role="group" aria-label="模型篩選">
       <button v-for="item in [{id:'all',label:'全部'}, {id:'recommended',label:'適合此電腦'}, {id:'novel_game',label:'小說／遊戲專用'}]" :key="item.id"
         :class="['rounded-full px-4 py-2 text-sm font-semibold transition', filter === item.id ? 'bg-indigo-500 text-white' : 'bg-white/5 text-white/60 hover:bg-white/10']"
-        @click="filter = item.id as any">{{ item.label }}</button>
+         :aria-pressed="filter === item.id" @click="filter = item.id as any">{{ item.label }}</button>
     </div>
 
     <section class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -120,7 +120,7 @@ onMounted(() => load(false));
         </div>
         <p class="mt-3 text-xs leading-5 text-white/45">{{ model.fit_reason }}</p>
         <div class="mt-auto grid gap-2 pt-4">
-          <button v-if="model.deployment_config" type="button" class="rounded-lg border border-cyan-400/30 bg-cyan-500/10 px-4 py-2.5 text-sm font-bold text-cyan-100 hover:bg-cyan-500/20" @click="applyDeployment(model)">套用部署參數</button>
+          <button v-if="model.deployment_config" type="button" class="model-secondary-action rounded-lg border border-cyan-400/30 bg-cyan-500/10 px-4 py-2.5 text-sm font-bold text-cyan-100 hover:bg-cyan-500/20" @click="applyDeployment(model)">套用部署參數</button>
           <a :href="model.url" target="_blank" rel="noopener noreferrer" class="commercial-primary-action px-4 py-2.5 text-center text-sm font-bold">開啟 GGUF 下載頁 ↗</a>
         </div>
       </article>
@@ -128,3 +128,20 @@ onMounted(() => load(false));
     <div v-if="!loading && visibleModels.length === 0" class="py-12 text-center text-white/45">這個篩選條件目前沒有合適模型。</div>
   </div>
 </template>
+
+<style scoped>
+.model-recommendations { color: var(--fw-text); }
+.model-recommendations header h1 { font-weight: 650; letter-spacing: -.025em; }
+.model-eyebrow { color: var(--fw-text-secondary); letter-spacing: .02em; }
+.model-recommendations .commercial-panel-accent, .model-notice { background: var(--fw-surface); border: 1px solid var(--fw-border); border-radius: var(--fw-radius-lg); }
+.model-recommendations article h2, .model-recommendations article p { overflow-wrap: anywhere; }
+.model-recommendations :is(button,a) { min-height: 2.75rem; display: inline-flex; align-items: center; justify-content: center; }
+.model-secondary-action { background: var(--fw-surface-raised); border-color: var(--fw-border-strong); color: var(--fw-text); }
+.model-secondary-action:hover { background: var(--fw-primary-soft); }
+.model-filters { padding: .25rem; border: 1px solid var(--fw-border); border-radius: var(--fw-radius-lg); width: fit-content; background: var(--fw-surface-subtle); }
+.model-filters button { border-radius: var(--fw-radius-md); background: transparent; color: var(--fw-text-secondary); }
+.model-filters button[aria-pressed="true"] { background: var(--fw-primary-soft); color: var(--fw-text); }
+.model-recommendations button:active { transform: scale(.985); }
+.model-recommendations :is(button,a):focus-visible { outline: 2px solid var(--fw-primary); outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) { .model-recommendations button { transform: none; transition: none; } }
+</style>

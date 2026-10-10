@@ -107,7 +107,8 @@ def test_hymt2_is_first_when_it_fits_but_does_not_override_hardware_fit():
 
     four_gb = build_translation_model_recommendations([gpu("NVIDIA GeForce RTX", 4096)])
     assert four_gb["models"][0]["id"] != "hy-mt2-7b"
-    assert four_gb["models"][0]["fit"] == "possible"
+    assert four_gb["models"][0]["fit"] == "recommended"
+    assert four_gb["models"][0]["id"] == "index-translate-2b"
 
 
 def test_sakura_parameters_distinguish_model_card_facts_from_app_defaults():
@@ -150,3 +151,45 @@ def test_simple_setup_supports_amd_in_middle_and_high_tiers():
     assert middle["vram_tier"] == "4_to_8gb"
     assert high["simple_setup"]["model_id"] == "hy-mt2-q6-k"
     assert high["vram_tier"] == "8gb_plus"
+
+
+def test_simple_setup_supports_arc_with_known_or_unknown_vram():
+    arc = build_translation_model_recommendations([gpu("Intel(R) Arc(TM) A750 Graphics", 8192, vendor="intel")])
+    assert arc["simple_setup"]["supported"] is True
+    assert arc["simple_setup"]["model_id"] == "hy-mt2-q6-k"
+    unknown = build_translation_model_recommendations([gpu("Intel Arc A750", None, vendor="intel")])
+    assert unknown["selected_gpu"]["vendor"] == "intel"
+    assert unknown["simple_setup"]["model_id"] == "hy-mt2-iq3-xxs"
+
+
+def test_simple_setup_excludes_intel_integrated_graphics():
+    for name in ("Intel UHD Graphics", "Intel Arc Graphics"):
+        result = build_translation_model_recommendations([gpu(name, 8192, integrated=True, vendor="intel")])
+        assert result["simple_setup"]["supported"] is False
+
+
+def test_index_models_use_official_gguf_sources_and_separate_memory_fits():
+    four_gb = build_translation_model_recommendations([gpu("NVIDIA GPU", 4096)])
+    six_gb = build_translation_model_recommendations([gpu("NVIDIA GPU", 6144)])
+    eight_gb = build_translation_model_recommendations([gpu("NVIDIA GPU", 8192)])
+    by_id = lambda result: {model["id"]: model for model in result["models"]}
+    small = by_id(four_gb)["index-translate-2b"]
+    large = by_id(four_gb)["index-translate-9b"]
+    assert small["repo"] == "IndexTeam/Index-Translate-2B-GGUF"
+    assert large["repo"] == "IndexTeam/Index-Translate-9B-GGUF"
+    assert small["url"].endswith("/Index-Translate-2B-GGUF/tree/main")
+    assert (small["model_size_gb"], small["minimum_size_gb"]) == (1.31, 0.99)
+    assert (large["model_size_gb"], large["minimum_size_gb"]) == (5.78, 3.91)
+    assert (small["min_vram_gb"], small["comfortable_vram_gb"], small["fit"]) == (4, 4, "recommended")
+    assert (large["min_vram_gb"], large["comfortable_vram_gb"], large["fit"]) == (6, 8, "not_recommended")
+    assert by_id(six_gb)["index-translate-9b"]["fit"] == "possible"
+    assert by_id(eight_gb)["index-translate-9b"]["fit"] == "recommended"
+    for model in (small, large):
+        assert model["recommended_quant"] == "Q4_K_M"
+        assert model["minimum_quant"] == "Q2_K"
+        assert model["deployment_config"]["temp"] == 0
+        assert model["deployment_config"]["n_predict"] == 1024
+        assert "本程式" in model["parameter_source"]
+        assert "尚未實測" in model["runtime_note"]
+    # Catalog additions do not change the simple-setup download choice.
+    assert four_gb["simple_setup"]["model_id"] == "hy-mt2-iq4-nl"

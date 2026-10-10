@@ -11,6 +11,7 @@
             }"
           ></span>
           <div>
+            <h2 class="page-title">本地翻譯</h2>
             <div class="status-text">
               {{
                 llamaStore.isServerReady
@@ -21,14 +22,11 @@
               }}
             </div>
             <p class="status-subtext">
-              {{ llamaStore.isServerRunning ? '目前可直接測試翻譯與切換模型觀察效果。' : '先挑模型、調參數，再一鍵啟動本地翻譯服務。' }}
+              {{ llamaStore.isServerRunning ? '模型在本機執行，設定變更會自動保存。' : '選擇模型與顯卡，啟動後即可測試翻譯。' }}
             </p>
           </div>
         </div>
         <div class="status-actions">
-          <span class="status-pill" :class="llamaStore.isServerReady ? 'ready' : llamaStore.isServerRunning ? 'booting' : 'idle'">
-            {{ llamaStore.isServerReady ? 'Ready' : llamaStore.isServerRunning ? 'Booting' : 'Offline' }}
-          </span>
           <button
             v-if="!llamaStore.isServerRunning"
             type="button"
@@ -63,7 +61,7 @@
 
       <div class="quick-model-picker">
         <div class="quick-model-label">
-          <span>快速選擇模型</span>
+          <span>翻譯模型</span>
           <small v-if="llamaStore.currentModel">執行中：{{ llamaStore.currentModel }}</small>
         </div>
         <div class="quick-model-controls">
@@ -78,11 +76,93 @@
           />
           <button type="button" class="favorite-model-button" :disabled="!llamaStore.selectedModelPath" @click="llamaStore.toggleFavoriteModel(llamaStore.selectedModelPath)"
             :title="isSelectedModelFavorite ? '取消收藏' : '收藏此模型'">{{ isSelectedModelFavorite ? '★' : '☆' }}</button>
-          <button type="button" class="ghost-button" @click="router.push('/llm-models')">完整模型管理</button>
+          <button type="button" class="ghost-button" @click="router.push('/llm-models')">管理模型</button>
         </div>
         <p v-if="hasPendingRuntimeChanges" class="quick-model-pending">已選擇新的模型或參數；目前服務不受影響，按「套用並重啟」後生效。</p>
       </div>
 
+    <section class="panel">
+      <div class="panel-header">
+        <div><h3>翻譯模型顯卡</h3><p class="hint">自動選擇單張獨顯；GPU 層數為 0 時使用 CPU。AMD 與 Intel 預設推薦 Vulkan。</p></div>
+        <button type="button" class="btn-secondary compact" :disabled="gpuDevicesLoading || llamaStore.isServerRunning || runtimeInstallBusy" @click="refreshGpuDevices">{{ gpuDevicesLoading ? '偵測中…' : '重新偵測顯卡' }}</button>
+      </div>
+      <label>下次啟動使用顯卡</label>
+      <UiSelect
+        :model-value="llamaStore.serverConfig.gpu_device || 'auto'"
+        @update:model-value="llamaStore.serverConfig.gpu_device = String($event ?? 'auto')"
+        :options="gpuDeviceOptions"
+        aria-label="使用顯卡"
+        :disabled="llamaStore.isServerRunning || gpuDevicesLoading || runtimeInstallBusy"
+      />
+      <label class="hint"><input aria-label="允許選擇內顯" v-model="llamaStore.serverConfig.allow_integrated_gpu" type="checkbox" :disabled="llamaStore.isServerRunning || gpuDevicesLoading || runtimeInstallBusy" /> 允許選擇內顯（預設排除）</label>
+      <p v-if="gpuDevicesError" class="alert alert-error" role="alert">{{ gpuDevicesError }}</p>
+      <p v-if="gpuSelectionNotice" class="hint" role="status">{{ gpuSelectionNotice }}</p>
+      <p v-else-if="gpuDevicesLoaded && !eligibleGpuDevices.length" class="hint">目前 Runtime 未偵測到可選顯卡。GPU 層數為 0 可使用 CPU。</p>
+      <p class="hint" role="status">實際使用：{{ actualGpuLabel }}</p>
+    </section>
+
+
+      <div class="common-settings"><div class="form-group">
+              <label>GPU 卸載層數</label>
+              <input
+                aria-label="GPU 層數" v-model.number="llamaStore.serverConfig.n_gpu_layers"
+                type="number"
+                min="0"
+                class="form-input"
+              />
+              <div class="suggestion-row">
+                <button type="button" class="suggestion-chip" @click="setServerConfigValue('n_gpu_layers', 0)">CPU</button>
+                <button type="button" class="suggestion-chip" @click="setServerConfigValue('n_gpu_layers', 33)">33</button>
+                <button type="button" class="suggestion-chip" @click="setServerConfigValue('n_gpu_layers', 99)">99</button>
+              </div>
+              <p class="hint">0 表示純 CPU；可用 GPU 時通常越高越快，但也越吃顯存。</p>
+            </div><div class="form-group">
+              <label>上下文長度</label>
+              <input
+                aria-label="上下文長度" v-model.number="llamaStore.serverConfig.n_ctx"
+                type="number"
+                min="512"
+                max="32768"
+                step="512"
+                class="form-input"
+              />
+              <div class="suggestion-row">
+                <button type="button" class="suggestion-chip" @click="setServerConfigValue('n_ctx', 2048)">2048</button>
+                <button type="button" class="suggestion-chip" @click="setServerConfigValue('n_ctx', 4096)">4096</button>
+                <button type="button" class="suggestion-chip" @click="setServerConfigValue('n_ctx', 8192)">8192</button>
+              </div>
+              <p class="hint">一般翻譯建議 2048–4096；內容較長可拉高。</p>
+            </div><div class="form-group">
+              <label>CPU 執行緒</label>
+              <input
+                aria-label="執行緒數" v-model.number="llamaStore.serverConfig.n_threads"
+                type="number"
+                min="1"
+                max="64"
+                class="form-input"
+              />
+              <div class="suggestion-row">
+                <button type="button" class="suggestion-chip" @click="setServerConfigValue('n_threads', 4)">4</button>
+                <button type="button" class="suggestion-chip" @click="setServerConfigValue('n_threads', 8)">8</button>
+                <button type="button" class="suggestion-chip" @click="setServerConfigValue('n_threads', 12)">12</button>
+              </div>
+              <p class="hint">依 CPU 核心數調整，通常設為實體核心數附近即可。</p>
+            </div><div class="form-group">
+              <label>同時請求數</label>
+              <input
+                aria-label="併發數量" v-model.number="llamaStore.serverConfig.n_parallel"
+                type="number"
+                min="1"
+                max="32"
+                class="form-input"
+              />
+              <div class="suggestion-row">
+                <button type="button" class="suggestion-chip" @click="setServerConfigValue('n_parallel', 1)">1</button>
+                <button type="button" class="suggestion-chip" @click="setServerConfigValue('n_parallel', 2)">2</button>
+                <button type="button" class="suggestion-chip" @click="setServerConfigValue('n_parallel', 4)">4</button>
+              </div>
+              <p class="hint">只做單一路翻譯可維持 1，多工時再慢慢加。</p>
+            </div></div>
       <div v-if="!llamaStore.isServerRunning" class="status-target">
         <span class="target-label">目標位址</span>
         <span class="target-value">{{ llamaStore.serverConfig.host }}:{{ llamaStore.serverConfig.port }}</span>
@@ -105,7 +185,8 @@
         </div>
       </div>
 
-      <div class="inline-test-workspace">
+      <details class="inline-test-workspace" open>
+        <summary>測試翻譯</summary>
         <div class="inline-test-heading">
           <div>
             <strong>啟動與測試</strong>
@@ -113,7 +194,7 @@
           </div>
           <span v-if="hasPendingRuntimeChanges" class="sync-badge warn">參數尚未套用至執行中服務</span>
         </div>
-        <textarea v-model="testText" class="form-textarea" rows="3" placeholder="輸入要測試翻譯的文字…"></textarea>
+        <textarea aria-label="試譯文字" v-model="testText" class="form-textarea" rows="3" placeholder="輸入要測試翻譯的文字…"></textarea>
         <div class="inline-test-actions">
           <button type="button" @click="executePrimaryTest" :disabled="!testText.trim() || !llamaStore.selectedModelPath || isTesting || llamaStore.isLoading" class="btn-test">
             {{ primaryTestButtonLabel }}
@@ -127,23 +208,18 @@
           <p v-if="testResult">{{ testResult }}</p>
           <p v-else class="empty-result">尚未執行測試</p>
         </div>
-      </div>
+      </details>
     </div>
 
-    <div class="runtime-overview-grid">
-      <section class="panel compact-overview">
-        <h3>📊 即時資源</h3>
-        <div class="overview-metrics">
-          <span>CPU <strong>{{ llamaStore.serverStatus.resources?.cpu_percent ?? '-' }}%</strong></span>
-          <span>RAM <strong>{{ llamaStore.serverStatus.resources?.ram_used_gb ?? '-' }} / {{ llamaStore.serverStatus.resources?.ram_total_gb ?? '-' }} GB</strong></span>
-          <span>程序 RAM <strong>{{ llamaStore.serverStatus.resources?.process_ram_mb ?? '-' }} MB</strong></span>
-          <span>GPU <strong>{{ llamaStore.serverStatus.resources?.gpu_name || '未偵測' }}</strong></span>
-          <span>VRAM <strong>{{ llamaStore.serverStatus.resources?.vram_used_mb ?? '-' }} / {{ llamaStore.serverStatus.resources?.vram_total_mb ?? '-' }} MB</strong></span>
-          <span>生成速度 <strong>{{ llamaStore.serverStatus.performance?.tokens_per_second ?? '-' }} tok/s</strong></span>
-        </div>
-      </section>
-      <section class="panel compact-overview">
-        <h3>🧩 llama.cpp Runtime</h3>
+    <section class="resource-strip" aria-label="即時資源" v-if="llamaStore.isServerRunning">
+      <span>CPU <strong>{{ llamaStore.serverStatus.resources?.cpu_percent ?? '—' }}%</strong></span>
+      <span>RAM <strong>{{ llamaStore.serverStatus.resources?.ram_used_gb ?? '—' }} / {{ llamaStore.serverStatus.resources?.ram_total_gb ?? '—' }} GB</strong></span>
+      <span>程序 RAM <strong>{{ llamaStore.serverStatus.resources?.process_ram_mb ?? '—' }} MB</strong></span>
+      <span>生成速度 <strong>{{ llamaStore.serverStatus.performance?.tokens_per_second ?? '—' }} tok/s</strong></span>
+      <span v-if="llamaStore.serverStatus.gpu_selection?.confirmed">GPU 卸載 <strong>{{ llamaStore.serverStatus.gpu_selection.offloaded_layers ?? '—' }} 層</strong></span>
+    </section>
+    <details class="panel runtime-management">
+      <summary>執行環境 <small>{{ llamaStore.serverStatus.runtime?.version || "llama.cpp" }}</small></summary>
         <p class="runtime-version">{{ llamaStore.serverStatus.runtime?.version || '讀取中…' }}</p>
         <p class="hint break-path">{{ llamaStore.serverStatus.runtime?.path || '尚未找到 llama-server' }}</p>
         <span v-if="llamaStore.serverStatus.runtime?.source === 'custom'" class="runtime-current-badge">自訂位置</span>
@@ -156,9 +232,8 @@
         <span v-else-if="runtimeRelease?.is_latest" class="runtime-current-badge">✓ 已是最新版本 {{ runtimeRelease.tag }}</span>
         <button v-else type="button" @click="openRuntimeInstaller" class="btn-start-quick runtime-download">在此下載／更新 Runtime</button>
         <a :href="llamaStore.serverStatus.runtime?.download_url || 'https://github.com/ggml-org/llama.cpp/releases/latest'" target="_blank" rel="noopener" class="runtime-official-link">查看官方 Release</a>
-      </section>
-    </div>
 
+    </details>
     <section v-if="showRuntimeInstaller" class="panel runtime-installer">
       <div class="panel-header">
         <div><h3>下載 llama.cpp Runtime</h3><p class="panel-subtitle">來源為官方 GitHub Release，並依目前 Runtime Profile 標示推薦的 Windows x64 套件。</p></div>
@@ -218,256 +293,26 @@
     <div v-if="llamaStore.errorMessage" class="alert alert-error">{{ llamaStore.errorMessage }}</div>
     <div v-if="llamaStore.successMessage" class="alert alert-success">{{ llamaStore.successMessage }}</div>
 
-    <div class="workspace-grid">
-      <section class="panel panel-emphasis">
-        <div class="panel-header">
-          <div>
-            <h3>⚡ 配置工作區</h3>
-            <p class="panel-subtitle">把「切換預設 → 微調參數 → 保存自己的版本」。</p>
-          </div>
-          <span class="sync-badge" :class="presetSyncTone">
-            {{ presetSyncText }}
-          </span>
-        </div>
-
-        <div class="preset-selector-block">
-          <label>快速切換配置</label>
-          <UiSelect
-            v-model="llamaStore.selectedPreset"
-            :options="presetOptions"
-            placeholder="選擇系統預設或自己的配置"
-          />
-          <p class="hint">切換後會立即套用到目前編輯中的 Llama 參數，並自動保存到設定檔。</p>
-        </div>
-
-        <div class="preset-actions-grid">
-          <button
-            type="button"
-            @click="handleSetDefaultPreset"
-            :disabled="!llamaStore.selectedPreset"
-            class="action-tile"
-            :class="{ active: llamaStore.selectedPreset && llamaStore.selectedPreset === llamaStore.defaultPreset }"
-          >
-            <span class="action-icon">{{ llamaStore.selectedPreset === llamaStore.defaultPreset ? '⭐' : '☆' }}</span>
-            <span>
-              <strong>{{ llamaStore.selectedPreset === llamaStore.defaultPreset ? '已設為啟動預設' : '設為啟動預設' }}</strong>
-              <small>開啟程式時自動套用這組配置</small>
-            </span>
-          </button>
-
-          <button type="button" @click="openSaveDialog" class="action-tile primary">
-            <span class="action-icon">💾</span>
-            <span>
-              <strong>保存目前配置</strong>
-              <small>{{ isOverwritingPreset ? '將覆蓋同名自訂配置' : '把現在的模型與參數收成你的預設' }}</small>
-            </span>
-          </button>
-
-          <button
-            v-if="llamaStore.selectedPreset.startsWith('custom:')"
-            type="button"
-            @click="handleDeletePreset"
-            class="action-tile danger"
-          >
-            <span class="action-icon">🗑️</span>
-            <span>
-              <strong>刪除此自訂配置</strong>
-              <small>只會移除你保存的配置，不影響目前頁面內容</small>
-            </span>
-          </button>
-        </div>
-
-        <div class="meta-grid">
-          <div class="meta-card">
-            <span class="meta-label">目前來源</span>
-            <strong>{{ selectedPresetLabel }}</strong>
-            <small>{{ selectedPresetSourceText }}</small>
-          </div>
-          <div class="meta-card">
-            <span class="meta-label">啟動預設</span>
-            <strong>{{ defaultPresetLabel }}</strong>
-            <small>程式啟動後自動載入</small>
-          </div>
-          <div class="meta-card">
-            <span class="meta-label">我的配置</span>
-            <strong>{{ customPresetCount }}</strong>
-            <small>已保存的自訂組合</small>
-          </div>
-          <div class="meta-card">
-            <span class="meta-label">系統預設</span>
-            <strong>{{ systemPresetCount }}</strong>
-            <small>內建建議配置</small>
-          </div>
-        </div>
-
-        <div class="preset-library">
-          <div class="library-group">
-            <div class="library-title">系統預設</div>
-            <div class="pill-row">
-              <button
-                v-for="name in systemPresetNames"
-                :key="`system-${name}`"
-                type="button"
-                class="pill-button"
-                :class="{ active: llamaStore.selectedPreset === name }"
-                @click="llamaStore.selectedPreset = name"
-              >
-                {{ name }}
-              </button>
-            </div>
-          </div>
-
-          <div class="library-group" v-if="customPresetNames.length">
-            <div class="library-title">我的配置</div>
-            <div class="pill-row">
-              <button
-                v-for="name in customPresetNames"
-                :key="`custom-${name}`"
-                type="button"
-                class="pill-button custom"
-                :class="{ active: llamaStore.selectedPreset === `custom:${name}` }"
-                @click="llamaStore.selectedPreset = `custom:${name}`"
-              >
-                📦 {{ name }}
-              </button>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section class="panel current-config-panel">
-        <div class="panel-header">
-          <div>
-            <h3>🎯 當前配置總覽</h3>
-            <p class="panel-subtitle">使用者最常看的資訊先放前面：現在是哪個模型、參數偏哪種風格、是否與預設同步。</p>
-          </div>
-        </div>
-
-        <div class="hero-config-card">
-          <div>
-            <span class="hero-label">當前模型</span>
-            <div class="hero-title">{{ getModelName(llamaStore.selectedModelPath) }}</div>
-            <p class="hero-subtitle">
-              {{ activeModelInfo ? `${getModelSeries(activeModelInfo.name)} · ${activeModelInfo.size_mb.toFixed(0)} MB` : '尚未從已掃描清單中選定模型' }}
-            </p>
-          </div>
-          <div class="hero-tags">
-            <span class="hero-tag">{{ llamaStore.serverConfig.host }}:{{ llamaStore.serverConfig.port }}</span>
-            <span class="hero-tag">GPU {{ llamaStore.serverConfig.n_gpu_layers }}</span>
-            <span class="hero-tag">Ctx {{ llamaStore.serverConfig.n_ctx }}</span>
-          </div>
-        </div>
-
-        <div class="summary-grid">
-          <div v-for="item in currentConfigItems" :key="item.label" class="summary-card">
-            <span class="summary-label">{{ item.label }}</span>
-            <strong class="summary-value">{{ item.value }}</strong>
-            <small class="summary-help">{{ item.help }}</small>
-          </div>
-        </div>
-
-        <div class="info-strip">
-          <div>
-            <strong>配置狀態：</strong>
-            {{ presetSyncText }}
-          </div>
-          <div>
-            <strong>自動保存：</strong>
-            參數變更約 1 秒後會同步到設定檔
-          </div>
-        </div>
-      </section>
-    </div>
-
-    <section v-if="false" class="panel">
+    <details class="panel preset-management">
+      <summary>配置預設 <small>{{ selectedPresetLabel }}</small></summary>
+      <p class="hint">{{ presetSyncText }} · 啟動預設：{{ defaultPresetLabel }}</p>
+      <div class="preset-selector-block">
+        <label>套用配置</label>
+        <UiSelect v-model="llamaStore.selectedPreset" :options="presetOptions" placeholder="選擇系統預設或自己的配置" aria-label="套用配置" />
+        <p class="hint">套用至目前編輯的設定；執行中的服務需重啟後生效。</p>
+      </div>
+      <div class="status-actions preset-actions">
+        <button type="button" @click="handleSetDefaultPreset" :disabled="!llamaStore.selectedPreset" class="btn-secondary">{{ llamaStore.selectedPreset === llamaStore.defaultPreset ? '已設為啟動預設' : '設為啟動預設' }}</button>
+        <button type="button" @click="openSaveDialog" class="btn-secondary">保存目前配置</button>
+        <button v-if="llamaStore.selectedPreset.startsWith('custom:')" type="button" @click="handleDeletePreset" class="btn-stop">刪除自訂配置</button>
+      </div>
+    </details>
+    <details class="panel advanced-settings">
+      <summary>進階執行設定 <small>連線、效能與生成參數</small></summary>
       <div class="panel-header">
         <div>
-          <h3>模型管理</h3>
-          <p class="panel-subtitle">先掃描模型，再用搜尋 / 系列 / 卡片選取快速鎖定要啟動的 GGUF 模型。</p>
-        </div>
-      </div>
-
-      <div class="form-group">
-        <label>模型目錄</label>
-        <div class="input-with-btn">
-          <input
-            v-model="modelDirectory"
-            type="text"
-            placeholder="例如: G:\models"
-            class="form-input"
-          />
-          <button type="button" @click="handleLoadModels" :disabled="llamaStore.isLoading" class="btn-primary compact">
-            掃描模型
-          </button>
-        </div>
-        <p class="hint">輸入包含 `.gguf` 模型的目錄路徑。掃描成功後會保留在設定裡，下次不用再找一次。</p>
-      </div>
-
-      <div v-if="llamaStore.selectedModelPath" class="selected-model-banner">
-        <div>
-          <span class="meta-label">已選擇模型</span>
-          <strong>{{ getModelName(llamaStore.selectedModelPath) }}</strong>
-          <small>{{ llamaStore.selectedModelPath }}</small>
-        </div>
-        <span class="sync-badge ok">準備可啟動</span>
-      </div>
-
-      <div v-if="llamaStore.hasModels" class="model-list">
-        <div class="model-list-header">
-          <h4>可用模型 ({{ filteredModels.length }} / {{ llamaStore.models.length }})</h4>
-          <div class="model-controls">
-            <div class="control-block">
-              <label class="control-label">模型系列</label>
-              <UiSelect v-model="modelSeriesFilter" :options="modelSeriesOptions" placeholder="所有系列" />
-            </div>
-            <button type="button" @click="showSeriesManager = true" class="btn-manage-series" title="管理模型系列">
-              管理系列
-            </button>
-            <div class="control-block grow">
-              <label class="control-label">搜尋模型</label>
-              <input
-                v-model="modelSearchQuery"
-                type="text"
-                placeholder="🔍 輸入模型名稱關鍵字..."
-                class="form-input"
-              />
-            </div>
-          </div>
-        </div>
-
-        <div class="model-grid">
-          <div
-            v-for="model in filteredModels"
-            :key="model.path"
-            class="model-card"
-            :class="{ selected: llamaStore.selectedModelPath === model.path }"
-            @click="llamaStore.selectModel(model.path)"
-          >
-            <div class="model-card-header">
-              <div class="model-icon">🤖</div>
-              <div class="model-check" v-if="llamaStore.selectedModelPath === model.path">✓</div>
-            </div>
-            <div class="model-card-body">
-              <div class="model-name">{{ getModelDisplayName(model.name) }}</div>
-              <div class="model-series">{{ getModelSeries(model.name) }}</div>
-              <div class="model-meta">
-                <span class="model-size">📦 {{ model.size_mb.toFixed(0) }} MB</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div v-else-if="!llamaStore.isLoading" class="empty-state">
-        <p>🔍 尚未掃描模型，請輸入模型目錄並點擊「掃描模型」</p>
-      </div>
-    </section>
-
-    <section class="panel">
-      <div class="panel-header">
-        <div>
-          <h3>參數編輯器</h3>
-          <p class="panel-subtitle">常用設定先排前面，搭配快捷建議值，改參數不用像在解鎖 BIOS。</p>
+          <h3>執行參數</h3>
+          <p class="panel-subtitle">設定會自動保存；服務執行中，重啟後才會套用。</p>
         </div>
         <div class="panel-header-actions">
           <button type="button" class="ghost-button" @click="resetServerTuning">↺ 重設參數</button>
@@ -482,7 +327,7 @@
           class="profile-chip"
           @click="applyQuickProfile(profile.id)"
         >
-          <span>{{ profile.icon }}</span>
+
           <span>{{ profile.label }}</span>
         </button>
       </div>
@@ -490,100 +335,31 @@
       <div class="parameter-grid">
         <div class="param-card">
           <div class="param-card-header">
-            <h4>🧭 基本連線與上下文</h4>
-            <p>控制伺服器位址、上下文長度與 CPU 執行緒數。</p>
+            <h4>連線與上下文</h4>
+            <p>設定本機服務的監聽位址與埠號。</p>
           </div>
 
           <div class="form-row">
             <div class="form-group">
               <label>主機</label>
-              <input v-model="llamaStore.serverConfig.host" type="text" class="form-input" />
+              <input aria-label="主機" v-model="llamaStore.serverConfig.host" type="text" class="form-input" />
             </div>
             <div class="form-group">
               <label>埠號</label>
-              <input v-model.number="llamaStore.serverConfig.port" type="number" class="form-input" />
+              <input aria-label="埠號" v-model.number="llamaStore.serverConfig.port" type="number" class="form-input" />
             </div>
           </div>
 
-          <div class="form-row">
-            <div class="form-group">
-              <label>上下文長度 (n_ctx)</label>
-              <input
-                v-model.number="llamaStore.serverConfig.n_ctx"
-                type="number"
-                min="512"
-                max="32768"
-                step="512"
-                class="form-input"
-              />
-              <div class="suggestion-row">
-                <button type="button" class="suggestion-chip" @click="setServerConfigValue('n_ctx', 2048)">2048</button>
-                <button type="button" class="suggestion-chip" @click="setServerConfigValue('n_ctx', 4096)">4096</button>
-                <button type="button" class="suggestion-chip" @click="setServerConfigValue('n_ctx', 8192)">8192</button>
-              </div>
-              <p class="hint">一般翻譯建議 2048–4096；內容較長可拉高。</p>
-            </div>
 
-            <div class="form-group">
-              <label>執行緒數 (n_threads)</label>
-              <input
-                v-model.number="llamaStore.serverConfig.n_threads"
-                type="number"
-                min="1"
-                max="64"
-                class="form-input"
-              />
-              <div class="suggestion-row">
-                <button type="button" class="suggestion-chip" @click="setServerConfigValue('n_threads', 4)">4</button>
-                <button type="button" class="suggestion-chip" @click="setServerConfigValue('n_threads', 8)">8</button>
-                <button type="button" class="suggestion-chip" @click="setServerConfigValue('n_threads', 12)">12</button>
-              </div>
-              <p class="hint">依 CPU 核心數調整，通常設為實體核心數附近即可。</p>
-            </div>
-          </div>
         </div>
 
         <div class="param-card">
           <div class="param-card-header">
-            <h4>⚡ 加速與吞吐量</h4>
-            <p>決定 GPU 使用程度、單次可處理併發量，以及記憶體載入策略。</p>
+            <h4>效能與記憶體</h4>
+            <p>設定注意力加速與模型載入策略。</p>
           </div>
 
-          <div class="form-row">
-            <div class="form-group">
-              <label>GPU 層數 (n_gpu_layers)</label>
-              <input
-                v-model.number="llamaStore.serverConfig.n_gpu_layers"
-                type="number"
-                min="0"
-                max="100"
-                class="form-input"
-              />
-              <div class="suggestion-row">
-                <button type="button" class="suggestion-chip" @click="setServerConfigValue('n_gpu_layers', 0)">CPU</button>
-                <button type="button" class="suggestion-chip" @click="setServerConfigValue('n_gpu_layers', 33)">33</button>
-                <button type="button" class="suggestion-chip" @click="setServerConfigValue('n_gpu_layers', 99)">99</button>
-              </div>
-              <p class="hint">0 表示純 CPU；可用 GPU 時通常越高越快，但也越吃顯存。</p>
-            </div>
 
-            <div class="form-group">
-              <label>併發數量 (n_parallel)</label>
-              <input
-                v-model.number="llamaStore.serverConfig.n_parallel"
-                type="number"
-                min="1"
-                max="32"
-                class="form-input"
-              />
-              <div class="suggestion-row">
-                <button type="button" class="suggestion-chip" @click="setServerConfigValue('n_parallel', 1)">1</button>
-                <button type="button" class="suggestion-chip" @click="setServerConfigValue('n_parallel', 2)">2</button>
-                <button type="button" class="suggestion-chip" @click="setServerConfigValue('n_parallel', 4)">4</button>
-              </div>
-              <p class="hint">只做單一路翻譯可維持 1，多工時再慢慢加。</p>
-            </div>
-          </div>
 
           <div class="toggle-stack">
             <label :class="['toggle-card', { 'is-disabled': isHyMtModel }]">
@@ -592,14 +368,10 @@
                 <small v-if="isHyMtModel">Hy-MT／Hy-MT2 不相容，已自動關閉。</small>
                 <small v-else>預設 auto，由 llama.cpp 根據模型與硬體自行判斷。</small>
               </div>
-              <select v-model="llamaStore.serverConfig.flash_attn" class="form-select compact-select" :disabled="isHyMtModel">
-                <option value="auto">auto</option>
-                <option value="on">on</option>
-                <option value="off">off</option>
-              </select>
+              <UiSelect :model-value="llamaStore.serverConfig.flash_attn || 'auto'" @update:model-value="llamaStore.serverConfig.flash_attn = $event as 'auto' | 'on' | 'off'" :options="[{ value: 'auto', label: '自動' }, { value: 'on', label: '開啟' }, { value: 'off', label: '關閉' }]" :disabled="isHyMtModel" aria-label="Flash Attention" />
             </label>
             <label :class="['toggle-card', { 'is-disabled': isHyMtModel }]">
-              <input v-model="llamaStore.serverConfig.no_mmap" type="checkbox" :disabled="isHyMtModel" />
+              <input aria-label="禁用 mmap" v-model="llamaStore.serverConfig.no_mmap" type="checkbox" :disabled="isHyMtModel" />
               <div>
                 <strong>禁用 mmap</strong>
                 <small v-if="isHyMtModel">Hy-MT／Hy-MT2 必須停用 mmap，已自動套用。</small>
@@ -619,7 +391,7 @@
             <div class="form-group">
               <label>溫度 (temp)</label>
               <input
-                v-model.number="llamaStore.serverConfig.temp"
+                aria-label="溫度" v-model.number="llamaStore.serverConfig.temp"
                 type="number"
                 min="0"
                 max="2"
@@ -636,7 +408,7 @@
             <div class="form-group">
               <label>Top-P</label>
               <input
-                v-model.number="llamaStore.serverConfig.top_p"
+                aria-label="Top-P" v-model.number="llamaStore.serverConfig.top_p"
                 type="number"
                 min="0"
                 max="1"
@@ -649,19 +421,19 @@
             <div class="form-group">
               <label>Top-K</label>
               <input
-                v-model.number="llamaStore.serverConfig.top_k"
+                aria-label="Top-K" v-model.number="llamaStore.serverConfig.top_k"
                 type="number"
-                min="1"
+                min="0"
                 max="100"
                 class="form-input"
               />
-              <p class="hint">候選 token 數量，較小通常更穩定。</p>
+              <p class="hint">候選 token 數量；0 表示停用 Top-K。</p>
             </div>
 
             <div class="form-group">
               <label>重複懲罰</label>
               <input
-                v-model.number="llamaStore.serverConfig.repeat_penalty"
+                aria-label="重複懲罰" v-model.number="llamaStore.serverConfig.repeat_penalty"
                 type="number"
                 min="1"
                 max="2"
@@ -674,7 +446,7 @@
             <div class="form-group">
               <label>預測長度 (n_predict)</label>
               <input
-                v-model.number="llamaStore.serverConfig.n_predict"
+                aria-label="預測長度" v-model.number="llamaStore.serverConfig.n_predict"
                 type="number"
                 min="128"
                 max="4096"
@@ -701,7 +473,7 @@
           </div>
         </div>
       </div>
-    </section>
+    </details>
 
     <div v-if="showSaveDialog" class="modal-overlay" @click.self="showSaveDialog = false">
       <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="save-preset-title">
@@ -812,7 +584,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import UiSelect, { type UiSelectOption } from './UiSelect.vue';
 import { useLlamaStore } from '../stores/llama';
-import { llamaApi, type RuntimeInstallStatus, type RuntimeReleaseInfo, type ServerConfig } from '../services/llamaApi';
+import { llamaApi, type RuntimeInstallStatus, type RuntimeReleaseInfo, type RuntimeDevice, type ServerConfig } from '../services/llamaApi';
 
 const showRuntimeInstaller = ref(false);
 const runtimeReleaseLoading = ref(false);
@@ -822,6 +594,60 @@ const selectedRuntimeVariant = ref('');
 const runtimeInstallStatus = ref<RuntimeInstallStatus | null>(null);
 const runtimeInstallNotice = ref('');
 const runtimePathBusy = ref(false);
+const gpuDevices = ref<RuntimeDevice[]>([]);
+const gpuDevicesLoading = ref(false);
+const gpuDevicesLoaded = ref(false);
+const gpuDevicesError = ref('');
+const gpuSelectionNotice = ref('');
+let gpuRequestGeneration = 0;
+let gpuSettingsInitialized = false;
+const eligibleGpuDevices = computed(() => gpuDevices.value.filter(device => device.eligible && (!device.is_integrated || llamaStore.serverConfig.allow_integrated_gpu)));
+const unlistedGpuSelection = computed(() => llamaStore.serverConfig.gpu_device && llamaStore.serverConfig.gpu_device !== 'auto' && !eligibleGpuDevices.value.some(device => device.id === llamaStore.serverConfig.gpu_device));
+const gpuDeviceOptions = computed<UiSelectOption[]>(() => [
+  { value: 'auto', label: '自動選擇獨顯' },
+  ...(unlistedGpuSelection.value ? [{
+    value: llamaStore.serverConfig.gpu_device || '',
+    label: `已儲存的顯卡：${llamaStore.serverConfig.gpu_device}（目前無法選用）`,
+    disabled: true,
+  }] : []),
+  ...eligibleGpuDevices.value.map(device => ({
+    value: device.id,
+    label: `${device.name} · ${device.id}${device.memory_mb ? ` · ${(device.memory_mb / 1024).toFixed(1)} GB` : ''}${device.is_integrated ? ' · 內顯' : ''}`,
+  })),
+]);
+const actualGpuLabel = computed(() => {
+  const selection = llamaStore.serverStatus.gpu_selection;
+  if (!llamaStore.isServerRunning) return '尚未啟動模型';
+  if (selection?.mode === 'cpu') return 'CPU';
+  if (selection?.confirmed && selection.selected_device) return selection.selected_device.name;
+  if (selection?.selected_device) return `已指定 ${selection.selected_device.name}，等待確認 GPU 卸載`;
+  return '實際使用裝置尚未確認';
+});
+
+async function refreshGpuDevices() {
+  const generation = ++gpuRequestGeneration;
+  gpuDevicesLoading.value = true;
+  gpuDevicesLoaded.value = false;
+  gpuDevicesError.value = '';
+  gpuDevices.value = [];
+  try {
+    const result = await llamaApi.getRuntimeDevices(llamaStore.serverConfig.server_exe || '', llamaStore.serverConfig.allow_integrated_gpu === true);
+    if (generation !== gpuRequestGeneration) return;
+    gpuDevices.value = result.devices;
+    gpuDevicesError.value = result.error || '';
+    gpuDevicesLoaded.value = !result.error;
+    if (!result.error && unlistedGpuSelection.value) {
+      gpuDevicesError.value = `已儲存的顯卡 ${llamaStore.serverConfig.gpu_device} 目前無法選用。請明確選擇另一張顯卡或自動選擇後再啟動。`;
+    } else if (!result.error && llamaStore.serverConfig.gpu_device_name) {
+      const selected = eligibleGpuDevices.value.find(device => device.id === llamaStore.serverConfig.gpu_device);
+      if (selected && selected.name !== llamaStore.serverConfig.gpu_device_name) gpuDevicesError.value = `顯卡編號已變更：原本為 ${llamaStore.serverConfig.gpu_device_name}，目前為 ${selected.name}。請重新選擇顯卡後再啟動。`;
+    }
+  } catch (error: any) {
+    if (generation === gpuRequestGeneration) gpuDevicesError.value = error.response?.data?.detail || error.message || '顯卡偵測失敗';
+  } finally {
+    if (generation === gpuRequestGeneration) gpuDevicesLoading.value = false;
+  }
+}
 let runtimeCompletionNotifiedJobId = '';
 let runtimeInstallPollTimer: number | null = null;
 
@@ -971,8 +797,8 @@ const quickProfiles = [
 const llamaStore = useLlamaStore();
 const router = useRouter();
 const modelDirectory = ref('');
-const modelSearchQuery = ref('');
-const modelSeriesFilter = ref<string | number | null>('');
+
+
 const testText = ref('Hello, how are you today?');
 const testResult = ref('');
 const isTesting = ref(false);
@@ -986,27 +812,9 @@ const editingSeriesIndex = ref(-1);
 const newSeries = ref({ name: '', patterns: [] as string[] });
 const newSeriesPatterns = ref('');
 
-function getModelSeries(modelName: string): string {
-  const lowerName = modelName.toLowerCase();
 
-  for (const series of llamaStore.customModelSeries) {
-    for (const pattern of series.patterns) {
-      if (lowerName.includes(pattern.toLowerCase())) {
-        return series.name;
-      }
-    }
-  }
 
-  return '其他';
-}
 
-function getModelDisplayName(fullName: string): string {
-  let name = fullName.replace(/\.gguf$/i, '');
-  if (name.length > 40) {
-    name = `${name.substring(0, 37)}...`;
-  }
-  return name;
-}
 
 function getModelName(path: string): string {
   if (!path) return '未選擇';
@@ -1036,7 +844,10 @@ function isConfigMatch(preset: Partial<ServerConfig>): boolean {
     'repeat_penalty',
     'n_predict',
     'flash_attn',
-    'no_mmap'
+    'no_mmap',
+    'gpu_device',
+    'gpu_device_name',
+    'allow_integrated_gpu'
   ];
 
   return keysToCompare.every((key) => {
@@ -1048,8 +859,7 @@ function isConfigMatch(preset: Partial<ServerConfig>): boolean {
 
 const systemPresetNames = computed(() => Object.keys(llamaStore.systemPresets));
 const customPresetNames = computed(() => Object.keys(llamaStore.customPresets));
-const systemPresetCount = computed(() => systemPresetNames.value.length);
-const customPresetCount = computed(() => customPresetNames.value.length);
+
 
 const presetOptions = computed<UiSelectOption[]>(() => [
   { value: '', label: '自訂配置（目前手動調整）' },
@@ -1057,31 +867,6 @@ const presetOptions = computed<UiSelectOption[]>(() => [
   ...customPresetNames.value.map((name) => ({ value: `custom:${name}`, label: `📦 ${name}`, group: '我的配置' }))
 ]);
 
-const modelSeries = computed(() => {
-  const series = new Set<string>();
-  llamaStore.models.forEach((model) => series.add(getModelSeries(model.name)));
-  return Array.from(series).sort();
-});
-
-const modelSeriesOptions = computed<UiSelectOption[]>(() => [
-  { value: '', label: '所有系列' },
-  ...modelSeries.value.map((series) => ({ value: series, label: series }))
-]);
-
-const filteredModels = computed(() => {
-  let models = llamaStore.models;
-
-  if (modelSeriesFilter.value) {
-    models = models.filter((model) => getModelSeries(model.name) === modelSeriesFilter.value);
-  }
-
-  if (modelSearchQuery.value.trim()) {
-    const query = modelSearchQuery.value.toLowerCase();
-    models = models.filter((model) => model.name.toLowerCase().includes(query));
-  }
-
-  return models;
-});
 
 const selectedPresetLabel = computed(() => {
   if (!llamaStore.selectedPreset) return '手動調整中';
@@ -1090,10 +875,6 @@ const selectedPresetLabel = computed(() => {
     : llamaStore.selectedPreset;
 });
 
-const selectedPresetSourceText = computed(() => {
-  if (!llamaStore.selectedPreset) return '目前沒有綁定到任何預設';
-  return llamaStore.selectedPreset.startsWith('custom:') ? '使用自訂配置' : '使用系統預設';
-});
 
 const defaultPresetLabel = computed(() => {
   if (!llamaStore.defaultPreset) return '未設定';
@@ -1108,10 +889,6 @@ const isSelectedPresetSynced = computed(() => {
   return isConfigMatch(currentPresetConfig.value);
 });
 
-const presetSyncTone = computed(() => {
-  if (!llamaStore.selectedPreset) return 'idle';
-  return isSelectedPresetSynced.value ? 'ok' : 'warn';
-});
 
 const presetSyncText = computed(() => {
   if (!llamaStore.selectedPreset) return '目前是手動調整配置';
@@ -1125,7 +902,7 @@ const hasPendingRuntimeChanges = computed(() => llamaStore.isServerRunning
 const primaryTestButtonLabel = computed(() => {
   if (isTesting.value) return '測試中…';
   if (!llamaStore.isServerReady) return '🚀 啟動並測試';
-  if (hasPendingRuntimeChanges.value) return '♻️ 套用、重啟並測試';
+  if (hasPendingRuntimeChanges.value) return '套用、重啟並測試';
   return '🧪 測試翻譯';
 });
 const isSelectedModelFavorite = computed(() => llamaStore.favoriteModelPaths.includes(llamaStore.selectedModelPath));
@@ -1155,40 +932,7 @@ function handleQuickModelSelect(value: string | number | null) {
   if (typeof value === 'string' && value) llamaStore.selectModel(value);
 }
 
-const activeModelInfo = computed(() => llamaStore.models.find((model) => model.path === llamaStore.selectedModelPath));
 
-const currentConfigItems = computed(() => [
-  {
-    label: '預設來源',
-    value: selectedPresetLabel.value,
-    help: selectedPresetSourceText.value
-  },
-  {
-    label: '推理風格',
-    value: `T=${llamaStore.serverConfig.temp} · P=${llamaStore.serverConfig.top_p} · K=${llamaStore.serverConfig.top_k}`,
-    help: '越低越穩、越高越靈活'
-  },
-  {
-    label: '輸出長度',
-    value: `${llamaStore.serverConfig.n_predict} tokens`,
-    help: '單次生成上限'
-  },
-  {
-    label: 'CPU / GPU',
-    value: `${llamaStore.serverConfig.n_threads} 執行緒 / ${llamaStore.serverConfig.n_gpu_layers} GPU 層`,
-    help: '決定推理速度與資源占用'
-  },
-  {
-    label: '吞吐量',
-    value: `${llamaStore.serverConfig.n_parallel} 路併發`,
-    help: '多任務時才需要拉高'
-  },
-  {
-    label: '效能模式',
-    value: `Flash Attention ${llamaStore.serverConfig.flash_attn || 'auto'}`,
-    help: llamaStore.serverConfig.no_mmap ? '已禁用 mmap' : '使用 mmap 載入模型'
-  }
-]);
 
 const savePresetSummaryItems = computed(() => [
   { label: '模型', value: getModelName(llamaStore.selectedModelPath) },
@@ -1287,9 +1031,7 @@ async function handleDeletePreset() {
   }
 }
 
-async function handleLoadModels() {
-  await llamaStore.loadModels(modelDirectory.value);
-}
+
 
 async function handleStartServer() {
   try {
@@ -1377,6 +1119,8 @@ function cancelEditSeries() {
 
 onMounted(async () => {
   await llamaStore.initialize();
+  gpuSettingsInitialized = true;
+  void refreshGpuDevices();
   void refreshRuntimeRelease(true);
   if (llamaStore.isServerRunning) appliedRuntimeFingerprint.value = runtimeFingerprint.value;
   if (llamaStore.modelDirectory) {
@@ -1385,6 +1129,27 @@ onMounted(async () => {
 });
 
 let pollTimer: number | null = null;
+
+watch(() => [llamaStore.serverConfig.server_exe, llamaStore.serverStatus.runtime?.path, llamaStore.serverStatus.runtime?.version], () => {
+  ++gpuRequestGeneration;
+  gpuDevices.value = [];
+  gpuDevicesLoaded.value = false;
+  gpuDevicesLoading.value = false;
+  gpuDevicesError.value = '';
+  if (gpuSettingsInitialized && !llamaStore.isServerRunning) {
+    if (llamaStore.serverConfig.gpu_device !== 'auto') gpuSelectionNotice.value = 'Runtime 已變更，顯卡選擇已重設為自動。請重新偵測並確認顯卡。';
+    llamaStore.serverConfig.gpu_device = 'auto';
+  }
+});
+watch(() => llamaStore.serverConfig.gpu_device, () => {
+  if (gpuSettingsInitialized) {
+    llamaStore.serverConfig.gpu_device_name = llamaStore.serverConfig.gpu_device === 'auto' ? '' : (eligibleGpuDevices.value.find(device => device.id === llamaStore.serverConfig.gpu_device)?.name || llamaStore.serverConfig.gpu_device_name || '');
+  }
+  if (gpuDevicesLoaded.value && !unlistedGpuSelection.value) gpuDevicesError.value = '';
+});
+watch(() => llamaStore.serverConfig.allow_integrated_gpu, () => {
+  if (!llamaStore.isServerRunning) void refreshGpuDevices();
+});
 
 watch(
   isHyMtModel,
@@ -1452,1042 +1217,34 @@ async function executePrimaryTest() {
 </script>
 
 <style scoped>
-.runtime-overview-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-}
-
-.inline-test-workspace {
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  display: grid;
-  gap: 12px;
-}
-
-.quick-model-picker {
-  margin-top: 16px;
-  padding: 14px;
-  border-radius: 12px;
-  background: rgba(15, 23, 42, 0.65);
-  border: 1px solid rgba(103, 232, 249, 0.16);
-}
-
-.quick-model-label,
-.quick-model-controls {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.quick-model-label { justify-content: space-between; margin-bottom: 9px; font-weight: 700; }
-.quick-model-label small { color: rgba(255, 255, 255, 0.45); font-weight: 500; }
-.quick-model-controls > :first-child { flex: 1; min-width: 0; }
-.favorite-model-button { width: 42px; height: 42px; border-radius: 9px; border: 1px solid rgba(250, 204, 21, 0.3); background: rgba(250, 204, 21, 0.08); color: #fde047; font-size: 1.35rem; }
-.favorite-model-button:disabled { opacity: 0.35; }
-.quick-model-pending { margin: 9px 0 0; color: #fcd34d; font-size: 0.78rem; }
-
-.inline-test-heading,
-.inline-test-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.inline-test-heading p { margin: 4px 0 0; color: rgba(255, 255, 255, 0.5); font-size: 0.82rem; }
-.inline-test-actions { justify-content: flex-start; flex-wrap: wrap; }
-.test-performance { color: rgba(255, 255, 255, 0.55); font-size: 0.78rem; }
-.inline-test-result { padding: 12px; border-radius: 10px; background: rgba(2, 6, 23, 0.55); border: 1px solid rgba(255, 255, 255, 0.08); }
-.inline-test-result > span { color: rgba(255, 255, 255, 0.45); font-size: 0.75rem; }
-.inline-test-result p { margin: 7px 0 0; white-space: pre-wrap; }
-.inline-test-result .empty-result { color: rgba(255, 255, 255, 0.3); }
-
-.compact-overview {
-  margin: 0;
-}
-
-.overview-metrics {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  margin-top: 14px;
-}
-
-.overview-metrics span {
-  padding: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
-  color: rgba(255, 255, 255, 0.55);
-}
-
-.overview-metrics strong { display: block; color: white; margin-top: 3px; }
-.runtime-version { color: #a5f3fc; font-weight: 700; margin-top: 12px; }
-.break-path { overflow-wrap: anywhere; }
-.runtime-download { display: inline-flex; margin-top: 12px; text-decoration: none; }
-.runtime-current-badge { display: inline-flex; align-items: center; margin-top: 12px; padding: 9px 13px; border: 1px solid rgba(52, 211, 153, 0.28); border-radius: 10px; background: rgba(16, 185, 129, 0.1); color: #6ee7b7; font-size: 13px; font-weight: 700; }
-.runtime-current-badge.checking { border-color: rgba(56, 189, 248, 0.2); background: rgba(14, 165, 233, 0.08); color: #7dd3fc; }
-.runtime-official-link { display: inline-block; margin: 12px 0 0 12px; color: #94a3b8; font-size: 12px; }
-.runtime-installer { margin-top: 16px; }
-.runtime-release-meta { display: flex; flex-wrap: wrap; gap: 8px 18px; color: #cbd5e1; margin: 12px 0; }
-.runtime-hardware-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
-.runtime-hardware-summary > span { display: grid; gap: 2px; padding: 8px 10px; border-radius: 9px; background: rgba(255,255,255,.04); color: #e2e8f0; font-size: 13px; }
-.runtime-hardware-summary small { color: #94a3b8; font-size: 11px; }
-.runtime-recommendation { margin: 8px 0 14px; color: #a5f3fc; font-size: 13px; }
-.runtime-variant-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; margin-bottom: 16px; }
-.runtime-variant { display: flex; gap: 10px; padding: 13px; border: 1px solid rgba(255,255,255,.1); border-radius: 10px; background: rgba(255,255,255,.03); cursor: pointer; }
-.runtime-variant.selected { border-color: rgba(34,211,238,.55); background: rgba(34,211,238,.08); }
-.runtime-variant.disabled { opacity: .55; cursor: not-allowed; }
-.runtime-variant-content { display: grid; gap: 5px; color: #e2e8f0; }
-.runtime-variant-title { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
-.runtime-variant-content small { color: #94a3b8; }
-.runtime-asset-list { display: grid; gap: 4px; padding-top: 5px; border-top: 1px solid rgba(255,255,255,.07); }
-.runtime-asset-list small { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 6px; overflow-wrap: anywhere; }
-.runtime-asset-list b, .runtime-file-progress-head b { color: #67e8f9; font-size: 10px; letter-spacing: .03em; }
-.recommended-badge { width: fit-content; padding: 2px 7px; border-radius: 999px; background: rgba(16,185,129,.15); color: #6ee7b7; font-size: 11px; }
-.runtime-progress-wrap { margin: 14px 0; color: #cbd5e1; font-size: 13px; }
-.runtime-progress { height: 8px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.08); }
-.runtime-progress span { display: block; height: 100%; background: linear-gradient(90deg,#10b981,#22d3ee); transition: width .25s ease; }
-.runtime-progress.file { height: 5px; }
-.runtime-progress span.error { background: #ef4444; }
-.runtime-state-badge { margin-left: 8px; padding: 2px 7px; border-radius: 999px; background: rgba(34,211,238,.1); color: #67e8f9; }
-.runtime-file-progress-list { display: grid; gap: 10px; margin-top: 12px; }
-.runtime-file-progress-item { display: grid; gap: 6px; padding: 10px; border: 1px solid rgba(255,255,255,.08); border-radius: 9px; background: rgba(0,0,0,.12); }
-.runtime-file-progress-head { display: flex; justify-content: space-between; gap: 12px; }
-.runtime-file-progress-head > span { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 6px; min-width: 0; overflow-wrap: anywhere; }
-.runtime-file-progress-head > small { flex: none; color: #94a3b8; }
-.runtime-error, .warn-text { color: #fbbf24; }
-
-@media (max-width: 900px) {
-  .runtime-overview-grid { grid-template-columns: 1fr; }
-}
-.llama-settings {
-  contain: layout style;
-  isolation: isolate;
-}
-
-.llama-settings > :not(.workspace-grid),
-.workspace-grid > * {
-  /* Long QWebEngine pages can recreate large tiles during fast scrolling
-     when paint containment is applied to every panel. */
-  contain: layout style;
-  isolation: isolate;
-}
-
-.llama-settings {
-  padding: 0;
-  color: white;
-}
-
-.status-card,
-.panel {
-  border-radius: 20px;
-  padding: 1.5rem;
-  margin-bottom: 1.5rem;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(15, 23, 42, 0.92);
-  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.22);
-}
-
-.panel-emphasis {
-  background: rgba(26, 16, 54, 0.95);
-  border-color: rgba(192, 132, 252, 0.28);
-}
-
-.current-config-panel {
-  background: rgba(10, 34, 50, 0.95);
-  border-color: rgba(96, 165, 250, 0.28);
-}
-
-.status-card {
-  background: rgba(15, 27, 55, 0.95);
-  border-color: rgba(59, 130, 246, 0.3);
-}
-
-.status-card.running {
-  background: rgba(5, 30, 22, 0.95);
-  border-color: rgba(16, 185, 129, 0.3);
-}
-
-.workspace-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
-  gap: 1.5rem;
-}
-
-.status-header,
-.panel-header,
-.model-list-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 1rem;
-}
-
-.panel-header h3,
-.status-text {
-  margin: 0;
-  font-size: 1.2rem;
-  font-weight: 700;
-}
-
-.panel-subtitle,
-.status-subtext {
-  margin: 0.35rem 0 0;
-  color: rgba(255, 255, 255, 0.66);
-  line-height: 1.5;
-  font-size: 0.92rem;
-}
-
-.status-indicator {
-  display: flex;
-  align-items: center;
-  gap: 0.9rem;
-}
-
-.status-actions,
-.panel-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-}
-
-.status-dot {
-  width: 14px;
-  height: 14px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.24);
-  flex-shrink: 0;
-}
-
-.status-dot.active {
-  background: #4ade80;
-  box-shadow: 0 0 14px rgba(74, 222, 128, 0.85);
-}
-
-.status-dot.starting {
-  background: #f59e0b;
-  box-shadow: 0 0 10px rgba(245, 158, 11, 0.75);
-  animation: pulse 1s infinite;
-}
-
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.45;
-  }
-}
-
-.status-pill,
-.sync-badge,
-.hero-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  padding: 0.45rem 0.75rem;
-  border-radius: 999px;
-  font-size: 0.8rem;
-  font-weight: 700;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-}
-
-.status-pill.ready,
-.sync-badge.ok {
-  background: rgba(34, 197, 94, 0.18);
-  color: #86efac;
-  border-color: rgba(34, 197, 94, 0.4);
-}
-
-.status-pill.booting,
-.sync-badge.warn {
-  background: rgba(245, 158, 11, 0.16);
-  color: #fcd34d;
-  border-color: rgba(245, 158, 11, 0.3);
-}
-
-.status-pill.idle,
-.sync-badge.idle {
-  background: rgba(148, 163, 184, 0.16);
-  color: #cbd5e1;
-  border-color: rgba(148, 163, 184, 0.3);
-}
-
-.btn-stop,
-.btn-manage-series,
-.ghost-button,
-.btn-add-series,
-.btn-secondary {
-  padding: 0.75rem 1rem;
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.08);
-  color: white;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  font-weight: 600;
-}
-
-.btn-stop:hover:not(:disabled),
-.btn-manage-series:hover,
-.ghost-button:hover,
-.btn-add-series:hover,
-.btn-secondary:hover {
-  background: rgba(255, 255, 255, 0.14);
-  transform: translateY(-1px);
-}
-
-.btn-stop {
-  background: rgba(220, 38, 38, 0.18);
-  border-color: rgba(248, 113, 113, 0.26);
-  color: #fecaca;
-}
-
-.status-details,
-.meta-grid,
-.summary-grid,
-.parameter-grid {
-  display: grid;
-  gap: 1rem;
-}
-
-.status-details,
-.meta-grid,
-.summary-grid {
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-}
-
-.detail-item,
-.meta-card,
-.summary-card,
-.hero-config-card,
-.selected-model-banner,
-.note-card,
-.action-tile,
-.toggle-card,
-.series-item {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 16px;
-}
-
-.detail-item,
-.meta-card,
-.summary-card {
-  padding: 1rem;
-}
-
-.label,
-.meta-label,
-.summary-label,
-.hero-label,
-.control-label {
-  display: block;
-  font-size: 0.78rem;
-  color: rgba(255, 255, 255, 0.55);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  margin-bottom: 0.35rem;
-}
-
-.value,
-.summary-value,
-.hero-title,
-.meta-card strong {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
-  color: #e2e8f0;
-  word-break: break-word;
-}
-
-.summary-help,
-.meta-card small,
-.hero-subtitle,
-.modal-description,
-.info-strip,
-.series-patterns {
-  color: rgba(255, 255, 255, 0.58);
-}
-
-.preset-selector-block,
-.form-group {
-  margin-top: 1.25rem;
-}
-
-.form-group label {
-  display: block;
-  margin-bottom: 0.55rem;
-  color: rgba(255, 255, 255, 0.74);
-  font-weight: 600;
-}
-
-.preset-actions-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 0.9rem;
-  margin-top: 1rem;
-}
-
-.action-tile {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.85rem;
-  text-align: left;
-  padding: 1rem;
-  cursor: pointer;
-  color: white;
-}
-
-.action-tile strong,
-.toggle-card strong {
-  display: block;
-  margin-bottom: 0.25rem;
-}
-
-.action-tile small,
-.toggle-card small {
-  display: block;
-  line-height: 1.5;
-  color: rgba(255, 255, 255, 0.62);
-}
-
-.toggle-card.is-disabled {
-  cursor: not-allowed;
-  opacity: 0.72;
-}
-
-.toggle-card.is-disabled small {
-  color: #fbbf24;
-}
-
-.action-tile.primary {
-  border-color: rgba(96, 165, 250, 0.25);
-  background: rgba(37, 99, 235, 0.16);
-}
-
-.action-tile.danger {
-  border-color: rgba(248, 113, 113, 0.25);
-  background: rgba(127, 29, 29, 0.16);
-}
-
-.action-tile.active {
-  border-color: rgba(251, 191, 36, 0.4);
-  background: rgba(251, 191, 36, 0.16);
-}
-
-.action-icon {
-  font-size: 1.25rem;
-  line-height: 1;
-}
-
-.preset-library {
-  margin-top: 1.25rem;
-  display: grid;
-  gap: 0.85rem;
-}
-
-.library-title {
-  font-size: 0.88rem;
-  font-weight: 700;
-  color: #d8b4fe;
-  margin-bottom: 0.45rem;
-}
-
-.pill-row,
-.quick-profile-row,
-.suggestion-row {
-  display: flex;
-  gap: 0.55rem;
-  flex-wrap: wrap;
-}
-
-.pill-button,
-.profile-chip,
-.suggestion-chip {
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.05);
-  color: white;
-  border-radius: 999px;
-  padding: 0.45rem 0.8rem;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.pill-button:hover,
-.profile-chip:hover,
-.suggestion-chip:hover {
-  background: rgba(255, 255, 255, 0.12);
-  transform: translateY(-1px);
-}
-
-.pill-button.active {
-  background: rgba(168, 85, 247, 0.22);
-  border-color: rgba(192, 132, 252, 0.4);
-}
-
-.pill-button.custom {
-  color: #f9a8d4;
-}
-
-.hero-config-card {
-  padding: 1.15rem;
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-  align-items: flex-start;
-}
-
-.hero-title {
-  font-size: 1.1rem;
-  font-weight: 700;
-}
-
-.hero-tags {
-  display: flex;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.hero-tag {
-  background: rgba(96, 165, 250, 0.14);
-  color: #bfdbfe;
-}
-
-.info-strip {
-  margin-top: 1rem;
-  display: grid;
-  gap: 0.5rem;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px dashed rgba(255, 255, 255, 0.14);
-  border-radius: 14px;
-  padding: 0.9rem 1rem;
-  line-height: 1.6;
-}
-
-.input-with-btn {
-  display: flex;
-  gap: 0.75rem;
-  align-items: stretch;
-}
-
-.control-block {
-  min-width: 180px;
-}
-
-.control-block.grow {
-  flex: 1;
-}
-
-.model-controls {
-  display: flex;
-  gap: 0.75rem;
-  align-items: flex-end;
-  flex-wrap: wrap;
-  flex: 1;
-  justify-content: flex-end;
-}
-
-.form-input,
-.form-textarea {
-  width: 100%;
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  background: rgba(255, 255, 255, 0.05);
-  color: white;
-  padding: 0.8rem 0.95rem;
-  font-size: 0.95rem;
-  transition: border-color 0.2s ease, background 0.2s ease;
-}
-
-.form-input:focus,
-.form-textarea:focus {
-  outline: none;
-  border-color: rgba(96, 165, 250, 0.85);
-  background: rgba(255, 255, 255, 0.1);
-}
-
-.form-input::placeholder,
-.form-textarea::placeholder {
-  color: rgba(255, 255, 255, 0.3);
-}
-
-.form-textarea {
-  resize: vertical;
-}
-
-.hint {
-  margin: 0.45rem 0 0;
-  font-size: 0.82rem;
-  color: rgba(255, 255, 255, 0.48);
-  line-height: 1.5;
-}
-
-.selected-model-banner {
-  padding: 1rem 1.1rem;
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-  align-items: center;
-  margin-bottom: 1rem;
-}
-
-.selected-model-banner strong,
-.selected-model-banner small {
-  display: block;
-}
-
-.selected-model-banner small {
-  color: rgba(255, 255, 255, 0.48);
-  margin-top: 0.3rem;
-  word-break: break-all;
-}
-
-.model-list {
-  margin-top: 1rem;
-}
-
-.model-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 1rem;
-  max-height: 560px;
-  overflow-y: auto;
-  padding: 0.35rem;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
-}
-
-.model-card {
-  background: rgba(255, 255, 255, 0.05);
-  border: 2px solid rgba(255, 255, 255, 0.08);
-  border-radius: 16px;
-  padding: 1rem;
-  cursor: pointer;
-  transition: all 0.25s ease;
-  display: flex;
-  flex-direction: column;
-  gap: 0.8rem;
-}
-
-.model-card:hover {
-  background: rgba(255, 255, 255, 0.09);
-  border-color: rgba(96, 165, 250, 0.44);
-  transform: translateY(-2px);
-}
-
-.model-card.selected {
-  background: linear-gradient(135deg, rgba(59, 130, 246, 0.2) 0%, rgba(37, 99, 235, 0.15) 100%);
-  border-color: #60a5fa;
-  box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.2), 0 10px 24px rgba(37, 99, 235, 0.18);
-}
-
-.model-card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.model-icon {
-  font-size: 1.8rem;
-}
-
-.model-check {
-  width: 24px;
-  height: 24px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  background: #10b981;
-  color: white;
-  font-weight: 700;
-}
-
-.model-card-body {
-  display: grid;
-  gap: 0.5rem;
-}
-
-.model-name {
-  font-weight: 700;
-  line-height: 1.45;
-  word-break: break-word;
-}
-
-.model-series {
-  width: fit-content;
-  padding: 0.3rem 0.55rem;
-  border-radius: 999px;
-  background: rgba(96, 165, 250, 0.18);
-  color: #bfdbfe;
-  font-size: 0.78rem;
-  font-weight: 600;
-}
-
-.model-meta {
-  color: rgba(255, 255, 255, 0.62);
-  font-size: 0.85rem;
-}
-
-.parameter-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  margin-top: 1rem;
-}
-
-.param-card {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 18px;
-  padding: 1.2rem;
-}
-
-.param-card.full-width {
-  grid-column: 1 / -1;
-}
-
-.param-card-header h4 {
-  margin: 0;
-  color: #93c5fd;
-}
-
-.param-card-header p {
-  margin: 0.35rem 0 0.9rem;
-  color: rgba(255, 255, 255, 0.56);
-  line-height: 1.5;
-}
-
-.form-row {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1rem;
-}
-
-.form-row.three-columns {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.toggle-stack {
-  display: grid;
-  gap: 0.85rem;
-  margin-top: 0.75rem;
-}
-
-.toggle-card {
-  display: flex;
-  gap: 0.85rem;
-  align-items: flex-start;
-  padding: 0.95rem 1rem;
-  cursor: pointer;
-}
-
-.toggle-card input[type='checkbox'] {
-  margin-top: 0.2rem;
-  width: 1.1rem;
-  height: 1.1rem;
-  accent-color: #60a5fa;
-}
-
-.note-card {
-  padding: 1rem;
-  height: 100%;
-}
-
-.note-card ul {
-  margin: 0.6rem 0 0;
-  padding-left: 1.2rem;
-  color: rgba(255, 255, 255, 0.72);
-  line-height: 1.75;
-}
-
-.parameter-note {
-  display: flex;
-}
-
-.empty-state {
-  text-align: center;
-  padding: 2rem;
-  color: rgba(255, 255, 255, 0.44);
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px dashed rgba(255, 255, 255, 0.14);
-  border-radius: 16px;
-}
-
-.alert {
-  margin-bottom: 1rem;
-  padding: 1rem 1.1rem;
-  border-radius: 14px;
-  border: 1px solid transparent;
-}
-
-.alert-error {
-  background: rgba(239, 68, 68, 0.18);
-  border-color: rgba(248, 113, 113, 0.25);
-  color: #fecaca;
-}
-
-.alert-success {
-  background: rgba(34, 197, 94, 0.18);
-  border-color: rgba(74, 222, 128, 0.25);
-  color: #bbf7d0;
-}
-
-.action-buttons {
-  display: flex;
-  gap: 1rem;
-  margin-top: 1.5rem;
-  flex-wrap: wrap;
-}
-
-.btn-primary,
-.btn-start,
-.btn-start-quick,
-.btn-test {
-  border: none;
-  border-radius: 14px;
-  padding: 0.95rem 1.4rem;
-  font-size: 1rem;
-  font-weight: 700;
-  color: white;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.45rem;
-}
-
-.btn-primary.compact {
-  min-width: 0;
-}
-
-.btn-primary {
-  background: #2563eb;
-}
-
-.btn-primary:hover:not(:disabled) {
-  background: #1d4ed8;
-}
-
-.btn-start-quick {
-  padding: 0.55rem 1.1rem;
-  font-size: 0.92rem;
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
-}
-
-.btn-start-quick:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 6px 16px rgba(16, 185, 129, 0.45);
-}
-
-.status-target {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin-top: 0.85rem;
-  padding: 0.65rem 0.9rem;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
-  font-size: 0.85rem;
-}
-
-.target-label {
-  color: rgba(255, 255, 255, 0.5);
-  font-size: 0.78rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.target-value {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  color: #93c5fd;
-  font-weight: 600;
-}
-
-.target-warn {
-  color: #fcd34d;
-  font-size: 0.82rem;
-}
-
-.target-model {
-  color: rgba(255, 255, 255, 0.68);
-  font-size: 0.82rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 260px;
-}
-
-.btn-start,
-.btn-test {
-  flex: 1;
-  min-width: 220px;
-}
-
-.btn-start {
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-  box-shadow: 0 8px 20px rgba(16, 185, 129, 0.28);
-}
-
-.btn-test {
-  background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
-  box-shadow: 0 8px 20px rgba(99, 102, 241, 0.28);
-}
-
-.btn-test.full-width {
-  min-width: 0;
-  width: 100%;
-}
-
-.btn-start:hover:not(:disabled),
-.btn-test:hover:not(:disabled) {
-  transform: translateY(-2px);
-}
-
-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  transform: none !important;
-  box-shadow: none !important;
-}
-
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1rem;
-  background: rgba(2, 6, 23, 0.88);
-}
-
-.modal-content {
-  width: 100%;
-  max-width: 560px;
-  background: #0f172a;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 20px;
-  padding: 1.6rem;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
-}
-
-.modal-content h3 {
-  margin: 0 0 0.75rem;
-  font-size: 1.35rem;
-}
-
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.75rem;
-  margin-top: 1.4rem;
-}
-
-.preset-summary-card {
-  margin-top: 1rem;
-  padding: 1rem;
-  background: rgba(59, 130, 246, 0.08);
-  border-radius: 16px;
-  border: 1px solid rgba(96, 165, 250, 0.18);
-}
-
-.preset-summary-card h4 {
-  margin: 0 0 0.85rem;
-  color: #bfdbfe;
-}
-
-.summary-grid.compact-grid {
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-}
-
-.summary-card.compact {
-  padding: 0.8rem;
-}
-
-.series-manager {
-  max-width: 620px;
-  max-height: 82vh;
-  overflow-y: auto;
-}
-
-.series-list {
-  display: grid;
-  gap: 0.75rem;
-  margin: 1rem 0;
-}
-
-.series-item {
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-  align-items: center;
-  padding: 1rem;
-}
-
-.series-info {
-  display: grid;
-  gap: 0.25rem;
-}
-
-.series-info strong {
-  color: #d8b4fe;
-}
-
-.series-actions {
-  display: flex;
-  gap: 0.5rem;
-}
-
-.series-actions button {
-  width: 38px;
-  height: 38px;
-  border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.08);
-  color: white;
-  cursor: pointer;
-}
-
-.series-actions button:hover {
-  background: rgba(255, 255, 255, 0.14);
-}
-
-@media (max-width: 1100px) {
-  .workspace-grid,
-  .parameter-grid,
-  .form-row,
-  .form-row.three-columns {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 720px) {
-  .status-header,
-  .panel-header,
-  .model-list-header,
-  .selected-model-banner,
-  .hero-config-card {
-    flex-direction: column;
-  }
-
-  .input-with-btn,
-  .modal-actions {
-    flex-direction: column;
-  }
-
-  .action-buttons {
-    flex-direction: column;
-  }
-
-  .btn-start,
-  .btn-test {
-    width: 100%;
-  }
-}
+.llama-settings { color:var(--fw-text); font-family:system-ui,-apple-system,"Segoe UI",sans-serif; font-size:.9375rem; line-height:1.5; }
+.status-card,.panel { background:var(--fw-surface); border:1px solid var(--fw-border); border-radius:16px; padding:1.25rem; margin-bottom:1rem; }
+.status-card { padding:1.5rem; } .status-card .panel { background:transparent; border:0; border-top:1px solid var(--fw-border); border-radius:0; padding:1.25rem 0 0; margin:1.25rem 0; }
+.page-title { margin:0 0 .3rem;font-size:1.5rem;line-height:1.2;letter-spacing:-.025em;font-weight:650; }
+h3,h4 { margin:0;font-size:1rem;font-weight:600;letter-spacing:-.01em; } p { margin:.45rem 0; }
+.status-header,.panel-header,.status-indicator,.status-actions,.quick-model-controls,.inline-test-actions,.input-with-btn,.modal-actions { display:flex;align-items:center;gap:.75rem; }
+.status-header,.panel-header { justify-content:space-between;align-items:flex-start; } .status-actions { flex-wrap:wrap; } .status-indicator { align-items:flex-start; }
+.status-text { font-size:.875rem;color:var(--fw-text-secondary); } .status-dot { width:8px;height:8px;border-radius:50%;background:#8290a4;margin-top:.5rem;flex-shrink:0; } .status-dot.active { background:#5bd9a3; } .status-dot.starting { background:#e7b867; }
+.status-subtext,.hint,.panel-subtitle,.param-card-header p,.modal-description,.toggle-card small { font-size:.8125rem;line-height:1.55;color:var(--fw-text-secondary); }
+.common-settings { display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1rem;border-top:1px solid var(--fw-border);padding-top:.25rem; }
+.quick-model-picker { margin-top:1.5rem; } .quick-model-label { display:flex;justify-content:space-between;gap:.5rem;margin-bottom:.5rem;font-weight:600; } .quick-model-label small { color:var(--fw-text-secondary);font-weight:400; } .quick-model-controls > :first-child { flex:1;min-width:0; }
+button { font:inherit;font-weight:600;min-height:44px;padding:.6rem 1rem;border-radius:10px;border:1px solid #ffffff1c;background:#ffffff09;color:var(--fw-text);cursor:pointer;touch-action:manipulation;transition:background 120ms ease,transform 100ms ease; } button:hover:not(:disabled) { background:#ffffff13; } button:active:not(:disabled) { transform:scale(.98);background:#ffffff20; } button:disabled { opacity:.45;cursor:not-allowed; }
+.btn-start-quick,.btn-primary { background:var(--fw-primary);border-color:var(--fw-primary);color:white; } .btn-start-quick:hover:not(:disabled),.btn-primary:hover:not(:disabled) { background:#4488ee; } .btn-stop { color:#f4b6bb; } .favorite-model-button { padding:.5rem .75rem;font-size:1.25rem; } .btn-test { background:var(--fw-primary-soft);border-color:#598cc066; }
+button:focus-visible,input:focus-visible,textarea:focus-visible,summary:focus-visible { outline:2px solid var(--fw-primary);outline-offset:3px; }
+.form-input,.form-textarea,.form-select { box-sizing:border-box;width:100%;min-height:44px;padding:.65rem .8rem;border-radius:10px;border:1px solid #ffffff26;background:var(--fw-surface-subtle);color:var(--fw-text);font:inherit; } .form-textarea { resize:vertical; } .form-input::placeholder,.form-textarea::placeholder { color:var(--fw-text-muted); }
+label { display:block;font-weight:500;margin-bottom:.45rem; } input[type=checkbox] { width:18px;height:18px;accent-color:var(--fw-primary);vertical-align:middle; } label.hint { display:flex;align-items:center;gap:.5rem;min-height:44px; }
+.status-target,.status-details { display:flex;gap:1.5rem;flex-wrap:wrap;font-size:.8125rem;margin-top:1rem;color:var(--fw-text-secondary); } .target-model { display:none; } .label { display:block;color:#94a3b8;font-size:.75rem; } .value,.target-value { color:#dbe5f2;overflow-wrap:anywhere; } .target-warn { color:#e7b867; }
+.inline-test-workspace { margin-top:1.25rem;border-top:1px solid var(--fw-border);padding-top:.65rem; } summary { min-height:44px;cursor:pointer;font-weight:600;line-height:1.5;display:list-item;align-content:center; } summary small { font-weight:400;color:var(--fw-text-secondary);margin-left:.75rem;font-size:.8125rem; } details[open] > summary { margin-bottom:.75rem; }
+.inline-test-heading { display:none; } .inline-test-actions { justify-content:space-between;margin-top:.75rem;flex-wrap:wrap; } .test-performance { color:var(--fw-text-secondary);font-size:.75rem; } .inline-test-result { margin-top:.9rem;padding:.85rem 1rem;border-radius:10px;background:var(--fw-surface-subtle); } .inline-test-result > span { font-size:.75rem;color:var(--fw-text-secondary); } .empty-result { color:var(--fw-text-muted); }
+.quick-model-pending { color:#e7b867;font-size:.8125rem; } .resource-strip { display:flex;flex-wrap:wrap;gap:.75rem 1.5rem;padding:.25rem .5rem 1.25rem;font-size:.75rem;color:var(--fw-text-secondary); } .resource-strip strong { color:#dbe5f2;font-weight:500; }
+.runtime-version { font-weight:600; } .break-path { overflow-wrap:anywhere; } .runtime-current-badge,.runtime-official-link { display:block;font-size:.8125rem;margin-top:.65rem;color:#9abff6; } .runtime-download { margin-top:.75rem; } .runtime-management .form-input { margin:.5rem 0; }
+.preset-selector-block { margin-top:1rem; } .preset-actions { margin-top:1rem; } .parameter-grid { display:grid;grid-template-columns:1fr 1fr;gap:1.25rem;margin-top:1.25rem; } .param-card { min-width:0;border-top:1px solid var(--fw-border);padding-top:1rem; } .full-width { grid-column:1/-1; } .form-row { display:grid;grid-template-columns:1fr 1fr;gap:1rem; } .three-columns { grid-template-columns:repeat(3,1fr); } .form-group { margin-top:1rem; } .suggestion-row,.quick-profile-row { display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.5rem; } .suggestion-chip { font-size:.75rem;padding:.35rem .65rem; } .toggle-stack { display:grid;gap:.75rem;margin-top:1rem; } .toggle-card { display:flex;align-items:center;justify-content:space-between;gap:.75rem;padding:.75rem 0; } .toggle-card strong,.toggle-card small { display:block; } .toggle-card.is-disabled { opacity:.7; } .toggle-card > :last-child { min-width:0; } .note-card { font-size:.8125rem;color:var(--fw-text-secondary); } .note-card ul { padding-left:1.25rem; }
+.runtime-release-meta,.runtime-hardware-summary { display:flex;flex-wrap:wrap;gap:1rem;font-size:.8125rem;margin:1rem 0; } .runtime-hardware-summary small { display:block;color:var(--fw-text-secondary); } .runtime-recommendation { color:var(--fw-text-secondary);font-size:.8125rem; } .runtime-variant-grid { display:grid;grid-template-columns:1fr 1fr;gap:.75rem;margin:1rem 0; } .runtime-variant { display:flex;gap:.6rem;border:1px solid #ffffff1c;border-radius:10px;padding:1rem;cursor:pointer; } .runtime-variant.selected { background:var(--fw-primary-soft);border-color:var(--fw-primary); } .runtime-variant.disabled { opacity:.5; } .runtime-variant-content,.runtime-asset-list { display:grid;gap:.4rem;min-width:0;overflow-wrap:anywhere; } .runtime-variant-content small { color:var(--fw-text-secondary); } .recommended-badge { color:#97bdf1;font-size:.7rem;margin-left:.5rem; } .runtime-progress { height:6px;border-radius:5px;overflow:hidden;background:var(--fw-border);margin:.75rem 0; } .runtime-progress span { display:block;height:100%;background:var(--fw-primary); } .runtime-file-progress-head { display:flex;justify-content:space-between;gap:.75rem;font-size:.75rem;overflow-wrap:anywhere; } .runtime-error,.warn-text { color:#e7b867; } .runtime-state-badge { margin-left:.5rem; } .runtime-asset-list b,.runtime-file-progress-head b { margin-right:.5rem; }
+.alert { padding:.75rem 1rem;margin:.75rem 0;border-radius:10px;font-size:.875rem; } .alert-error { color:#f4b6bb;background:#dc354515; } .alert-success { color:#9bddb9;background:#32b77812; }
+.modal-overlay { position:fixed;inset:0;z-index:1000;background:#060b13cc;backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:1rem; } .modal-content { width:100%;max-width:560px;max-height:85vh;overflow:auto;background:var(--fw-surface-raised);border:1px solid #ffffff20;border-radius:18px;padding:1.5rem;box-shadow:0 24px 80px #0008; } .modal-actions { justify-content:flex-end;margin-top:1.25rem; } .summary-grid { display:grid;grid-template-columns:repeat(3,1fr);gap:.75rem;margin-top:.75rem; } .summary-label { display:block;font-size:.75rem;color:var(--fw-text-secondary); } .summary-value { overflow-wrap:anywhere; } .series-item { display:flex;justify-content:space-between;gap:.75rem;margin:1rem 0; }.series-info { display:grid; }.series-patterns { font-size:.8125rem;color:var(--fw-text-secondary); }.series-actions { display:flex;gap:.5rem; }
+@media(max-width:960px) { .common-settings { grid-template-columns:1fr 1fr; } .parameter-grid { grid-template-columns:1fr; } .three-columns { grid-template-columns:1fr 1fr; } }
+@media(max-width:720px) { .common-settings { grid-template-columns:1fr; } .status-card { padding:1rem; }.status-header,.panel-header { flex-direction:column; }.status-actions { width:100%; }.quick-model-controls { flex-wrap:wrap; }.quick-model-controls > :first-child { flex-basis:calc(100% - 60px); }.quick-model-label { flex-direction:column; }.form-row,.three-columns,.runtime-variant-grid { grid-template-columns:1fr; }.inline-test-actions { align-items:stretch;flex-direction:column; }.runtime-file-progress-head { flex-direction:column; } summary small { display:block;margin-left:0; }.summary-grid { grid-template-columns:1fr 1fr; } }
+@media(prefers-reduced-motion:reduce) { button { transition:none; }button:active:not(:disabled) { transform:none; } }
+@media(prefers-reduced-transparency:reduce) { .modal-overlay { background:#060b13;backdrop-filter:none; } }
+@media(prefers-contrast:more) { .panel,.status-card { border-color:#8b9bb5; }.hint,.status-subtext { color:#d2dbea; } }
 </style>

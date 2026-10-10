@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch, nextTick, toRaw, defineAsyncComponent } from 'vue';
 import { useRoute } from 'vue-router';
+import { resolveTranslationFamily } from '../utils/translationFamily';
 import axios from 'axios';
 import { useTranslationStore } from '../stores/translation';
 import { useModelDownloadStore } from '../stores/modelDownload';
@@ -238,6 +239,7 @@ const slicingModeOptions: UiSelectOption[] = [
 const translationModelFamilyOptions: UiSelectOption[] = [
   { value: 'auto', label: '自動判斷' },
   { value: 'hy_mt2', label: 'Hy-MT2 專用翻譯模型' },
+  { value: 'index_translate', label: 'Index-Translate 專用翻譯模型' },
   { value: 'generic_chat', label: '通用聊天模型（Gemma 等）' },
   { value: 'structured_api', label: '結構化 API（OpenAI / Gemini）' },
 ];
@@ -368,10 +370,30 @@ const localConfig = ref<any>({
     hy_mt2_provider: 'existing',
     hy_mt2_lm_studio_url: 'http://127.0.0.1:1234/v1',
     hy_mt2_lm_studio_model: '',
+    hy_mt2_lm_studio_api_key: '',
     hy_mt2_llama_cpp_url: 'http://127.0.0.1:8081/v1',
     hy_mt2_llama_cpp_model: '',
+    hy_mt2_llama_cpp_api_key: '',
     hy_mt2_glossary_folder: '',
     hy_mt2_glossary_preset: '',
+    index_translate_optimizer_enabled: false,
+    index_translate_context_window: 3,
+    index_translate_max_context_chars: 1000,
+    index_translate_max_terms: 10,
+    index_translate_style: true,
+    index_translate_style_text: '使用自然、簡潔的台灣繁體中文直播字幕；保留原文語氣，不要補充原文沒有的資訊；只輸出譯文。',
+    index_translate_preferences: '',
+    index_translate_debug: false,
+    index_translate_provider: 'existing',
+    index_translate_lm_studio_url: 'http://127.0.0.1:1234/v1',
+    index_translate_lm_studio_model: '',
+    index_translate_lm_studio_api_key: '',
+    index_translate_llama_cpp_url: 'http://127.0.0.1:8081/v1',
+    index_translate_llama_cpp_model: '',
+    index_translate_llama_cpp_api_key: '',
+    index_translate_glossary_folder: '',
+    index_translate_glossary_preset: '',
+    translation_glossary_scope: null,
     paired_subtitle_mode: true,
     deduplicate_asr_overlap: true,
     subtitle_assembler_enabled: true,
@@ -549,40 +571,52 @@ const translationBackendOptions = computed<UiSelectOption[]>(() => {
   return [...base, ...customOptions];
 });
 
-const hyMt2RecommendedAvailable = computed(() => {
-  const translation = localConfig.value.translation;
-  return translation.hy_mt2_provider !== 'existing' || !['gpt', 'gemini'].includes(translation.backend);
-});
+const activeTranslationFamily = computed(() => resolveTranslationFamily(localConfig.value.translation));
+const familySettings = computed(() => activeTranslationFamily.value === 'index_translate' ? 'index_translate' : 'hy_mt2');
+const familyLabel = computed(() => activeTranslationFamily.value === 'index_translate' ? 'Index-Translate' : 'HY-MT2');
+const previewText = ref('今日はすいちゃんと一緒にゲームをします。');
+const previewContext = ref('');
+const previewBusy = ref(false);
+const previewError = ref('');
+const previewResult = ref<any>(null);
+function previewValidationStatus(result: any): string {
+  const reasons = Array.isArray(result?.validation)
+    ? result.validation.map((issue: any) => issue.code).filter(Boolean).join('、') : '';
+  if (result?.error) return reasons ? `未通過：${reasons}` : '未完成：翻譯請求失敗';
+  if (!String(result?.translation || '').trim()) return reasons ? `未通過：${reasons}` : '未通過：空白譯文';
+  return reasons ? `未通過：${reasons}` : '通過';
+}
+function previewLatencyLabel(value: unknown): string {
+  const milliseconds = Number(value);
+  return Number.isFinite(milliseconds) && milliseconds >= 0 ? `${Math.round(milliseconds)} ms` : '未取得';
+}
+
+async function runTranslationPreview() {
+  previewBusy.value = true;
+  previewError.value = '';
+  previewResult.value = null;
+  try {
+    const response = await axios.post('/api/translation/preview', {
+      text: previewText.value,
+      context: previewContext.value.split('\n').filter(Boolean).map(source => ({source, target: ''})),
+      config: { translation: toRaw(localConfig.value.translation), terminology: toRaw(localConfig.value.terminology), transcription: {language: localConfig.value.transcription.language} },
+    });
+    previewResult.value = response.data;
+  } catch (e: any) {
+    previewError.value = e?.response?.data?.detail || '試譯失敗，請檢查端點與模型 ID。';
+  } finally { previewBusy.value = false; }
+}
 
 const hyMt2EffectiveBackend = computed(() => {
-  const translation = localConfig.value.translation;
-  if (translation.hy_mt2_optimizer_enabled && translation.hy_mt2_provider === 'lm_studio') {
-    return `LM Studio · ${translation.hy_mt2_lm_studio_model || '尚未填模型 ID'}`;
+  const t = localConfig.value.translation;
+  const provider = t[familySettings.value + '_provider'];
+  if (['lm_studio', 'llama_cpp'].includes(provider)) {
+    return `${provider === 'lm_studio' ? 'LM Studio' : 'llama.cpp'} · ${t[familySettings.value + '_' + provider + '_model'] || '尚未填模型 ID'}`;
   }
-  if (translation.hy_mt2_optimizer_enabled && translation.hy_mt2_provider === 'llama_cpp') {
-    return `llama.cpp · ${translation.hy_mt2_llama_cpp_model || '尚未填模型 ID'}`;
-  }
-  const selected = String(translation.backend || 'none');
-  if (selected.startsWith('custom:')) {
-    const name = selected.slice('custom:'.length);
-    const model = (translation.custom_models || []).find((item: any) => item.name === name);
-    return `沿用目前模型 · ${model?.model_name || name}${model?.base_url ? ` · ${model.base_url}` : ''}`;
-  }
-  return `沿用目前後端 · ${selected}`;
+  const selected = String(t.backend || 'none');
+  const custom = (t.custom_models || []).find((m: any) => `custom:${m.name}` === selected);
+  return `目前模型 · ${custom?.model_name || t.gpt_model || selected}`;
 });
-
-function applyHyMt2RecommendedSettings() {
-  if (!hyMt2RecommendedAvailable.value) return;
-  const translation = localConfig.value.translation;
-  translation.hy_mt2_optimizer_enabled = true;
-  translation.translation_model_family = 'hy_mt2';
-  translation.translation_output_format = 'text';
-  translation.target_language = 'Traditional Chinese';
-  translation.use_smart_prompt = true;
-  translation.hy_mt2_context_window = 3;
-  translation.hy_mt2_style = true;
-  localConfig.value.terminology.use_terminology_glossary = true;
-}
 
 // Each config section saves independently so a small UI edit does not traverse,
 // serialize, replace, and re-render the complete configuration tree.
@@ -631,7 +665,7 @@ async function checkHyMt2Backend() {
     if (pendingSave) clearTimeout(pendingSave);
     sectionSaveTimers.delete('translation');
     await saveSectionNow('translation');
-    const response = await axios.post('/api/config/hy-mt2-health');
+    const response = await axios.post('/api/translation/health', {config: {translation: toRaw(localConfig.value.translation), terminology: toRaw(localConfig.value.terminology)}});
     const result = response.data;
     hyMt2HealthResult.value = `已連線 ${result.model}；測試回應「${result.sample}」（${result.latency_ms} ms）`;
   } catch (error: any) {
@@ -661,12 +695,12 @@ async function testConnection(backend: 'gpt' | 'gemini') {
   } else {
     testingGemini.value = true;
   }
-  
+
   try {
     const apiKey = isGpt
       ? localConfig.value.translation.openai_api_key
       : localConfig.value.translation.google_api_key;
-      
+
     const baseUrl = isGpt ? localConfig.value.translation.gpt_base_url : localConfig.value.translation.gemini_base_url;
     const proxy = localConfig.value.translation.processing_proxy || localConfig.value.input.proxy;
 
@@ -681,7 +715,7 @@ async function testConnection(backend: 'gpt' | 'gemini') {
       base_url: baseUrl || null,
       proxy: proxy || null
     });
-    
+
     if (res.data && res.data.success) {
       alert(`✓ ${isGpt ? 'OpenAI' : 'Gemini'} 連線測試成功！`);
     } else {
@@ -728,7 +762,7 @@ const glossaryScopeOptions = computed(() => [...builtinGlossaryScopeOptions, ...
 const newGlossaryScopeName = ref('');
 const editingGlossaryScope = ref('');
 const editingGlossaryScopeName = ref('');
-const selectedGlossaryPreset = computed(() => String(localConfig.value.translation?.hy_mt2_glossary_preset || ''));
+const selectedGlossaryPreset = computed(() => String(localConfig.value.translation?.translation_glossary_scope ?? localConfig.value.translation?.hy_mt2_glossary_preset ?? ''));
 const selectedGlossaryPresetLabel = computed(() => glossaryScopeOptions.value.find(option => option.value === selectedGlossaryPreset.value)?.label || '不加情境詞表');
 const activeUserGlossaryRows = computed<any[]>(() => {
   const rows: any[] = localConfig.value.terminology?.glossary_list || [];
@@ -1473,7 +1507,7 @@ onMounted(async () => {
     await llamaStore.loadConfig();
     await llamaStore.refreshServerStatus();
   })();
-  
+
   // 從 URL 參數設定 tab
   syncActiveTabFromRoute();
 
@@ -1569,7 +1603,7 @@ function addGlossaryScope() {
     localConfig.value.terminology.custom_glossary_scopes = [];
   }
   localConfig.value.terminology.custom_glossary_scopes.push({ value, label });
-  localConfig.value.translation.hy_mt2_glossary_preset = value;
+  localConfig.value.translation.translation_glossary_scope = value;
   newGlossaryScopeName.value = '';
   store.statusMessage = `已建立「${label}」，儲存設定後可在翻譯時使用`;
 }
@@ -1593,7 +1627,7 @@ function removeGlossaryScope(scope: { value: string; label: string }) {
     return;
   }
   localConfig.value.terminology.custom_glossary_scopes = customGlossaryScopes.value.filter(item => item.value !== scope.value);
-  if (selectedGlossaryPreset.value === scope.value) localConfig.value.translation.hy_mt2_glossary_preset = '';
+  if (selectedGlossaryPreset.value === scope.value) localConfig.value.translation.translation_glossary_scope = '';
   if (newTermScope.value === scope.value) newTermScope.value = 'all';
   if (bulkGlossaryScope.value === scope.value) bulkGlossaryScope.value = 'all';
   editingGlossaryScope.value = '';
@@ -2115,7 +2149,7 @@ function saveCustomModel() {
     store.errorMessage = '請填寫模型名稱和 Base URL';
     return;
   }
-  
+
   if (!localConfig.value.translation.custom_models) {
       localConfig.value.translation.custom_models = [];
   }
@@ -2171,7 +2205,7 @@ async function testOpenAiAsrConnection() {
 async function handleFileChange(event: Event) {
   const input = event.target as HTMLInputElement;
   if (!input.files || input.files.length === 0) return;
-  
+
   const file = input.files[0];
   try {
     await store.importConfig(file);
@@ -2181,7 +2215,7 @@ async function handleFileChange(event: Event) {
   } catch (error) {
     console.error('匯入失敗:', error);
   }
-  
+
   // 清空輸入框以允許再次選擇同一檔案
   input.value = '';
 }
@@ -2212,7 +2246,7 @@ async function handleFileChange(event: Event) {
           </div>
         </div>
       </div>
-      
+
       <!-- Import/Export & Reset Buttons -->
       <div class="flex flex-wrap gap-2">
         <button @click="handleImportClick" class="bg-blue-600/85 hover:bg-blue-600 text-white font-semibold py-1.5 px-3 rounded-lg transition text-xs flex items-center gap-1.5 shadow-sm">
@@ -2226,7 +2260,7 @@ async function handleFileChange(event: Event) {
         </button>
       </div>
     </div>
-    
+
     <!-- 隱藏的檔案輸入框 -->
     <input type="file" ref="fileInput" accept=".yaml,.yml" class="hidden" @change="handleFileChange" />
 
@@ -2255,8 +2289,8 @@ async function handleFileChange(event: Event) {
     </div>
     <div v-else class="commercial-panel min-h-[550px] p-6 sm:p-8">
           <!-- General Settings -->
-          <div v-if="activeTab === 'general'" class="settings-paint-section space-y-6">
-            <h2 class="text-xl font-bold text-white mb-4">一般設定</h2>
+          <div v-if="activeTab === 'general'" class="settings-paint-section apple-settings">
+            <header class="apple-page-header"><h2>一般設定</h2><p>管理程式啟動、更新與執行環境。</p></header>
 
             <div class="rounded-xl border border-blue-500/25 bg-blue-500/10 p-5 space-y-4">
               <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -2299,7 +2333,7 @@ async function handleFileChange(event: Event) {
               </details>
               <p class="text-xs text-white/40">只會安裝相同 Profile 的 App Update；套用前會備份 config、術語、ASR 修正與 Cookies，模型、輸出與日誌不會被覆蓋。</p>
             </div>
-            
+
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div v-if="false">
                 <label class="block text-white/70 font-semibold mb-2">OpenAI API Key</label>
@@ -2383,8 +2417,8 @@ async function handleFileChange(event: Event) {
             </div>
           </div>
 
-          <div v-if="activeTab === 'diagnostics'" class="settings-paint-section space-y-6">
-            <h2 class="text-xl font-bold text-white">進階設定／疑難排解</h2>
+          <div v-if="activeTab === 'diagnostics'" class="settings-paint-section apple-settings">
+            <header class="apple-page-header"><h2>進階設定／疑難排解</h2><p>檢查目前環境與診斷資訊。</p></header>
             <div class="rounded-xl border border-white/10 bg-white/5 p-5">
               <h3 class="text-lg font-semibold text-cyan-300">Runtime 診斷報告</h3>
               <p class="mt-2 text-sm leading-6 text-white/60">
@@ -2398,9 +2432,9 @@ async function handleFileChange(event: Event) {
           </div>
 
           <!-- Input Settings -->
-          <div v-if="activeTab === 'input'" class="settings-paint-section space-y-6">
-            <h2 class="text-xl font-bold text-white mb-4">輸入選項</h2>
-            
+          <div v-if="activeTab === 'input'" class="settings-paint-section apple-settings">
+            <header class="apple-page-header"><h2>輸入選項</h2><p>選擇音訊來源與擷取方式。</p></header>
+
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
                 <label class="block text-white/70 font-semibold mb-2">來源類型</label>
@@ -2526,9 +2560,9 @@ async function handleFileChange(event: Event) {
           </div>
 
           <!-- Audio Slicing & VAD Settings -->
-          <div v-if="activeTab === 'audio_vad'" class="settings-paint-section space-y-6">
-            <h2 class="text-xl font-bold text-white mb-4">音訊切片 & VAD 設定</h2>
-            
+          <div v-if="activeTab === 'audio_vad'" class="settings-paint-section apple-settings">
+            <header class="apple-page-header"><h2>音訊切片 & VAD 設定</h2><p>調整語音切片、靜音判斷與辨識節奏。</p></header>
+
             <!-- 音訊切片 -->
             <div class="bg-white/5 rounded-xl p-4 border border-white/10">
               <h3 class="commercial-section-title">音訊切片</h3>
@@ -2590,7 +2624,7 @@ async function handleFileChange(event: Event) {
                   <span class="text-white">啟用 VAD</span>
                 </label>
               </div>
-              
+
               <div v-if="localConfig.audio_slicing_vad.vad_enabled" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 <div>
                   <label class="block text-white/70 text-sm mb-1 font-semibold">切段模式</label>
@@ -2684,9 +2718,9 @@ async function handleFileChange(event: Event) {
           </div>
 
           <!-- Transcription Settings -->
-          <div v-if="activeTab === 'transcription'" class="settings-paint-section space-y-6">
-            <h2 class="text-xl font-bold text-white mb-4">轉錄選項</h2>
-            
+          <div v-if="activeTab === 'transcription'" class="settings-paint-section apple-settings">
+            <header class="apple-page-header"><h2>轉錄選項</h2><p>選擇語音辨識引擎，調整語言與推論設定。</p></header>
+
             <div class="bg-white/5 rounded-xl p-4 border border-white/10">
               <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-4">
                 <div>
@@ -2903,7 +2937,7 @@ async function handleFileChange(event: Event) {
                 </label>
               </div>
             </div>
-            
+
             <!-- 轉錄模型與語言設定 -->
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
@@ -3022,11 +3056,88 @@ async function handleFileChange(event: Event) {
           </div>
 
           <!-- Model Management Settings -->
-          <div v-if="activeTab === 'model_management'" class="settings-paint-section space-y-6">
-            <div
+          <div v-if="activeTab === 'model_management'" class="settings-paint-section apple-settings apple-asr">
+            <header class="apple-page-header"><h2>ASR 模型管理</h2><p>依執行環境挑選語音模型，查看下載狀態與本機檔案。</p></header>
+            <div class="apple-backend-choice" role="group" aria-label="ASR 模型執行環境">
+              <button type="button" :aria-pressed="modelManagementBackend === 'gpu'" @click="modelManagementBackend = 'gpu'" :class="['px-4 py-2 rounded-lg font-semibold transition', modelManagementBackend === 'gpu' ? 'bg-blue-600 text-white' : 'text-white/60 hover:bg-white/10']">GPU 原生模型</button>
+              <button type="button" :aria-pressed="modelManagementBackend === 'cpu'" @click="modelManagementBackend = 'cpu'" :class="['px-4 py-2 rounded-lg font-semibold transition', modelManagementBackend === 'cpu' ? 'bg-cyan-600 text-white' : 'text-white/60 hover:bg-white/10']">Sherpa-ONNX CPU 模型</button>
+            </div>
+
+            <div class="bg-cyan-500/10 rounded-xl p-4 border border-cyan-500/20">
+              <p class="text-cyan-200 text-sm">
+                <template v-if="modelManagementBackend === 'cpu'">此分頁下載 Sherpa-ONNX 專用 INT8 ONNX bundle，不能與同名的 PyTorch／NeMo GPU 模型互換。</template>
+                <template v-else>此分頁管理 GPU 原生模型；模型格式與 Sherpa-ONNX CPU bundle 分開。</template>
+              </p>
+              <p class="text-white/50 text-xs mt-2">
+                <template v-if="modelManagementBackend === 'cpu'">模型儲存在 models\\sherpa-onnx，使用 CPU 離線推論，不需要 CUDA、ROCm 或 PyTorch；只列出目前已支援的 bundle。</template>
+                <template v-else>GPU 使用 Hugging Face／ModelScope cache；GPU 與 CPU 兩種格式可同時存在。</template>
+              </p>
+            </div>
+
+            <div v-if="modelDownloadStore.errorMessage" class="p-3 rounded-lg border border-red-500/40 bg-red-500/20 text-red-200 text-sm">
+              {{ modelDownloadStore.errorMessage }}
+            </div>
+            <div v-if="modelDownloadStore.successMessage" class="p-3 rounded-lg border border-green-500/40 bg-green-500/20 text-green-200 text-sm">
+              {{ modelDownloadStore.successMessage }}
+            </div>
+
+            <AsrModelGroup title="Qwen3-ASR" engine="qwen3-asr" :compute-backend="modelManagementBackend" :models="modelManagementBackend === 'cpu' ? cpuQwenModels : gpuQwenModels" :descriptions="modelManagementBackend === 'cpu' ? cpuQwenDescriptions : {}" />
+            <AsrModelGroup
+              title="SenseVoice 模型"
+              engine="sensevoice"
+              :compute-backend="modelManagementBackend"
+              :models="modelManagementBackend === 'cpu' ? cpuSenseVoiceModels : gpuSenseVoiceModels"
+              :descriptions="modelManagementBackend === 'cpu' ? cpuSenseVoiceDescriptions : {}"
+              :default-description="modelManagementBackend === 'cpu' ? '' : 'GPU 原生模型；ROCm 在 AMD 實機驗證前維持 experimental。'"
+            />
+            <AsrModelGroup
+              title="Fun-ASR Nano 模型"
+              engine="fun-asr-nano"
+              :compute-backend="modelManagementBackend"
+              :models="modelManagementBackend === 'cpu' ? cpuFunAsrModels : gpuFunAsrModels"
+              :descriptions="modelManagementBackend === 'cpu' ? cpuFunAsrDescriptions : {
+                'FunAudioLLM/Fun-ASR-Nano-2512': '中文／英文／日文與中文方言模型',
+                'FunAudioLLM/Fun-ASR-MLT-Nano-2512': '31 種語言模型',
+              }"
+            />
+            <AsrModelGroup
+              title="NVIDIA Parakeet 模型"
+              engine="parakeet-ctc-ja"
+              :compute-backend="modelManagementBackend"
+              :models="modelManagementBackend === 'cpu' ? cpuParakeetModels : gpuParakeetModels"
+              :descriptions="modelManagementBackend === 'cpu' ? cpuParakeetDescriptions : {}"
+              :default-description="modelManagementBackend === 'cpu' ? '' : 'CUDA experimental；官方模型採 CC-BY-4.0，透過 NVIDIA NeMo 執行。'"
+            />
+            <AsrModelGroup v-if="modelManagementBackend === 'gpu'" title="Faster-Whisper" engine="faster-whisper" compute-backend="gpu" :models="gpuFasterWhisperModels" />
+
+            <details class="apple-disclosure"><summary>模型儲存位置<span>路徑與資料夾</span></summary><div class="apple-disclosure-body">
+
+              <label class="block text-white/70 text-sm mb-1">自訂位置（留空使用程式旁的預設位置）</label>
+              <div class="flex flex-col lg:flex-row gap-2">
+                <input
+                  v-model="localConfig.models.storage_path"
+                  type="text"
+                  placeholder="例如 D:\\StreamTranslatorModels"
+                  class="flex-1 px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400"
+                />
+                <button @click="applyModelStoragePath" class="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold transition">
+                  套用路徑
+                </button>
+                <button @click="modelDownloadStore.openStorage()" class="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white font-semibold transition">
+                  開啟資料夾
+                </button>
+              </div>
+              <p class="text-white/50 text-xs mt-2 break-all">
+                目前位置：{{ modelDownloadStore.storageInfo?.storage_path || '讀取中...' }}
+              </p>
+              <p class="text-yellow-200/70 text-xs mt-1">
+                變更位置不會自動搬移既有模型；需要保留時請搬移 huggingface、modelscope 與 sherpa-onnx 子資料夾。
+              </p>
+            </div></details>
+
+            <details class="apple-disclosure"
               v-if="['cuda', 'rocm'].includes(runtimeStatus?.profile || '')"
-              class="bg-white/5 rounded-xl p-5 border border-cyan-500/30"
-            >
+            ><summary>CPU 語音執行環境<span>{{ cpuAsrSidecarBusy ? '安裝中' : cpuAsrSidecarStatus?.healthy ? '已就緒' : cpuAsrSidecarStatus?.installed ? '需要修復' : '尚未安裝' }}</span></summary><div class="apple-disclosure-body">
               <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                 <div>
                   <h3 class="text-lg font-semibold text-cyan-300">CPU ASR Sidecar</h3>
@@ -3078,85 +3189,7 @@ async function handleFileChange(event: Event) {
                   <button @click="importCpuAsrSidecarOffline" :disabled="cpuAsrSidecarBusy || !cpuAsrOfflineArchive.trim()" class="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-40 text-white font-semibold">匯入離線套件</button>
                 </div>
               </div>
-            </div>
-            <h2 class="text-xl font-bold text-white mb-4">ASR 模型管理</h2>
-            <div class="grid grid-cols-2 gap-2 p-1 rounded-xl bg-black/20 border border-white/10">
-              <button @click="modelManagementBackend = 'gpu'" :class="['px-4 py-2 rounded-lg font-semibold transition', modelManagementBackend === 'gpu' ? 'bg-blue-600 text-white' : 'text-white/60 hover:bg-white/10']">GPU 原生模型</button>
-              <button @click="modelManagementBackend = 'cpu'" :class="['px-4 py-2 rounded-lg font-semibold transition', modelManagementBackend === 'cpu' ? 'bg-cyan-600 text-white' : 'text-white/60 hover:bg-white/10']">Sherpa-ONNX CPU 模型</button>
-            </div>
-
-            <div class="bg-cyan-500/10 rounded-xl p-4 border border-cyan-500/20">
-              <p class="text-cyan-200 text-sm">
-                <template v-if="modelManagementBackend === 'cpu'">此分頁下載 Sherpa-ONNX 專用 INT8 ONNX bundle，不能與同名的 PyTorch／NeMo GPU 模型互換。</template>
-                <template v-else>此分頁管理 GPU 原生模型；模型格式與 Sherpa-ONNX CPU bundle 分開。</template>
-              </p>
-              <p class="text-white/50 text-xs mt-2">
-                <template v-if="modelManagementBackend === 'cpu'">模型儲存在 models\\sherpa-onnx，使用 CPU 離線推論，不需要 CUDA、ROCm 或 PyTorch；只列出目前已支援的 bundle。</template>
-                <template v-else>GPU 使用 Hugging Face／ModelScope cache；GPU 與 CPU 兩種格式可同時存在。</template>
-              </p>
-            </div>
-
-            <div class="bg-white/5 rounded-xl p-5 border border-white/10">
-              <h3 class="text-lg font-semibold text-blue-300 mb-3">模型儲存位置</h3>
-              <label class="block text-white/70 text-sm mb-1">自訂位置（留空使用程式旁的預設位置）</label>
-              <div class="flex flex-col lg:flex-row gap-2">
-                <input
-                  v-model="localConfig.models.storage_path"
-                  type="text"
-                  placeholder="例如 D:\\StreamTranslatorModels"
-                  class="flex-1 px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400"
-                />
-                <button @click="applyModelStoragePath" class="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold transition">
-                  套用路徑
-                </button>
-                <button @click="modelDownloadStore.openStorage()" class="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white font-semibold transition">
-                  開啟資料夾
-                </button>
-              </div>
-              <p class="text-white/50 text-xs mt-2 break-all">
-                目前位置：{{ modelDownloadStore.storageInfo?.storage_path || '讀取中...' }}
-              </p>
-              <p class="text-yellow-200/70 text-xs mt-1">
-                變更位置不會自動搬移既有模型；需要保留時請搬移 huggingface、modelscope 與 sherpa-onnx 子資料夾。
-              </p>
-            </div>
-
-            <div v-if="modelDownloadStore.errorMessage" class="p-3 rounded-lg border border-red-500/40 bg-red-500/20 text-red-200 text-sm">
-              {{ modelDownloadStore.errorMessage }}
-            </div>
-            <div v-if="modelDownloadStore.successMessage" class="p-3 rounded-lg border border-green-500/40 bg-green-500/20 text-green-200 text-sm">
-              {{ modelDownloadStore.successMessage }}
-            </div>
-
-            <AsrModelGroup title="Qwen3-ASR" engine="qwen3-asr" :compute-backend="modelManagementBackend" :models="modelManagementBackend === 'cpu' ? cpuQwenModels : gpuQwenModels" :descriptions="modelManagementBackend === 'cpu' ? cpuQwenDescriptions : {}" />
-            <AsrModelGroup
-              title="SenseVoice 模型"
-              engine="sensevoice"
-              :compute-backend="modelManagementBackend"
-              :models="modelManagementBackend === 'cpu' ? cpuSenseVoiceModels : gpuSenseVoiceModels"
-              :descriptions="modelManagementBackend === 'cpu' ? cpuSenseVoiceDescriptions : {}"
-              :default-description="modelManagementBackend === 'cpu' ? '' : 'GPU 原生模型；ROCm 在 AMD 實機驗證前維持 experimental。'"
-            />
-            <AsrModelGroup
-              title="Fun-ASR Nano 模型"
-              engine="fun-asr-nano"
-              :compute-backend="modelManagementBackend"
-              :models="modelManagementBackend === 'cpu' ? cpuFunAsrModels : gpuFunAsrModels"
-              :descriptions="modelManagementBackend === 'cpu' ? cpuFunAsrDescriptions : {
-                'FunAudioLLM/Fun-ASR-Nano-2512': '中文／英文／日文與中文方言模型',
-                'FunAudioLLM/Fun-ASR-MLT-Nano-2512': '31 種語言模型',
-              }"
-            />
-            <AsrModelGroup
-              title="NVIDIA Parakeet 模型"
-              engine="parakeet-ctc-ja"
-              :compute-backend="modelManagementBackend"
-              :models="modelManagementBackend === 'cpu' ? cpuParakeetModels : gpuParakeetModels"
-              :descriptions="modelManagementBackend === 'cpu' ? cpuParakeetDescriptions : {}"
-              :default-description="modelManagementBackend === 'cpu' ? '' : 'CUDA experimental；官方模型採 CC-BY-4.0，透過 NVIDIA NeMo 執行。'"
-            />
-            <AsrModelGroup v-if="modelManagementBackend === 'gpu'" title="Faster-Whisper" engine="faster-whisper" compute-backend="gpu" :models="gpuFasterWhisperModels" />
-
+            </div></details>
             <div v-if="false" class="bg-white/5 rounded-xl p-5 border border-white/10">
               <h3 class="text-lg font-semibold text-blue-300 mb-4">Qwen3-ASR 模型</h3>
               <div class="space-y-3">
@@ -3359,22 +3392,22 @@ async function handleFileChange(event: Event) {
           </div>
 
           <!-- Translation Settings -->
-          <div v-if="activeTab === 'translation'" class="settings-paint-section space-y-6">
-            <h2 class="text-xl font-bold text-white mb-4">翻譯選項</h2>
-            
+          <div v-if="activeTab === 'translation'" class="settings-paint-section apple-settings apple-translation">
+            <header class="apple-page-header"><h2>翻譯選項</h2><p>選擇翻譯服務與語言，再依模型調整詞條、前文與字幕風格。</p></header>
+
             <!-- 基本翻譯設定 -->
             <div class="bg-white/5 rounded-xl p-5 border border-white/10">
               <h3 class="commercial-section-title">基本設定</h3>
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label class="block text-white/70 font-semibold mb-2">翻譯後端</label>
-                  <UiSelect v-model="localConfig.translation.backend" :options="translationBackendOptions" />
+                  <UiSelect aria-label="翻譯後端" v-model="localConfig.translation.backend" :options="translationBackendOptions" />
                   <p class="text-white/40 text-xs mt-1">選擇翻譯服務提供商</p>
                 </div>
 
                 <div>
                   <label class="block text-white/70 font-semibold mb-2">目標語言</label>
-                  <UiSelect v-model="localConfig.translation.target_language" :options="targetLanguageOptions" />
+                  <UiSelect aria-label="目標語言" v-model="localConfig.translation.target_language" :options="targetLanguageOptions" />
                   <p class="text-white/40 text-xs mt-1">翻譯的目標語言</p>
                 </div>
               </div>
@@ -3382,7 +3415,7 @@ async function handleFileChange(event: Event) {
 
             <!-- OpenAI GPT 設定 -->
             <div v-if="localConfig.translation.backend === 'gpt'" class="bg-gradient-to-br from-green-500/10 to-blue-500/10 rounded-xl p-5 border border-green-500/20">
-              <h3 class="text-lg font-semibold text-green-300 mb-4">🤖 OpenAI GPT 設定</h3>
+              <h3 class="text-lg font-semibold text-green-300 mb-4">OpenAI GPT</h3>
               <div class="space-y-4">
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
@@ -3400,25 +3433,25 @@ async function handleFileChange(event: Event) {
                       <button @click="testConnection('gpt')" :disabled="testingGpt" 
                         class="bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/30 font-semibold px-4 rounded-lg transition text-xs whitespace-nowrap flex items-center justify-center gap-1.5 min-w-[95px]">
                         <span v-if="testingGpt" class="inline-block w-3 h-3 border-2 border-blue-300 border-t-transparent rounded-full animate-spin"></span>
-                        <span>⚡ 測試連線</span>
+                        <span>測試連線</span>
                       </button>
                     </div>
                     <p class="text-white/50 text-xs mt-1">僅供 OpenAI GPT 雲端翻譯使用，不會提供給 OpenAI 語音轉錄或 Gemini。</p>
                   </div>
 
-                  <div class="md:col-span-2">
+                  <details class="md:col-span-2 apple-inline-disclosure"><summary>API 端點</summary><div class="apple-disclosure-body">
                     <label class="block text-white/70 font-semibold mb-2">API Base URL</label>
                     <input v-model="localConfig.translation.gpt_base_url" type="text" placeholder="https://api.openai.com/v1"
                       class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-green-400" />
                     <p class="text-white/40 text-xs mt-1">OpenAI 預設端點；使用相容服務時可自行修改。</p>
-                  </div>
+                  </div></details>
                 </div>
               </div>
             </div>
 
             <!-- Google Gemini 設定 -->
             <div v-if="localConfig.translation.backend === 'gemini'" class="bg-gradient-to-br from-blue-500/10 to-indigo-500/10 rounded-xl p-5 border border-blue-500/20">
-              <h3 class="text-lg font-semibold text-blue-300 mb-4">💎 Google Gemini 設定</h3>
+              <h3 class="text-lg font-semibold text-blue-300 mb-4">Google Gemini</h3>
               <div class="space-y-4">
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
@@ -3436,86 +3469,149 @@ async function handleFileChange(event: Event) {
                       <button @click="testConnection('gemini')" :disabled="testingGemini" 
                         class="bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/30 font-semibold px-4 rounded-lg transition text-xs whitespace-nowrap flex items-center justify-center gap-1.5 min-w-[95px]">
                         <span v-if="testingGemini" class="inline-block w-3 h-3 border-2 border-blue-300 border-t-transparent rounded-full animate-spin"></span>
-                        <span>⚡ 測試連線</span>
+                        <span>測試連線</span>
                       </button>
                     </div>
                     <p class="text-white/50 text-xs mt-1">僅供 Google Gemini 雲端翻譯使用，不會用於 ASR 或 OpenAI GPT。</p>
                   </div>
 
-                  <div class="md:col-span-2">
+                  <details class="md:col-span-2 apple-inline-disclosure"><summary>API 端點</summary><div class="apple-disclosure-body">
                     <label class="block text-white/70 font-semibold mb-2">API Base URL（通常不用修改）</label>
                     <input v-model="localConfig.translation.gemini_base_url" type="text" placeholder="https://generativelanguage.googleapis.com/v1beta"
                       class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
                     <p class="text-white/40 text-xs mt-1">Gemini REST API 的版本端點；官方服務通常保留 /v1beta 即可。</p>
-                  </div>
+                  </div></details>
                 </div>
               </div>
             </div>
 
-            <!-- 自訂模型設定 -->
-            <div v-if="localConfig.translation.backend.startsWith('custom:')" class="bg-gradient-to-br from-orange-500/10 to-yellow-500/10 rounded-xl p-5 border border-orange-500/20">
-              <h3 class="commercial-section-title">自訂模型設定</h3>
-              <div class="space-y-3">
-                <div class="p-4 bg-white/5 rounded-lg border border-white/10">
-                  <p class="text-white/60 text-sm">
-                    已選擇自訂模型: <span class="text-orange-300 font-semibold">{{ localConfig.translation.backend.replace('custom:', '') }}</span>
-                  </p>
-                  <p class="text-white/40 text-xs mt-2">
-                    自訂模型的 API 端點和金鑰設定在下方「自訂模型管理」區塊中管理
-                  </p>
-                </div>
+            <section v-if="localConfig.translation.backend.startsWith('custom:')" class="apple-current-service">
+              <div><h3>目前自訂服務</h3><p>{{ localConfig.translation.backend.replace('custom:', '') }}</p></div>
+              <div class="apple-endpoint-copy" v-for="model in (localConfig.translation.custom_models || []).filter((item: any) => item.name === localConfig.translation.backend.replace('custom:', ''))" :key="model.name">
+                <span>{{ model.model_name || '未指定模型 ID' }}</span><span>{{ model.base_url || model.api_base || '預設端點' }}</span>
               </div>
-
-              <!-- 自訂模型管理 (移至自訂模型設定內部) -->
-              <div class="mt-6 pt-6 border-t border-orange-500/20">
-                <div class="flex items-center justify-between mb-4">
-                  <div>
-                    <h4 class="text-base font-semibold text-orange-200">🤖 自訂模型管理</h4>
-                    <p class="text-white/50 text-xs mt-1">管理相容 OpenAI API 的自訂模型端點</p>
-                  </div>
-                  <button @click="openCustomModelDialog()" class="bg-orange-600 hover:bg-orange-700 text-white font-semibold py-2 px-4 rounded-lg transition flex items-center gap-2">
-                    <span>+</span>
-                    <span>新增模型</span>
-                  </button>
+            </section>
+            <!-- 進階翻譯設定 (所有後端共用，但不翻譯時隱藏) -->
+            <div v-if="localConfig.translation.backend !== 'none'" class="bg-white/5 rounded-xl p-5 border border-white/10">
+              <h3 class="text-lg font-semibold text-blue-300 mb-4">模型翻譯策略</h3>
+              <UiSelect aria-label="模型翻譯策略" v-model="localConfig.translation.translation_model_family" :options="translationModelFamilyOptions" />
+              <p class="text-white/40 text-xs mt-2">目前家族：{{ activeTranslationFamily }}。模型名稱不明確時，請手動指定策略。</p>
+              <div v-if="['hy_mt2', 'index_translate'].includes(activeTranslationFamily)" class="mt-4 border-t border-white/10 pt-4">
+              <div class="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <p class="font-semibold text-white">{{ familyLabel }} 策略控制</p>
+                  <p class="mt-1 text-sm text-white/55">讓日文直播字幕參考詞條、前文與台灣繁中風格。</p>
                 </div>
-                
-                <div v-if="localConfig.translation.custom_models && localConfig.translation.custom_models.length > 0" class="space-y-2">
-                  <div v-for="(model, idx) in localConfig.translation.custom_models" :key="idx"
-                    class="flex items-center justify-between p-4 bg-white/5 rounded-lg border border-white/10 hover:border-orange-500/30 transition">
-                    <div class="flex-1">
-                      <div class="flex items-center gap-2">
-                        <span class="text-white font-medium">{{ model.name }}</span>
-                        <span class="px-2 py-0.5 bg-orange-500/20 text-orange-300 text-xs rounded">自訂</span>
-                      </div>
-                      <div class="flex items-center gap-3 mt-1 text-sm text-white/40">
-                        <span>{{ model.model_name }}</span>
-                        <span>•</span>
-                        <span class="truncate max-w-xs">{{ model.api_base || '預設端點' }}</span>
-                      </div>
-                    </div>
-                    <div class="flex gap-2 ml-4">
-                      <button @click="openCustomModelDialog(Number(idx))" class="px-3 py-1.5 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded transition">
-                        編輯
-                      </button>
-                      <button @click="deleteCustomModel(Number(idx))" class="px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded transition">
-                        刪除
-                      </button>
-                    </div>
-                  </div>
+                <label class="flex items-center gap-2 rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm font-semibold text-white cursor-pointer">
+                  <input v-model="localConfig.translation[familySettings + '_optimizer_enabled']" type="checkbox" class="h-4 w-4 accent-blue-500" />
+                  {{ localConfig.translation[familySettings + '_optimizer_enabled'] ? '詞條與前文已啟用' : '啟用詞條與前文' }}
+                </label>
+              </div>
+              <div class="mt-4 flex flex-wrap items-center gap-2">
+                <button type="button" :disabled="hyMt2HealthChecking" class="rounded-lg bg-white/10 px-3 py-2 text-sm text-white hover:bg-white/20 disabled:opacity-50" @click="checkHyMt2Backend">{{ hyMt2HealthChecking ? '連線測試中…' : '測試模型連線' }}</button>
+              </div>
+              <p v-if="hyMt2HealthResult" class="mt-2 text-sm text-white/75" role="status">{{ hyMt2HealthResult }}</p>
+              <div class="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-blue-400/20 bg-blue-400/5 px-3 py-2 text-sm text-white/70">
+                <span>詞條情境：{{ selectedGlossaryPresetLabel }}</span>
+                <UiSelect v-model="localConfig.translation.translation_glossary_scope" :options="[{ value: '', label: '全域詞條' }, ...glossaryScopeOptions]" />
+                <span class="text-white/35">·</span>
+                <span>約 {{ effectiveGlossaryCount }} 個原詞</span>
+                <button type="button" class="text-blue-300 underline" @click="activeTab = 'terminology'">管理詞條</button>
+              </div>
+              <div class="mt-4">
+                <div class="mt-3 space-y-1 text-xs text-white/55">
+                  <p>目前模型：{{ hyMt2EffectiveBackend }}</p>
+                  <p>模型測試只確認連線與回應格式；設定會在重新開始翻譯工作階段後生效。</p>
+                  <p v-if="localConfig.translation[familySettings + '_glossary_folder']">JSON 詞條資料夾未計入上方數量。</p>
                 </div>
-                <div v-else class="text-center py-6 text-white/40">
-                  <div class="text-xs font-bold uppercase tracking-wider text-white/40 mb-2">Empty</div>
-                  <div class="text-sm">尚未新增自訂模型</div>
-                  <div class="text-xs mt-1">點擊上方按鈕新增第一個模型</div>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+                <div class="md:col-span-2">
+                  <label class="block text-white/70 mb-1">推理後端</label>
+                  <UiSelect v-model="localConfig.translation[familySettings + '_provider']" :options="[
+                    { value: 'existing', label: '沿用目前翻譯後端' },
+                    { value: 'lm_studio', label: 'LM Studio' },
+                    { value: 'llama_cpp', label: 'llama.cpp / llama-server' }
+                  ]" />
                 </div>
+                <template v-if="localConfig.translation[familySettings + '_provider'] === 'lm_studio'">
+                  <label class="text-white/70">LM Studio Server URL
+                    <input v-model="localConfig.translation[familySettings + '_lm_studio_url']" type="text" placeholder="http://127.0.0.1:1234/v1" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
+                  </label>
+                  <label class="text-white/70">模型 ID（須與伺服器提供的一致）
+                    <input v-model="localConfig.translation[familySettings + '_lm_studio_model']" type="text" placeholder="實際模型 ID" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
+                  </label>
+                  <label class="text-white/70">此服務 API Key（選填）
+                    <input v-model="localConfig.translation[familySettings + '_lm_studio_api_key']" type="password" autocomplete="off" placeholder="服務要求驗證時填寫" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
+                  </label>
+                </template>
+                <template v-if="localConfig.translation[familySettings + '_provider'] === 'llama_cpp'">
+                  <label class="text-white/70">llama-server URL
+                    <input v-model="localConfig.translation[familySettings + '_llama_cpp_url']" type="text" placeholder="http://127.0.0.1:8081/v1" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
+                  </label>
+                  <label class="text-white/70">模型 ID（須與伺服器提供的一致）
+                    <input v-model="localConfig.translation[familySettings + '_llama_cpp_model']" type="text" placeholder="實際模型 ID" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
+                  </label>
+                  <label class="text-white/70">此服務 API Key（選填）
+                    <input v-model="localConfig.translation[familySettings + '_llama_cpp_api_key']" type="password" autocomplete="off" placeholder="服務要求驗證時填寫" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
+                  </label>
+                </template>
+              </div>
+              </div>
+              <details class="mt-4 rounded-lg border border-white/10 p-3">
+                <summary class="cursor-pointer text-sm text-blue-200">詞條、前文與風格設定</summary>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+                <label class="text-white/70 md:col-span-2">JSON 術語資料夾（選填；相對於設定檔）
+                  <input v-model="localConfig.translation[familySettings + '_glossary_folder']" type="text" placeholder="例如：data/glossary" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
+                </label>
+                <label class="text-white/70">前文句數（0–5）
+                  <input v-model.number="localConfig.translation[familySettings + '_context_window']" type="number" min="0" max="5" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
+                </label>
+                <label class="text-white/70">前文字數上限
+                  <input v-model.number="localConfig.translation[familySettings + '_max_context_chars']" type="number" min="0" max="4000" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
+                </label>
+                <label class="text-white/70">最多術語數
+                  <input v-model.number="localConfig.translation[familySettings + '_max_terms']" type="number" min="0" max="30" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
+                </label>
+                <label class="flex items-center gap-2 text-white/70"><input v-model="localConfig.translation[familySettings + '_style']" type="checkbox" />台灣口語字幕風格</label>
+                <label v-if="localConfig.translation[familySettings + '_style']" class="text-white/70 md:col-span-2">字幕風格指示（最多 500 字）
+                  <textarea v-model="localConfig.translation[familySettings + '_style_text']" maxlength="500" rows="2" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
+                </label>
+                <label class="text-white/70 md:col-span-2">個人翻譯偏好（最多 500 字）
+                  <textarea v-model="localConfig.translation[familySettings + '_preferences']" maxlength="500" rows="2" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" placeholder="例如：人名沿用術語表，不任意補主詞" />
+                </label>
+                <label class="flex items-center gap-2 text-white/70"><input v-model="localConfig.translation[familySettings + '_debug']" type="checkbox" />記錄提示詞與輸出（包含字幕內容）</label>
+              </div>
+              </details>
+              <details class="mt-4 border-t border-white/10 pt-4 space-y-3">
+                <summary class="cursor-pointer font-semibold text-blue-200">試譯與策略比較</summary>
+                <textarea v-model="previewText" maxlength="4000" rows="3" aria-label="試譯日文" placeholder="輸入目前要翻譯的日文" class="w-full rounded-lg border border-white/20 bg-white/5 p-3 text-white" />
+                <textarea v-model="previewContext" maxlength="4000" rows="2" aria-label="試譯前文" placeholder="前文（選填；每行一句，最多 5 句）" class="w-full rounded-lg border border-white/20 bg-white/5 p-3 text-white" />
+                <button type="button" :disabled="previewBusy || !previewText.trim()" class="rounded-lg bg-blue-500/25 px-3 py-2 text-blue-100 disabled:opacity-50" @click="runTranslationPreview">{{ previewBusy ? '正在比較…' : '比較基本與優化' }}</button>
+                <p v-if="previewError" role="alert" class="text-red-300">{{ previewError }}</p>
+                <div v-if="previewResult" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <article v-for="mode in ['basic', 'optimized']" :key="mode" class="rounded-lg border border-white/15 p-3 space-y-2">
+                    <h5 class="text-blue-200">{{ mode === 'basic' ? (activeTranslationFamily === 'hy_mt2' ? '基本翻譯（沿用詞庫）' : '基本翻譯') : '優化翻譯' }}</h5>
+                    <p class="text-white whitespace-pre-wrap">{{ previewResult[mode].translation || '未取得可用譯文' }}</p>
+                    <p v-if="previewResult[mode].error" role="alert" class="text-sm text-red-300">{{ previewResult[mode].error }}</p>
+                    <p class="text-xs text-white/60">耗時 {{ previewLatencyLabel(previewResult[mode].latency_ms) }} · 修正 {{ previewResult[mode].retry_count }} 次</p>
+                    <p class="text-xs text-white/60">命中詞：{{ JSON.stringify(previewResult[mode].glossary_hits) }}</p>
+                    <p class="text-xs text-white/60">驗證：{{ previewValidationStatus(previewResult[mode]) }}</p>
+                    <p class="text-xs text-white/45">{{ previewResult[mode].validation_enforced ? '異常輸出會拒絕並有界修正' : '基本結果僅顯示驗證診斷' }}</p>
+                    <details v-if="previewResult[mode].attempts?.length" class="text-xs text-white/60">
+                      <summary class="cursor-pointer">檢視原始試譯與修正記錄</summary>
+                      <pre class="mt-2 whitespace-pre-wrap break-all">{{ JSON.stringify(previewResult[mode].attempts, null, 2) }}</pre>
+                    </details>
+                  </article>
+                </div>
+                <p class="text-xs text-white/45">試譯使用目前設定與直播相同策略；結果不代表日文譯意已人工驗證。</p>
+              </details>
               </div>
             </div>
-
-            <!-- 自訂模型管理（固定顯示，避免切換後端時找不到） -->
-            <div v-if="!localConfig.translation.backend.startsWith('custom:')" class="bg-gradient-to-br from-orange-500/10 to-yellow-500/10 rounded-xl p-5 border border-orange-500/20">
+                        <!-- 自訂模型管理（固定顯示，避免切換後端時找不到） -->
+            <details class="apple-disclosure"><summary>自訂模型管理<span>{{ localConfig.translation.custom_models?.length || 0 }} 個服務</span></summary><div class="apple-disclosure-body">
               <div class="flex items-center justify-between mb-4">
                 <div>
-                  <h3 class="text-lg font-semibold text-orange-300">🤖 自訂模型管理</h3>
+                  <h3 class="text-lg font-semibold text-orange-300">自訂模型管理</h3>
                   <p class="text-white/50 text-xs mt-1">管理相容 OpenAI API 的自訂模型端點</p>
                 </div>
                 <button @click="openCustomModelDialog()" class="bg-orange-600 hover:bg-orange-700 text-white font-semibold py-2 px-4 rounded-lg transition flex items-center gap-2">
@@ -3549,105 +3645,22 @@ async function handleFileChange(event: Event) {
                 </div>
               </div>
               <div v-else class="text-center py-6 text-white/40">
-                <div class="text-xs font-bold uppercase tracking-wider text-white/40 mb-2">Empty</div>
+
                 <div class="text-sm">尚未新增自訂模型</div>
                 <div class="text-xs mt-1">點擊上方按鈕新增第一個模型</div>
               </div>
-            </div>
+            </div></details>
 
-            <!-- 進階翻譯設定 (所有後端共用，但不翻譯時隱藏) -->
-            <div v-if="localConfig.translation.backend !== 'none'" class="bg-white/5 rounded-xl p-5 border border-white/10">
-              <div class="flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <h3 class="text-lg font-semibold text-blue-300">HY-MT2 即時字幕優化</h3>
-                  <p class="mt-1 text-sm text-white/55">讓日文直播字幕參考詞條、前文與台灣繁中風格。</p>
-                </div>
-                <label class="flex items-center gap-2 rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm font-semibold text-white cursor-pointer">
-                  <input v-model="localConfig.translation.hy_mt2_optimizer_enabled" type="checkbox" class="h-4 w-4 accent-blue-500" />
-                  {{ localConfig.translation.hy_mt2_optimizer_enabled ? '已啟用' : '啟用優化' }}
-                </label>
-              </div>
-              <div class="mt-4 flex flex-wrap items-center gap-2">
-                <button type="button" :disabled="!hyMt2RecommendedAvailable" class="rounded-lg bg-blue-500/25 px-3 py-2 text-sm font-semibold text-blue-100 hover:bg-blue-500/35 disabled:opacity-40" @click="applyHyMt2RecommendedSettings">套用推薦設定</button>
-                <button type="button" :disabled="hyMt2HealthChecking" class="rounded-lg bg-white/10 px-3 py-2 text-sm text-white hover:bg-white/20 disabled:opacity-50" @click="checkHyMt2Backend">{{ hyMt2HealthChecking ? '連線測試中…' : '測試模型連線' }}</button>
-              </div>
-              <p v-if="!hyMt2RecommendedAvailable" class="mt-2 text-sm text-amber-200">請先選擇 HY-MT2 模型，或在進階設定中指定推理後端。</p>
-              <p v-if="hyMt2HealthResult" class="mt-2 text-sm text-white/75" role="status">{{ hyMt2HealthResult }}</p>
-              <div class="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-blue-400/20 bg-blue-400/5 px-3 py-2 text-sm text-white/70">
-                <span>詞條情境：{{ selectedGlossaryPresetLabel }}</span>
-                <span class="text-white/35">·</span>
-                <span>約 {{ effectiveGlossaryCount }} 個原詞</span>
-                <button type="button" class="text-blue-300 underline" @click="activeTab = 'terminology'">管理詞條</button>
-              </div>
-              <details class="mt-4 rounded-lg border border-white/10 p-3">
-                <summary class="cursor-pointer text-sm text-blue-200">進階設定與模型資訊</summary>
-                <div class="mt-3 space-y-1 text-xs text-white/55">
-                  <p>目前模型：{{ hyMt2EffectiveBackend }}</p>
-                  <p>推薦設定會使用台灣繁中、3 句前文與現有詞條，並保留目前選擇的模型。</p>
-                  <p>模型測試只確認連線與回應格式；設定會在重新開始翻譯工作階段後生效。</p>
-                  <p v-if="localConfig.translation.hy_mt2_glossary_folder">JSON 詞條資料夾未計入上方數量。</p>
-                </div>
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
-                <div class="md:col-span-2">
-                  <label class="block text-white/70 mb-1">推理後端</label>
-                  <UiSelect v-model="localConfig.translation.hy_mt2_provider" :options="[
-                    { value: 'existing', label: '沿用目前翻譯後端' },
-                    { value: 'lm_studio', label: 'LM Studio' },
-                    { value: 'llama_cpp', label: 'llama.cpp / llama-server' }
-                  ]" />
-                </div>
-                <template v-if="localConfig.translation.hy_mt2_provider === 'lm_studio'">
-                  <label class="text-white/70">LM Studio Server URL
-                    <input v-model="localConfig.translation.hy_mt2_lm_studio_url" type="text" placeholder="http://127.0.0.1:1234/v1" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
-                  </label>
-                  <label class="text-white/70">模型 ID（須與伺服器提供的一致）
-                    <input v-model="localConfig.translation.hy_mt2_lm_studio_model" type="text" placeholder="實際模型 ID" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
-                  </label>
-                </template>
-                <template v-if="localConfig.translation.hy_mt2_provider === 'llama_cpp'">
-                  <label class="text-white/70">llama-server URL
-                    <input v-model="localConfig.translation.hy_mt2_llama_cpp_url" type="text" placeholder="http://127.0.0.1:8081/v1" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
-                  </label>
-                  <label class="text-white/70">模型 ID（須與伺服器提供的一致）
-                    <input v-model="localConfig.translation.hy_mt2_llama_cpp_model" type="text" placeholder="實際模型 ID" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
-                  </label>
-                </template>
-                <label class="text-white/70 md:col-span-2">JSON 術語資料夾（選填；相對於設定檔）
-                  <input v-model="localConfig.translation.hy_mt2_glossary_folder" type="text" placeholder="例如：data/glossary" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
-                </label>
-                <label class="text-white/70">前文句數（0–5）
-                  <input v-model.number="localConfig.translation.hy_mt2_context_window" type="number" min="0" max="5" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
-                </label>
-                <label class="text-white/70">前文字數上限
-                  <input v-model.number="localConfig.translation.hy_mt2_max_context_chars" type="number" min="0" max="4000" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
-                </label>
-                <label class="text-white/70">最多術語數
-                  <input v-model.number="localConfig.translation.hy_mt2_max_terms" type="number" min="0" max="30" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
-                </label>
-                <label class="flex items-center gap-2 text-white/70"><input v-model="localConfig.translation.hy_mt2_style" type="checkbox" />台灣口語字幕風格</label>
-                <label v-if="localConfig.translation.hy_mt2_style" class="text-white/70 md:col-span-2">字幕風格指示（最多 500 字）
-                  <textarea v-model="localConfig.translation.hy_mt2_style_text" maxlength="500" rows="2" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
-                </label>
-                <label class="text-white/70 md:col-span-2">個人翻譯偏好（最多 500 字）
-                  <textarea v-model="localConfig.translation.hy_mt2_preferences" maxlength="500" rows="2" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" placeholder="例如：人名沿用術語表，不任意補主詞" />
-                </label>
-                <label class="flex items-center gap-2 text-white/70"><input v-model="localConfig.translation.hy_mt2_debug" type="checkbox" />記錄提示詞與輸出（包含字幕內容）</label>
-              </div>
-              </details>
-            </div>
-            <div v-if="localConfig.translation.backend !== 'none'" class="bg-white/5 rounded-xl p-5 border border-white/10">
-              <h3 class="text-lg font-semibold text-blue-300 mb-4">🔧 進階設定</h3>
+
+            <details v-if="localConfig.translation.backend !== 'none'" class="apple-disclosure">
+              <summary>字幕處理與進階設定</summary><div class="apple-disclosure-body">
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label class="block text-white/70 font-semibold mb-2">模型翻譯策略</label>
-                  <UiSelect v-model="localConfig.translation.translation_model_family" :options="translationModelFamilyOptions" />
-                  <p class="text-white/40 text-xs mt-1">本地模型名稱不明確時，請手動指定策略。</p>
-                </div>
+
 
                 <div>
                   <label class="block text-white/70 font-semibold mb-2">輸出格式</label>
                   <UiSelect v-model="localConfig.translation.translation_output_format" :options="translationOutputFormatOptions" />
-                  <p class="text-white/40 text-xs mt-1">Hy-MT2 固定使用純文字；支援的 API 才會使用 JSON。</p>
+                  <p class="text-white/40 text-xs mt-1">HY-MT2 與 Index-Translate 使用純文字；支援的 API 才會使用 JSON。</p>
                 </div>
 
                 <div>
@@ -3761,11 +3774,11 @@ async function handleFileChange(event: Event) {
                 </div>
 
               </div>
-            </div>
+            </div></details>
 
             <!-- 翻譯提示詞設定 (所有後端共用，但不翻譯時隱藏) -->
-            <div v-if="localConfig.translation.backend !== 'none'" class="bg-white/5 rounded-xl p-5 border border-white/10">
-              <h3 class="text-lg font-semibold text-blue-300 mb-4">💬 提示詞設定</h3>
+            <details v-if="localConfig.translation.backend !== 'none'" class="apple-disclosure">
+              <summary>提示詞設定</summary><div class="apple-disclosure-body">
               <div class="space-y-4">
                 <label class="flex items-center gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer hover:bg-white/10 transition">
                   <input v-model="localConfig.translation.use_smart_prompt" type="checkbox" class="w-5 h-5 accent-blue-500" />
@@ -3783,22 +3796,17 @@ async function handleFileChange(event: Event) {
                   <p class="text-white/40 text-sm mt-2">關閉智能提示詞時，將使用此提示詞進行翻譯。</p>
                 </div>
               </div>
-            </div>
+            </div></details>
           </div>
 
           <!-- Llama Settings -->
-          <div v-if="activeTab === 'llama'" class="settings-paint-section space-y-6">
-            <h2 class="mb-4 text-xl font-bold text-white">Llama 設定</h2>
-            <div class="bg-gradient-to-br from-yellow-500/10 to-orange-500/10 rounded-xl p-5 border border-yellow-500/20 mb-4">
-              <p class="text-yellow-200 mb-2">使用本地 llama.cpp 進行翻譯</p>
-              <p class="text-white/60 text-sm">無需網路連線，支援 GPU 加速，保護資料隱私</p>
-            </div>
+          <div v-if="activeTab === 'llama'" class="settings-paint-section">
             <LlamaSettings />
           </div>
 
           <!-- Terminology Settings -->
-          <div v-if="activeTab === 'terminology'" class="settings-paint-section space-y-6">
-            <h2 class="text-xl font-bold text-white mb-4">術語表</h2>
+          <div v-if="activeTab === 'terminology'" class="settings-paint-section apple-settings">
+            <header class="apple-page-header"><h2>術語表</h2><p>管理辨識修正、翻譯詞條與使用情境。</p></header>
             <div class="grid grid-cols-2 gap-2 rounded-xl border border-white/10 bg-black/20 p-1" role="tablist" aria-label="術語設定種類">
               <button type="button" role="tab" :aria-selected="terminologySubTab === 'translation'" :class="terminologySubTab === 'translation' ? 'bg-purple-500/25 text-purple-100' : 'text-white/60 hover:bg-white/5'" class="rounded-lg px-4 py-3 font-semibold" @click="terminologySubTab = 'translation'">翻譯詞條</button>
               <button type="button" role="tab" :aria-selected="terminologySubTab === 'asr'" :class="terminologySubTab === 'asr' ? 'bg-cyan-500/25 text-cyan-100' : 'text-white/60 hover:bg-white/5'" class="rounded-lg px-4 py-3 font-semibold" @click="terminologySubTab = 'asr'">ASR 辨識修正</button>
@@ -3809,7 +3817,7 @@ async function handleFileChange(event: Event) {
                 <h3 class="text-lg font-semibold text-blue-200">這次要看的內容</h3>
                 <p class="mt-1 text-sm text-white/60">切換情境後，下面會顯示這次生效的個人詞條與內建詞條。選擇不會改動已存的詞條；重新開始翻譯工作階段後生效。</p>
               </div>
-              <UiSelect v-model="localConfig.translation.hy_mt2_glossary_preset" aria-label="這次觀看的情境" :options="[
+              <UiSelect v-model="localConfig.translation.translation_glossary_scope" aria-label="這次觀看的情境" :options="[
                 { value: '', label: '不加情境詞表（只用我的全域詞條）' },
                 ...glossaryScopeOptions.filter(option => option.value !== 'all')
               ]" />
@@ -3835,7 +3843,7 @@ async function handleFileChange(event: Event) {
                 </div>
                 </div>
               </details>
-              <p class="text-sm text-white/70">{{ localConfig.translation.hy_mt2_optimizer_enabled ? '下次翻譯會使用' : '啟用 HY-MT2 優化後可使用' }}約 {{ effectiveGlossaryCount }} 個原詞：我的詞條 {{ userGlossaryBySource.size }} 個、內建 {{ selectedPresetPreview.length }} 個；同名時以我的譯法為準。</p>
+              <p class="text-sm text-white/70">{{ localConfig.translation[familySettings + '_optimizer_enabled'] ? '下次翻譯會使用' : '啟用家族優化後可使用' }}約 {{ effectiveGlossaryCount }} 個原詞：我的詞條 {{ userGlossaryBySource.size }} 個、內建 {{ selectedPresetPreview.length }} 個；同名時以我的譯法為準。</p>
               <p v-if="localConfig.translation.hy_mt2_glossary_folder" class="text-xs text-white/45">JSON 資料夾的詞條仍會加入翻譯，但不包含在此處的預覽與數量中。</p>
               <details v-if="selectedPresetPreview.length" class="rounded-lg border border-white/10 bg-black/15 p-3">
                 <summary class="cursor-pointer text-sm font-semibold text-white/80">查看內建詞條（{{ selectedPresetPreview.length }} 筆）</summary>
@@ -3929,7 +3937,7 @@ async function handleFileChange(event: Event) {
 
             <div v-if="terminologySubTab === 'translation'" class="space-y-5">
             <h3 class="text-lg font-semibold text-purple-300 pt-4">翻譯術語表</h3>
-            
+
             <!-- 啟用術語表開關 -->
             <div class="bg-gradient-to-br from-purple-500/10 to-blue-500/10 rounded-xl p-5 border border-purple-500/20 mb-6">
               <div class="flex items-center justify-between">
@@ -3950,7 +3958,7 @@ async function handleFileChange(event: Event) {
               </label>
               <p v-if="Object.keys(localConfig.terminology?.terminology_glossary || {}).length" class="mt-3 text-xs text-amber-200">設定檔仍含舊版術語字典；它目前優先於下方個人詞條列表。若修改列表後沒有生效，請先匯出備份並整理舊版字典。</p>
             </div>
-            
+
             <!-- 新增術語 -->
             <div ref="glossaryEntryForm" class="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
               <h4 class="font-semibold text-white/85">新增個人詞條</h4>
@@ -4058,9 +4066,9 @@ async function handleFileChange(event: Event) {
           </div>
 
           <!-- Output & Notification Settings -->
-          <div v-if="activeTab === 'output'" class="settings-paint-section space-y-6">
-            <h2 class="text-xl font-bold text-white mb-4">輸出選項</h2>
-            
+          <div v-if="activeTab === 'output'" class="settings-paint-section apple-settings">
+            <header class="apple-page-header"><h2>輸出選項</h2><p>設定字幕輸出、分享與通知。</p></header>
+
             <div class="bg-white/5 rounded-xl p-4 border border-white/10 mb-6">
               <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
@@ -4118,7 +4126,7 @@ async function handleFileChange(event: Event) {
 
             <!-- 通知設定 -->
             <h3 class="text-lg font-bold text-white mb-4">🔔 通知推播</h3>
-            
+
             <!-- Discord -->
             <div class="bg-white/5 rounded-xl p-4 border border-white/10 mb-4">
               <div class="flex items-center justify-between mb-4">
@@ -4174,7 +4182,7 @@ async function handleFileChange(event: Event) {
     <div v-if="showCustomModelDialog" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
       <div class="bg-gray-900 rounded-2xl border border-white/20 shadow-2xl p-6 w-full max-w-md mx-4" role="dialog" aria-modal="true" aria-labelledby="custom-model-dialog-title">
         <h3 id="custom-model-dialog-title" class="text-xl font-bold text-white mb-4">{{ editingModelIndex >= 0 ? '編輯' : '新增' }}自訂模型</h3>
-        
+
         <div class="space-y-4">
           <div>
             <label class="block text-white/70 text-sm mb-1">模型名稱 *</label>
@@ -4212,6 +4220,107 @@ async function handleFileChange(event: Event) {
 </template>
 
 <style scoped>
+.apple-settings {
+  --apple-surface: var(--fw-surface);
+  --apple-border: var(--fw-border);
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  min-width: 0;
+  color: var(--fw-text);
+}
+.apple-page-header { padding: .5rem 0 .75rem; }
+.apple-page-header h2 { font-size: 1.75rem; font-weight: 650; letter-spacing: -.025em; line-height: 1.25; }
+.apple-page-header p { margin-top: .6rem; color: var(--fw-text-secondary); font-size: .875rem; line-height: 1.6; }
+.apple-settings > div:not(.apple-backend-choice),
+.apple-settings > section,
+.apple-disclosure {
+  background: var(--apple-surface);
+  background-image: none;
+  border: 1px solid var(--apple-border);
+  border-radius: 1rem;
+  padding: 1.4rem;
+}
+.apple-settings h3, .apple-settings h4, .apple-settings .commercial-section-title {
+  color: var(--fw-text);
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: -.01em;
+}
+.apple-settings h3 { margin-bottom: 1rem; }
+.apple-settings :deep(button),
+.apple-settings input:not([type="checkbox"]),
+.apple-settings summary { min-height: 44px; }
+.apple-settings :deep(button) { border-radius: .65rem; transition: background-color 120ms ease, border-color 120ms ease; touch-action: manipulation; }
+.apple-settings :deep(button:active:not(:disabled)) { filter: brightness(1.15); }
+.apple-settings :deep(button:focus-visible),
+.apple-settings input:focus-visible,
+.apple-settings textarea:focus-visible,
+.apple-settings summary:focus-visible {
+  outline: 2px solid var(--fw-primary);
+  outline-offset: 3px;
+}
+.apple-settings input:not([type="checkbox"]), .apple-settings textarea {
+  min-width: 0;
+  border-color: rgba(255,255,255,.15);
+  background: var(--fw-surface-subtle);
+  border-radius: .65rem;
+  font-size: .875rem;
+}
+.apple-settings input[type="checkbox"] { accent-color: var(--fw-primary); flex-shrink: 0; }
+.apple-settings :deep(.text-white\/40), .apple-settings :deep(.text-white\/50) { color: var(--fw-text-secondary); }
+.apple-settings :deep(.text-white\/70) { color: var(--fw-text-secondary); }
+.apple-settings :deep(.text-orange-300), .apple-settings :deep(.text-orange-200),
+.apple-settings :deep(.text-green-300), .apple-settings :deep(.text-cyan-200) { color: var(--fw-text-secondary); }
+.apple-settings :deep(.bg-orange-600), .apple-settings :deep(.bg-cyan-600) { background-color: var(--fw-primary); }
+.apple-disclosure { padding: 0; }
+.apple-disclosure > summary, .apple-inline-disclosure > summary {
+  cursor: pointer;
+  padding: .85rem 1.4rem;
+  color: var(--fw-text);
+  font-size: .9rem;
+  font-weight: 600;
+  line-height: 1.6;
+}
+.apple-disclosure > summary span { float: right; padding-left: 1rem; color: var(--fw-text-secondary); font-size: .8rem; font-weight: 400; }
+.apple-disclosure[open] > summary { border-bottom: 1px solid var(--apple-border); }
+.apple-disclosure-body { padding: 1.25rem 1.4rem; }
+.apple-inline-disclosure { border: 1px solid var(--apple-border); border-radius: .7rem; }
+.apple-inline-disclosure > summary { padding: .5rem .8rem; }
+.apple-inline-disclosure .apple-disclosure-body { padding: .5rem .8rem 1rem; }
+.apple-current-service { display: flex; gap: 1rem; justify-content: space-between; align-items: center; }
+.apple-current-service h3 { margin-bottom: .4rem; }
+.apple-current-service p { color: var(--fw-text-secondary); font-size: .875rem; }
+.apple-endpoint-copy { display: flex; flex-direction: column; text-align: right; font-size: .8rem; line-height: 1.7; color: var(--fw-text-secondary); overflow-wrap: anywhere; min-width: 0; }
+.apple-backend-choice { display: grid; grid-template-columns: 1fr 1fr; gap: .35rem; padding: .35rem; background: var(--fw-surface-subtle); border: 1px solid var(--apple-border); border-radius: .85rem; }
+.apple-backend-choice button { font-size: .875rem; }
+.apple-backend-choice button[aria-pressed="true"] { background: var(--fw-primary-soft); box-shadow: 0 1px 3px #0004; }
+.apple-asr > .bg-cyan-500\/10 { padding: .9rem 1.25rem; }
+.apple-translation > div > .commercial-section-title { margin-bottom: 1rem; }
+.apple-translation :deep(.flex-1) { min-width: 0; }
+@media (max-width: 720px) {
+  .apple-settings > div:not(.apple-backend-choice), .apple-settings > section { padding: 1rem; }
+  .apple-page-header h2 { font-size: 1.5rem; }
+  .apple-current-service { align-items: flex-start; flex-direction: column; }
+  .apple-endpoint-copy { text-align: left; }
+  .apple-disclosure > summary { padding: .8rem 1rem; }
+  .apple-disclosure > summary span { float: none; display: block; padding-left: 1rem; }
+  .apple-disclosure-body { padding: 1rem; }
+  .apple-disclosure-body .flex.items-center.justify-between { flex-wrap: wrap; gap: .75rem; }
+  .apple-disclosure-body .flex.items-center.justify-between > .flex-1 { flex-basis: 100%; }
+  .apple-disclosure-body .flex.items-center.justify-between > .flex.gap-2 { margin-left: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .apple-settings :deep(*), .apple-settings :deep(*::before), .apple-settings :deep(*::after) { transition: none !important; animation: none !important; }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .apple-settings > div:not(.apple-backend-choice), .apple-settings > section, .apple-disclosure { background: var(--fw-surface); }
+}
+@media (prefers-contrast: more) {
+  .apple-settings { --apple-border: #8696ad; }
+  .apple-settings :deep(.text-white\/40), .apple-settings :deep(.text-white\/50) { color: #c4cfde; }
+}
 .settings-paint-section {
   contain: layout style;
 }

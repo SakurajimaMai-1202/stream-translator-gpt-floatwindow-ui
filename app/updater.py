@@ -9,13 +9,15 @@ import shutil
 import subprocess
 import sys
 import time
+import tempfile
 from pathlib import Path
+from manual_update import prepare_package
 
 import yaml
 from update_runtime_contract import validate_update_runtime
 from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtGui import QIcon
-from PyQt6.QtWidgets import QApplication, QDialog, QHBoxLayout, QLabel, QMessageBox, QProgressBar, QPushButton, QTextEdit, QVBoxLayout
+from PyQt6.QtWidgets import QApplication, QDialog, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton, QTextEdit, QVBoxLayout
 
 ALLOWED = {
     "app-update-build.json", "StreamTranslatorUpdater.exe",
@@ -308,12 +310,70 @@ class Worker(QThread):
             self.failed.emit(str(exc))
 
 
+class PrepareWorker(QThread):
+    progress = pyqtSignal(int, str)
+    ready = pyqtSignal(str)
+    failed = pyqtSignal(str)
+
+    def __init__(self, package, installation):
+        super().__init__()
+        self.package, self.installation = Path(package), Path(installation)
+
+    def run(self):
+        plan = None
+        try:
+            plan = prepare_package(self.package, self.installation, ALLOWED, self.progress.emit)
+            Worker.validate_plan(plan)
+            self.ready.emit(str(plan))
+        except Exception as exc:
+            if plan is not None:
+                work = plan.parent.resolve()
+                expected = (self.installation.resolve() / ".app-update").resolve()
+                if work.parent == expected and work.name.startswith("manual-"):
+                    shutil.rmtree(work)
+            self.failed.emit(str(exc))
+
+
+def installation_processes(root: Path) -> list[int]:
+    """Query process image paths without terminating any process."""
+    if os.name != "nt":
+        return []
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    psapi = ctypes.WinDLL("psapi", use_last_error=True)
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
+    ids = (wintypes.DWORD * 65536)()
+    needed = wintypes.DWORD()
+    if not psapi.EnumProcesses(ids, ctypes.sizeof(ids), ctypes.byref(needed)):
+        raise RuntimeError("無法確認主程式是否已關閉")
+    found = []
+    for pid in ids[:needed.value // ctypes.sizeof(wintypes.DWORD)]:
+        if pid == os.getpid():
+            continue
+        handle = kernel.OpenProcess(0x1000, False, pid)
+        if not handle:
+            continue
+        try:
+            size = wintypes.DWORD(32768)
+            buffer = ctypes.create_unicode_buffer(size.value)
+            if kernel.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)):
+                if root.resolve() in Path(buffer.value).resolve().parents:
+                    found.append(pid)
+        finally:
+            kernel.CloseHandle(handle)
+    return found
+
+
 class Window(QDialog):
-    def __init__(self, plan=None, preview=False):
+    def __init__(self, plan=None, preview=False, package="", installation=""):
         super().__init__()
         self.setWindowTitle("Stream Translator 更新器")
         self.setMinimumSize(560, 390)
         self.setStyleSheet("QDialog{background:#0b1220;color:#e5e7eb} QLabel#title{font-size:22px;font-weight:700;color:#67e8f9} QLabel#status{font-size:14px;color:#cbd5e1} QProgressBar{height:14px;border:1px solid #334155;border-radius:7px;background:#111827;text-align:center} QProgressBar::chunk{border-radius:6px;background:#0891b2} QTextEdit{background:#070d18;border:1px solid #263449;border-radius:8px;color:#94a3b8;padding:8px} QPushButton{background:#155e75;color:white;border:0;border-radius:7px;padding:9px 18px;font-weight:600} QPushButton:disabled{background:#334155;color:#94a3b8}")
+        self.setStyleSheet(self.styleSheet() + " QLabel{color:#cbd5e1} QLineEdit{background:#111827;color:#e5e7eb;border:1px solid #334155;border-radius:6px;padding:8px} QProgressBar{color:#e5e7eb}")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 26, 28, 24)
         layout.setSpacing(14)
@@ -321,6 +381,26 @@ class Window(QDialog):
         title.setObjectName("title")
         layout.addWidget(title)
         layout.addWidget(QLabel("更新前會備份設定；啟動失敗時會自動回復上一版本。"))
+        self.manual = not plan and not preview
+        self.plan = None
+        self.worker = None
+        self.preparer = None
+        self.manual_controls = []
+        if self.manual:
+            hint = QLabel("選取 App Update ZIP 或 .zip.part01；所有分割檔需放在同一資料夾。\n建議將同版本的 SHA256SUMS 清單放在更新包旁。套用前請關閉主程式。")
+            hint.setWordWrap(True)
+            layout.addWidget(hint)
+            self.package_edit = QLineEdit(package)
+            self.install_edit = QLineEdit(installation)
+            for label, field, directory in [("更新包", self.package_edit, False), ("安裝目錄", self.install_edit, True)]:
+                layout.addWidget(QLabel(label))
+                selection = QHBoxLayout()
+                selection.addWidget(field)
+                button = QPushButton("選取")
+                button.clicked.connect(lambda _=False, f=field, d=directory: self.select_path(f, d))
+                selection.addWidget(button)
+                layout.addLayout(selection)
+                self.manual_controls.extend([field, button])
         self.status = QLabel("準備更新")
         self.status.setObjectName("status")
         layout.addWidget(self.status)
@@ -333,11 +413,77 @@ class Window(QDialog):
         layout.addWidget(self.details, 1)
         row = QHBoxLayout()
         row.addStretch()
+        if self.manual:
+            self.start_btn = QPushButton("驗證更新包")
+            self.start_btn.clicked.connect(self.prepare_or_apply)
+            row.addWidget(self.start_btn)
         self.close_btn = QPushButton("關閉")
-        self.close_btn.setEnabled(False)
+        self.close_btn.setEnabled(self.manual)
         self.close_btn.clicked.connect(self.accept)
         row.addWidget(self.close_btn)
         layout.addLayout(row)
+        if plan or preview:
+            self.start_worker(plan, preview)
+
+    def select_path(self, field, directory):
+        if directory:
+            path = QFileDialog.getExistingDirectory(self, "選取安裝目錄", field.text())
+        else:
+            path, _ = QFileDialog.getOpenFileName(self, "選取更新包", field.text(), "更新包 (*.zip *.zip.part01)")
+        if path:
+            field.setText(path)
+
+    def prepare_or_apply(self):
+        if self.plan:
+            root = Path(json.loads(Path(self.plan).read_text(encoding="utf-8"))["app_root"])
+            try:
+                running = installation_processes(root)
+                if running:
+                    raise RuntimeError("請先關閉主程式與後端，再按套用更新（PID：" + ", ".join(map(str, running)) + "）")
+            except Exception as exc:
+                QMessageBox.warning(self, "尚未套用", str(exc))
+                return
+            self.start_btn.setEnabled(False)
+            self.close_btn.setEnabled(False)
+            self.start_worker(self.plan)
+            return
+        if not self.package_edit.text().strip() or not self.install_edit.text().strip():
+            QMessageBox.warning(self, "請選取檔案與目錄", "請選取更新包及安裝目錄")
+            return
+        self.start_btn.setEnabled(False)
+        self.close_btn.setEnabled(False)
+        for control in self.manual_controls:
+            control.setEnabled(False)
+        self.preparer = PrepareWorker(self.package_edit.text().strip(), self.install_edit.text().strip())
+        self.preparer.progress.connect(self.on_prepare_progress)
+        self.preparer.ready.connect(self.prepared)
+        self.preparer.failed.connect(self.prepare_failed)
+        self.preparer.start()
+
+    def on_prepare_progress(self, value, message):
+        if self.status.text() != message:
+            self.details.append(message)
+        self.on_progress(value, message)
+
+    def prepared(self, plan):
+        self.plan = plan
+        info = json.loads(Path(plan).read_text(encoding="utf-8"))
+        self.status.setText(f"可更新至 v{info['version']}（{info['profile']}）")
+        self.details.append("更新目錄：" + info["app_root"])
+        self.start_btn.setText("套用更新")
+        self.start_btn.setEnabled(True)
+        self.close_btn.setEnabled(True)
+
+    def prepare_failed(self, message):
+        self.status.setText("更新包驗證失敗；尚未套用")
+        self.details.append(message)
+        self.start_btn.setEnabled(True)
+        self.close_btn.setEnabled(True)
+        for control in self.manual_controls:
+            control.setEnabled(True)
+        QMessageBox.critical(self, "更新包驗證失敗", message)
+
+    def start_worker(self, plan=None, preview=False):
         self.worker = Worker(Path(plan) if plan else Path(), preview)
         self.worker.progress.connect(self.on_progress)
         self.worker.log.connect(self.details.append)
@@ -367,16 +513,26 @@ def main():
     parser.add_argument("--plan")
     parser.add_argument("--preview", action="store_true")
     parser.add_argument("--health-check", action="store_true")
+    parser.add_argument("--package", default="", help="Local App Update ZIP or .zip.part01")
+    parser.add_argument("--install-dir", default="", help="Existing installation directory")
+    parser.add_argument("--local-session", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.health_check:
         return 0
-    preview = args.preview or not args.plan
+    if not args.plan and not args.preview and getattr(sys, "frozen", False) and not args.local_session:
+        # Keep the running updater outside the installation it will replace.
+        destination = Path(tempfile.mkdtemp(prefix="StreamTranslatorManualUpdater-")) / "StreamTranslatorUpdater.exe"
+        shutil.copy2(sys.executable, destination)
+        subprocess.Popen([str(destination), "--local-session", "--package", args.package,
+                          "--install-dir", args.install_dir or str(Path(sys.executable).parent)])
+        return 0
+    preview = args.preview
     app = QApplication(sys.argv)
     app.setApplicationName("Stream Translator Updater")
     icon = Path(getattr(sys, "_MEIPASS", Path(__file__).parent)) / "app_icon.ico"
     if icon.exists():
         app.setWindowIcon(QIcon(str(icon)))
-    window = Window(args.plan, preview)
+    window = Window(args.plan, preview, args.package, args.install_dir)
     window.show()
     return app.exec()
 

@@ -12,6 +12,7 @@ $profileLabel = $Profile.ToUpperInvariant()
 $runtimeCache = Join-Path $scriptDir "build-runtime-cache\$Profile-runtime"
 $manifestPath = Join-Path $runtimeCache "runtime-version.json"
 $patchedPackage = Join-Path $scriptDir "..\stream-translator-gpt\stream_translator_gpt"
+. (Join-Path $packagingDir 'ensure_process_audio_capture.ps1')
 $pythonCandidates = @(
     $env:STREAM_TRANSLATOR_BUILD_PYTHON,
     (Join-Path $scriptDir "venv\Scripts\python.exe"),
@@ -85,6 +86,9 @@ if profile == 'cuda': required.extend(['faster_whisper', 'whisper', 'nemo.collec
 
 for name in required:
     importlib.import_module(name)
+
+from stream_translator_gpt.process_audio_capture import _load_library
+_load_library()
 
 if profile != 'cpu':
     import torch

@@ -1,6 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 import sys
 from pathlib import Path
+from PyInstaller.utils.hooks import collect_data_files
 
 app_dir = Path(SPECPATH).parent
 
@@ -39,15 +40,19 @@ if qt6_dir:
 
 a = Analysis(
     [str(app_dir / 'main.py')],
-    pathex=[str(app_dir)],
+    pathex=[str(app_dir), str(app_dir.parent / 'stream-translator-gpt')],
     binaries=qt_binaries,
     datas=[
         (str(app_dir / 'backend/static'), 'backend/static'),
         (str(app_dir / 'config.example.yaml'), '.'),
         (str(app_dir / 'README.txt'), '.'),
         (str(app_dir / 'app_icon.ico'), '.'),
-    ] + qt_datas,
+    ] + qt_datas + collect_data_files('opencc'),
     hiddenimports=[
+        # The GUI backend builds worker arguments using this lightweight policy.
+        'stream_translator_gpt.translation_policy',
+        # Lightweight ctypes discovery only; capture runs in external runtime.
+        'stream_translator_gpt.process_audio_targets',
         # FastAPI / uvicorn
         'uvicorn',
         'uvicorn.lifespan.on',
@@ -76,6 +81,7 @@ a = Analysis(
         # misc
         'multipart',
         'email_validator',
+        'opencc',
     ],
     hookspath=[],
     hooksconfig={},
@@ -113,6 +119,7 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=str(app_dir / 'app_icon.ico'),
+    version=str(app_dir / 'version_info.txt'),
 )
 
 # onedir：把所有 DLL / 資源收集到同一個輸出資料夾

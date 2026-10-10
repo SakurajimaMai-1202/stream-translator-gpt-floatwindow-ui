@@ -24,6 +24,7 @@ def _make_slicer(prefix_retention_length: float) -> AudioSlicer:
         vad_threshold=0.35,
         dynamic_vad_threshold=False,
         disable_vad=True,
+        slicing_mode='legacy',
     )
 
 

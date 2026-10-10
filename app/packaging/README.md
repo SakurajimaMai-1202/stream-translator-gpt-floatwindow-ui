@@ -14,11 +14,14 @@ Use `app/build_release.ps1` for normal release builds:
 .\build_release.ps1 -Profile rocm
 ```
 
-Every release build updates and verifies `yt-dlp` in the GUI build environment
-and each packaged runtime before assembly. Network access is therefore required;
-an update failure stops packaging. `-ReuseSharedGui` is intentionally rejected by
-the three-profile release command because a reused frozen GUI could contain an
-older `yt-dlp` even after its Python environment was upgraded.
+Every release build queries official PyPI and installs the newest `yt-dlp`,
+including the upstream-recommended nightly channel, with its default dependencies
+and EJS package. The GUI build environment and each packaged runtime are verified
+before assembly. Network access is required; update or version verification
+failure stops packaging. Set `STREAM_TRANSLATOR_YTDLP_VERSION` to pin a release
+build: the pin must still match the newest official version. The frozen GUI is
+rebuilt for each release; its ML/runtime exclusions include `yt_dlp`, which is
+executed from the packaged ASR runtime rather than the user's PATH.
 
 Build all three profiles from one shared frontend/PyInstaller GUI artifact:
 

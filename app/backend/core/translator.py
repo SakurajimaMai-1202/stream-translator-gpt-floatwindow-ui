@@ -340,6 +340,7 @@ class TranslationContext:
         allowed_args = {
             'proxy', 'openai_api_key', 'google_api_key', 'format', 'list_format', 'cookies',
             'input_proxy', 'device_index', 'list_devices', 'device_recording_interval',
+            'process_id', 'process_start_time',
             'runtime_profile', 'asr_compute_backend', 'runtime_device_policy', 'runtime_allow_integrated_gpu',
             'min_audio_length', 'max_audio_length', 'target_audio_length',
             'continuous_no_speech_threshold', 'disable_dynamic_no_speech_threshold',
@@ -352,6 +353,7 @@ class TranslationContext:
             'asr_corrections_enabled', 'asr_correction_log_enabled', 'asr_correction_learning_enabled',
             'asr_correction_rules', 'asr_corrections_case_sensitive',
             'gpt_model', 'gemini_model', 'translation_prompt', 'translation_glossary',
+            'translation_target_language',
             'translation_glossary_audit_enabled', 'translation_history_size',
             'translation_timeout', 'gpt_base_url', 'gemini_base_url', 'processing_proxy',
             'translation_model_family', 'translation_output_format',
@@ -362,6 +364,12 @@ class TranslationContext:
             'hy_mt2_preferences',
             'hy_mt2_style_text',
             'hy_mt2_glossary_folder',
+            'index_translate_optimizer_enabled', 'index_translate_context_window',
+            'index_translate_max_context_chars', 'index_translate_max_terms', 'index_translate_style', 'index_translate_debug',
+            'index_translate_aliases',
+            'index_translate_preferences',
+            'index_translate_style_text',
+            'index_translate_glossary_folder',
             'disable_paired_subtitle_mode', 'translation_provider',
             'disable_asr_overlap_deduplication', 'disable_subtitle_assembler',
             'subtitle_assembler_wait_ms', 'subtitle_assembler_max_duration',
@@ -382,6 +390,13 @@ class TranslationContext:
         }
 
         runtime_supported_args = _get_supported_cli_args(cmd[0], cwd)
+        if self.config.get('url') == 'process_audio':
+            required_process_args = {'process_id', 'process_start_time'}
+            if not runtime_supported_args or not required_process_args.issubset(runtime_supported_args):
+                _get_supported_cli_args.cache_clear()
+                runtime_supported_args = _get_supported_cli_args(cmd[0], cwd)
+            if not runtime_supported_args or not required_process_args.issubset(runtime_supported_args):
+                raise RuntimeError('目前選用的音訊執行環境不支援指定程式收音，請更新或重建執行環境。')
         required_backend_args = {
             key for key in (
                 'use_qwen3_asr',
@@ -423,7 +438,7 @@ class TranslationContext:
         url = config_copy.pop('url', '')
         
         # 添加所有配置參數
-        zero_allowed_args = {'hy_mt2_context_window', 'hy_mt2_max_context_chars', 'hy_mt2_max_terms'}
+        zero_allowed_args = {'hy_mt2_context_window', 'hy_mt2_max_context_chars', 'hy_mt2_max_terms', 'index_translate_context_window', 'index_translate_max_context_chars', 'index_translate_max_terms'}
         for key, value in sorted(config_copy.items()):
             if key not in allowed_args:
                 logger.warning(f"Skipping unsupported CLI arg: {key}")
@@ -462,6 +477,10 @@ class TranslationContext:
 
     async def _process_loop(self):
         """主處理循環：啟動進程並讀取輸出（使用 threading 避免 Windows asyncio 問題）"""
+        # A stop may arrive before the task scheduled by start() gets a turn.
+        # Do not launch a capture subprocess after that stop has completed.
+        if self.stop_requested:
+            return
         try:
             cmd = self._build_command()
             
@@ -523,7 +542,8 @@ class TranslationContext:
             reused = False
             
             if persistent_process is not None:
-                if persistent_process.poll() is None and persistent_config_args == process_signature:
+                if (url != 'process_audio' and persistent_process.poll() is None
+                        and persistent_config_args == process_signature):
                     logger.info(f"Reusing persistent ASR subprocess (PID: {persistent_process.pid})")
                     self.process = persistent_process
                     persistent_process = None
@@ -634,6 +654,13 @@ class TranslationContext:
                         
                         # 移除 ANSI 顏色碼
                         clean_line = re.sub(r'\x1b\[[0-9;]*m', '', line)
+
+                        # Older workers sent these diagnostics to stdout. They are
+                        # never subtitle content, even without a log-level prefix.
+                        if clean_line.startswith(('[FAMILY OPTIMIZER]', '[HY-MT2 OPTIMIZER]',
+                                                  'Translation failed:', 'Translation timeout:')):
+                            logger.debug("%s", clean_line)
+                            continue
 
                         if _ASR_READY_EVENT in clean_line or "Initialization complete, starting up" in clean_line:
                             self.asr_ready = True
@@ -782,6 +809,11 @@ class TranslationContext:
                                 "See logs/translator_stderr.log for stderr output.",
                                 return_code,
                             )
+                            if self.config.get('url') == 'process_audio':
+                                self._broadcast({
+                                    'type': 'error',
+                                    'data': {'message': '指定程式收音已停止；程式可能已關閉或擷取失敗，請重新選擇並測試來源。'}
+                                })
                         elif return_code != 0:
                             logger.info(
                                 "Translation subprocess exited with code %s after an intentional stop",

@@ -47,7 +47,8 @@ def test_exporter_uses_one_stdout_format_and_preserves_delivery(
         assert SUBTITLE_EVENT_PREFIX not in stdout
         assert "[Latency:" in stdout
         if translation:
-            assert translation in stdout
+            assert ' '.join(translation.splitlines()) in stdout
+            assert len(stdout.splitlines()) == 1
     exported = exporter.file_queue.get_nowait()
     assert task.transcript in exported
     if translation:

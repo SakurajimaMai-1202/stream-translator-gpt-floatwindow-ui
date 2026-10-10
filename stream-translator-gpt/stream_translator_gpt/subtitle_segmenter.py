@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import queue
 import re
+import sys
 import time
 import unicodedata
 
@@ -10,6 +11,8 @@ from .common import LoopWorkerBase, TranslationTask, sec2str
 
 _SENTENCE_END_RE = re.compile(r"[。！？!?…．.][」』”’）)\]]?$")
 _CJK_RE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]")
+_JAPANESE_RE = re.compile(r'[\u3040-\u30ff]')
+_DEPENDENT_JAPANESE_TAIL_RE = re.compile(r'(なんて|だって|って|[がをにへ])$')
 
 
 def is_punctuation_only(text: str) -> bool:
@@ -65,10 +68,19 @@ class SubtitleSegmenter(LoopWorkerBase):
         self.previous_transcript = ""
         self.print_result = bool(print_result)
         self.output_timestamps = bool(output_timestamps)
+        print(f'[Assembler] policy=bounded-v2 enabled={self.assembler_enabled} '
+              f'wait_ms={self.assembler_wait_seconds * 1000:g} '
+              f'max_span_s={self.assembler_max_duration:g} gap_s={self.assembler_gap_threshold:g}', file=sys.stderr, flush=True)
 
     @staticmethod
     def _is_complete(task: TranslationTask) -> bool:
-        return bool(_SENTENCE_END_RE.search(str(task.transcript or "").strip()))
+        text = str(task.transcript or "").strip()
+        if getattr(task, 'audio_boundary', None) == 'max_length':
+            return False
+        tail = re.sub(r'[。！？!?…．.」』”’）)\]]+$', '', text)
+        if _JAPANESE_RE.search(tail) and _DEPENDENT_JAPANESE_TAIL_RE.search(tail):
+            return False
+        return bool(_SENTENCE_END_RE.search(text))
 
     def _prepare(self, task: TranslationTask) -> TranslationTask | None:
         if task.latency_trace.assembler_received_at is None:
@@ -80,16 +92,29 @@ class SubtitleSegmenter(LoopWorkerBase):
             return None
         self.previous_transcript = _join_text(self.previous_transcript, transcript)[-500:]
         task.transcript = transcript
+        print(f'[Assembler] received trace={task.latency_trace.trace_id} '
+              f'at={task.latency_trace.assembler_received_at:.6f} '
+              f'range={task.time_range[0]:.3f}:{task.time_range[1]:.3f} '
+              f'boundary={getattr(task, "audio_boundary", None)} '
+              f'complete={self._is_complete(task)}', file=sys.stderr, flush=True)
         return task
 
     @staticmethod
     def _merge(first: TranslationTask, second: TranslationTask) -> TranslationTask:
-        first.transcript = _join_text(first.transcript, second.transcript)
+        left = first.transcript
+        tail = re.sub(r'[。！？!?…．.」』”’）)\]]+$', '', str(left or '').strip())
+        if _JAPANESE_RE.search(tail) and _DEPENDENT_JAPANESE_TAIL_RE.search(tail):
+            left = tail
+        first.transcript = _join_text(left, second.transcript)
         first.raw_transcript = _join_text(first.raw_transcript, second.raw_transcript)
         first.time_range = (first.time_range[0], second.time_range[1])
         if first.asr_latency_ms is not None and second.asr_latency_ms is not None:
             first.asr_latency_ms += second.asr_latency_ms
+        received_at = first.latency_trace.assembler_received_at
         first.latency_trace.merge(second.latency_trace)
+        # The deadline belongs to the first fragment, including after a merge.
+        first.latency_trace.assembler_received_at = received_at
+        first.audio_boundary = getattr(second, 'audio_boundary', None)
         return first
 
     def _can_merge(self, first: TranslationTask, second: TranslationTask) -> bool:
@@ -101,8 +126,14 @@ class SubtitleSegmenter(LoopWorkerBase):
             and gap <= self.assembler_gap_threshold
         )
 
-    def _emit(self, task: TranslationTask, output_queue: queue.SimpleQueue[TranslationTask]) -> None:
+    def _emit(self, task: TranslationTask, output_queue: queue.SimpleQueue[TranslationTask], reason: str = 'complete') -> None:
         task.latency_trace.assembler_emitted_at = time.perf_counter()
+        waited = (task.latency_trace.assembler_emitted_at - task.latency_trace.assembler_received_at) * 1000
+        print(f'[Assembler] trace={task.latency_trace.trace_id} '
+              f'at={task.latency_trace.assembler_emitted_at:.6f} '
+              f'range={task.time_range[0]:.3f}:{task.time_range[1]:.3f} '
+              f'boundary={getattr(task, "audio_boundary", None)} reason={reason} '
+              f'merged={len(task.latency_trace.merged_trace_ids)} wait_ms={waited:.1f}', file=sys.stderr, flush=True)
         if task.translation_queued_at is None:
             task.translation_queued_at = task.latency_trace.assembler_emitted_at
         task.latency_trace.translation_queued_at = task.translation_queued_at
@@ -132,21 +163,29 @@ class SubtitleSegmenter(LoopWorkerBase):
                     continue
 
             if not self.assembler_enabled or self._is_complete(pending):
-                self._emit(pending, output_queue)
+                self._emit(pending, output_queue, 'complete' if self.assembler_enabled else 'disabled')
                 pending = None
                 continue
 
+            # Future audio extends the span; at the cap there is no merge budget.
+            if pending.time_range[1] - pending.time_range[0] >= self.assembler_max_duration:
+                self._emit(pending, output_queue, 'max_span')
+                pending = None
+                continue
+
+            remaining = max(0.0, self.assembler_wait_seconds -
+                            (time.perf_counter() - pending.latency_trace.assembler_received_at))
             wait_started = time.perf_counter()
             try:
-                task = input_queue.get(timeout=self.assembler_wait_seconds)
+                task = input_queue.get(timeout=remaining)
             except queue.Empty:
-                self._emit(pending, output_queue)
+                self._emit(pending, output_queue, 'timeout')
                 pending = None
                 continue
 
             if task is None:
                 input_complete = True
-                self._emit(pending, output_queue)
+                self._emit(pending, output_queue, 'end_of_stream')
                 output_queue.put(None)
                 break
 
@@ -154,12 +193,14 @@ class SubtitleSegmenter(LoopWorkerBase):
             if task is None:
                 elapsed = time.perf_counter() - wait_started
                 if elapsed >= self.assembler_wait_seconds:
-                    self._emit(pending, output_queue)
+                    self._emit(pending, output_queue, 'timeout')
                     pending = None
                 continue
 
             if self._can_merge(pending, task):
                 pending = self._merge(pending, task)
             else:
-                self._emit(pending, output_queue)
+                reason = ('max_span' if task.time_range[1] - pending.time_range[0] > self.assembler_max_duration
+                          else 'gap')
+                self._emit(pending, output_queue, reason)
                 pending = task

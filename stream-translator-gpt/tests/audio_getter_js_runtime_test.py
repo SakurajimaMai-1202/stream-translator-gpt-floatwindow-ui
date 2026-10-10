@@ -89,6 +89,23 @@ def test_resolve_js_runtime_finds_node_bundled_beside_runtime(monkeypatch, tmp_p
     assert audio_getter._resolve_js_runtime_arg() == f"node:{node.resolve()}"
 
 
+def test_resolve_js_runtime_prefers_bundled_node_over_old_path_node(monkeypatch, tmp_path):
+    runtime_python = tmp_path / "_runtime" / "python.exe"
+    runtime_python.parent.mkdir()
+    runtime_python.write_bytes(b"")
+    bundled_node = tmp_path / "_js_runtime" / "node.exe"
+    bundled_node.parent.mkdir()
+    bundled_node.write_bytes(b"")
+    old_node = tmp_path / "old-global" / "node.exe"
+    old_node.parent.mkdir()
+    old_node.write_bytes(b"")
+    monkeypatch.setattr(audio_getter.sys, "executable", str(runtime_python))
+    monkeypatch.setattr(audio_getter.shutil, "which", lambda _name: str(old_node))
+    audio_getter._resolve_js_runtime_arg.cache_clear()
+
+    assert audio_getter._resolve_js_runtime_arg() == f"node:{bundled_node.resolve()}"
+
+
 def test_youtube_stream_reconnects_after_audio_stall(monkeypatch):
     release_stalled_read = threading.Event()
 
@@ -136,6 +153,8 @@ def test_youtube_stream_reconnects_after_audio_stall(monkeypatch):
         return Process(Stdout([pcm])), Process(Stdout())
 
     monkeypatch.setattr(audio_getter, "_open_stream", fake_open)
+    statuses = iter(['live', 'live', 'ended'])
+    monkeypatch.setattr(getter, '_source_status', lambda: next(statuses))
     output = queue.SimpleQueue()
 
     getter.loop(output)

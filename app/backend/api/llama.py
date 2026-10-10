@@ -20,6 +20,7 @@ from backend.config import settings
 from backend.core.external_process import run_external, popen_external
 from backend.core.llama_runtime_installer import active_runtime_executable, installer, list_latest_variants
 from backend.core.llama_model_installer import model_installer
+from backend.core.llama_devices import enumerate_devices, select_device, supports_device_selection, update_gpu_evidence, gpu_logging_args
 from backend.core.logging_setup import configure_dedicated_file_logger
 from backend.core.portable_paths import get_app_root
 
@@ -37,8 +38,27 @@ class LlamaState:
         self.current_model: Optional[str] = None
         self.last_error: Optional[str] = None
         self.last_inference: Dict[str, Any] = {}
+        self.gpu_selection: Dict[str, Any] = {}
         
 llama_state = LlamaState()
+
+
+def _select_server_error(current: Optional[str], line: str) -> Optional[str]:
+    """Keep the cause when llama.cpp follows it with generic load/exit errors."""
+    lowered = line.lower()
+    if not any(marker in lowered for marker in ("error", "invalid argument", "fatal", "failed")):
+        return current
+
+    def is_summary(message: str) -> bool:
+        message = message.lower()
+        return any(marker in message for marker in (
+            "failed to load model", "exiting due to model loading error",
+            "llama-server exited with code",
+        ))
+
+    if current and not is_summary(current) and is_summary(line):
+        return current
+    return line
 
 
 def _is_hymt_model(model_path: str | Path) -> bool:
@@ -184,6 +204,7 @@ async def probe_existing_llama_server() -> bool:
             llama_state.server_url = url
             llama_state.current_model = model_name or '未知模型'
             llama_state.server_process = None  # 非本 app 啟動，無 process 物件
+            llama_state.gpu_selection = dict(mode='external', selected_device=None, confirmed=False, offloaded_layers=None, evidence=None)
 
             logger.info(f"✅ 偵測到現有 llama 伺服器: {url}，模型: {llama_state.current_model}")
             return True
@@ -208,6 +229,9 @@ class ServerConfig(BaseModel):
     port: int = 8081
     n_ctx: int = 2048
     n_gpu_layers: int = 0
+    gpu_device: str = "auto"
+    gpu_device_name: str = ""
+    allow_integrated_gpu: bool = False
     n_threads: int = 4
     n_parallel: int = 1
     server_exe: Optional[str] = None
@@ -234,6 +258,7 @@ class ServerStatus(BaseModel):
     resources: Dict[str, Any] = Field(default_factory=dict)
     performance: Dict[str, Any] = Field(default_factory=dict)
     runtime: Dict[str, Any] = Field(default_factory=dict)
+    gpu_selection: Dict[str, Any] = Field(default_factory=dict)
 
 class InferenceRequest(BaseModel):
     """推論請求"""
@@ -325,33 +350,31 @@ async def start_server(config: ServerConfig, background_tasks: BackgroundTasks):
     if not model_path.exists():
         raise HTTPException(status_code=400, detail=f"模型文件不存在: {config.model_path}")
     
-    # 尋找 llama-server 執行檔
-    if config.server_exe:
-        server_exe = _resolve_custom_runtime(config.server_exe)
-        if not server_exe.is_file():
-            raise HTTPException(status_code=400, detail=f"自訂 llama Runtime 不存在: {server_exe}")
+    server_exe = _resolve_custom_runtime(config.server_exe) if config.server_exe else _find_llama_server()
+    if not server_exe or not server_exe.is_file():
+        raise HTTPException(status_code=400, detail="找不到 llama-server.exe，請在設定中指定路徑或確認安裝位置")
+    selection = dict(mode="cpu", selected_device=None, confirmed=False,
+                     offloaded_layers=None, evidence=None)
+    device_args = []
+    if config.n_gpu_layers != 0:
+        if not await asyncio.to_thread(supports_device_selection, str(server_exe)):
+            raise HTTPException(status_code=400, detail="此 Runtime 不支援指定顯卡，請更新 llama.cpp Runtime 或將 GPU 層數設為 0。")
+        inventory = await asyncio.to_thread(enumerate_devices, str(server_exe), config.allow_integrated_gpu)
+        if inventory["error"]:
+            raise HTTPException(status_code=400, detail=f"無法確認可用顯卡：{inventory['error']}")
+        try:
+            device = select_device(inventory["devices"], config.gpu_device, config.gpu_device_name)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        device_args = ["--device", device["id"], "--split-mode", "none"]
+        selection.update(mode="gpu", selected_device=device)
+    elif await asyncio.to_thread(supports_device_selection, str(server_exe)):
+        device_args = ["--device", "none"]
     else:
-        # 預設路徑
-        possible_paths = [
-            active_runtime_executable(),
-            # 嘗試使用 settings Based 路徑
-            settings.BASE_DIR / "../llama/llama-server.exe",
-            settings.BASE_DIR / "llama/llama-server.exe",
-            # CWD 相對路徑
-            Path("llama.cpp/bin/llama-server.exe"),
-            Path("llama-server.exe"),
-            Path("llama.cpp/llama-server.exe"),
-            Path("../llama/llama-server.exe")
-        ]
-        server_exe = None
-        for p in possible_paths:
-            if p and p.exists():
-                server_exe = p.resolve() # 獲取絕對路徑
-                break
-        
-        if not server_exe:
-            raise HTTPException(status_code=400, detail="找不到 llama-server.exe，請在設定中指定路徑或確認安裝位置")
-    
+        selection["mode"] = "unknown"
+        selection["evidence"] = "GPU 層數為 0；舊版 Runtime 無法停用所有 GPU 裝置。"
+    llama_state.gpu_selection = selection
+
     effective_flash_attn, effective_no_mmap = _effective_memory_options(
         model_path,
         config.flash_attn,
@@ -375,6 +398,10 @@ async def start_server(config: ServerConfig, background_tasks: BackgroundTasks):
         "-n", str(config.n_predict)
     ]
     
+    cmd.extend(device_args)
+    if selection["mode"] == "gpu":
+        cmd.extend(await asyncio.to_thread(gpu_logging_args, str(server_exe)))
+
     # 進階選項
     cmd.extend(_flash_attn_args(str(server_exe), effective_flash_attn))
     if effective_no_mmap:
@@ -395,8 +422,13 @@ async def start_server(config: ServerConfig, background_tasks: BackgroundTasks):
         process_logger.info("Starting llama-server with command: %s", " ".join(cmd))
         
         # 啟動子程序
+        launch_env = dict(os.environ)
+        for key in ("LLAMA_ARG_DEVICE", "LLAMA_ARG_SPLIT_MODE", "LLAMA_ARG_TENSOR_SPLIT", "LLAMA_ARG_MAIN_GPU",
+                    "LLAMA_ARG_LOG_DISABLE", "LLAMA_LOG_DISABLE", "LLAMA_ARG_LOG_VERBOSITY"):
+            launch_env.pop(key, None)
         process = popen_external(
             cmd,
+            env=launch_env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
@@ -415,11 +447,12 @@ async def start_server(config: ServerConfig, background_tasks: BackgroundTasks):
                     if line:
                         line_stripped = line.strip()
                         process_logger.info(f"[{prefix}] {line_stripped}")
-                        if prefix == "Llama-Stderr" and any(
-                            marker in line_stripped.lower()
-                            for marker in ("error", "invalid argument", "fatal", "failed")
-                        ):
-                            llama_state.last_error = line_stripped
+                        if llama_state.gpu_selection is selection:
+                            update_gpu_evidence(selection, line_stripped)
+                        if prefix == "Llama-Stderr":
+                            llama_state.last_error = _select_server_error(
+                                llama_state.last_error, line_stripped,
+                            )
                         
                         # 检测是否就绪
                         if "listening on" in line_stripped or "HTTP server listening" in line_stripped:
@@ -488,6 +521,7 @@ async def stop_server():
         llama_state.is_ready = False  # 重置就緒狀態
         llama_state.server_url = None
         llama_state.current_model = None
+        llama_state.gpu_selection = {}
         
         return {"status": "stopped"}
         
@@ -513,6 +547,7 @@ async def get_server_status():
         resources=resources,
         performance=llama_state.last_inference,
         runtime=runtime,
+        gpu_selection=llama_state.gpu_selection,
     )
 
 
@@ -527,6 +562,14 @@ async def get_available_port(preferred: int = 8081):
             except OSError:
                 continue
     raise HTTPException(status_code=503, detail="找不到可用的本機翻譯連接埠")
+
+
+@router.get("/runtime/devices")
+async def get_runtime_devices(server_exe: Optional[str] = None, allow_integrated_gpu: bool = False):
+    executable = _resolve_custom_runtime(server_exe) if server_exe else _find_llama_server()
+    if not executable or not executable.is_file():
+        return dict(devices=[], error="找不到 llama-server.exe，請先安裝或選擇 Runtime。", server_exe=str(executable or ""))
+    return await asyncio.to_thread(enumerate_devices, str(executable), allow_integrated_gpu)
 
 
 @router.get("/runtime/releases")
@@ -952,6 +995,9 @@ async def save_custom_preset(name: str, config: ServerConfig):
         'port': config.port,
         'n_ctx': config.n_ctx,
         'n_gpu_layers': config.n_gpu_layers,
+        'gpu_device': config.gpu_device,
+        'gpu_device_name': config.gpu_device_name,
+        'allow_integrated_gpu': config.allow_integrated_gpu,
         'n_threads': config.n_threads,
         'n_parallel': config.n_parallel,
         'top_k': config.top_k,

@@ -15,6 +15,11 @@ _LEADING_LANGUAGE_MARKER = re.compile(
 )
 _SPECIAL_TOKEN = re.compile(r"<\|[^>]+\|>")
 
+
+def strip_unknown_token(text: object) -> str:
+    """Remove the literal ASR unknown token without guessing missing speech."""
+    return re.sub(r"<unk>", "", str(text or ""), flags=re.IGNORECASE).strip()
+
 _TRADITIONAL_CHINESE = {
     "zh-tw", "zh-hant", "traditional chinese", "繁體中文", "繁体中文",
 }
@@ -45,7 +50,7 @@ def strip_qwen3_asr_markers(text: object) -> str:
         normalized = _LEADING_LANGUAGE_MARKER.sub("", normalized, count=1)
     normalized = _SPECIAL_TOKEN.sub("", normalized)
     normalized = _TRAILING_ASR_TEXT_MARKER.sub("", normalized).strip()
-    return normalized
+    return strip_unknown_token(normalized)
 
 
 def normalize_chinese_script(text: object, output_language: str | None) -> str:

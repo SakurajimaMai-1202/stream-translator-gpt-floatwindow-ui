@@ -203,13 +203,15 @@ onBeforeUnmount(detachOpenListeners);
 </script>
 
 <template>
-  <div ref="rootRef" class="relative">
+  <div ref="rootRef" class="fw-select relative">
     <button
       type="button"
       :aria-label="ariaLabel"
+      :aria-expanded="isOpen"
+      aria-haspopup="true"
       :disabled="disabled"
       :class="[
-        'w-full flex items-center justify-between px-3 py-2 rounded-lg border border-white/20 bg-white/5 text-white focus:outline-none focus:border-blue-400 transition-colors',
+        'fw-select-trigger w-full flex items-center justify-between px-3 py-2 rounded-lg border border-white/20 bg-white/5 text-white focus:outline-none focus:border-blue-400 transition-colors',
         disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:bg-white/10',
         buttonClass
       ]"
@@ -225,17 +227,17 @@ onBeforeUnmount(detachOpenListeners);
         ref="menuRef"
         :style="menuStyle"
         :class="[
-          'fixed z-[9999] overflow-y-auto rounded-lg border border-white/20 bg-slate-800 shadow-2xl',
+          'fw-select-menu fixed z-[9999] overflow-y-auto rounded-lg border border-white/20 bg-slate-800 shadow-2xl',
           menuClass
         ]"
       >
-        <div v-if="searchable" class="sticky top-0 z-10 p-2 bg-slate-900 border-b border-white/10">
+        <div v-if="searchable" class="fw-select-search sticky top-0 z-10 p-2 bg-slate-900 border-b border-white/10">
           <input v-model="searchQuery" :placeholder="searchPlaceholder" autofocus
             class="w-full px-3 py-2 rounded-md bg-slate-950 border border-white/15 text-sm text-white outline-none focus:border-blue-400"
             @pointerdown.stop @click.stop />
         </div>
         <template v-for="(group, idx) in groupedOptions" :key="`group-${idx}-${group.group || 'default'}`">
-          <div v-if="group.group" class="px-3 py-2 text-xs text-white/50 bg-slate-900/70 border-b border-white/10">
+          <div v-if="group.group" class="fw-select-group px-3 py-2 text-xs text-white/50 bg-slate-900/70 border-b border-white/10">
             {{ group.group }}
           </div>
           <button
@@ -243,7 +245,8 @@ onBeforeUnmount(detachOpenListeners);
             :key="`${group.group || 'default'}-${String(option.value)}`"
             type="button"
             :disabled="option.disabled"
-            class="w-full text-left px-3 py-2 text-sm transition-colors"
+            class="fw-select-option w-full text-left px-3 py-2 text-sm transition-colors"
+            :aria-current="option.value === modelValue ? 'true' : undefined"
             :class="[
               option.value === modelValue ? 'bg-blue-600/60 text-white' : 'text-slate-100',
               option.disabled ? 'opacity-40 cursor-not-allowed' : 'hover:bg-white/10'
@@ -257,3 +260,18 @@ onBeforeUnmount(detachOpenListeners);
     </Teleport>
   </div>
 </template>
+
+<style scoped>
+.fw-select-trigger { min-height: 2.75rem; border-radius: var(--fw-radius-sm, .625rem); border-color: var(--fw-border-strong, #ffffff29); background: var(--fw-surface-subtle, #101824); color: var(--fw-text, #eef2f7); font-family: inherit; touch-action: manipulation; }
+.fw-select-trigger:active:not(:disabled) { filter: brightness(1.12); }
+.fw-select-menu { border-color: var(--fw-border-strong, #ffffff29); border-radius: var(--fw-radius-md, .75rem); background: var(--fw-surface-raised, #1e2939); color: var(--fw-text, #eef2f7); box-shadow: 0 12px 36px #0007; padding: .25rem; overscroll-behavior: contain; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+.fw-select-option { min-height: 2.75rem; padding: .65rem .75rem; border-radius: var(--fw-radius-sm, .625rem); line-height: 1.5; overflow-wrap: anywhere; touch-action: manipulation; }
+.fw-select-option[aria-current="true"] { background: var(--fw-primary-soft, #243c5d); color: #eef2f7; }
+.fw-select-option:hover:not(:disabled) { background: #ffffff12; }
+.fw-select-option:active:not(:disabled) { background: #ffffff20; }
+.fw-select-search { background: var(--fw-surface-raised, #1e2939); border-color: var(--fw-border, #ffffff1a); }
+.fw-select-search input { min-height: 2.75rem; background: var(--fw-surface-subtle, #101824); border-color: var(--fw-border-strong, #ffffff29); border-radius: var(--fw-radius-sm, .625rem); }
+.fw-select-group { background: var(--fw-surface-raised, #1e2939); color: var(--fw-text-secondary, #aab6c8); border-color: var(--fw-border, #ffffff1a); font-size: .75rem; font-weight: 600; }
+@media (prefers-reduced-motion: reduce) { .fw-select-trigger, .fw-select-option { transition: none; } }
+@media (prefers-contrast: more) { .fw-select-menu, .fw-select-trigger { border-color: #a9b9d0; } }
+</style>

@@ -4,7 +4,7 @@
 
 將直播、影片、遊戲或麥克風音訊轉為原文與翻譯字幕，透過桌面浮動視窗或區網字幕頁呈現。可依硬體與使用需求，選擇本機模型、雲端服務，或兩者搭配的處理方式。
 
-[下載最新版](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest) · [更新說明](app/docs/RELEASE_NOTES_v1.5.0_zh-TW.md) · [操作指南](app/README.md) · [觀看示範](https://youtu.be/p1O2Ecu4js0) · [回報問題](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/issues)
+[下載最新版](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest) · [更新說明](app/docs/RELEASE_NOTES_v1.5.0_zh-TW.md) · [操作指南](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/blob/main/app/README.md) · [觀看示範](https://youtu.be/p1O2Ecu4js0) · [回報問題](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/issues)
 
 ![Version](https://img.shields.io/badge/version-v1.5.0-blue)
 ![Windows](https://img.shields.io/badge/platform-Windows-lightgrey)
@@ -166,7 +166,7 @@ CPU 模式使用對應的 sherpa-onnx 模型，無法直接沿用 GPU 權重。�
 
 ## 文件與專案資訊
 
-- [操作與設定指南](app/README.md)
+- [操作與設定指南](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/blob/main/app/README.md)
 - [版本更新說明](app/docs/RELEASE_NOTES_v1.5.0_zh-TW.md)
 - [手動更新指南](app/docs/MANUAL_UPDATE_zh-TW.md)
 - [開發與打包文件](app/packaging/README.md)

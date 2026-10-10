@@ -1,373 +1,179 @@
 # Stream Translator FloatWindow
 
-Windows 即時語音辨識、翻譯與浮動字幕工具。它能擷取直播網址、系統聲音、麥克風或本機影音，先以本機／雲端 ASR 轉成文字，再交由 OpenAI、Google Gemini 或本機 LLM 翻譯，最後輸出成桌面字幕、區網字幕頁或字幕檔。
+**Windows 即時語音辨識、翻譯與浮動字幕工具。**
 
-[下載最新版](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest) · [V1.5.0 更新說明](app/docs/RELEASE_NOTES_v1.5.0_zh-TW.md) · [回報問題](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/issues)
+將直播、影片、遊戲或麥克風音訊轉為原文與翻譯字幕，透過桌面浮動視窗或區網字幕頁呈現。可依硬體與使用需求，選擇本機模型、雲端服務，或兩者搭配的處理方式。
 
+[下載最新版](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest) · [更新說明](app/docs/RELEASE_NOTES_v1.5.0_zh-TW.md) · [操作指南](app/README.md) · [觀看示範](https://youtu.be/p1O2Ecu4js0) · [回報問題](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/issues)
 
-![Windows](https://img.shields.io/badge/platform-Windows-lightgrey)
-![NVIDIA CUDA](https://img.shields.io/badge/GPU-NVIDIA%20CUDA-green)
-![AMD ROCm](https://img.shields.io/badge/GPU-AMD%20ROCm%20Experimental-orange)
-![CPU sherpa-onnx](https://img.shields.io/badge/CPU-sherpa--onnx-blueviolet)
 ![Version](https://img.shields.io/badge/version-v1.5.0-blue)
+![Windows](https://img.shields.io/badge/platform-Windows-lightgrey)
+![CPU](https://img.shields.io/badge/ASR-CPU-blueviolet)
+![CUDA](https://img.shields.io/badge/ASR-NVIDIA%20CUDA-green)
+![ROCm](https://img.shields.io/badge/ASR-ROCm%20Experimental-orange)
 
-> **目前版本：V1.5.0（2026-10-10 重建）。** CPU、CUDA 與 ROCm Experimental 完整包及更新包已包含最新介面、顯卡選擇、Index 模型推薦與指定應用程式音訊。請使用 GitHub Releases 的對應資產與 SHA-256 清單。
-
-## 新手最簡單的安裝方式
-
-> **直接下載 `StreamTranslator-win64-CPU-Full.zip`，使用內建 CPU ASR，再接 OpenAI、Gemini 或 OpenAI-compatible API 翻譯。**
-
-這個組合不需要 NVIDIA／AMD 獨立顯示卡，也不必另外安裝 CPU ASR sidecar 或本機翻譯模型。解壓 CPU Full 包、執行 `Stream Translator.exe`、首次選擇「簡單模式」，再於首頁選擇 API 翻譯後端並填入 API Key 即可。程式依辨識語言準備對應入門模型，例如中文 SenseVoice、日文 Parakeet 或多語 Parakeet v3；已下載的模型會略過。
-
-## 演示影片
-
-[觀看 Stream Translator FloatWindow 功能演示](https://youtu.be/p1O2Ecu4js0)
-
-## 適合哪些用途
-
-- 觀看 YouTube、Twitch、Bilibili、X 等直播時產生即時翻譯字幕。
-- 擷取遊戲、播放器、瀏覽器或會議軟體的系統聲音。
-- 使用麥克風進行即時語音辨識、口譯或會議記錄。
-- 將字幕置頂顯示於全螢幕影片或遊戲上方。
-- 在同一個區網內，讓手機、平板或另一台電腦同步觀看字幕。
-- 使用本機 ASR 與本機 LLM，建立較重視隱私或離線可用的工作流程。
-
-## 功能總覽
-
-處理流程如下：
-
-```text
-音訊來源 → VAD 語音切片 → ASR 語音辨識 → ASR 文字修正 → LLM 翻譯 → 術語檢查 → 字幕顯示／匯出
-```
+## 主要功能
 
 | 功能 | 說明 |
-|---|---|
-| 多種音源 | 支援直播 URL、本機影音、麥克風與 Windows 系統音訊（WASAPI Loopback）；V1.5.0 新增指定應用程式音訊。URL 來源透過 yt-dlp 處理，支援範圍取決於網站與 yt-dlp。 |
-| 本機與雲端 ASR | 提供 Qwen3-ASR、Fun-ASR、SenseVoice、NVIDIA Parakeet、faster-whisper 與 OpenAI Whisper API；實際選項會依 Runtime Profile 顯示。 |
-| Runtime Profile | 提供 CUDA、CPU、ROCm Experimental 三種打包版。CUDA／ROCm Full 包也可透過獨立 sherpa-onnx CPU sidecar 切換到 CPU ASR。 |
-| VAD 與即時處理 | 新安裝預設採用 **FireRed OmniStreamVAD 原生事件切段**，語音閾值 0.35、原生最長切片 6 秒；也保留傳統 FireRedVAD 與 Silero VAD 選項。可調整偵測門檻、切段長度與語音／靜音 frame。既有 `config.yaml` 的設定不會被預設值覆蓋。 |
-| 多種翻譯後端 | 支援 OpenAI GPT、Google Gemini、OpenAI-compatible API，以及程式內管理的 llama.cpp 本機伺服器。 |
-| 浮動字幕 | 置頂字幕視窗支援逐字流式顯示，可調整字型、顏色、透明度、位置與顯示行數；右側紅／綠燈可直接判斷是否正在收音。 |
-| 字幕分享 | 內建區網字幕頁與遠端字幕 API，手機、平板或其他電腦可用瀏覽器觀看。 |
-| 字幕匯出 | 可保留辨識與翻譯結果，輸出 SRT、TXT、ASS 等格式。 |
-| ASR 修正規則 | 在翻譯前修正辨識錯誤，適合人名、作品名與固定誤辨。格式為 `正確詞,誤辨詞1,誤辨詞2`。 |
-| 翻譯術語表 | 約束譯文中的固定譯名，格式為 `原文,譯文`。它作用於翻譯階段，與 ASR 修正規則不同。 |
-| 模型與 Runtime 管理 | 可在介面內檢查、下載與切換 ASR 模型、GGUF 模型及 llama.cpp Runtime；下載進度與格式會依 GPU／CPU 分流。 |
-| 內建更新器 | 支援啟動時檢查 GitHub Release、首頁新版通知、下載進度、SHA-256 驗證、同 Profile 套用與更新回復。 |
+| --- | --- |
+| 多種音訊來源 | 支援直播網址、本機影音、麥克風、Windows 系統音訊與指定應用程式音訊。 |
+| 即時辨識與翻譯 | 提供多種語音辨識引擎，可搭配 OpenAI、Google Gemini、OpenAI-compatible API 或本機翻譯模型。 |
+| 桌面浮動字幕 | 置頂顯示原文與譯文，可自訂字型、顏色、透明度、位置與顯示行數。 |
+| 區網字幕分享 | 透過瀏覽器，讓同一網路內的手機、平板或其他電腦同步觀看字幕。 |
+| 字幕匯出 | 保存辨識與翻譯結果，支援 SRT、TXT、ASS 等格式。 |
+| 術語與辨識修正 | 分別管理 ASR 修正規則與翻譯術語表，處理人名、作品名及固定譯名。 |
+| 模型管理 | 在介面內下載、匯入及切換語音辨識模型、GGUF 翻譯模型與 llama.cpp 執行環境。 |
+| 更新管理 | 提供新版通知、檔案完整性檢查、同類型套件更新、備份及失敗回復。 |
 
-> v1.3.11 起，術語表與 ASR 修正規則的 CSV／TSV 匯入支援引號、欄位內逗號、Tab、換行與 UTF-8 BOM；匯出使用 UTF-8 BOM 與 CRLF，方便 Excel 正確辨識繁體中文。
+適合直播字幕、遊戲與影音翻譯、麥克風轉錄，以及需要跨裝置觀看字幕的使用情境。完成模型與執行環境準備後，可使用本機音源搭配本機辨識及翻譯；使用雲端服務時則需要網路與對應 API 金鑰。
 
-## V1.5.0 更新重點
+## v1.5.0 更新亮點
 
-- **全站介面統一**：首頁、教學、所有設定分頁、ASR／LLM 模型管理與字幕控制採一致的深色配色、字級、卡片、按鈕及鍵盤焦點；進階設定可展開，字幕自訂外觀保留。
-- **本機翻譯顯卡選擇**：支援手動選卡，區分下次啟動選擇與實際使用的顯卡；預設排除內顯，NVIDIA 建議 CUDA、AMD／Intel 建議 Vulkan。
-- **Index 翻譯模型**：推薦頁加入 Index-Translate 2B、9B 官方 GGUF、量化大小與顯存估算；修正 temperature=0、top_k=0 重新載入被覆蓋的問題。
-- **指定應用程式音訊**：可選擇要收音的應用程式，減少其他程式聲音混入；需要支援 Process Loopback 的 Windows build 20348 以上環境。
-- **翻譯與字幕穩定性**：HY-MT2／Index 設定分開保存，繁體中文統一經 OpenCC 轉換，改善空回覆、字幕組句與輸出檢查。
-- **更新與首次設定**：依來源／語言準備入門 ASR 模型，提供來源測試；手動更新支援 App Update ZIP／分割包及相容性檢查。
+- **介面更新：** 統一深色視覺與設定層級，集中常用操作，改善模型管理與窄視窗使用體驗。
+- **應用程式收音：** 選擇指定程式作為音訊來源，提供收音測試與目標關閉提示。
+- **翻譯顯卡選擇：** 支援手動指定本機翻譯使用的顯卡，顯示模型的 GPU 載入狀態。
+- **模型與字幕改善：** 新增 Index-Translate 2B／9B GGUF 推薦，改善翻譯設定保存、繁體中文輸出與字幕銜接。
+- **安裝與更新改善：** 優化首次設定、來源檢查及手動更新，支援 ZIP 與分割更新包。
 
-完整功能、套件選擇、更新步驟與實測範圍，請見 [V1.5.0 更新說明](app/docs/RELEASE_NOTES_v1.5.0_zh-TW.md)。三種 Profile 的建置與套件檢查通過；各顯卡、模型及長時間直播的實際表現仍依使用環境而異。
+完整內容請參閱 [v1.5.0 更新說明](app/docs/RELEASE_NOTES_v1.5.0_zh-TW.md)。
 
-## 下載：先選對執行版本
+## 下載與安裝
 
-請從 [GitHub Releases](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases) 選擇已公開的版本與對應套件。GitHub 自動提供的 `Source code (zip)` 不是可直接執行的 Windows 完整包。
+### 選擇套件
 
-| 版本 | 適用硬體 | 本機 ASR 路徑 | Full package |
-|---|---|---|---|
-| CUDA | NVIDIA CUDA 相容獨立顯示卡 | CUDA 原生 ASR；可另匯入 sherpa-onnx CPU sidecar | `StreamTranslator-win64-CUDA-Full.zip.part01`～`.part03` |
-| CPU | 無獨立顯示卡、相容性優先 | sherpa-onnx／ONNX Runtime，不包含 PyTorch | `StreamTranslator-win64-CPU-Full.zip`（可直接解壓） |
-| ROCm Experimental | 支援 Windows ROCm／HIP 的 AMD 獨立顯示卡 | ROCm 原生 ASR；可另匯入 sherpa-onnx CPU sidecar | `StreamTranslator-win64-ROCm-Experimental-Full.zip`（可直接解壓） |
+從 [GitHub Releases](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest) 下載與使用需求相符的完整包。
 
-ROCm 版本仍屬實驗性支援，能否使用取決於顯示卡、驅動程式與 Windows ROCm Runtime 相容性。若不確定，先使用 CPU 版。
+| 套件 | 適用情境 | 完整包檔名 |
+| --- | --- | --- |
+| **CPU** | 使用 CPU 語音辨識，或搭配雲端翻譯；不需獨立顯卡 | `StreamTranslator-win64-CPU-Full.zip` |
+| **CUDA** | 使用支援 CUDA 的 NVIDIA 顯示卡進行本機語音辨識 | `StreamTranslator-win64-CUDA-Full.zip.part01`～`.part03` |
+| **ROCm Experimental** | 使用相容的 AMD 顯示卡；相容性依顯卡、驅動與模型而異 | `StreamTranslator-win64-ROCm-Experimental-Full.zip` |
 
-### 合併與安裝 Full package
+初次使用可從 **CPU 完整包＋雲端翻譯**開始。CPU 完整包已內附 CPU ASR 執行環境，無須另裝 CPU ASR Sidecar。
 
-1. CPU／ROCm 使用者下載對應的 Full ZIP；CUDA 使用者下載 `.part01`～`.part03` 與 `merge-full-package.bat`，將檔案放在同一資料夾後執行合併。
-2. 以 Release 附帶的 `SHA256SUMS-<版本>.txt` 驗證 Full ZIP。
-3. 解壓到一般可寫入路徑，例如 `D:\Apps\StreamTranslator`。
-4. 執行 `Stream Translator.exe`。
+套件類型決定語音辨識的執行環境；本機翻譯的顯卡與 llama.cpp 執行環境可另外設定。CPU 版也能搭配 GPU 本機翻譯。
 
-不要直接解壓 `.part01`；CUDA 完整包必須先透過 `merge-full-package.bat` 產生 ZIP。
+### 安裝步驟
+
+1. **下載完整包。** CPU／ROCm 下載對應 ZIP；CUDA 請下載全部 3 個分卷及 `merge-full-package.bat`，放在同一資料夾後執行合併。
+2. **確認檔案完整性。** 使用發布頁提供的 `SHA256SUMS-v1.5.0.txt` 核對下載檔案。
+3. **解壓並啟動。** 解壓到可寫入的資料夾，例如 `D:\Apps\StreamTranslator`，執行 `Stream Translator.exe`。
+4. **完成首次設定。** 選擇音訊來源與辨識語言，依提示準備模型；需要翻譯時，再設定翻譯服務或本機模型。
+
+CUDA 完整包須先合併為 ZIP 再解壓。請下載上述 Full 完整包；GitHub 自動提供的 `Source code` 檔案供原始碼使用。
+
+完整包內附執行環境，但大型 ASR／GGUF 模型與 llama.cpp 翻譯執行環境需依需求準備。使用 API 翻譯時無須下載本機翻譯模型。
 
 ### 更新既有安裝
 
-同一 Profile 的舊版可使用對應 App Update：
+使用與目前安裝類型相同的 App Update：
 
-- `StreamTranslator-CUDA-App-Update.zip.part01`～`.part02`（下載全部分段後，可在手動更新器直接選擇 `.part01`，或先用 `merge-full-package.bat` 合併）
-- `StreamTranslator-CPU-App-Update.zip`
-- `StreamTranslator-ROCm-Experimental-App-Update.zip`
+| 目前套件 | 更新包 |
+| --- | --- |
+| CPU | `StreamTranslator-CPU-App-Update.zip` |
+| CUDA | `StreamTranslator-CUDA-App-Update.zip.part01`、`.part02` |
+| ROCm Experimental | `StreamTranslator-ROCm-Experimental-App-Update.zip` |
 
-更新器會在套用前備份 `config.yaml`、自訂術語、ASR 修正規則與 Cookies，最多保留五份。App Update 只能套用相同 Profile，不要以 CUDA 更新包更新 CPU 或 ROCm 安裝。
+1. 備份 `config.yaml`、Cookies、術語與自訂規則，停止正在執行的辨識與翻譯任務。
+2. 下載對應更新包與 SHA-256 清單。CUDA 更新包需下載全部 2 個分卷並放在同一資料夾。
+3. 使用程式提供的更新功能；手動更新器可直接選擇 ZIP 或 `.zip.part01`，依提示完成更新。
+4. 更新後確認版本為 **v1.5.0**，再啟動原本使用的音源、辨識模型與翻譯服務。
 
-V1.5.0 更新包使用 `runtime_replace`，包含完整 Runtime，並會在啟動失敗時嘗試回復舊 Runtime。v1.3.11 以下或無法識別的安裝請改用同 Profile Full package。
+更新包包含對應執行環境，並保留既有模型、設定與輸出檔案。切換 CPU／CUDA／ROCm 類型，或無法識別的舊版安裝，請使用完整包；v1.3.11 以下版本亦建議使用完整包。
 
-從 v1.4.0 起，上述流程已整合到「設定 → 一般設定」。從更舊版本首次升級到 v1.4.0 時，請完整解壓相同 Profile 的 App Update；更新包已包含 `StreamTranslatorUpdater.exe`，不需另外下載。
+CUDA／ROCm 使用者若要改用 CPU 語音辨識，可匯入 `StreamTranslator-CPU-ASR-Sidecar-v1.5.0.zip`，再於模型管理頁準備對應的 CPU 模型。
 
-CUDA／ROCm 使用者若缺少 CPU ASR sidecar，可下載與安裝版本相符的 `StreamTranslator-CPU-ASR-Sidecar-v1.5.0.zip` 並匯入；sidecar 只含 CPU ASR Runtime，模型可在模型管理頁按需準備。
+## 開始使用
 
-目前 Full package 不包含大型 ASR／GGUF 模型或 llama.cpp Runtime。若使用 API 翻譯，不需要本機 LLM；選擇本機翻譯時，請匯入或按需準備 GGUF 與相符的 llama.cpp Runtime。
+1. **選擇音訊來源：** 貼上直播網址，或選擇本機影音、系統音訊、麥克風及指定應用程式。
+2. **準備辨識模型：** 在「ASR 模型管理」下載模型，再於「轉錄選項」選擇相同引擎、模型與輸入語言。
+3. **設定翻譯：** 選擇翻譯後端及目標語言，填入 API 金鑰或啟動本機模型，使用測試功能確認回應。
+4. **啟動轉譯：** 在首頁開始辨識，依需要開啟浮動字幕、字幕分享或檔案輸出。只需要原文字幕時，可關閉翻譯。
 
-## 第一次使用教學
+指定應用程式收音需要 Windows build 20348 以上。瀏覽器可能共用程序，因此無法保證只擷取單一分頁或視窗的音訊。
 
-### 1. 啟動與確認 Runtime
+## 模型與翻譯服務
 
-1. 執行 `Stream Translator.exe`。
-2. 開啟「轉錄選項」，確認目前 Runtime Profile 與 ASR 運算模式。
-3. CUDA／ROCm 可選「GPU 原生 ASR」或「CPU / sherpa-onnx」；CPU 版固定使用 sherpa-onnx。
-4. 切換運算模式後，重新確認 ASR 引擎與模型。這項切換會改變實際 Python Runtime 與模型格式，不只是介面名稱。
+### 語音辨識
 
-### 2. 選擇音訊來源
+可用引擎與模型格式依套件類型而異，以「ASR 模型管理」顯示的清單為準。
 
-| 來源 | 適用情境 | 使用方式 |
-|---|---|---|
-| URL 串流 | YouTube、Twitch、Bilibili、X 或其他 yt-dlp 支援來源 | 貼上網址；受限內容可在輸入設定指定 Netscape 格式 `cookies.txt`。 |
-| 系統音訊 | 遊戲、瀏覽器、播放器、會議軟體 | 選擇正在播放聲音的輸出裝置。建議避免同時開啟多個回授裝置。 |
-| 麥克風 | 口譯、會議、現場發言 | 選擇麥克風，先觀察音量與 VAD 是否正常觸發。 |
-| 本機檔案 | 測試模型、轉錄已下載影音 | 選擇檔案後執行；適合先比較不同模型結果。 |
-| 指定應用程式音訊 | 只收取指定播放器、遊戲或瀏覽器的聲音 | 選擇應用程式並執行來源測試；同一瀏覽器的分頁不保證可分開。 |
+| 引擎 | 選擇方向 |
+| --- | --- |
+| **Qwen3-ASR** | 提供 0.6B、1.7B 及日文特化模型；GPU 權重與 CPU ONNX 模型分別準備。 |
+| **NVIDIA Parakeet** | 提供多語、日文與英文模型；CUDA 與 CPU 可用型號依模型清單而異。 |
+| **Fun-ASR／SenseVoice** | 適用於中文、英文、日文等內容，具體語言支援依模型而異。 |
+| **faster-whisper** | 提供 Whisper 多種尺寸模型，目前打包版使用 GPU 原生執行環境。 |
+| **OpenAI Whisper API** | 使用雲端辨識，無須下載本機模型；需網路與 API 金鑰，可能產生費用。 |
 
-### 3. 下載並選擇 ASR 模型
+選擇模型時，請同時考量主要語言、硬體資源與字幕延遲。若搭配本機翻譯模型，CPU ASR 可將顯存留給翻譯；是否能維持即時速度仍取決於 CPU 與音源。
 
-1. 開啟「ASR 模型管理」。
-2. 確認管理頁目前顯示的是 GPU 還是 CPU 模型。
-3. 下載欲使用的模型，等待狀態變成「已下載」。
-4. 回到「轉錄選項」，選擇相同 ASR 引擎與模型。
-5. 設定輸入語言；固定語言模型會自動限制可選語言。
+### 翻譯後端
 
-若開始轉譯時顯示模型缺失，回到模型管理頁檢查「運算後端、引擎、模型 ID」三者是否一致。GPU 權重與 sherpa-onnx CPU bundle 不能互換。
+| 後端 | 使用方式 |
+| --- | --- |
+| **OpenAI** | 設定 API 金鑰與可用模型，適合使用雲端文字翻譯。 |
+| **Google Gemini** | 使用 Gemini API 金鑰，模型與配額依帳戶服務而定。 |
+| **llama.cpp** | 透過程式管理 GGUF 模型與執行環境，在本機執行翻譯。 |
+| **OpenAI-compatible API** | 連接 LM Studio 或其他相容服務，設定對應 Base URL 與模型名稱。 |
 
-### 4. 設定翻譯
+雲端語音辨識會將音訊傳送至服務商；雲端文字翻譯會將辨識文字傳送至服務商。API 費用與配額依各服務規定。
 
-1. 到「翻譯選項」選擇 OpenAI、Gemini 或 OpenAI-compatible／本機 LLM。
-2. 設定目標語言。
-3. 雲端後端填入各自的 API Key 與模型名稱；本機後端先啟動 llama.cpp、LM Studio 或相容伺服器。
-4. 使用設定頁的連線／測試翻譯功能確認回應正常。
-5. 回到首頁開啟翻譯。若只需要原文字幕，可關閉翻譯以降低延遲與費用。
+### 本機翻譯模型
 
-OpenAI ASR、OpenAI GPT 翻譯與 Gemini 翻譯的金鑰彼此獨立，不會互相代用。
+| 模型系列 | 選擇方向 |
+| --- | --- |
+| **HY-MT2** | 提供 1.8B 與 7B；較小模型節省資源，較大模型需要更多記憶體與顯存。 |
+| **Index-Translate** | 官方 2B／9B GGUF；Q4_K_M 約 **1.31／5.78 GB**，推薦頁顯存估算為 **4／8 GB**。 |
+| **Sakura** | 日文到中文模型，涵蓋 Galgame 與文學語氣；使用前請確認所選模型授權。 |
+| **其他 GGUF 模型** | 可依語言與內容需求匯入，翻譯效果取決於模型、提示詞及參數。 |
 
-#### Gemini API Key 詳細流程
+模型大小與顯存需求為選型參考。實際占用還會受上下文長度、量化格式與同時執行的語音辨識影響。
 
-1. 登入 [Google AI Studio API Keys](https://aistudio.google.com/app/apikey)，按「Create API key」；若畫面要求選專案，選擇或匯入要使用的 Google Cloud 專案。
-2. 複製新建立的 Gemini API Key。請把它當成密碼保管，不要放進 Git、公開截圖或貼文；長時間使用前也請確認 Google 帳戶的配額與計費設定。
-3. 回到「設定」→「翻譯選項」，將「翻譯後端」選為「Google Gemini」。
-4. 將金鑰貼到「Google Gemini」區塊的「API Key」，模型名稱保留預設值或改成 Google AI Studio 目前可用的 Gemini 模型；API Base URL 保留 `https://generativelanguage.googleapis.com/v1beta`。
-5. 按「測試連線」；測試成功後回到首頁，開啟「翻譯」並按「啟動即時轉譯」。
+本機翻譯可在「Llama 執行設定」選擇顯卡：NVIDIA 優先使用 CUDA，AMD／Intel Arc 獨顯建議使用 Vulkan。程式管理的 llama.cpp 預設翻譯端點為 `http://127.0.0.1:8081/v1`；LM Studio 常見端點為 `http://127.0.0.1:1234/v1`，請以實際服務設定為準。
 
-如果測試失敗，先檢查金鑰是否完整、模型名稱是否可用、網路與 Google API 配額是否正常。Google 的金鑰管理與安全規則可能更新，請參考 [Gemini API 金鑰說明](https://ai.google.dev/gemini-api/docs/api-key)。
+## 字幕與資料管理
 
-### 5. 開始轉譯
+- **字幕外觀：** 自訂字型、配色、透明度、位置與行數，搭配桌面浮動視窗或瀏覽器字幕頁。
+- **字幕分享：** 使用介面顯示的區網網址，讓同一網路內的裝置觀看；需要允許 Windows 防火牆連線。
+- **辨識修正：** ASR 修正規則在翻譯前處理固定誤辨，格式為 `正確詞,誤辨詞1,誤辨詞2`。
+- **翻譯術語：** 術語表固定譯名，格式為 `原文,譯文`，可與辨識修正分別管理。
+- **設定與模型：** 設定保存在可寫入位置的 `config.yaml`；模型路徑可於模型管理頁查看，輸出位置由首頁指定。
 
-1. 確認音源、輸入語言、目標語言、ASR 與翻譯後端。
-2. 按下「啟動即時轉譯」。首次載入本機模型可能需要較久時間。
-3. 先觀察原文字幕：原文已錯時應調整 ASR，而不是先修改翻譯提示詞。
-4. 再觀察譯文：原文正確但譯文不佳時，才調整翻譯模型、提示詞或術語表。
-5. 需要桌面覆蓋時開啟浮動字幕；需要手機觀看時開啟字幕分享並使用介面顯示的區網網址。
-
-## ASR 模型選擇指南
-
-ASR 決定「聽到了什麼」。選型時依序考慮：硬體與 Runtime、主要語言、準確度、延遲、是否允許音訊上傳。模型管理頁顯示的可用清單是目前 Profile 的最終依據。
-
-### 快速推薦
-
-| 使用情境 | 建議起點 | 原因 |
-|---|---|---|
-| NVIDIA、多語內容、品質優先 | `Qwen/Qwen3-ASR-1.7B` | 泛用多語與品質取向；顯存不足可改 0.6B 或嘗試 4-bit。 |
-| NVIDIA、顯存有限或低延遲 | 優先切換「CPU / sherpa-onnx」Runtime，使用 INT8 Qwen3-ASR 0.6B、Parakeet 0.6B 或 SenseVoiceSmall；若 CPU 效能不足，再改用 GPU Qwen3-ASR 0.6B／faster-whisper small | CPU ASR 不占用顯存，可把有限 VRAM 留給本機翻譯 LLM；是否能維持即時速度取決於 CPU。 |
-| NVIDIA、日文動畫／遊戲 | `jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame`；另可比較日文 Parakeet | 日文內容取向；專有名詞仍建議配合 ASR 修正規則。 |
-| NVIDIA、英文 | `nvidia/parakeet-tdt_ctc-1.1b` 或 Qwen3-ASR | Parakeet 英文模型為固定語言選擇；Qwen 適合混合語言。 |
-| AMD ROCm | 先用 Qwen3-ASR 0.6B，再測 1.7B | ROCm 為 Experimental，從較保守模型開始較容易排除環境問題。 |
-| CPU、泛用多語 | sherpa-onnx Qwen3-ASR 0.6B 或 Parakeet TDT 0.6B v3 | INT8 ONNX CPU 路徑，不需 PyTorch 或獨顯。 |
-| CPU、日文 | sherpa-onnx Parakeet 0.6B 日文或 SenseVoiceSmall | 固定日文模型方向明確；實際品質請用自己的音源比較。 |
-| 中、英、日及中文方言 | Fun-ASR Nano 或 SenseVoiceSmall | 適合亞洲語言情境；Fun-ASR CPU bundle 目前不提供時間戳。 |
-| 不想下載模型或占用本機資源 | OpenAI Whisper API | 所有 Profile 可用，但需要網路、API Key，音訊會送往雲端且可能產生費用。 |
-
-### 模型家族比較
-
-| ASR 家族 | 目前用途 | 主要取捨 |
-|---|---|---|
-| Qwen3-ASR | 0.6B 適合資源保守；1.7B 適合品質優先；另有日文 Anime／Galgame 模型 | 多語泛用，GPU 模型與 CPU ONNX bundle 分開下載。1.7B 需要較多顯存。 |
-| NVIDIA Parakeet | 0.6B v3 多語、0.6B 日文、1.1B 英文與 1.1B 日文等固定用途 | CUDA 原生版本依賴 NeMo；CPU 只提供模型管理頁列出的 sherpa-onnx bundle，並非所有 GPU 型號都有 CPU 對應版。 |
-| Fun-ASR Nano／MLT Nano | 中文、英文、日文與多語內容 | GPU 與 CPU 格式分開。CPU 目前提供 Nano 2512 bundle；MLT 是否可選以 Profile 能力為準。 |
-| SenseVoiceSmall | 中文、粵語、日文、英文等短語音辨識 | 體積與速度取向，適合 CPU 比較；複雜長句請用實際素材驗證。 |
-| faster-whisper | Whisper small、medium、large-v3、large-v3-turbo 等 | 成熟的泛用多語路徑；目前打包架構中屬 GPU 原生 Runtime，CPU Profile 請改用 sherpa-onnx 或雲端 ASR。 |
-| OpenAI Whisper API | 雲端語音辨識 | 省本機資源但依賴網路、費用與資料上傳政策。 |
-
-### ASR 調整原則
-
-- 先用同一段代表性音訊比較，不要只看模型大小。建議包含安靜對話、背景音樂、快速語速與專有名詞。
-- 1.7B 不一定在所有硬體上都比 0.6B 更適合；字幕落後太多時，較小模型的整體體驗可能更好。
-- Whisper／faster-whisper 的初始提示詞可協助提供上下文；Parakeet 的現行路徑不使用這個提示詞。
-- 人名或作品名被穩定誤辨時，使用 ASR 修正規則；它會在翻譯之前修正文句。
-- 新安裝 VAD 預設使用 FireRed OmniStreamVAD 原生事件切段，也可選傳統 FireRedVAD 或 Silero VAD；既有設定保留。模型路徑留空或填 `auto` 時使用內建模型。
-- 辨識句子過碎或延遲太高時，再調整 VAD 門檻與最短／目標／最長切片。提高 `VAD 計算頻率`欄位的間隔值可降低 CPU 使用量，但會增加語音偵測延遲；VAD、ASR 與翻譯都會影響端到端延遲。
-
-## 翻譯後端與模型選擇指南
-
-翻譯模型決定「如何把正確原文翻成目標語言」。先判斷是否能使用雲端，再依內容類型、隱私、成本與硬體選擇。
-
-### 後端怎麼選
-
-| 後端 | 適合情境 | 優點 | 注意事項 |
-|---|---|---|---|
-| OpenAI GPT | 希望快速完成設定、重視泛用品質 | 雲端部署簡單、模型選擇彈性 | 需要 OpenAI 翻譯 Key、網路與 API 費用；模型 ID 以帳號實際可用清單為準。 |
-| Google Gemini | 重視速度與成本彈性 | 適合大量即時文字 | 需要 Gemini Key；模型名稱與可用性會隨服務更新。 |
-| llama.cpp | 希望離線、資料留在本機 | 程式可管理 GGUF、Runtime 與伺服器 | 速度與品質取決於 GGUF、量化、RAM／VRAM、GPU layers 和 context。 |
-| LM Studio／其他 OpenAI-compatible API | 已有本機模型伺服器 | 管理與切換模型方便 | Base URL、model id 與伺服器實際回傳值必須一致。 |
-
-常見端點：OpenAI 為 `https://api.openai.com/v1`、程式管理的 llama.cpp 為 `http://127.0.0.1:8081/v1`、LM Studio 常見為 `http://127.0.0.1:1234/v1`。
-
-### 本機翻譯模型怎麼選
-
-推薦頁提供模型下載、量化大小、顯存估算與部署參數。顯存建議需另留 ASR 餘量；模型品質應使用自己的音源試譯比較。
-
-| 模型系列 | 建議用途 | 選擇方向 |
-|---|---|---|
-| Hy-MT2 | 多語翻譯、日常直播字幕 | 1.8B Q4 較省資源、適合長時間運行；7B Q4 品質取向，通常需要更多 RAM／VRAM。 |
-| Index-Translate | 多語翻譯、術語及格式要求 | 官方 2B／9B GGUF；Q4_K_M 約 1.31／5.78 GB，推薦頁估算分別需 4／8 GB VRAM。 |
-| Sakura | 日文到中文、Galgame、輕小說語氣 | 7B 適合中階硬體，14B 適合品質優先；許多 Sakura 模型有非商用限制，使用前務必查閱授權。 |
-| Gemma 等泛用模型 | 翻譯兼一般文字理解 | 提示詞遵循能力通常較彈性，但專門翻譯語氣應以實際內容測試。 |
-
-### 依硬體搭配
-
-下表是起始配置，不是保證值。實際占用會受量化格式、context、KV cache、GPU offload、驅動程式與同時運行的 ASR 影響。
-
-| 硬體／目標 | ASR＋翻譯建議 |
-|---|---|
-| CPU-only | sherpa-onnx 小型 ASR＋GPT／Gemini；若要全本機，使用較小 GGUF 並預期較高延遲。 |
-| NVIDIA 6GB | **建議 CPU / sherpa-onnx ASR＋GPU LLM**：ASR 先用 INT8 Qwen3-ASR 0.6B、Parakeet 0.6B 或 SenseVoiceSmall，將 6GB VRAM 優先留給 Hy-MT2 1.8B Q4 等本機翻譯模型。若 CPU ASR 無法即時，再改用 GPU Qwen3-ASR 0.6B／faster-whisper small，並縮小 LLM 或改用雲端翻譯。 |
-| NVIDIA 8GB | Qwen3-ASR 0.6B＋Hy-MT2 1.8B Q4；日文可使用 Parakeet＋Hy-MT2 1.8B Q4。 |
-| NVIDIA 12GB 穩定優先 | Qwen3-ASR 1.7B＋Hy-MT2 1.8B Q4。 |
-| NVIDIA 12GB 品質優先 | Qwen3-ASR 1.7B＋Hy-MT2 7B Q4，但顯存可能偏緊；必要時降低 GPU layers 或讓翻譯部分落到 CPU。 |
-| NVIDIA 16GB+ | Qwen3-ASR 1.7B＋Hy-MT2 7B 較高量化，或 Sakura 14B Q4。 |
-| AMD ROCm | 先確認 ASR 穩定；翻譯可使用獨立 llama.cpp Runtime 或雲端 API，不要假設 PyTorch ROCm 與 llama.cpp 使用相同後端。 |
-
-### 本機翻譯顯卡與 Runtime
-
-ASR 的 CPU／CUDA／ROCm Profile 與 llama.cpp 翻譯 Runtime 分開管理。CPU Full 使用者也能以 CPU ASR 搭配 GPU 本機翻譯。
-
-- NVIDIA：預設推薦 CUDA；AMD／Intel：預設推薦 Vulkan。
-- 到「Llama 執行設定」選擇顯卡；自動模式選擇單張獨顯，預設排除內顯，可手動允許。
-- 頁面分別顯示下次啟動選擇與模型啟動後的實際使用顯卡；GPU layers 為 0 時使用 CPU。
-- 雙顯卡筆電請依實際偵測結果選卡。這是翻譯模型的選卡設定，不會改變 ASR 運算模式。
-
-### 翻譯品質調整順序
-
-1. 先確認原文 ASR 正確；錯字應在 ASR 階段處理。
-2. 確認來源語言、目標語言與模型名稱。
-3. 保持「模型翻譯策略」為 `auto`；只有模型名稱無法識別時才手動指定 HY-MT2 或 Index-Translate。兩者端點、金鑰、提示詞與優化設定分開保存。
-4. 使用翻譯術語表固定角色名、地名與專業術語。術語表不會修正 ASR 原文。
-5. 再依需求調整提示詞、輸出長度、context 與並行數。即時字幕通常重視短回應與穩定延遲，不宜盲目提高輸出上限。
-
-## 教學：使用 hy-mt2-7b-IQ4 本機翻譯
-
-`hy-mt2-7b-IQ4` 是翻譯用 GGUF，不是 ASR 模型。完整流程仍是「音訊 → ASR → Hy-MT2 翻譯 → 字幕」。
-
-1. 在「LLM 模型管理」下載或匯入 `hy-mt2-7b-IQ4.gguf`。
-2. 在「Llama 執行設定」下載與硬體相符的 llama.cpp Runtime。GGUF 是模型，Runtime 是執行模型的程式，兩者缺一不可。
-3. 選擇模型後設定 Host `127.0.0.1`、Port `8081`、Context 先用 `4096`，GPU layers 使用介面建議值或依顯存調低，並確認實際使用的顯卡。
-4. 啟動伺服器，確認狀態為 Running，再執行「測試翻譯」。
-5. 到「翻譯選項」選擇本機 LLM／OpenAI-compatible，Base URL 填 `http://127.0.0.1:8081/v1`。
-6. Model 填伺服器 `/v1/models` 回傳的 model id；未啟用驗證的 llama.cpp 可使用任意非空 API Key。
-
-若模型載入失敗，先檢查 GGUF 路徑與 Runtime 架構；若顯存不足，降低 GPU layers、context 或改用較小／較低量化模型。CPU ASR sidecar 與 llama.cpp Runtime 是兩套獨立元件，安裝其中一個不會自動提供另一個。
-
-## 字幕分享
-
-啟用字幕分享後，程式會顯示本機與區網網址。其他裝置需與電腦位於同一網路，並使用區網 IP，而不是 `127.0.0.1`。
-
-若手機無法開啟：
-
-- 允許 Windows 防火牆放行程式或對應連接埠。
-- 確認路由器未啟用 AP isolation／用戶端隔離。
-- 確認服務仍在運行，且手機使用介面顯示的正確網址。
-- 不要直接把未加密字幕服務暴露到 Internet；遠端使用請自行加上 HTTPS、驗證或 VPN。
-
-## 媒體輸入注意事項
-
-- V1.5.0 套件包含可攜式 Node.js 與 yt-dlp-ejs，供 yt-dlp 處理 JavaScript challenge；元件版本見更新說明。
-- 部分 YouTube／Twitch 內容可能需要登入、地區權限或 cookies；請匯出 Netscape 格式 `cookies.txt`。
-- Chromium 的 App-Bound Encryption 可能阻止直接讀取瀏覽器 cookies，匯出檔通常較穩定。
-- 系統音訊請選擇實際播放裝置；無聲時先確認 Windows 音量混音器與輸出裝置。
-
-## 設定與資料位置
-
-- 使用者設定：程式可寫入位置的 `config.yaml`
-- ASR／LLM 模型：`models` 目錄或模型管理頁顯示的路徑
-- 字幕輸出：首頁輸出設定指定的資料夾
-- 日誌：程式目錄附近的 `logs`
-
-更新或搬移前請備份設定與自訂規則。若程式位於受保護目錄，Windows 權限可能讓設定寫入其他使用者資料位置。
+字幕分享預設供區網使用。需要跨網路存取時，請使用具驗證的 HTTPS 或 VPN 配置。
 
 ## 常見問題
 
-### 第一次啟動或第一次辨識很久
+### 第一次使用為什麼需要等待？
 
-模型可能正在下載、驗證或載入。請查看模型管理進度與日誌，不要在下載途中重複啟動。
+首次使用可能需要下載或載入模型。請查看模型管理頁的進度，待模型準備完成後開始辨識。
 
-### 翻譯沒有回應
+### 沒有收到音訊或無法解析直播網址？
 
-先用設定頁測試連線。檢查 API Key、Base URL 與 model id；本機伺服器可測試 `/v1/models`。`127.0.0.1:8081` 與 `127.0.0.1:8081/v1` 用途不同，翻譯 Base URL 通常需要 `/v1`，埠號以實際服務設定為準。
+先執行來源測試。系統音訊請確認 Windows 的實際播放裝置；直播網址可能受網站變更、地區限制或登入狀態影響，部分內容需要 Netscape 格式的 `cookies.txt`。
 
-### 原文錯、譯文也跟著錯
+### 翻譯沒有回應？
 
-這是 ASR 問題。先更換 ASR 模型、確認輸入語言、檢查音源與 VAD，再用 ASR 修正規則處理穩定出現的專有名詞誤辨。
+使用設定頁的測試功能，確認 API 金鑰、Base URL 與模型名稱。本機翻譯請先確認模型伺服器已啟動；OpenAI 語音辨識、OpenAI 翻譯與 Gemini 使用各自的金鑰設定。
 
-### 原文正確，但固定譯名不一致
+### 字幕錯字或譯名不一致，應如何調整？
 
-這是翻譯階段問題。加入翻譯術語表，或調整翻譯模型與提示詞；不要把譯名規則放進 ASR 修正表。
+原文辨識錯誤時，先確認音源、語言與 ASR 模型，再使用辨識修正規則；原文正確但譯名不一致時，使用翻譯術語表或調整翻譯設定。
 
-### CUDA／ROCm 版切到 CPU 後找不到模型
+### 切換 CPU 辨識後找不到模型？
 
-CPU 模式使用 sherpa-onnx bundle，不會直接使用原生 GPU 權重。到 ASR 模型管理切換至 CPU 分頁，下載對應模型；若 Runtime 缺失，先安裝 CPU ASR sidecar。
+CPU 模式使用對應的 sherpa-onnx 模型，無法直接沿用 GPU 權重。請在模型管理頁準備 CPU 模型；CUDA／ROCm 使用者也需確認 CPU ASR Sidecar 已就緒。
 
-## 從原始碼執行
+## 文件與專案資訊
 
-需求：Windows 10／11、Python 3.10～3.12、Node.js 18+、npm、Git 與 FFmpeg。
+- [操作與設定指南](app/README.md)
+- [版本更新說明](app/docs/RELEASE_NOTES_v1.5.0_zh-TW.md)
+- [手動更新指南](app/docs/MANUAL_UPDATE_zh-TW.md)
+- [開發與打包文件](app/packaging/README.md)
+- [文件索引](app/docs/README.md)
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r .\app\requirements.txt
-pip install -e .\stream-translator-gpt
-
-cd .\app\frontend
-npm install
-npm run build
-cd ..\..
-
-if (-not (Test-Path .\app\config.yaml)) {
-  Copy-Item .\app\config.example.yaml .\app\config.yaml
-}
-cd .\app
-python .\main.py
-```
-
-原始碼環境不會自動具備三種打包版的 Runtime；PyTorch、CUDA／ROCm 與模型依賴需依目標 Profile 安裝。詳見 [打包說明](app/packaging/README.md)。
-
-## 建立發佈包
-
-```powershell
-cd .\app
-
-# 快速驗證
-.\build_all_profiles.ps1 -Version 1.5.0 -Mode Quick -ReuseRuntimeCache
-
-# 正式發佈
-.\build_all_profiles.ps1 `
-  -Version 1.5.0 `
-  -Mode Final `
-  -ReuseRuntimeCache `
-  -CompressionLevel 7 `
-  -SplitSizeMiB 1900 `
-  -CopyThreads 8
-```
-
-V1.5.0 打包輸出包含 App Update、Full package、manifest 與 SHA-256 清單；分割方式依各資產大小而異，請以 GitHub Release 資產清單為準。
-
-## 專案來源
+### 專案來源
 
 - 核心專案：[ionic-bond/stream-translator-gpt](https://github.com/ionic-bond/stream-translator-gpt)
 - 行動字幕參考：[W-Nana/SubtitleOverlay](https://github.com/W-Nana/SubtitleOverlay)
-- 本機 LLM Runtime：[ggerganov/llama.cpp](https://github.com/ggerganov/llama.cpp)
+- 本機模型執行環境：[llama.cpp](https://github.com/ggerganov/llama.cpp)

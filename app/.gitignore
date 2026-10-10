@@ -83,3 +83,6 @@ README.md
 app.log
 backend.log
 translator_stderr.log
+
+# Public application guide
+!README.md

@@ -19,16 +19,3 @@ All functions use the C calling convention; Python should use `ctypes.CDLL`. HRE
 An MTA worker owns all capture COM objects. The agile activation callback has independent reference-counted lifetime, so a late callback never references a destroyed capture. The queue holds at most five seconds and drops oldest frames. Silent packets become zeros. The process handle detects exit and prevents PID reuse. Each handle is single-use. Keep the DLL loaded until process exit: if an OS COM call stalls past stop's bounded wait, the worker retains shared state until it finishes.
 
 Reference: [Microsoft ApplicationLoopback sample](https://github.com/microsoft/Windows-classic-samples/tree/main/Samples/ApplicationLoopback).
-
-## Reproducible local validation
-
-Run from the repository root:
-
-```powershell
-python tools/process_audio_capture_smoke.py
-python tools/process_audio_targets_smoke.py
-& app/build-runtime-cache/cpu-runtime/python.exe tools/process_audio_pipeline_smoke.py
-& app/build-runtime-cache/cpu-runtime/python.exe tools/process_audio_pipeline_smoke.py --route main --report benchmark-results/process-audio-capture-20261009/main-pipeline-report.json
-```
-
-The capture smoke plays two simultaneous test tones using sibling processes and checks isolation, ten silent lifecycle cycles, OS handle/thread counts, stale creation time rejection, and target exit. The targets smoke creates a minimized temporary Win32 window and checks actual window enumeration and stale target rejection. The pipeline smoke uses the existing six-second Japanese audio fixture, actual FireRed OmniVAD and cached CPU SenseVoice ONNX model, then asserts nonempty exported subtitles through both entry paths. It disables translation and sets Hugging Face offline flags. These checks validate local source/runtime inference, not browser-tab isolation, full packaged GUI deployment, or translation-provider behavior. Reports live in `benchmark-results/process-audio-capture-20261009/`.

@@ -173,3 +173,41 @@ stream-translator-gpt/quick_test.py
 
 # ── Copilot / agent instructions ──────────────────────────────
 .github/instructions/
+# Local inspection, validation and temporary outputs
+.codex-*/
+.pytest-*/
+.tmp-*/
+.release-*/
+.test-tmp/
+.ui-backups/
+.tools/
+pytest-temp/
+pytest-tmp/
+test-temp*/
+test-tmp*/
+benchmark-results/
+app/release-validation*/
+app/frontend/*.tsbuildinfo
+app/frontend/vite.config.js
+app/frontend/vite.config.d.ts
+
+# Internal work plans, handoffs and local evidence
+app/docs/*_PLAN*.md
+app/docs/*_IMPLEMENTATION_*.md
+app/docs/*_HANDOFF*.md
+app/docs/*_EVIDENCE*.json
+# Local user exports, diagnostics and downloaded resources
+/exports/
+/design-audit/
+/design-qa-evidence/
+/design-qa.md
+/pytest-*/
+/app/tmp*/
+/app/logs/
+/nvidianemotron-3.5asr-streaming-0.6b/
+/W-Nanastream-translator-gpt/
+/config_local_ver.py
+/config_base_ver.py
+/config_remote_ver.py
+.wrangler/
+/app/docs/PRODUCT_VIDEO_*.md

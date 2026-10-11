@@ -2,7 +2,8 @@
 param(
     [ValidateSet("cuda", "cpu", "rocm")]
     [string]$Profile = "cuda",
-    [string]$Python
+    [string]$Python,
+    [switch]$StrictConstraints
 )
 
 $ErrorActionPreference = "Stop"
@@ -33,6 +34,18 @@ foreach ($candidate in $pythonCandidates) {
 
 if (-not $pythonExe) {
     throw "No usable Python found. Pass -Python or set STREAM_TRANSLATOR_BUILD_PYTHON."
+}
+
+$constraintsPath = Join-Path $scriptDir "constraints\runtime-$Profile.txt"
+$checkerPath = Join-Path $packagingDir "check_constraints.py"
+# Ask for a strict exit code so drift can be surfaced as a warning by default.
+& $pythonExe $checkerPath $constraintsPath --strict
+$constraintsExitCode = $LASTEXITCODE
+if ($constraintsExitCode -ne 0) {
+    if ($StrictConstraints) {
+        throw "Runtime constraints check failed for '$Profile' (exit $constraintsExitCode)."
+    }
+    Write-Warning "Runtime constraints drift or check failure for '$Profile'. Use -StrictConstraints to make this fatal."
 }
 
 $probeScript = @"

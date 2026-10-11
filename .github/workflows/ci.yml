@@ -25,11 +25,18 @@ jobs:
           cache: pip
           cache-dependency-path: |
             app/requirements.txt
+            app/constraints/*.txt
             stream-translator-gpt/requirements.txt
       - name: Install CPU PyTorch
         run: python -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+      - name: Prepare CPU-compatible runtime constraints
+        shell: pwsh
+        run: |
+          Get-Content app/constraints/runtime-cuda.txt |
+            Where-Object { $_ -notmatch "^(torch==|torchaudio==|torchvision==|nvidia-|triton)" } |
+            Set-Content (Join-Path $env:RUNNER_TEMP "runtime-ci.txt") -Encoding utf8
       - name: Install backend dependencies
-        run: python -m pip install -r app/requirements.txt pytest
+        run: python -m pip install -r app/requirements.txt pytest -c (Join-Path $env:RUNNER_TEMP "runtime-ci.txt")
       - name: Backend tests
         working-directory: app
         run: python -m pytest backend/tests -q

@@ -181,7 +181,8 @@ CPU 模式使用對應的 sherpa-onnx 模型，無法直接沿用 GPU 權重。�
 ```powershell
 $env:PYTHONUTF8 = "1"
 python -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
-python -m pip install -r app/requirements.txt pytest
+Get-Content app/constraints/runtime-cuda.txt | Where-Object { $_ -notmatch "^(torch==|torchaudio==|torchvision==|nvidia-|triton)" } | Set-Content (Join-Path $env:TEMP "runtime-ci.txt") -Encoding utf8
+python -m pip install -r app/requirements.txt pytest -c (Join-Path $env:TEMP "runtime-ci.txt")
 Push-Location app; python -m pytest backend/tests -q; Pop-Location
 $env:PYTHONPATH = Join-Path (Get-Location).Path "app"
 Push-Location stream-translator-gpt; python -m pytest -q; Pop-Location

@@ -101,6 +101,16 @@ The legacy CUDA wrappers are still available:
 They are compatibility aliases for `-Profile cuda` and are kept only so older
 automation does not break.
 
+`constraints/runtime-<profile>.txt` records the actual shipped package versions
+for each profile. Before building, run
+`.\packaging\check_runtime_profile_env.ps1 -Profile cuda -StrictConstraints`
+from `app` to make build-Python version drift fatal;
+without `-StrictConstraints`, drift is reported as a warning. After a release,
+regenerate the matching file with
+`.\packaging\export_runtime_constraints.ps1 -Profile cuda` (or `cpu` / `rocm`);
+use `-RuntimeDir <path>` for another packaged `_runtime` directory. `yt-dlp` is
+intentionally unpinned because packaging always updates it to the latest version.
+
 ## Internal scripts
 
 | Script | Purpose |

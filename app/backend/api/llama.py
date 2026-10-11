@@ -985,7 +985,8 @@ async def get_custom_presets():
     """獲取用戶自訂配置列表"""
     from backend.api.config import get_config_manager
     config = get_config_manager().get_config()
-    return config.get('llama', {}).get('custom_presets', {})
+    from backend.core.config_secrets import mask_secrets
+    return mask_secrets(config.get('llama', {}).get('custom_presets', {}))
 
 
 @router.get("/presets/{preset_name}")

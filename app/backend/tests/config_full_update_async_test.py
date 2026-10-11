@@ -17,6 +17,9 @@ def test_full_config_disk_save_leaves_event_loop_responsive(monkeypatch):
         updated_config = {"translation": {"backend": "gpt"}, "general": {"language": "zh-TW"}}
 
         class SlowManager:
+            def get_config(self):
+                return {}
+
             def update_config(self, updates):
                 # Fail immediately if persistence regresses onto the event loop;
                 # do not deadlock the loop waiting for its own release signal.

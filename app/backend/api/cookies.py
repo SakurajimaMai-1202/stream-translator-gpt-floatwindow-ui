@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from backend.api.config import get_config_manager
 from backend.core.app_sync import publish_app_event
+from backend.core.config_secrets import mask_secrets
 from backend.core.cookie_manager import (
     BrowserCookieDatabaseLockedError,
     BrowserCookieDecryptionUnsupportedError,
@@ -39,7 +40,7 @@ async def _persist_cookie_result(result: dict, request: Request) -> None:
     updated_config = manager.update_config({"input": input_config})
     await publish_app_event("config.updated", {
         "section": "input",
-        "config": updated_config,
+        "config": mask_secrets(updated_config),
         "source_client_id": request.headers.get("X-Client-Id", ""),
     })
 

@@ -10,6 +10,7 @@ import logging
 import time
 import httpx
 from backend.core.app_sync import publish_app_event
+from backend.core.config_secrets import mask_secrets, omit_secrets, restore_masked_secrets
 
 router = APIRouter(prefix="/config", tags=["config"])
 logger = logging.getLogger(__name__)
@@ -92,7 +93,7 @@ async def check_hy_mt2_backend():
 async def get_config():
     """獲取完整配置"""
     try:
-        return {"success": True, "data": get_config_manager().get_config()}
+        return {"success": True, "data": mask_secrets(get_config_manager().get_config())}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -105,16 +106,17 @@ async def update_full_config(data: Dict[str, Any], request: Request):
             translation = dict(updates.get('translation') or {})
             translation['custom_models'] = updates.pop('custom_models')
             updates['translation'] = translation
+        updates = restore_masked_secrets(updates, get_config_manager().get_config())
         updated_config = await asyncio.to_thread(
             get_config_manager().update_config,
             updates,
         )
         await publish_app_event("config.updated", {
             "section": "*",
-            "config": updated_config,
+            "config": mask_secrets(updated_config),
             "source_client_id": request.headers.get("X-Client-Id", ""),
         })
-        return {"success": True, "data": updated_config}
+        return {"success": True, "data": mask_secrets(updated_config)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -127,6 +129,7 @@ async def get_config_status():
 async def update_section(section: str, data: Dict[str, Any], request: Request):
     """更新配置區段"""
     try:
+        data = restore_masked_secrets(data, get_config_manager().get_config().get(section, {}))
         # 特殊處理 llama 區段，避免覆蓋 custom_presets
         if section == 'llama':
             current_config = get_config_manager().get_config().get('llama', {})
@@ -147,10 +150,10 @@ async def update_section(section: str, data: Dict[str, Any], request: Request):
         )
         await publish_app_event("config.updated", {
             "section": section,
-            "config": full_config,
+            "config": mask_secrets(full_config),
             "source_client_id": request.headers.get("X-Client-Id", ""),
         })
-        return {"success": True, "data": full_config.get(section)}
+        return {"success": True, "data": mask_secrets(full_config.get(section))}
     except Exception as e:
         logger.exception("Failed to save config section %s", section)
         raise HTTPException(status_code=500, detail=str(e))
@@ -162,20 +165,22 @@ async def reset_config(request: Request):
         get_config_manager().reset_to_defaults()
         reset_config_data = get_config_manager().get_config()
         await publish_app_event("config.reset", {
-            "config": reset_config_data,
+            "config": mask_secrets(reset_config_data),
             "source_client_id": request.headers.get("X-Client-Id", ""),
         })
-        return {"success": True, "data": reset_config_data}
+        return {"success": True, "data": mask_secrets(reset_config_data)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/export")
-async def export_config():
+async def export_config(include_secrets: bool = False):
     """匯出配置為 YAML 檔案"""
     try:
         # 獲取當前配置
         config = get_config_manager().get_config()
         
+        if not include_secrets:
+            config = omit_secrets(config)
         # 轉換為 YAML 字串
         yaml_content = yaml.dump(config, allow_unicode=True, sort_keys=False)
         
@@ -192,6 +197,10 @@ async def export_config():
 async def import_config(file_content: dict, request: Request):
     """匯入 YAML 配置內容 (接收 JSON 包含 content 欄位或直接 YAML 轉換的 dict)"""
     try:
+        if isinstance(file_content.get("content"), str):
+            file_content = yaml.safe_load(file_content["content"])
+        if not isinstance(file_content, dict):
+            raise HTTPException(status_code=400, detail="配置根節點必須是字典")
         # 如果接收到的是字典（已經由 FastAPI 透過 JSON 解析）
         # 我們假設前端會傳送整個配置結構
         if not file_content:
@@ -213,11 +222,12 @@ async def import_config(file_content: dict, request: Request):
         # 我們使用 update_full_config 的邏輯，但這裡我們可以直接呼叫 save
         # 更安全的做法是逐個 section 更新
         
-        get_config_manager().update_config(file_content)
+        get_config_manager().update_config(restore_masked_secrets(
+            file_content, get_config_manager().get_config()))
             
         imported_config = get_config_manager().get_config()
         await publish_app_event("config.imported", {
-            "config": imported_config,
+            "config": mask_secrets(imported_config),
             "source_client_id": request.headers.get("X-Client-Id", ""),
         })
         return {"success": True, "message": "配置已成功匯入"}
@@ -241,23 +251,25 @@ async def import_config_file(request: Request, file: UploadFile = File(...)):
         if not isinstance(config_data, dict):
              raise HTTPException(status_code=400, detail="配置檔案格式不正確 (根節點必須是字典)")
              
-        get_config_manager().update_config(config_data)
+        get_config_manager().update_config(restore_masked_secrets(
+            config_data, get_config_manager().get_config()))
         
         imported_config = get_config_manager().get_config()
         await publish_app_event("config.imported", {
-            "config": imported_config,
+            "config": mask_secrets(imported_config),
             "source_client_id": request.headers.get("X-Client-Id", ""),
         })
         return {
             "success": True,
             "message": "配置檔案已成功匯入",
-            "data": imported_config,
+            "data": mask_secrets(imported_config),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"匯入檔案失敗: {str(e)}")
 
 class TestConnectionRequest(BaseModel):
     backend: str
+    section: str = "translation"
     api_key: str
     base_url: str | None = None
     proxy: str | None = None
@@ -266,7 +278,13 @@ class TestConnectionRequest(BaseModel):
 async def test_connection(request: TestConnectionRequest):
     """測試 API 金鑰與連線"""
     backend = request.backend.lower()
-    api_key = request.api_key.strip() if request.api_key else ""
+    if request.section not in {"translation", "transcription"}:
+        raise HTTPException(status_code=400, detail="不支援的配置區段")
+    translation = get_config_manager().get_config().get(request.section, {})
+    key_field = "google_api_key" if backend == "gemini" else "openai_api_key"
+    api_key = restore_masked_secrets(
+        {key_field: request.api_key}, translation)[key_field]
+    api_key = api_key.strip() if api_key else ""
     base_url = request.base_url.strip() if request.base_url else None
     proxy = request.proxy.strip() if request.proxy else None
     

@@ -9,6 +9,7 @@ from backend.core.translator import active_translations, create_task, get_task, 
 from backend.core.runtime_profiles import get_runtime_capabilities
 from backend.core.config_manager import ConfigManager, normalize_transcription_engine_flags
 from backend.core.app_sync import publish_app_event
+from backend.core.config_secrets import restore_masked_secrets
 from backend.core.language_identity import same_language
 from backend.core.process_audio import list_process_audio_targets, validate_process_target
 from pydantic import BaseModel
@@ -39,11 +40,14 @@ class GeminiConnectionTest(BaseModel):
 async def test_gemini(request: GeminiConnectionTest):
     """Validate an onboarding API key without persisting or logging it."""
     import httpx
+    stored = get_config_manager().get_config().get("translation", {})
+    api_key = restore_masked_secrets(
+        {"google_api_key": request.api_key}, stored)["google_api_key"]
     model = request.model.strip() or "gemini-2.5-flash-lite"
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}"
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.get(url, headers={"x-goog-api-key": request.api_key.strip()})
+            response = await client.get(url, headers={"x-goog-api-key": (api_key or "").strip()})
         if response.status_code == 200:
             return {"success": True, "model": model}
         if response.status_code in {401, 403}:
@@ -77,8 +81,9 @@ def _resolve_preview_args(request: FamilyPreviewRequest):
         raise HTTPException(status_code=400, detail="設定資料過大")
     manager = get_config_manager()
     config = copy.deepcopy(manager.get_config())
+    incoming = restore_masked_secrets(request.config, config)
     for section in ('translation', 'terminology', 'transcription'):
-        value = request.config.get(section)
+        value = incoming.get(section)
         if isinstance(value, dict):
             config.setdefault(section, {}).update(value)
     if config.get('translation', {}).get('backend') == 'none':
@@ -236,7 +241,8 @@ async def start_translation(request: StartTranslationRequest, http_request: Requ
         # 進階覆蓋
         if request.override_config:
             # 遞迴合併邏輯簡單實作，假設 override_config 結構正確
-            for section, values in request.override_config.items():
+            overrides = restore_masked_secrets(request.override_config, current_config)
+            for section, values in overrides.items():
                 if section in current_config and isinstance(values, dict):
                     current_config[section].update(values)
         

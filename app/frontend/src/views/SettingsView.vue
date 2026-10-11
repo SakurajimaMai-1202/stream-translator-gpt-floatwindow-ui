@@ -2191,6 +2191,7 @@ async function testOpenAiAsrConnection() {
     const res = await axios.post('/api/config/test-connection', {
       backend: 'gpt',
       api_key: apiKey,
+      section: 'transcription',
       base_url: 'https://api.openai.com/v1',
       proxy: localConfig.value.input.proxy || null
     });

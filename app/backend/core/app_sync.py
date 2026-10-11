@@ -3,6 +3,8 @@ import json
 import time
 from typing import Any, AsyncGenerator
 
+from backend.core.config_secrets import mask_secrets
+
 
 class AppSyncBroker:
     def __init__(self) -> None:
@@ -23,7 +25,7 @@ class AppSyncBroker:
         event = {
             'type': event_type,
             'payload': {
-                **payload,
+                **mask_secrets(payload),
                 'emitted_at': time.time(),
             },
         }

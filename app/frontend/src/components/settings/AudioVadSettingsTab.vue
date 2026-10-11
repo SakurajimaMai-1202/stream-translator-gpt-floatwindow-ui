@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import { useSettingsContext } from '../../composables/settings/settingsContext';
 import UiSelect, { type UiSelectOption } from '../UiSelect.vue';
 const { localConfig } = useSettingsContext();
+const vadLockedByNativeMode = computed(() => localConfig.value?.audio_slicing_vad?.slicing_mode === 'omnivad_native');
 const vadBackendOptions: UiSelectOption[] = [
   { value: 'silero', label: 'Silero VAD' },
   { value: 'firered', label: 'FireRed VAD' },
@@ -72,8 +74,12 @@ const slicingModeOptions: UiSelectOption[] = [
             <div class="bg-white/5 rounded-xl p-4 border border-white/10">
               <div class="flex items-center justify-between mb-4">
                 <h3 class="commercial-section-title mb-0">VAD（語音活動偵測）</h3>
-                <label class="flex items-center gap-2 cursor-pointer">
-                  <input v-model="localConfig.audio_slicing_vad.vad_enabled" type="checkbox" class="w-5 h-5 accent-blue-500" />
+                <!-- 原生事件模式依賴 VAD，SettingsView 會強制開啟，因此鎖定開關並說明原因 -->
+                <label class="flex items-center gap-2"
+                       :class="vadLockedByNativeMode ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'"
+                       :title="vadLockedByNativeMode ? 'OmniStreamVAD 原生事件模式需要 VAD；改用其他切段模式才能關閉' : undefined">
+                  <input v-model="localConfig.audio_slicing_vad.vad_enabled" type="checkbox" class="w-5 h-5 accent-blue-500"
+                         :disabled="vadLockedByNativeMode" />
                   <span class="text-white">啟用 VAD</span>
                 </label>
               </div>

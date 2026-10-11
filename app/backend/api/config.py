@@ -105,7 +105,10 @@ async def update_full_config(data: Dict[str, Any], request: Request):
             translation = dict(updates.get('translation') or {})
             translation['custom_models'] = updates.pop('custom_models')
             updates['translation'] = translation
-        updated_config = get_config_manager().update_config(updates)
+        updated_config = await asyncio.to_thread(
+            get_config_manager().update_config,
+            updates,
+        )
         await publish_app_event("config.updated", {
             "section": "*",
             "config": updated_config,

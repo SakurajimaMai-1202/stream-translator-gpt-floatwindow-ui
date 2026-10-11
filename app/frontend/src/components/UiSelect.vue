@@ -71,6 +71,10 @@ const groupedOptions = computed(() => {
 
 function toggleOpen() {
   if (props.disabled) return;
+  if (!isOpen.value && rootRef.value) {
+    // Mount at the final width so the first measurement includes label wrapping.
+    menuStyle.width = `${Math.min(rootRef.value.getBoundingClientRect().width, Math.max(80, window.innerWidth - 24))}px`;
+  }
   isOpen.value = !isOpen.value;
 }
 
@@ -100,17 +104,27 @@ function handleKeydown(event: KeyboardEvent) {
 }
 
 function updateMenuPosition() {
-  if (!rootRef.value) return;
+  if (!isOpen.value || !rootRef.value || !menuRef.value) return;
   const rect = rootRef.value.getBoundingClientRect();
   const gap = 4;
   const viewportPadding = 12;
+  const maxMenuWidth = Math.max(80, window.innerWidth - viewportPadding * 2);
+  const menuWidth = Math.min(rect.width, maxMenuWidth);
+  if (menuStyle.width !== `${menuWidth}px`) {
+    // After a resize, measure wrapping on the next frame instead of forcing
+    // layout immediately after changing width.
+    menuStyle.width = `${menuWidth}px`;
+    nextTick(scheduleMenuPositionUpdate);
+    return;
+  }
   const spaceBelow = window.innerHeight - rect.bottom - viewportPadding;
   const spaceAbove = rect.top - viewportPadding;
   // Measure the actual menu content before deciding which side to use.  The
   // old fixed 180px threshold made a short three-item menu flip upward in a
   // compact window even when it would fit below the button, which looked like
   // the dropdown had detached from its control.
-  const contentHeight = menuRef.value?.scrollHeight || 0;
+  const contentHeight = menuRef.value.scrollHeight;
+  const borderHeight = menuRef.value.offsetHeight - menuRef.value.clientHeight;
   const desiredHeight = Math.min(288, Math.max(96, contentHeight || 288));
   // Prefer the predictable downward placement.  Only flip when the lower
   // area is too small to show a useful portion of the menu; otherwise a long
@@ -120,17 +134,11 @@ function updateMenuPosition() {
     && spaceAbove > spaceBelow;
   const availableSpace = Math.max(32, (openUp ? spaceAbove : spaceBelow) - gap);
   const maxHeight = Math.min(288, availableSpace);
-  const maxMenuWidth = Math.max(80, window.innerWidth - viewportPadding * 2);
-  const menuWidth = Math.min(rect.width, maxMenuWidth);
   const maxLeft = Math.max(viewportPadding, window.innerWidth - menuWidth - viewportPadding);
   const left = Math.max(viewportPadding, Math.min(rect.left, maxLeft));
-  // Position using the rendered height, not the scrolling height limit.
-  // Set width first so wrapped option labels are measured at their final width.
-  if (menuRef.value) {
-    menuRef.value.style.width = `${menuWidth}px`;
-    menuRef.value.style.maxHeight = `${maxHeight}px`;
-  }
-  const actualHeight = menuRef.value?.getBoundingClientRect().height || Math.min(desiredHeight, maxHeight);
+  // Read all geometry before writing styles. Border-box height is the natural
+  // content height plus borders, capped at the available scrolling viewport.
+  const actualHeight = Math.min(contentHeight + borderHeight, maxHeight);
   const rawTop = openUp ? rect.top - actualHeight - gap : rect.bottom + gap;
   const maxTop = Math.max(viewportPadding, window.innerHeight - viewportPadding - actualHeight);
   const top = Math.max(viewportPadding, Math.min(rawTop, maxTop));
@@ -264,7 +272,7 @@ onBeforeUnmount(detachOpenListeners);
 <style scoped>
 .fw-select-trigger { min-height: 2.75rem; border-radius: var(--fw-radius-sm, .625rem); border-color: var(--fw-border-strong, #ffffff29); background: var(--fw-surface-subtle, #101824); color: var(--fw-text, #eef2f7); font-family: inherit; touch-action: manipulation; }
 .fw-select-trigger:active:not(:disabled) { filter: brightness(1.12); }
-.fw-select-menu { border-color: var(--fw-border-strong, #ffffff29); border-radius: var(--fw-radius-md, .75rem); background: var(--fw-surface-raised, #1e2939); color: var(--fw-text, #eef2f7); box-shadow: 0 12px 36px #0007; padding: .25rem; overscroll-behavior: contain; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+.fw-select-menu { box-sizing: border-box; border-color: var(--fw-border-strong, #ffffff29); border-radius: var(--fw-radius-md, .75rem); background: var(--fw-surface-raised, #1e2939); color: var(--fw-text, #eef2f7); box-shadow: 0 12px 36px #0007; padding: .25rem; overscroll-behavior: contain; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
 .fw-select-option { min-height: 2.75rem; padding: .65rem .75rem; border-radius: var(--fw-radius-sm, .625rem); line-height: 1.5; overflow-wrap: anywhere; touch-action: manipulation; }
 .fw-select-option[aria-current="true"] { background: var(--fw-primary-soft, #243c5d); color: #eef2f7; }
 .fw-select-option:hover:not(:disabled) { background: #ffffff12; }

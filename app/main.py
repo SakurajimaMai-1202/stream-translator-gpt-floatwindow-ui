@@ -494,12 +494,17 @@ def main():
     parser.add_argument(
         '--enable-webview-gpu',
         action='store_true',
-        help='相容舊版參數；WebView 現在預設使用自動 GPU 相容模式'
+        help='啟用 WebView GPU 硬體加速；Windows 預設使用軟體渲染'
     )
     parser.add_argument(
         '--enable-webview-direct-composition',
         action='store_true',
-        help='實驗性啟用 Windows DirectComposition；透明視窗可能閃爍'
+        help='實驗性啟用 Windows DirectComposition，供顯示相容性測試'
+    )
+    parser.add_argument(
+        '--disable-webview-direct-composition',
+        action='store_true',
+        help='停用 Windows DirectComposition，供顯示相容性測試'
     )
     args = parser.parse_args()
 
@@ -511,10 +516,13 @@ def main():
         is_frozen = getattr(sys, 'frozen', False)
         dev_mode = (not args.prod) and (not is_frozen)
         
-        # GPU/ANGLE 是 Qt WebEngine 的標準路徑。只有使用者明確指定
-        # --disable-gpu 時才退回完整軟體合成，避免所有動畫與透明效果
-        # 都落到 CPU 上。--enable-webview-gpu 保留供舊捷徑相容。
-        disable_webview_gpu = args.disable_gpu
+        # Windows 的內嵌控制介面採用已驗證的軟體渲染，避免特定
+        # ANGLE/驅動組合造成選單卡頓與破圖。此設定不影響 ASR/LLM GPU。
+        # GPU 與 DirectComposition 仍可明確啟用；--disable-gpu 優先。
+        disable_webview_gpu = args.disable_gpu or (
+            sys.platform == "win32"
+            and not (args.enable_webview_gpu or args.enable_webview_direct_composition)
+        )
         if disable_webview_gpu:
             append_chromium_flags("--disable-gpu", "--disable-gpu-compositing")
             os.environ.setdefault("QT_OPENGL", "software")
@@ -523,19 +531,21 @@ def main():
             if sys.platform == "win32":
                 # Qt 的置頂／半透明多視窗可能讓 Chromium 誤判 WebView 已被
                 # Windows 遮蔽，暫停繪製後再恢復時便出現整塊灰底閃爍。
-                # 保留 GPU 渲染，但停用 DirectComposition 的顯示交換路徑；
-                # 在部分 NVIDIA/ANGLE 組合中，這比完整停用 GPU 更快且穩定。
+                # 預設停用 DirectComposition；僅在明確指定啟用參數時
+                # 使用此路徑。停用參數優先，方便相容性測試。
                 append_chromium_flags(
                     "--disable-features=CalculateNativeWinOcclusion",
                 )
-                if not args.enable_webview_direct_composition:
+                if args.disable_webview_direct_composition or not args.enable_webview_direct_composition:
                     append_chromium_flags(
                         "--disable-direct-composition",
                         "--disable-direct-composition-video-overlays",
                     )
-                logger.info("WebView GPU 相容模式：已停用 Native Win Occlusion/DirectComposition，保留 GPU 渲染")
+                    logger.info("WebView GPU 相容模式：已停用 Native Win Occlusion/DirectComposition，保留 GPU 渲染")
+                else:
+                    logger.info("WebView GPU 模式：已停用 Native Win Occlusion，保留 GPU 渲染與 DirectComposition")
             if args.enable_webview_gpu:
-                logger.info("--enable-webview-gpu 已不再需要；目前預設即為自動 GPU 相容模式")
+                logger.info("已明確啟用 WebView GPU 硬體加速")
             
         app = UI2Application(dev_mode=dev_mode, disable_gpu=disable_webview_gpu)
         exit_code = app.run()

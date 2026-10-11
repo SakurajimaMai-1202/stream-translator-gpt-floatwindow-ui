@@ -464,6 +464,20 @@ select optgroup {
 .fw-disclosure > summary { padding: 1rem 1.25rem; cursor: pointer; font-weight: 600; }
 .fw-disclosure[open] > summary { border-bottom: 1px solid var(--fw-border); }
 .commercial-sidebar { backdrop-filter: blur(20px); }
+/* Embedded Qt compositing has a different cost from the system browser.
+   Keep control feedback immediate and avoid filtered layers in the control UI.
+   Subtitle canvases are outside these selectors. */
+.fw-desktop-webview :is(.commercial-sidebar, .commercial-mobile-header, .commercial-main [class*="backdrop-blur"]) {
+  backdrop-filter: none !important;
+}
+.fw-desktop-webview :is(.commercial-shell, .fw-onboarding) button,
+.fw-desktop-webview :is(.fw-select-trigger, .fw-select-option) {
+  transition: none !important;
+  filter: none !important;
+}
+.fw-desktop-webview .fw-select-menu {
+  box-shadow: none !important;
+}
 .commercial-navigation button { padding: .65rem .75rem; border-left: 0 !important; font-size: .8125rem !important; }
 .commercial-navigation button[aria-current="page"] { background: var(--fw-primary-soft) !important; color: var(--fw-text) !important; }
 .commercial-navigation button[aria-current="page"] .app-icon { color: #9ec3ff; }

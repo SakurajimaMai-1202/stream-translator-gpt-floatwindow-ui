@@ -55,6 +55,12 @@ if "--update-health-check" in sys.argv:
     sys.exit(0)
 
 from backend.core.logging_setup import configure_logging
+import ui_perf
+from webview_rendering import (
+    apply_render_mode as apply_webview_render_mode,
+    read_configured_render_mode as read_configured_webview_render_mode,
+    resolve_render_mode as resolve_webview_render_mode,
+)
 from services import BackendProcess, FrontendServer
 from windows import HomeWindow, SettingsWindow, FloatingSubtitleWindow, SubtitleSettingsWindow
 from native_subtitle import NativeSubtitleWindow
@@ -93,18 +99,6 @@ def resolve_app_icon() -> QIcon:
     return QIcon()
 
 
-def append_chromium_flags(*flags: str) -> str:
-    """將 Chromium 啟動旗標合併且去重，保留外部傳入旗標的順序。"""
-    existing = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "").split()
-    merged = list(existing)
-    for flag in flags:
-        if flag and flag not in merged:
-            merged.append(flag)
-    value = " ".join(merged)
-    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = value
-    return value
-
-
 class UI2Application:
     """UI2 應用程式管理器"""
     
@@ -124,6 +118,7 @@ class UI2Application:
         
         self.app = QApplication(sys.argv)
         self.app.setApplicationName("Stream Translator")
+        ui_perf.install_if_enabled(self.app)
 
         # 設定應用程式圖標（支援打包模式）
         app_icon = resolve_app_icon()
@@ -489,12 +484,12 @@ def main():
     parser.add_argument(
         '--disable-gpu',
         action='store_true',
-        help='停用 WebView GPU 硬體加速'
+        help='WebView 使用完整軟體渲染（顯示仍異常時的退回選項）'
     )
     parser.add_argument(
         '--enable-webview-gpu',
         action='store_true',
-        help='啟用 WebView GPU 硬體加速；Windows 預設使用軟體渲染'
+        help='WebView 使用完整 GPU 渲染；Windows 預設為 GPU 合成搭配 CPU 光柵化'
     )
     parser.add_argument(
         '--enable-webview-direct-composition',
@@ -516,37 +511,14 @@ def main():
         is_frozen = getattr(sys, 'frozen', False)
         dev_mode = (not args.prod) and (not is_frozen)
         
-        # Windows 的內嵌控制介面採用已驗證的軟體渲染，避免特定
-        # ANGLE/驅動組合造成選單卡頓與破圖。此設定不影響 ASR/LLM GPU。
-        # GPU 與 DirectComposition 仍可明確啟用；--disable-gpu 優先。
-        disable_webview_gpu = args.disable_gpu or (
-            sys.platform == "win32"
-            and not (args.enable_webview_gpu or args.enable_webview_direct_composition)
+        # 渲染模式只影響 WebView 介面，不影響 ASR/LLM GPU。命令列參數
+        # 優先，其次是 config.yaml 的 ui.webview_rendering。
+        from backend.config import settings
+        render_mode = resolve_webview_render_mode(
+            args, read_configured_webview_render_mode(settings.CONFIG_FILE)
         )
-        if disable_webview_gpu:
-            append_chromium_flags("--disable-gpu", "--disable-gpu-compositing")
-            os.environ.setdefault("QT_OPENGL", "software")
-            logger.info("已設定 Chromium 旗標以停用 WebView GPU 合成")
-        else:
-            if sys.platform == "win32":
-                # Qt 的置頂／半透明多視窗可能讓 Chromium 誤判 WebView 已被
-                # Windows 遮蔽，暫停繪製後再恢復時便出現整塊灰底閃爍。
-                # 預設停用 DirectComposition；僅在明確指定啟用參數時
-                # 使用此路徑。停用參數優先，方便相容性測試。
-                append_chromium_flags(
-                    "--disable-features=CalculateNativeWinOcclusion",
-                )
-                if args.disable_webview_direct_composition or not args.enable_webview_direct_composition:
-                    append_chromium_flags(
-                        "--disable-direct-composition",
-                        "--disable-direct-composition-video-overlays",
-                    )
-                    logger.info("WebView GPU 相容模式：已停用 Native Win Occlusion/DirectComposition，保留 GPU 渲染")
-                else:
-                    logger.info("WebView GPU 模式：已停用 Native Win Occlusion，保留 GPU 渲染與 DirectComposition")
-            if args.enable_webview_gpu:
-                logger.info("已明確啟用 WebView GPU 硬體加速")
-            
+        disable_webview_gpu = apply_webview_render_mode(render_mode, args)
+
         app = UI2Application(dev_mode=dev_mode, disable_gpu=disable_webview_gpu)
         exit_code = app.run()
         app.cleanup()

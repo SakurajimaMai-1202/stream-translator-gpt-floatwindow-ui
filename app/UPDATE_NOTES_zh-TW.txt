@@ -5,7 +5,7 @@ Stream Translator v1.5.0 更新摘要
 主要更新
 - 全新深色介面，集中常用設定，改善模型管理、字幕控制與窄視窗操作。
 - 改善桌面首頁下拉選單反應，減少版面重算與視覺效果成本，設定保存改為背景執行。
-- Windows 控制介面預設使用軟體渲染，改善部分顯卡環境的卡頓與殘影；ASR／LLM GPU 加速不受影響。
+- Windows 控制介面預設採用 GPU 合成搭配 CPU 光柵化，改善捲動與下拉選單卡頓，並避開常見的顯卡繪製殘影；ASR／LLM GPU 加速不受影響。
 - 新增指定應用程式收音，支援來源選擇、收音測試與目標關閉提示。
 - 本機翻譯可指定顯卡，新增 Index-Translate-2B／9B GGUF 模型推薦。
 - 改善首次設定與音訊來源檢查；HY-MT2 與 Index 分別保存設定。
@@ -25,4 +25,4 @@ Stream Translator v1.5.0 更新摘要
 使用提醒
 - 指定應用程式收音需要 Windows build 20348 以上；瀏覽器無法保證單一分頁或視窗隔離。
 - ROCm 為實驗性版本，相容性依顯卡、驅動與模型而異。
-- 可使用 --enable-webview-gpu 啟動，測試桌面控制介面的 GPU 加速。
+- 控制介面若仍出現破圖或殘影，可在 config.yaml 的 ui 區段加入 webview_rendering: software，或以 --disable-gpu 啟動改用軟體渲染。

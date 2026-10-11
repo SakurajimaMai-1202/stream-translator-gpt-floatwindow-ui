@@ -14,6 +14,8 @@ from PyQt6.QtCore import Qt, QUrl, QTimer, QPoint, QRect, QEvent, QObject, pyqtS
 from PyQt6.QtGui import QIcon, QCursor, QMouseEvent, QWheelEvent, QKeyEvent, QColor, QDesktopServices
 import logging
 
+import ui_perf
+
 logger = logging.getLogger(__name__)
 
 
@@ -197,6 +199,7 @@ class WebViewWindow(QMainWindow):
         self.web_view.repaint()
         if not self._initial_load_emitted:
             self._initial_load_emitted = True
+            ui_perf.track_presented_frames(self.web_view.focusProxy(), self.windowTitle())
             self.initialLoadFinished.emit(ok)
 
     def _show_web_view_if_hidden(self):
@@ -273,6 +276,7 @@ class CustomWebPage(QWebEnginePage):
     
     def javaScriptConsoleMessage(self, level, message, lineNumber, sourceID):
         """捕獲 JavaScript 控制台訊息"""
+        ui_perf.record_console_message()
         log_levels = {
             QWebEnginePage.JavaScriptConsoleMessageLevel.InfoMessageLevel: logger.info,
             QWebEnginePage.JavaScriptConsoleMessageLevel.WarningMessageLevel: logger.warning,

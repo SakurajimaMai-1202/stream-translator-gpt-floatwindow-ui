@@ -168,7 +168,8 @@ def test_legacy_parakeet_is_forced_to_ctc():
 
 
 def test_parakeet_low_precision_disables_graphs_without_mutating_model_config():
-    from omegaconf import OmegaConf
+    # omegaconf 隨 NeMo 安裝，只存在於 CUDA Parakeet profile
+    OmegaConf = pytest.importorskip("omegaconf").OmegaConf
     from types import SimpleNamespace
 
     calls = []

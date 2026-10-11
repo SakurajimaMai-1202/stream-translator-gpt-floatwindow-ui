@@ -14,6 +14,8 @@ from backend.core.language_identity import same_language
 from backend.core.process_audio import list_process_audio_targets, validate_process_target
 from pydantic import BaseModel
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/translation", tags=["translation"])
 from backend.api.config import get_config_manager
 
@@ -444,6 +446,7 @@ async def list_audio_devices():
             try:
                 default_input_index = sd.default.device[0]
             except Exception:
+                logger.debug("讀取預設麥克風失敗", exc_info=True)
                 default_input_index = -1
             for i, device in enumerate(sd_devices):
                 if device['max_input_channels'] > 0:
@@ -454,6 +457,7 @@ async def list_audio_devices():
                         "is_default": (i == default_input_index)
                     })
         except Exception as e:
+            logger.debug("查詢音訊輸入裝置失敗", exc_info=True)
             print(f"Error querying SoundDevice: {e}")
         
         # WASAPI Loopback 設備 (僅 Windows)
@@ -473,6 +477,7 @@ async def list_audio_devices():
                             default_output = p.get_default_wasapi_loopback()
                             is_def = (device.get('index') == default_output.get('index'))
                         except Exception:
+                            logger.debug("讀取預設 WASAPI 回送裝置失敗", exc_info=True)
                             # fallback: 第一個 loopback 設備視為預設
                             is_def = first_loopback
                         devices["system_audio"].append({
@@ -488,6 +493,7 @@ async def list_audio_devices():
                 # pyaudiowpatch 未安裝
                 pass
             except Exception as e:
+                logger.debug("查詢 WASAPI 裝置失敗", exc_info=True)
                 print(f"Error querying WASAPI devices: {e}")
         
         return {

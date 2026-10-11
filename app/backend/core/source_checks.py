@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import json
 import math
 import shutil
@@ -14,6 +15,9 @@ from urllib.parse import urlparse
 
 from backend.core.cookie_manager import _resolve_runtime_python
 from backend.core.external_process import run_external
+
+
+logger = logging.getLogger(__name__)
 
 
 SourceKind = Literal["url", "file", "microphone", "system_audio", "process_audio"]
@@ -212,6 +216,7 @@ def check_device(source: SourceKind, device_index: int | None, duration_seconds:
         else:
             raise ValueError(f"不支援的裝置來源: {source}")
     except Exception as exc:
+        logger.debug("測試音訊裝置失敗", exc_info=True)
         return _result(source, started, "error", "device_open", "無法開啟音訊裝置",
                        "重新選擇裝置、確認未被停用或占用，再重試。", technical_detail=str(exc))
     dbfs = round(20 * math.log10(max(peak, 1e-9)), 1)

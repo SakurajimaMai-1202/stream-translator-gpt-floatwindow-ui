@@ -249,7 +249,7 @@ class WebViewWindow(QMainWindow):
         status_str = "Unknown"
         try:
             status_str = terminationStatus.name
-        except Exception:
+        except AttributeError:
             status_str = str(terminationStatus)
         logger.error(f"[WebView] 網頁渲染程序異常終止 (Status: {status_str}, Exit Code: {exitCode})")
 

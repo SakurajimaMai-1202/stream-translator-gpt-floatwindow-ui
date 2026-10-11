@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import hashlib
 import json
 import os
@@ -18,6 +19,9 @@ from backend.config import settings
 from update_runtime_contract import validate_update_runtime
 from backend.core.http_downloader import HttpDownloader
 from backend.core.portable_paths import get_app_root, get_packaged_runtime_profile
+
+
+logger = logging.getLogger(__name__)
 
 
 REPOSITORY = "SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui"
@@ -164,6 +168,7 @@ class AppUpdateManager:
                          else ("Update available" if available else "Already up to date")),
             )
         except Exception as exc:
+            logger.debug("檢查應用程式更新失敗", exc_info=True)
             self._set(status="error", error=str(exc), message="Update check failed")
         return self.status()
 
@@ -338,6 +343,7 @@ class AppUpdateManager:
         except InterruptedError:
             self._set(status="cancelled", message="Application update download cancelled")
         except Exception as exc:
+            logger.debug("準備應用程式更新失敗", exc_info=True)
             self._set(status="error", message="Application update preparation failed", error=str(exc))
 
     def create_apply_plan(self) -> dict[str, Any]:

@@ -295,7 +295,8 @@ Translation:"""
             try:
                 self.process.terminate()
                 self.process.wait(timeout=3)
-            except:
+            except (OSError, subprocess.TimeoutExpired):
+                logger.debug("清理 Llama 伺服器程序失敗", exc_info=True)
                 pass
 
 

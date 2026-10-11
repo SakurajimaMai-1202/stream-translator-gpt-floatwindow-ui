@@ -1,4 +1,5 @@
 """Select opaque device IDs reported by the installed llama.cpp runtime."""
+import logging
 import os
 import re
 import subprocess
@@ -9,6 +10,9 @@ from backend.core.external_process import run_external
 from backend.core.hardware_detector import (
     detect_windows_dxgi_adapters, is_integrated_gpu_name, normalize_gpu_name,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 def parse_devices(output: str, adapters=None) -> list[dict]:
@@ -43,6 +47,7 @@ def enumerate_devices(server_exe: str, allow_integrated_gpu: bool = False) -> di
             device["eligible"] = allow_integrated_gpu or not device["is_integrated"]
         return dict(devices=devices, error=None, server_exe=server_exe)
     except Exception as exc:
+        logger.debug("列舉 llama.cpp 顯卡失敗", exc_info=True)
         return dict(devices=[], error=str(exc), server_exe=server_exe)
 
 
@@ -70,7 +75,8 @@ def _runtime_help(server_exe: str, mtime_ns: int, size: int) -> str:
                               text=True, encoding="utf-8", errors="replace", timeout=5,
                               creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         return (result.stdout or "") + (result.stderr or "")
-    except Exception:
+    except (OSError, subprocess.TimeoutExpired):
+        logger.debug("讀取 llama.cpp 說明失敗", exc_info=True)
         return ""
 
 

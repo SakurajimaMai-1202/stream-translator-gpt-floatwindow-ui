@@ -321,6 +321,7 @@ class FrontendServer(QObject):
                     self.started.emit(port)
                     return
             except Exception:
+                logger.debug("探測前端開發伺服器失敗", exc_info=True)
                 continue
         
         # 重試

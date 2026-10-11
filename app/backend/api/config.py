@@ -306,6 +306,7 @@ async def test_connection(request: TestConnectionRequest):
             client.models.list()
             return {"success": True, "message": "連線測試成功！API 金鑰有效。"}
         except Exception as e:
+            logger.debug("OpenAI 連線測試失敗", exc_info=True)
             return {"success": False, "message": f"OpenAI 連線測試失敗: {str(e)}"}
             
     elif backend == "gemini":
@@ -316,6 +317,7 @@ async def test_connection(request: TestConnectionRequest):
             list(genai.list_models())
             return {"success": True, "message": "連線測試成功！API 金鑰有效。"}
         except Exception as e:
+            logger.debug("Gemini 連線測試失敗", exc_info=True)
             return {"success": False, "message": f"Gemini 連線測試失敗: {str(e)}"}
             
     else:

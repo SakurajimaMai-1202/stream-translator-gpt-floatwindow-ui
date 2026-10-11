@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import json
 import os
 import re
@@ -12,6 +13,9 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Literal
+
+
+logger = logging.getLogger(__name__)
 
 
 RuntimeProfile = Literal["cuda", "cpu", "rocm"]
@@ -136,6 +140,7 @@ def detect_torch_gpus(torch_module: Any | None = None) -> list[GpuDevice]:
         if torch is None:
             import torch  # type: ignore
     except Exception:
+        logger.debug("載入 PyTorch 顯卡探測失敗", exc_info=True)
         return []
 
     cuda = getattr(torch, "cuda", None)
@@ -145,6 +150,7 @@ def detect_torch_gpus(torch_module: Any | None = None) -> list[GpuDevice]:
     try:
         count = int(cuda.device_count())
     except Exception:
+        logger.debug("讀取 PyTorch 顯卡數量失敗", exc_info=True)
         return []
 
     torch_version = getattr(torch, "version", None)
@@ -155,6 +161,7 @@ def detect_torch_gpus(torch_module: Any | None = None) -> list[GpuDevice]:
         try:
             name = str(cuda.get_device_name(index))
         except Exception:
+            logger.debug("讀取 PyTorch 顯卡名稱失敗", exc_info=True)
             name = f"GPU {index}"
         vendor = classify_vendor(name)
         backend = backend_for_vendor(vendor, hip_version) if hip_version else ("cuda" if vendor == "nvidia" else "unknown")
@@ -169,6 +176,7 @@ def detect_torch_gpus(torch_module: Any | None = None) -> list[GpuDevice]:
                 or getattr(props, "arch_name", None)
             )
         except Exception:
+            logger.debug("讀取 PyTorch 顯卡屬性失敗", exc_info=True)
             pass
         is_supported = _is_arch_supported_by_torch(arch_name, supported_arches)
         devices.append(
@@ -213,7 +221,8 @@ def detect_windows_video_controllers() -> list[GpuDevice]:
             check=False,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
-    except Exception:
+    except (OSError, subprocess.TimeoutExpired):
+        logger.debug("探測 Windows 顯卡失敗", exc_info=True)
         return []
     if result.returncode != 0 or not result.stdout.strip():
         return []
@@ -338,7 +347,8 @@ def detect_nvidia_smi_gpus() -> list[GpuDevice]:
             check=False,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
-    except Exception:
+    except (OSError, subprocess.TimeoutExpired):
+        logger.debug("執行 NVIDIA 顯卡探測失敗", exc_info=True)
         return []
     if result.returncode != 0:
         return []
@@ -403,6 +413,8 @@ def detect_runtime_python_gpus(python_exe: str | None = None) -> list[GpuDevice]
 
     script = (
         "import json\n"
+        "import logging\n"
+        "logger = logging.getLogger(__name__)\n"
         "try:\n"
         "    import torch\n"
         "    cuda = getattr(torch, 'cuda', None)\n"
@@ -413,6 +425,7 @@ def detect_runtime_python_gpus(python_exe: str | None = None) -> list[GpuDevice]
         "        try:\n"
         "            supported_arches = list(cuda.get_arch_list() or [])\n"
         "        except Exception:\n"
+        "            logger.debug('讀取 Runtime 支援架構失敗', exc_info=True)\n"
         "            supported_arches = []\n"
         "    devices = []\n"
         "    count = int(cuda.device_count()) if cuda is not None else 0\n"
@@ -420,6 +433,7 @@ def detect_runtime_python_gpus(python_exe: str | None = None) -> list[GpuDevice]
         "        try:\n"
         "            name = str(cuda.get_device_name(index))\n"
         "        except Exception:\n"
+        "            logger.debug('讀取 Runtime 顯卡名稱失敗', exc_info=True)\n"
         "            name = f'GPU {index}'\n"
         "        memory_mb = None\n"
         "        arch_name = None\n"
@@ -428,10 +442,12 @@ def detect_runtime_python_gpus(python_exe: str | None = None) -> list[GpuDevice]
         "            memory_mb = int(getattr(props, 'total_memory', 0) / (1024 * 1024)) or None\n"
         "            arch_name = getattr(props, 'gcnArchName', None) or getattr(props, 'gcn_arch_name', None) or getattr(props, 'arch_name', None)\n"
         "        except Exception:\n"
+        "            logger.debug('讀取 Runtime 顯卡屬性失敗', exc_info=True)\n"
         "            pass\n"
         "        devices.append({'index': index, 'name': name, 'memory_mb': memory_mb, 'arch_name': arch_name})\n"
         "    print(json.dumps({'ok': True, 'hip': hip, 'supported_arches': supported_arches, 'devices': devices}, ensure_ascii=True))\n"
         "except Exception as exc:\n"
+        "    logger.debug('Runtime 顯卡探測失敗', exc_info=True)\n"
         "    print(json.dumps({'ok': False, 'error': str(exc)}, ensure_ascii=True))\n"
     )
 
@@ -446,7 +462,8 @@ def detect_runtime_python_gpus(python_exe: str | None = None) -> list[GpuDevice]
             check=False,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
-    except Exception:
+    except (OSError, subprocess.TimeoutExpired):
+        logger.debug("執行 Runtime 顯卡探測失敗", exc_info=True)
         return []
 
     if result.returncode != 0 or not result.stdout.strip():
@@ -629,6 +646,7 @@ def _torch_supported_arches(cuda: Any) -> set[str]:
     try:
         raw_arches = get_arch_list()
     except Exception:
+        logger.debug("讀取 PyTorch 支援架構失敗", exc_info=True)
         return set()
     arches: set[str] = set()
     for arch in raw_arches or []:

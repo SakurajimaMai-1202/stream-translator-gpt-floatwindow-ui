@@ -1,6 +1,7 @@
 """Download and verify the small set of GGUF models offered by simple setup."""
 from __future__ import annotations
 
+import logging
 import hashlib
 import json
 import os
@@ -14,6 +15,9 @@ from typing import Any
 
 from backend.core.http_downloader import HttpDownloader
 from backend.core.portable_paths import get_app_root
+
+logger = logging.getLogger(__name__)
+
 
 REPOSITORY = "mradermacher/Hy-MT2-7B-i1-GGUF"
 MODELS = {
@@ -126,6 +130,7 @@ class LlamaModelInstaller:
             self._set(state="completed", message="翻譯模型已就緒", progress=1.0,
                       path=str(target), bytes_downloaded=size, bytes_total=size, sha256=actual)
         except Exception as exc:
+            logger.debug("下載翻譯模型失敗", exc_info=True)
             self._set(state="error", message="翻譯模型下載失敗", error=str(exc))
 
     @staticmethod

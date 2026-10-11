@@ -16,6 +16,9 @@ import yaml
 from backend.config import settings
 
 
+logger = logging.getLogger(__name__)
+
+
 DEFAULT_LOG_LEVEL_NAME = "INFO"
 LOG_MAX_BYTES = 5 * 1024 * 1024
 LOG_BACKUP_COUNT = 5
@@ -45,6 +48,7 @@ def _read_log_level_name(config_path: Optional[Path] = None) -> str:
             if value in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
                 return value
     except Exception:
+        logger.debug("讀取日誌等級設定失敗", exc_info=True)
         pass
     return DEFAULT_LOG_LEVEL_NAME
 
@@ -91,6 +95,7 @@ def _reset_log_path(log_file: Path):
         except FileNotFoundError:
             pass
         except Exception:
+            logger.debug("清理舊日誌失敗", exc_info=True)
             pass
 
 
@@ -109,6 +114,7 @@ def _close_handlers(logger: logging.Logger):
         try:
             handler.close()
         except Exception:
+            logger.debug("關閉日誌處理器失敗", exc_info=True)
             pass
 
 

@@ -1,4 +1,5 @@
 import ipaddress
+import logging
 import socket
 
 from fastapi import FastAPI
@@ -12,6 +13,8 @@ from . import cookies
 from . import readiness
 from backend.api.config import get_config_manager
 from backend.core.system_check import check_ffmpeg
+
+logger = logging.getLogger(__name__)
 
 def register_routes(app: FastAPI):
     """註冊所有路由"""
@@ -33,6 +36,7 @@ def register_routes(app: FastAPI):
             public_port = server_cfg.get("public_port", 8765)
             sharing_enabled = server_cfg.get("enable_subtitle_sharing", True)
         except Exception:
+            logger.debug("讀取伺服器分享設定失敗", exc_info=True)
             public_port = 8765
             sharing_enabled = False
         lan_addresses = set()

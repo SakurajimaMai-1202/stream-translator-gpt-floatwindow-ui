@@ -96,6 +96,7 @@ def resolve_app_icon() -> QIcon:
             if not icon.isNull():
                 return icon
         except Exception:
+            logger.debug("載入應用圖示失敗", exc_info=True)
             continue
 
     return QIcon()
@@ -320,7 +321,8 @@ class UI2Application:
                 self.subtitle_sse_client = None
             try:
                 self.subtitle_window.close()
-            except:
+            except RuntimeError:
+                logger.debug("關閉舊字幕視窗失敗", exc_info=True)
                 pass
             self.subtitle_window = None
         
@@ -448,7 +450,7 @@ class UI2Application:
             parsed = urlparse(url)
             if parsed.port:
                 port_set.add(parsed.port)
-        except Exception:
+        except (ValueError, TypeError, AttributeError):
             pass
 
     def _pick_backend_port(self, preferred: int, reserved: set = None) -> int:

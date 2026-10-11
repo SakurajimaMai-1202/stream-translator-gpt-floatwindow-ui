@@ -29,6 +29,7 @@ def _is_subtitle_sharing_enabled() -> bool:
             return False
         return bool(cfg.get("server", {}).get("enable_subtitle_sharing", True))
     except Exception:
+        logger.debug("讀取字幕分享設定失敗", exc_info=True)
         return False
 
 # 修正 Windows MIME 解析

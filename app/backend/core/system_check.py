@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import subprocess
@@ -10,6 +11,9 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from backend.config import settings
+
+logger = logging.getLogger(__name__)
+
 
 _CACHE_TTL_SECONDS = 30
 _cached_result: Optional[Dict] = None
@@ -78,6 +82,7 @@ def _read_ffmpeg_version(ffmpeg_path: Path) -> Optional[str]:
             return first_line.replace("ffmpeg version", "", 1).strip()
         return first_line.strip() or None
     except Exception:
+        logger.debug("讀取 FFmpeg 版本失敗", exc_info=True)
         return None
 
 

@@ -5,6 +5,7 @@
 
 from pathlib import Path
 from typing import Dict, Any, List, Optional
+import logging
 import yaml
 import copy
 import json
@@ -22,6 +23,9 @@ from backend.core.runtime_profiles import (
 )
 from backend.core.asr_model_capabilities import coerce_model_language
 from backend.core.portable_paths import get_packaged_runtime_profile
+
+
+logger = logging.getLogger(__name__)
 
 
 def normalize_transcription_engine_flags(transcription: Dict[str, Any]) -> None:
@@ -343,6 +347,7 @@ class ConfigManager:
                         print(f"舊版配置已載入，但遷移結果暫時無法寫回: {save_error}")
                     return migrated
                 except Exception as e:
+                    logger.debug("載入舊版配置失敗", exc_info=True)
                     print(f"舊版配置載入失敗: {e}，使用預設值")
 
         if self.config_path.exists():
@@ -363,6 +368,7 @@ class ConfigManager:
                             print(f"配置已載入，但更新後的配置暫時無法寫回: {save_error}")
                     return migrated
             except Exception as e:
+                logger.debug("載入配置失敗", exc_info=True)
                 print(f"配置載入失敗: {e}，使用預設值")
                 return self._deep_copy(self.DEFAULT_CONFIG)
         else:

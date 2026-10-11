@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import hashlib
 import json
 import os
@@ -17,6 +18,9 @@ from typing import Any
 from backend.core.http_downloader import HttpDownloader
 from backend.config import settings
 from backend.core.portable_paths import get_app_root, get_cpu_asr_runtime_path
+
+
+logger = logging.getLogger(__name__)
 
 
 REPOSITORY = "SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui"
@@ -168,6 +172,7 @@ class CpuAsrSidecarManager(HttpDownloader):
             self._validate_runtime(runtime)
             result = (True, "")
         except Exception as exc:
+            logger.debug("CPU ASR Runtime 健康檢查失敗", exc_info=True)
             result = (False, str(exc))
         with self._lock:
             self._health_fingerprint = fingerprint
@@ -295,6 +300,7 @@ class CpuAsrSidecarManager(HttpDownloader):
         except InterruptedError:
             self._set(status="cancelled", message="CPU ASR runtime installation cancelled", error="")
         except Exception as exc:
+            logger.debug("安裝 CPU ASR Runtime 失敗", exc_info=True)
             self._set(status="error", message="CPU ASR runtime installation failed", error=str(exc))
 
 

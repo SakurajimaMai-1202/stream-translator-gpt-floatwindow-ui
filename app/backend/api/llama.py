@@ -158,6 +158,7 @@ async def probe_existing_llama_server() -> bool:
         host = llama_cfg.get('host', '127.0.0.1')
         port = int(llama_cfg.get('port', 8081))
     except Exception:
+        logger.debug("讀取 llama 伺服器位址失敗", exc_info=True)
         host = '127.0.0.1'
         port = 8081
 
@@ -184,6 +185,7 @@ async def probe_existing_llama_server() -> bool:
                     if model_path:
                         model_name = Path(model_path).name
             except Exception:
+                logger.debug("探測 llama 模型屬性失敗", exc_info=True)
                 pass
 
             # 3) fallback：嘗試 /v1/models（OpenAI-compatible endpoint）
@@ -196,6 +198,7 @@ async def probe_existing_llama_server() -> bool:
                         if models_list:
                             model_name = models_list[0].get('id', '') or None
                 except Exception:
+                    logger.debug("探測 llama 模型清單失敗", exc_info=True)
                     pass
 
             # 更新全域狀態
@@ -649,6 +652,7 @@ def _configured_llama_server() -> tuple[Optional[Path], bool]:
         from backend.api.config import get_config_manager
         configured = str(get_config_manager().get_config().get("llama", {}).get("server_exe", "") or "").strip()
     except Exception:
+        logger.debug("讀取自訂 llama Runtime 設定失敗", exc_info=True)
         configured = ""
     return (_resolve_custom_runtime(configured), True) if configured else (None, False)
 
@@ -749,6 +753,7 @@ def _get_llama_runtime_info() -> Dict[str, Any]:
             lines = (result.stdout + "\n" + result.stderr).strip().splitlines()
             version = next((line.strip() for line in lines if line.strip().lower().startswith("version:")), lines[0] if lines else "未知版本")
         except Exception:
+            logger.debug("讀取 llama Runtime 版本失敗", exc_info=True)
             version = "無法讀取版本"
     info = {
         "installed": executable is not None,
@@ -792,6 +797,7 @@ def _collect_resource_status() -> Dict[str, Any]:
             result["process_ram_mb"] = round(process.memory_info().rss / 1024 ** 2, 1)
             result["process_cpu_percent"] = process.cpu_percent(interval=None)
     except Exception:
+        logger.debug("查詢 CPU 與程序資源失敗", exc_info=True)
         pass
     try:
         gpu = subprocess.run(
@@ -803,6 +809,7 @@ def _collect_resource_status() -> Dict[str, Any]:
             name, used, total, utilization = [part.strip() for part in gpu.stdout.splitlines()[0].split(",")]
             result.update({"gpu_name": name, "vram_used_mb": float(used), "vram_total_mb": float(total), "gpu_percent": float(utilization)})
     except Exception:
+        logger.debug("查詢 NVIDIA 顯卡資源失敗", exc_info=True)
         pass
     if not result.get("gpu_name"):
         try:
@@ -812,6 +819,7 @@ def _collect_resource_status() -> Dict[str, Any]:
                 result["gpu_name"] = devices[0].name
                 result["vram_total_mb"] = devices[0].memory_mb
         except Exception:
+            logger.debug("查詢備援顯卡資訊失敗", exc_info=True)
             pass
     with _resource_status_cache_lock:
         _resource_status_cache = result

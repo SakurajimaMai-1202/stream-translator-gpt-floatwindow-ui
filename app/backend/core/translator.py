@@ -497,7 +497,7 @@ class TranslationContext:
                             safe_args.append(arg)
                         else:
                             safe_args.append('<contains-unicode>')
-                    except:
+                    except (AttributeError, UnicodeError):
                         safe_args.append('<encoding-error>')
                 logger.debug(f"Args: {' '.join(safe_args[:20])}...")
             except Exception as log_err:
@@ -531,7 +531,7 @@ class TranslationContext:
             try:
                 import json
                 logger.info(f"Full command args: {json.dumps(_redact_command_args(cmd), ensure_ascii=False)}")
-            except:
+            except (TypeError, ValueError):
                 logger.info(f"Full command (fallback): {cmd}")
             
             url = cmd[-1] if cmd else ""

@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -18,6 +19,9 @@ from update_runtime_contract import validate_update_runtime
 from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication, QDialog, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton, QTextEdit, QVBoxLayout
+
+logger = logging.getLogger(__name__)
+
 
 ALLOWED = {
     "app-update-build.json", "StreamTranslatorUpdater.exe",
@@ -278,6 +282,7 @@ class Worker(QThread):
             self.step(100, "更新完成，Stream Translator 已重新啟動")
             self.completed.emit(f"已更新至 v{plan['version']}")
         except Exception as exc:
+            logger.debug("套用更新失敗，準備回復", exc_info=True)
             self.log.emit(f"更新失敗：{exc}\n正在回復上一版本")
             rollback_errors = []
             try:
@@ -288,6 +293,7 @@ class Worker(QThread):
                             try:
                                 self.remove_with_retry(target)
                             except Exception as rollback_exc:
+                                logger.debug("移除新版更新檔案失敗", exc_info=True)
                                 rollback_errors.append(str(rollback_exc))
                     for name in reversed(moved):
                         saved = backup / name
@@ -299,11 +305,13 @@ class Worker(QThread):
                             try:
                                 self.rename_with_retry(saved, target)
                             except Exception as rollback_exc:
+                                logger.debug("回復舊版更新檔案失敗", exc_info=True)
                                 rollback_errors.append(str(rollback_exc))
                     old = app_root / "Stream Translator.exe"
                     if old.exists() and not rollback_errors:
                         subprocess.Popen([str(old)], cwd=app_root)
             except Exception as rollback:
+                logger.debug("回復更新或重啟舊版失敗", exc_info=True)
                 rollback_errors.append(str(rollback))
             if rollback_errors:
                 self.log.emit("回復未完全成功：" + "；".join(rollback_errors))
@@ -326,6 +334,7 @@ class PrepareWorker(QThread):
             Worker.validate_plan(plan)
             self.ready.emit(str(plan))
         except Exception as exc:
+            logger.debug("準備手動更新失敗", exc_info=True)
             if plan is not None:
                 work = plan.parent.resolve()
                 expected = (self.installation.resolve() / ".app-update").resolve()
@@ -441,6 +450,7 @@ class Window(QDialog):
                 if running:
                     raise RuntimeError("請先關閉主程式與後端，再按套用更新（PID：" + ", ".join(map(str, running)) + "）")
             except Exception as exc:
+                logger.debug("更新前程序檢查失敗", exc_info=True)
                 QMessageBox.warning(self, "尚未套用", str(exc))
                 return
             self.start_btn.setEnabled(False)

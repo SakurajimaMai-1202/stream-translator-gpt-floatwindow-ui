@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import hashlib
 import json
 import os
@@ -20,6 +21,9 @@ from typing import Any
 from backend.config import settings
 from backend.core.external_process import run_external
 from backend.core.hardware_detector import GpuDevice, detect_gpus, vram_tier
+
+logger = logging.getLogger(__name__)
+
 
 RELEASE_API = "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
 RELEASE_TAG_API = "https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/{tag}"
@@ -98,7 +102,8 @@ def installed_runtime_build_tag() -> str:
             match = re.search(r"(?:version:\s*|\bb)(\d{3,})\b", output, re.IGNORECASE)
             if match:
                 return f"b{match.group(1)}"
-        except Exception:
+        except (OSError, subprocess.TimeoutExpired):
+            logger.debug("探測 llama.cpp 版本失敗", exc_info=True)
             continue
     return ""
 
@@ -128,6 +133,7 @@ def _release_json() -> dict[str, Any]:
     try:
         release = _fetch_json(RELEASE_API)
     except Exception:
+        logger.debug("讀取 llama.cpp 最新版本失敗", exc_info=True)
         release = {}
     if _build_variants(release.get("assets", [])):
         return release
@@ -144,6 +150,7 @@ def _release_json() -> dict[str, Any]:
             if _build_variants(selected.get("assets", [])):
                 return selected
         except Exception:
+            logger.debug("讀取 llama.cpp nightly 版本失敗", exc_info=True)
             pass
     recent = _fetch_json(RECENT_RELEASES_API)
     nightly = [
@@ -440,6 +447,7 @@ class LlamaRuntimeInstaller:
                 completed_message = "原生 GPU Runtime 驗證失敗，已改用 Vulkan GPU Runtime"
             self._set(state="completed", message=completed_message, progress=1.0, installed_path=str(installed))
         except Exception as exc:
+            logger.debug("安裝 llama.cpp Runtime 失敗", exc_info=True)
             self._set(state="error", message="llama.cpp Runtime 安裝失敗", error=str(exc))
 
     def _prepare_variant_status(self, tag: str, variant: dict[str, Any], fallback_reason: str = "") -> None:

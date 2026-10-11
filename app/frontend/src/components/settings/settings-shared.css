@@ -1,0 +1,145 @@
+.apple-settings {
+  --apple-surface: var(--fw-surface);
+  --apple-border: var(--fw-border);
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  min-width: 0;
+  color: var(--fw-text);
+}
+.apple-page-header { padding: .5rem 0 .75rem; }
+.apple-page-header h2 { font-size: 1.75rem; font-weight: 650; letter-spacing: -.025em; line-height: 1.25; }
+.apple-page-header p { margin-top: .6rem; color: var(--fw-text-secondary); font-size: .875rem; line-height: 1.6; }
+.apple-settings > div:not(.apple-backend-choice),
+.apple-settings > section,
+.apple-disclosure {
+  background: var(--apple-surface);
+  background-image: none;
+  border: 1px solid var(--apple-border);
+  border-radius: 1rem;
+  padding: 1.4rem;
+}
+.apple-settings h3, .apple-settings h4, .apple-settings .commercial-section-title {
+  color: var(--fw-text);
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: -.01em;
+}
+.apple-settings h3 { margin-bottom: 1rem; }
+.apple-settings :deep(button),
+.apple-settings input:not([type="checkbox"]),
+.apple-settings summary { min-height: 44px; }
+.apple-settings :deep(button) { border-radius: .65rem; transition: background-color 120ms ease, border-color 120ms ease; touch-action: manipulation; }
+.apple-settings :deep(button:active:not(:disabled)) { filter: brightness(1.15); }
+.apple-settings :deep(button:focus-visible),
+.apple-settings input:focus-visible,
+.apple-settings textarea:focus-visible,
+.apple-settings summary:focus-visible {
+  outline: 2px solid var(--fw-primary);
+  outline-offset: 3px;
+}
+.apple-settings input:not([type="checkbox"]), .apple-settings textarea {
+  min-width: 0;
+  border-color: rgba(255,255,255,.15);
+  background: var(--fw-surface-subtle);
+  border-radius: .65rem;
+  font-size: .875rem;
+}
+.apple-settings input[type="checkbox"] { accent-color: var(--fw-primary); flex-shrink: 0; }
+.apple-settings :deep(.text-white\/40), .apple-settings :deep(.text-white\/50) { color: var(--fw-text-secondary); }
+.apple-settings :deep(.text-white\/70) { color: var(--fw-text-secondary); }
+.apple-settings :deep(.text-orange-300), .apple-settings :deep(.text-orange-200),
+.apple-settings :deep(.text-green-300), .apple-settings :deep(.text-cyan-200) { color: var(--fw-text-secondary); }
+.apple-settings :deep(.bg-orange-600), .apple-settings :deep(.bg-cyan-600) { background-color: var(--fw-primary); }
+.apple-disclosure { padding: 0; }
+.apple-disclosure > summary, .apple-inline-disclosure > summary {
+  cursor: pointer;
+  padding: .85rem 1.4rem;
+  color: var(--fw-text);
+  font-size: .9rem;
+  font-weight: 600;
+  line-height: 1.6;
+}
+.apple-disclosure > summary span { float: right; padding-left: 1rem; color: var(--fw-text-secondary); font-size: .8rem; font-weight: 400; }
+.apple-disclosure[open] > summary { border-bottom: 1px solid var(--apple-border); }
+.apple-disclosure-body { padding: 1.25rem 1.4rem; }
+.apple-inline-disclosure { border: 1px solid var(--apple-border); border-radius: .7rem; }
+.apple-inline-disclosure > summary { padding: .5rem .8rem; }
+.apple-inline-disclosure .apple-disclosure-body { padding: .5rem .8rem 1rem; }
+.apple-current-service { display: flex; gap: 1rem; justify-content: space-between; align-items: center; }
+.apple-current-service h3 { margin-bottom: .4rem; }
+.apple-current-service p { color: var(--fw-text-secondary); font-size: .875rem; }
+.apple-endpoint-copy { display: flex; flex-direction: column; text-align: right; font-size: .8rem; line-height: 1.7; color: var(--fw-text-secondary); overflow-wrap: anywhere; min-width: 0; }
+.apple-backend-choice { display: grid; grid-template-columns: 1fr 1fr; gap: .35rem; padding: .35rem; background: var(--fw-surface-subtle); border: 1px solid var(--apple-border); border-radius: .85rem; }
+.apple-backend-choice button { font-size: .875rem; }
+.apple-backend-choice button[aria-pressed="true"] { background: var(--fw-primary-soft); box-shadow: 0 1px 3px #0004; }
+.apple-asr > .bg-cyan-500\/10 { padding: .9rem 1.25rem; }
+.apple-translation > div > .commercial-section-title { margin-bottom: 1rem; }
+.apple-translation :deep(.flex-1) { min-width: 0; }
+@media (max-width: 720px) {
+  .apple-settings > div:not(.apple-backend-choice), .apple-settings > section { padding: 1rem; }
+  .apple-page-header h2 { font-size: 1.5rem; }
+  .apple-current-service { align-items: flex-start; flex-direction: column; }
+  .apple-endpoint-copy { text-align: left; }
+  .apple-disclosure > summary { padding: .8rem 1rem; }
+  .apple-disclosure > summary span { float: none; display: block; padding-left: 1rem; }
+  .apple-disclosure-body { padding: 1rem; }
+  .apple-disclosure-body .flex.items-center.justify-between { flex-wrap: wrap; gap: .75rem; }
+  .apple-disclosure-body .flex.items-center.justify-between > .flex-1 { flex-basis: 100%; }
+  .apple-disclosure-body .flex.items-center.justify-between > .flex.gap-2 { margin-left: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .apple-settings :deep(*), .apple-settings :deep(*::before), .apple-settings :deep(*::after) { transition: none !important; animation: none !important; }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .apple-settings > div:not(.apple-backend-choice), .apple-settings > section, .apple-disclosure { background: var(--fw-surface); }
+}
+@media (prefers-contrast: more) {
+  .apple-settings { --apple-border: #8696ad; }
+  .apple-settings :deep(.text-white\/40), .apple-settings :deep(.text-white\/50) { color: #c4cfde; }
+}
+.settings-paint-section {
+  contain: layout style;
+}
+
+.settings-paint-section > :not(.llama-settings) {
+  /* Qt WebEngine 在長頁面使用 paint containment 時可能短暫漏畫 tile。 */
+  contain: layout style;
+}
+
+.tooltip-container {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.tooltip-text {
+  visibility: hidden;
+  position: absolute;
+  bottom: 125%;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: rgba(15, 23, 42, 0.95);
+  color: #fff;
+  text-align: left;
+  padding: 8px 12px;
+  border-radius: 8px;
+  width: 260px;
+  font-size: 0.75rem;
+  line-height: 1.25rem;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3);
+  z-index: 50;
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  pointer-events: none;
+  font-weight: normal;
+}
+
+.tooltip-container:hover .tooltip-text {
+  visibility: visible;
+  opacity: 1;
+  transform: translateX(-50%) translateY(-2px);
+}

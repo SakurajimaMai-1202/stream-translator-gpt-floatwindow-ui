@@ -11,6 +11,7 @@ from backend.core.translator import _extract_latency_metrics, _parse_structured_
 
 APP_DIR = Path(__file__).resolve().parents[2]
 SETTINGS_VIEW = APP_DIR / "frontend" / "src" / "views" / "SettingsView.vue"
+SETTINGS_COMPONENTS = APP_DIR / "frontend" / "src" / "components" / "settings"
 EXAMPLE_CONFIG = APP_DIR / "config.example.yaml"
 TRANSLATOR_SOURCE = APP_DIR / "backend" / "core" / "translator.py"
 RUNTIME_MAIN_SOURCE = APP_DIR.parent / "stream-translator-gpt" / "stream_translator_gpt" / "main.py"
@@ -45,6 +46,11 @@ REMOVED_AUDIO_KEYS = {
     "vad_speech_pad_ms",
     "realtime_processing",
 }
+
+
+def _settings_source():
+    sources = [SETTINGS_VIEW, *sorted(SETTINGS_COMPONENTS.glob("*.vue"))]
+    return "\n".join(source.read_text(encoding="utf-8") for source in sources)
 
 
 def test_config_changes_survive_new_manager(tmp_path):
@@ -112,7 +118,7 @@ def test_stale_window_manager_does_not_overwrite_saved_settings(tmp_path):
 
 
 def test_all_settings_view_bindings_exist_in_yaml_and_defaults():
-    source = SETTINGS_VIEW.read_text(encoding="utf-8")
+    source = _settings_source()
     paths = sorted(set(re.findall(
         r'v-model(?:\.\w+)*="localConfig\.([^\"]+)"',
         source,
@@ -142,7 +148,7 @@ def test_all_settings_view_bindings_exist_in_yaml_and_defaults():
 
 
 def test_live_audio_defaults_match_example_yaml_and_ui():
-    source = SETTINGS_VIEW.read_text(encoding="utf-8")
+    source = _settings_source()
     example = yaml.safe_load(EXAMPLE_CONFIG.read_text(encoding="utf-8"))
     defaults = ConfigManager.DEFAULT_CONFIG
 

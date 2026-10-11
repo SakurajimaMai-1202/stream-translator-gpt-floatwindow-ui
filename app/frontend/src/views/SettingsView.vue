@@ -1,5 +1,11 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch, nextTick, toRaw, defineAsyncComponent } from 'vue';
+import GeneralSettingsTab from '../components/settings/GeneralSettingsTab.vue';
+import DiagnosticsSettingsTab from '../components/settings/DiagnosticsSettingsTab.vue';
+import InputSettingsTab from '../components/settings/InputSettingsTab.vue';
+import AudioVadSettingsTab from '../components/settings/AudioVadSettingsTab.vue';
+import OutputSettingsTab from '../components/settings/OutputSettingsTab.vue';
+import { provideSettingsContext } from '../composables/settings/settingsContext';
 import { useRoute } from 'vue-router';
 import { resolveTranslationFamily } from '../utils/translationFamily';
 import axios from 'axios';
@@ -86,33 +92,6 @@ async function applyAppUpdate() {
 }
 const llamaStore = useLlamaStore();
 
-const sharingHost = computed(() => {
-  const browserHost = window.location.hostname;
-  if (browserHost && !['localhost', '127.0.0.1', '::1'].includes(browserHost)) return browserHost;
-  return sharingLanAddresses.value[0] || '127.0.0.1';
-});
-const sharingBaseUrl = computed(() => `http://${sharingHost.value}:${localConfig.value.server.public_port || 8765}`);
-const desktopSharingUrl = computed(() => `${sharingBaseUrl.value}/desktop`);
-const mobileSharingUrl = computed(() => `${sharingBaseUrl.value}/mobile`);
-
-async function copySharingUrl(url: string) {
-  try {
-    await navigator.clipboard.writeText(url);
-  } catch {
-    const input = document.createElement('textarea');
-    input.value = url;
-    input.style.position = 'fixed';
-    input.style.left = '-9999px';
-    document.body.appendChild(input);
-    input.select();
-    document.execCommand('copy');
-    input.remove();
-  }
-  copiedSharingUrl.value = url;
-  window.setTimeout(() => {
-    if (copiedSharingUrl.value === url) copiedSharingUrl.value = '';
-  }, 1800);
-}
 
 const allQwenModels = ['Qwen/Qwen3-ASR-0.6B', 'Qwen/Qwen3-ASR-1.7B', 'jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame'];
 const legacyQwen3JaModel = 'neosophie/Qwen3-ASR-1.7B-JA';
@@ -127,33 +106,6 @@ const allParakeetModels = [
   'grider-transwithai/parakeet-ctc-1.1b-ja',
 ];
 
-const logLevelOptions: UiSelectOption[] = [
-  { value: 'DEBUG', label: 'DEBUG' },
-  { value: 'INFO', label: 'INFO' },
-  { value: 'WARNING', label: 'WARNING' },
-  { value: 'ERROR', label: 'ERROR' },
-];
-const sourceTypeOptions: UiSelectOption[] = [
-  { value: 'youtube', label: 'YouTube' },
-  { value: 'tiktok', label: 'TikTok' },
-  { value: 'twitch', label: 'Twitch' },
-  { value: 'bilibili', label: 'Bilibili' },
-  { value: 'x', label: 'X (Twitter)' },
-];
-const cookiePlatformOptions: UiSelectOption[] = [
-  { value: 'youtube', label: 'YouTube' },
-  { value: 'tiktok', label: 'TikTok' },
-  { value: 'twitter', label: 'X (Twitter)' },
-  { value: 'twitch', label: 'Twitch' },
-  { value: 'bilibili', label: 'Bilibili' },
-];
-const cookieBrowserOptions: UiSelectOption[] = [
-  { value: 'chrome', label: 'Google Chrome' },
-  { value: 'edge', label: 'Microsoft Edge' },
-  { value: 'firefox', label: 'Mozilla Firefox' },
-  { value: 'brave', label: 'Brave' },
-  { value: 'chromium', label: 'Chromium' },
-];
 const whisperModelSelectOptions = computed<UiSelectOption[]>(() =>
   allFasterWhisperModels
     .filter(m => allowedFasterWhisperModels.value.includes(m))
@@ -227,14 +179,6 @@ const runtimeDevicePolicyOptions: UiSelectOption[] = [
   { value: 'auto_any', label: 'Auto any GPU' },
   { value: 'manual', label: 'Manual' },
   { value: 'cpu', label: 'CPU' },
-];
-const vadBackendOptions: UiSelectOption[] = [
-  { value: 'silero', label: 'Silero VAD' },
-  { value: 'firered', label: 'FireRed VAD' },
-];
-const slicingModeOptions: UiSelectOption[] = [
-  { value: 'legacy', label: '目前切段（動態門檻）' },
-  { value: 'omnivad_native', label: 'OmniStreamVAD 原生事件' },
 ];
 const translationModelFamilyOptions: UiSelectOption[] = [
   { value: 'auto', label: '自動判斷' },
@@ -438,9 +382,6 @@ const cookieBrowserProfile = ref('');
 const cookieImporting = ref(false);
 const cookieFileInput = ref<HTMLInputElement | null>(null);
 const cookieImportResult = ref<{ type: 'success' | 'error'; message: string } | null>(null);
-const selectedPlatformCookiePath = computed(() =>
-  localConfig.value?.input?.cookies_by_site?.[cookiePlatform.value] || ''
-);
 const funAsrModelOptions = computed<UiSelectOption[]>(() =>
   allFunAsrModels
     .filter(model => allowedFunAsrModels.value.includes(model))
@@ -457,76 +398,10 @@ const funAsrModelOptions = computed<UiSelectOption[]>(() =>
         ),
     }))
 );
-const selectedBrowserMayLockCookies = computed(() =>
-  ['chrome', 'edge', 'brave', 'chromium'].includes(cookieBrowser.value)
-);
 watch(cookiePlatform, () => {
   cookieImportResult.value = null;
 });
 
-async function importCookiesFromBrowser() {
-  cookieImporting.value = true;
-  cookieImportResult.value = null;
-  try {
-    const response = await axios.post('/api/cookies/import-browser', {
-      platform: cookiePlatform.value,
-      browser: cookieBrowser.value,
-      profile: cookieBrowserProfile.value.trim(),
-    });
-    const result = response.data?.data;
-    if (!localConfig.value.input.cookies_by_site) {
-      localConfig.value.input.cookies_by_site = {};
-    }
-    localConfig.value.input.cookies_by_site[cookiePlatform.value] = result.path;
-    cookieImportResult.value = {
-      type: 'success',
-      message: `${result.platform_label} Cookies 已更新（${result.cookie_count} 筆）`,
-    };
-  } catch (error: any) {
-    cookieImportResult.value = {
-      type: 'error',
-      message: error.response?.data?.detail || error.message || 'Cookies 更新失敗',
-    };
-  } finally {
-    cookieImporting.value = false;
-  }
-}
-
-function selectCookieFile() {
-  cookieFileInput.value?.click();
-}
-
-async function importCookiesFromFile(event: Event) {
-  const input = event.target as HTMLInputElement;
-  const file = input.files?.[0];
-  if (!file) return;
-
-  cookieImporting.value = true;
-  cookieImportResult.value = null;
-  try {
-    const formData = new FormData();
-    formData.append('platform', cookiePlatform.value);
-    formData.append('cookie_file', file);
-    const response = await axios.post('/api/cookies/import-file', formData);
-    const result = response.data?.data;
-    if (!localConfig.value.input.cookies_by_site) {
-      localConfig.value.input.cookies_by_site = {};
-    }
-    localConfig.value.input.cookies_by_site[cookiePlatform.value] = result.path;
-    cookieImportResult.value = {
-      type: 'success',
-      message: `${result.platform_label} Cookies 已匯入（${result.cookie_count} 筆）`,
-    };
-  } catch (error: any) {
-    cookieImportResult.value = {
-      type: 'error',
-      message: error.response?.data?.detail || error.message || 'cookies.txt 匯入失敗',
-    };
-  } finally {
-    cookieImporting.value = false;
-    input.value = '';
-  }
-}
 const settingsTabIds = new Set([
   'general',
   'input',
@@ -982,45 +857,6 @@ async function importCpuAsrSidecarOffline() {
   }
 }
 
-async function exportRuntimeDiagnostics() {
-  if (diagnosticsBusy.value) return;
-  diagnosticsBusy.value = true;
-  store.errorMessage = '';
-  try {
-    const report = await runtimeApi.getDiagnostics();
-    const content = JSON.stringify(report, null, 2);
-    const filename = `stream-translator-diagnostics-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
-    const bridge = (window as any).pyqt;
-    if (bridge?.saveTextFile) {
-      const savedPath = await new Promise<string>((resolve) => {
-        bridge.saveTextFile(filename, content, (result: string) => resolve(result || ''));
-      });
-      if (!savedPath) {
-        store.statusMessage = '已取消儲存診斷報告';
-        return;
-      }
-      if (savedPath.startsWith('ERROR:')) throw new Error(savedPath.slice(6));
-      store.statusMessage = `診斷報告已儲存：${savedPath}`;
-      return;
-    }
-    const blob = new Blob([content], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = filename;
-    document.body.appendChild(anchor);
-    anchor.click();
-    window.setTimeout(() => {
-      anchor.remove();
-      URL.revokeObjectURL(url);
-    }, 10_000);
-    store.statusMessage = `診斷報告已下載：${filename}`;
-  } catch (error: any) {
-    store.errorMessage = `匯出 Runtime 診斷報告失敗：${error?.response?.data?.detail || error?.message || '未知錯誤'}`;
-  } finally {
-    diagnosticsBusy.value = false;
-  }
-}
 const selectedSettingsAsrModelId = computed<string>(() => {
   const transcription = localConfig.value.transcription;
   if (transcription.use_qwen3_asr) return transcription.qwen3_asr_model;
@@ -2220,6 +2056,7 @@ async function handleFileChange(event: Event) {
   // 清空輸入框以允許再次選擇同一檔案
   input.value = '';
 }
+provideSettingsContext({ localConfig, sharingLanAddresses, copiedSharingUrl, appUpdateStatus, appUpdateBusy, checkAppUpdate, downloadAppUpdate, cancelAppUpdate, applyAppUpdate, testingGpt, testingGemini, testConnection, diagnosticsBusy, cookiePlatform, cookieBrowser, cookieBrowserProfile, cookieImporting, cookieFileInput, cookieImportResult });
 </script>
 
 <template>
@@ -2290,433 +2127,15 @@ async function handleFileChange(event: Event) {
     </div>
     <div v-else class="commercial-panel min-h-[550px] p-6 sm:p-8">
           <!-- General Settings -->
-          <div v-if="activeTab === 'general'" class="settings-paint-section apple-settings">
-            <header class="apple-page-header"><h2>一般設定</h2><p>管理程式啟動、更新與執行環境。</p></header>
+          <GeneralSettingsTab v-if="activeTab === 'general'" />
 
-            <div class="rounded-xl border border-blue-500/25 bg-blue-500/10 p-5 space-y-4">
-              <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                <div>
-                  <h3 class="text-lg font-semibold text-blue-200">程式更新</h3>
-                  <p class="text-sm text-white/55 mt-1">
-                    目前 {{ appUpdateStatus?.current_version || '—' }} · {{ appUpdateStatus?.profile?.toUpperCase() || '開發版' }}
-                    <template v-if="appUpdateStatus?.latest_version"> → 最新 {{ appUpdateStatus.latest_version }}</template>
-                  </p>
-                </div>
-                <div class="flex flex-wrap gap-2">
-                  <button v-if="!appUpdateStatus?.ready_to_apply" @click="checkAppUpdate" :disabled="appUpdateBusy"
-                    class="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 font-semibold">
-                    {{ appUpdateStatus?.status === 'checking' ? '檢查中…' : '檢查更新' }}
-                  </button>
-                  <button v-if="appUpdateStatus?.available && !appUpdateStatus?.ready_to_apply" @click="downloadAppUpdate" :disabled="appUpdateBusy"
-                    class="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 font-semibold">
-                    下載並準備更新
-                  </button>
-                  <button v-if="appUpdateBusy" @click="cancelAppUpdate"
-                    class="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 font-semibold">取消</button>
-                  <button v-if="appUpdateStatus?.ready_to_apply" @click="applyAppUpdate"
-                    class="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 font-semibold">重新啟動並套用</button>
-                </div>
-              </div>
-              <div v-if="appUpdateBusy" class="space-y-2">
-                <div class="h-2 rounded-full bg-white/10 overflow-hidden"><div class="h-full bg-cyan-400" :style="{ width: `${Math.max(2, (appUpdateStatus?.progress || 0) * 100)}%` }"></div></div>
-                <p class="text-xs text-white/55">{{ appUpdateStatus?.message }} · {{ Math.round((appUpdateStatus?.progress || 0) * 100) }}%</p>
-              </div>
-              <p v-if="appUpdateStatus?.status === 'up_to_date'" class="text-sm text-emerald-300">目前已是最新版。</p>
-              <p v-if="appUpdateStatus?.status === 'full_install_required'" class="text-sm text-yellow-200">
-                此版本無法直接從 UI 升級，請下載相同 Profile 的 Full 完整包。
-              </p>
-              <p v-if="appUpdateStatus?.status === 'unsupported'" class="text-sm text-yellow-200">開發模式不提供自動更新；正式 CPU／CUDA／ROCm 包才會啟用。</p>
-              <p v-if="appUpdateStatus?.status === 'cancelled'" class="text-sm text-white/55">下載已取消，下次會從暫存進度繼續。</p>
-              <p v-if="appUpdateStatus?.error" class="text-sm text-red-300 break-words">{{ appUpdateStatus.error }}</p>
-              <details v-if="appUpdateStatus?.available && appUpdateStatus?.release_notes" class="rounded-lg bg-black/15 p-3">
-                <summary class="cursor-pointer text-sm font-semibold text-blue-200">查看更新說明</summary>
-                <pre class="mt-3 whitespace-pre-wrap break-words text-xs leading-6 text-white/60 font-sans">{{ appUpdateStatus.release_notes }}</pre>
-              </details>
-              <p class="text-xs text-white/40">只會安裝相同 Profile 的 App Update；套用前會備份 config、術語、ASR 修正與 Cookies，模型、輸出與日誌不會被覆蓋。</p>
-            </div>
-
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div v-if="false">
-                <label class="block text-white/70 font-semibold mb-2">OpenAI API Key</label>
-                <div class="flex gap-2">
-                  <input disabled value="" type="password" placeholder="sk-..."
-                    class="flex-1 px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
-                  <button @click="testConnection('gpt')" :disabled="testingGpt" 
-                    class="bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/30 font-semibold px-4 rounded-lg transition text-xs whitespace-nowrap flex items-center justify-center gap-1.5 min-w-[95px]">
-                    <span v-if="testingGpt" class="inline-block w-3 h-3 border-2 border-blue-300 border-t-transparent rounded-full animate-spin"></span>
-                    <span>⚡ 測試連線</span>
-                  </button>
-                </div>
-                <p class="text-white/40 text-sm mt-1">用於 GPT 翻譯</p>
-              </div>
-
-              <div v-if="false">
-                <label class="block text-white/70 font-semibold mb-2">Google API Key (Gemini)</label>
-                <div class="flex gap-2">
-                  <input disabled value="" type="password" placeholder="AIza..."
-                    class="flex-1 px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
-                  <button @click="testConnection('gemini')" :disabled="testingGemini" 
-                    class="bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/30 font-semibold px-4 rounded-lg transition text-xs whitespace-nowrap flex items-center justify-center gap-1.5 min-w-[95px]">
-                    <span v-if="testingGemini" class="inline-block w-3 h-3 border-2 border-blue-300 border-t-transparent rounded-full animate-spin"></span>
-                    <span>⚡ 測試連線</span>
-                  </button>
-                </div>
-                <p class="text-white/40 text-sm mt-1">用於 Gemini 翻譯</p>
-              </div>
-
-              <div>
-                <label class="block text-white/70 font-semibold mb-2">日誌等級</label>
-                <UiSelect v-model="localConfig.general.log_level" :options="logLevelOptions" />
-              </div>
-
-              <div class="md:col-span-2 rounded-xl p-5 border border-white/10 bg-gradient-to-br from-emerald-500/10 via-white/5 to-blue-500/10 space-y-5">
-                <label class="flex items-start justify-between gap-5 cursor-pointer">
-                  <div>
-                    <div class="flex items-center gap-2">
-                      <span class="text-white font-semibold">即時字幕分享</span>
-                      <span :class="['px-2 py-0.5 rounded-full text-xs border', localConfig.server.enable_subtitle_sharing ? 'text-emerald-300 bg-emerald-500/10 border-emerald-500/25' : 'text-white/45 bg-white/5 border-white/10']">
-                        {{ localConfig.server.enable_subtitle_sharing ? '已啟用' : '已關閉' }}
-                      </span>
-                    </div>
-                    <p class="text-white/55 text-sm mt-2 leading-6">讓同一個區域網路中的手機、平板或另一台電腦，透過瀏覽器觀看目前的即時原文與翻譯字幕。</p>
-                  </div>
-                  <input v-model="localConfig.server.enable_subtitle_sharing" type="checkbox" class="w-5 h-5 accent-emerald-500 mt-1 shrink-0" />
-                </label>
-
-                <div v-if="localConfig.server.enable_subtitle_sharing" class="space-y-3">
-                  <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                    <div class="rounded-lg border border-white/10 bg-black/15 p-4">
-                      <div class="text-white/80 font-semibold text-sm">桌面版字幕</div>
-                      <p class="text-white/40 text-xs mt-1">適合電腦、投影幕與直播監看畫面。</p>
-                      <div class="flex items-center gap-2 mt-3">
-                        <code class="min-w-0 flex-1 truncate text-xs text-cyan-300 bg-black/20 rounded px-3 py-2">{{ desktopSharingUrl }}</code>
-                        <button type="button" @click="copySharingUrl(desktopSharingUrl)" class="px-3 py-2 rounded-lg bg-blue-600/25 hover:bg-blue-600/40 text-blue-200 text-xs border border-blue-500/25">
-                          {{ copiedSharingUrl === desktopSharingUrl ? '已複製' : '複製' }}
-                        </button>
-                      </div>
-                    </div>
-                    <div class="rounded-lg border border-white/10 bg-black/15 p-4">
-                      <div class="text-white/80 font-semibold text-sm">行動版字幕</div>
-                      <p class="text-white/40 text-xs mt-1">適合手機與平板，版面會依螢幕自動調整。</p>
-                      <div class="flex items-center gap-2 mt-3">
-                        <code class="min-w-0 flex-1 truncate text-xs text-cyan-300 bg-black/20 rounded px-3 py-2">{{ mobileSharingUrl }}</code>
-                        <button type="button" @click="copySharingUrl(mobileSharingUrl)" class="px-3 py-2 rounded-lg bg-blue-600/25 hover:bg-blue-600/40 text-blue-200 text-xs border border-blue-500/25">
-                          {{ copiedSharingUrl === mobileSharingUrl ? '已複製' : '複製' }}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div class="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs text-white/55 leading-5">
-                    <span class="text-amber-300 font-semibold">使用方式：</span>
-                    分享裝置需與本機位於同一個 Wi-Fi／區域網路。若無法開啟，請允許 Windows 防火牆存取連接埠 {{ localConfig.server.public_port || 8765 }}。此功能沒有登入驗證，請勿直接暴露至公網；關閉後，分享頁與公開字幕 API 都會停止存取。
-                  </div>
-                </div>
-
-                <p v-else class="text-white/40 text-sm">分享頁面與公開字幕 API 已停用，區域網路中的其他裝置無法讀取字幕。</p>
-              </div>
-            </div>
-          </div>
-
-          <div v-if="activeTab === 'diagnostics'" class="settings-paint-section apple-settings">
-            <header class="apple-page-header"><h2>進階設定／疑難排解</h2><p>檢查目前環境與診斷資訊。</p></header>
-            <div class="rounded-xl border border-white/10 bg-white/5 p-5">
-              <h3 class="text-lg font-semibold text-cyan-300">Runtime 診斷報告</h3>
-              <p class="mt-2 text-sm leading-6 text-white/60">
-                匯出程式版本、CPU／GPU Runtime、CPU ASR Sidecar、模型儲存位置及 llama.cpp 路徑，供啟動失敗或 GPU 未被使用時分析。
-              </p>
-              <p class="mt-2 text-xs leading-5 text-white/40">報告不包含 API Key、Cookie 或字幕內容，也不會下載模型或修改設定。</p>
-              <button type="button" @click="exportRuntimeDiagnostics" :disabled="diagnosticsBusy" class="mt-4 px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-white font-semibold">
-                {{ diagnosticsBusy ? '正在建立報告…' : '匯出 Runtime 診斷報告' }}
-              </button>
-            </div>
-          </div>
+          <DiagnosticsSettingsTab v-if="activeTab === 'diagnostics'" />
 
           <!-- Input Settings -->
-          <div v-if="activeTab === 'input'" class="settings-paint-section apple-settings">
-            <header class="apple-page-header"><h2>輸入選項</h2><p>選擇音訊來源與擷取方式。</p></header>
-
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <label class="block text-white/70 font-semibold mb-2">來源類型</label>
-                <UiSelect v-model="localConfig.input.source_type" :options="sourceTypeOptions" />
-              </div>
-
-              <div>
-                <label class="block text-white/70 font-semibold mb-2">格式</label>
-                <input v-model="localConfig.input.format" type="text" placeholder="ba/wa*"
-                  class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
-              </div>
-
-              <div class="md:col-span-2 border-t border-white/10 pt-5">
-                <div class="flex items-center justify-between gap-3 mb-4">
-                  <div>
-                    <h3 class="text-white font-semibold">網站 Cookies</h3>
-                    <p class="text-white/40 text-sm mt-1">從已登入的瀏覽器更新平台專用 Cookies</p>
-                  </div>
-                  <span
-                    v-if="selectedPlatformCookiePath"
-                    class="text-xs px-2 py-1 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/25"
-                  >
-                    已設定
-                  </span>
-                </div>
-
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div>
-                    <label class="block text-white/70 font-semibold mb-2">平台</label>
-                    <UiSelect v-model="cookiePlatform" :options="cookiePlatformOptions" />
-                  </div>
-                  <div>
-                    <label class="block text-white/70 font-semibold mb-2">瀏覽器</label>
-                    <UiSelect v-model="cookieBrowser" :options="cookieBrowserOptions" />
-                    <p v-if="selectedBrowserMayLockCookies" class="text-amber-300/70 text-xs mt-2">
-                      Windows 新版 Chromium 可能無法直接解密；可改用 Firefox 或匯入 cookies.txt
-                    </p>
-                  </div>
-                  <div>
-                    <label class="block text-white/70 font-semibold mb-2">瀏覽器 Profile</label>
-                    <input
-                      v-model="cookieBrowserProfile"
-                      type="text"
-                      placeholder="留空使用預設 Profile"
-                      class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400"
-                    />
-                  </div>
-                </div>
-
-                <div class="mt-4 flex flex-col md:flex-row md:items-center gap-3">
-                  <button
-                    type="button"
-                    :disabled="cookieImporting"
-                    class="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition"
-                    @click="importCookiesFromBrowser"
-                  >
-                    {{ cookieImporting ? '更新中...' : '從瀏覽器更新' }}
-                  </button>
-                  <input
-                    ref="cookieFileInput"
-                    type="file"
-                    accept=".txt,text/plain"
-                    class="hidden"
-                    @change="importCookiesFromFile"
-                  />
-                  <button
-                    type="button"
-                    :disabled="cookieImporting"
-                    class="px-4 py-2 bg-white/10 hover:bg-white/15 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition"
-                    @click="selectCookieFile"
-                  >
-                    匯入 cookies.txt
-                  </button>
-                  <p
-                    v-if="cookieImportResult"
-                    class="text-sm"
-                    :class="cookieImportResult.type === 'success' ? 'text-emerald-300' : 'text-rose-300'"
-                  >
-                    {{ cookieImportResult.message }}
-                  </p>
-                  <p v-else-if="selectedPlatformCookiePath" class="text-white/45 text-sm truncate">
-                    {{ selectedPlatformCookiePath }}
-                  </p>
-                </div>
-
-                <div class="mt-5">
-                  <label class="block text-white/70 font-semibold mb-2">其他網站 Cookies（Fallback）</label>
-                  <input
-                    v-model="localConfig.input.cookies"
-                    type="text"
-                    placeholder="未匹配平台時使用的 cookies.txt"
-                    class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label class="block text-white/70 font-semibold mb-2">代理伺服器</label>
-                <input v-model="localConfig.input.proxy" type="text" placeholder="http://127.0.0.1:7890"
-                  class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
-              </div>
-
-              <div>
-                <label class="block text-white/70 font-semibold mb-2">超時時間（秒）</label>
-                <input v-model.number="localConfig.input.timeout" type="number" placeholder="30"
-                  class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
-              </div>
-
-              <div>
-                <label class="block text-white/70 font-semibold mb-2 flex items-center gap-1.5">
-                  設備錄音間隔（秒）
-                  <span class="tooltip-container text-white/40 hover:text-blue-300 transition text-sm">
-                    ⓘ
-                    <span class="tooltip-text">
-                      僅用於設備/Loopback 模式。間隔越短延遲越低但 CPU 使用率越高，直播建議 0.1 秒。
-                    </span>
-                  </span>
-                </label>
-                <input v-model.number="localConfig.input.device_recording_interval" type="number" step="0.05" min="0.05" max="1.0" placeholder="0.1"
-                  class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
-              </div>
-            </div>
-          </div>
+          <InputSettingsTab v-if="activeTab === 'input'" />
 
           <!-- Audio Slicing & VAD Settings -->
-          <div v-if="activeTab === 'audio_vad'" class="settings-paint-section apple-settings">
-            <header class="apple-page-header"><h2>音訊切片 & VAD 設定</h2><p>調整語音切片、靜音判斷與辨識節奏。</p></header>
-
-            <!-- 音訊切片 -->
-            <div class="bg-white/5 rounded-xl p-4 border border-white/10">
-              <h3 class="commercial-section-title">音訊切片</h3>
-              <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                <div>
-                  <label class="block text-white/70 text-sm mb-1">最小音訊長度 (秒)</label>
-                  <input v-model.number="localConfig.audio_slicing_vad.min_audio_length" type="number" step="0.1" min="0.1" max="30"
-                    class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
-                </div>
-                <div v-if="localConfig.audio_slicing_vad.slicing_mode === 'legacy'">
-                  <label class="block text-white/70 text-sm mb-1">目標音訊長度 (秒)</label>
-                  <input v-model.number="localConfig.audio_slicing_vad.target_audio_length" type="number" step="0.1" min="0.1" max="60"
-                    class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
-                  <p class="text-xs text-white/40 mt-1">動態句尾判斷會盡量在接近此長度時完成片段。</p>
-                </div>
-                <div v-if="localConfig.audio_slicing_vad.slicing_mode === 'legacy'">
-                  <label class="block text-white/70 text-sm mb-1">最大音訊長度 (秒)</label>
-                  <input v-model.number="localConfig.audio_slicing_vad.max_audio_length" type="number" step="0.1" min="0.1" max="120"
-                    class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
-                </div>
-                <div v-else>
-                  <label class="block text-white/70 text-sm mb-1">原生模式最大音訊長度 (秒)</label>
-                  <input v-model.number="localConfig.audio_slicing_vad.omnivad_max_audio_length" type="number" step="0.1" min="0.1" max="120"
-                    class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
-                  <p class="text-xs text-white/40 mt-1">正式回歸使用 6 秒；長語音達上限後會延續原生 SPEECH 狀態。</p>
-                </div>
-                <div v-if="localConfig.audio_slicing_vad.slicing_mode === 'legacy'">
-                  <label class="block text-white/70 text-sm mb-1">句尾連續靜音 (秒)</label>
-                  <input v-model.number="localConfig.audio_slicing_vad.continuous_no_speech_threshold" type="number"
-                    step="0.05" min="0.1" max="5"
-                    class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
-                  <p class="text-xs text-white/40 mt-1">偵測到連續靜音後結束片段；直播建議 0.4 到 0.7 秒。</p>
-                </div>
-                <div>
-                  <label class="block text-white/70 text-sm mb-1">前綴重疊長度 (秒)</label>
-                  <input v-model.number="localConfig.audio_slicing_vad.prefix_retention_length" type="number"
-                    step="0.05" min="0" max="5"
-                    class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
-                  <p class="text-xs text-white/40 mt-1">將上一片段結尾接到下一片段開頭；設為 0 可完全停用。</p>
-                </div>
-                <label v-if="localConfig.audio_slicing_vad.slicing_mode === 'legacy'"
-                  class="flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer">
-                  <input v-model="localConfig.audio_slicing_vad.disable_dynamic_no_speech_threshold" type="checkbox"
-                    class="w-5 h-5 accent-blue-500 mt-0.5" />
-                  <span>
-                    <span class="block text-white font-medium">停用動態句尾門檻</span>
-                    <span class="block text-xs text-white/40 mt-1">勾選後固定使用句尾連續靜音值，不再依片段長度調整。</span>
-                  </span>
-                </label>
-              </div>
-            </div>
-
-            <!-- VAD 設定 -->
-            <div class="bg-white/5 rounded-xl p-4 border border-white/10">
-              <div class="flex items-center justify-between mb-4">
-                <h3 class="commercial-section-title mb-0">VAD（語音活動偵測）</h3>
-                <label class="flex items-center gap-2 cursor-pointer">
-                  <input v-model="localConfig.audio_slicing_vad.vad_enabled" type="checkbox" class="w-5 h-5 accent-blue-500" />
-                  <span class="text-white">啟用 VAD</span>
-                </label>
-              </div>
-
-              <div v-if="localConfig.audio_slicing_vad.vad_enabled" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                <div>
-                  <label class="block text-white/70 text-sm mb-1 font-semibold">切段模式</label>
-                  <UiSelect v-model="localConfig.audio_slicing_vad.slicing_mode" :options="slicingModeOptions" />
-                  <p class="text-white/30 text-xs mt-1">原生模式使用 OmniStreamVAD 的 START／END 事件，仍保留最短、最長與前綴保護。</p>
-                </div>
-                <div v-if="localConfig.audio_slicing_vad.slicing_mode === 'legacy'">
-                  <label class="block text-white/70 text-sm mb-1 font-semibold">VAD 演算法</label>
-                  <UiSelect v-model="localConfig.audio_slicing_vad.vad_backend" :options="vadBackendOptions" />
-                </div>
-                <div v-else class="p-3 bg-blue-500/10 rounded-lg border border-blue-400/20">
-                  <span class="block text-white/70 text-sm mb-1 font-semibold">原生事件引擎</span>
-                  <span class="block text-white">FireRed OmniStreamVAD</span>
-                  <span class="block text-xs text-white/40 mt-1">原生模式固定使用此引擎並逐一處理 10 ms frame。</span>
-                </div>
-                <div v-if="localConfig.audio_slicing_vad.vad_backend === 'firered'">
-                  <label class="block text-white/70 text-sm mb-1 font-semibold">FireRed VAD 模型路徑</label>
-                  <input v-model="localConfig.audio_slicing_vad.firered_vad_model_path" type="text" placeholder="留空或填寫 auto"
-                    class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
-                  <p class="text-white/30 text-xs mt-1">預設使用內建模型</p>
-                </div>
-                <div v-if="localConfig.audio_slicing_vad.slicing_mode === 'legacy'">
-                  <label class="block text-white/70 text-sm mb-1 flex items-center gap-1.5">
-                    目前切段語音閾值
-                    <span class="tooltip-container text-white/40 hover:text-blue-300 transition text-xs">
-                      ⓘ
-                      <span class="tooltip-text">
-                        聲音被判定為語音的閾值。範圍 0.0 ~ 1.0，預設 0.35。數值越低越靈敏。
-                      </span>
-                    </span>
-                  </label>
-                  <input v-model.number="localConfig.audio_slicing_vad.vad_threshold" type="number" step="0.05" min="0" max="1"
-                    class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
-                </div>
-                <div v-else>
-                  <label class="block text-white/70 text-sm mb-1">OmniStreamVAD 語音閾值</label>
-                  <input v-model.number="localConfig.audio_slicing_vad.omnivad_threshold" type="number" step="0.05" min="0" max="1"
-                    class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
-                  <p class="text-xs text-white/40 mt-1">本程式預設為 0.35；FireRed 官方原生預設為 0.5。</p>
-                </div>
-                <label v-if="localConfig.audio_slicing_vad.slicing_mode === 'legacy'"
-                  class="flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer">
-                  <input v-model="localConfig.audio_slicing_vad.disable_dynamic_vad_threshold" type="checkbox"
-                    class="w-5 h-5 accent-blue-500 mt-0.5" />
-                  <span>
-                    <span class="block text-white font-medium">停用動態 VAD 門檻</span>
-                    <span class="block text-xs text-white/40 mt-1">勾選後固定使用上方語音閾值。</span>
-                  </span>
-                </label>
-                <div v-if="localConfig.audio_slicing_vad.slicing_mode === 'legacy'">
-                  <label class="block text-white/70 text-sm mb-1">VAD 計算頻率</label>
-                  <input v-model.number="localConfig.audio_slicing_vad.vad_every_n_frames" type="number"
-                    min="1" max="10" step="1"
-                    class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
-                  <p class="text-xs text-white/40 mt-1">1 為每個 32 ms frame 計算；提高可降低 CPU，但會增加判斷延遲。</p>
-                </div>
-                <template v-if="localConfig.audio_slicing_vad.slicing_mode === 'omnivad_native'">
-                  <div>
-                    <label class="block text-white/70 text-sm mb-1">平滑視窗（10 ms frame）</label>
-                    <input v-model.number="localConfig.audio_slicing_vad.omnivad_smooth_window_size" type="number" min="1" max="100" step="1"
-                      class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
-                    <p class="text-xs text-white/40 mt-1">預設 5，相當於 50 ms。</p>
-                  </div>
-                  <div>
-                    <label class="block text-white/70 text-sm mb-1">起音回溯 frame</label>
-                    <input v-model.number="localConfig.audio_slicing_vad.omnivad_pad_start_frame" type="number" min="0" max="100" step="1"
-                      class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
-                    <p class="text-xs text-white/40 mt-1">預設 5，保留起音前 50 ms。</p>
-                  </div>
-                  <div>
-                    <label class="block text-white/70 text-sm mb-1">最短語音 frame</label>
-                    <input v-model.number="localConfig.audio_slicing_vad.omnivad_min_speech_frame" type="number" min="1" max="1000" step="1"
-                      class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
-                    <p class="text-xs text-white/40 mt-1">預設 8，相當於 80 ms。</p>
-                  </div>
-                  <div>
-                    <label class="block text-white/70 text-sm mb-1">最長語音 frame</label>
-                    <input v-model.number="localConfig.audio_slicing_vad.omnivad_max_speech_frame" type="number" min="1" max="10000" step="1"
-                      class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
-                    <p class="text-xs text-white/40 mt-1">預設 2000，相當於 20 秒；應用層仍以 6 秒安全切片。</p>
-                  </div>
-                  <div>
-                    <label class="block text-white/70 text-sm mb-1">句尾靜音 frame</label>
-                    <input v-model.number="localConfig.audio_slicing_vad.omnivad_min_silence_frame" type="number" min="1" max="1000" step="1"
-                      class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
-                    <p class="text-xs text-white/40 mt-1">預設 20，相當於 200 ms。</p>
-                  </div>
-                </template>
-              </div>
-            </div>
-          </div>
+          <AudioVadSettingsTab v-if="activeTab === 'audio_vad'" />
 
           <!-- Transcription Settings -->
           <div v-if="activeTab === 'transcription'" class="settings-paint-section apple-settings">
@@ -4067,114 +3486,7 @@ async function handleFileChange(event: Event) {
           </div>
 
           <!-- Output & Notification Settings -->
-          <div v-if="activeTab === 'output'" class="settings-paint-section apple-settings">
-            <header class="apple-page-header"><h2>輸出選項</h2><p>設定字幕輸出、分享與通知。</p></header>
-
-            <div class="bg-white/5 rounded-xl p-4 border border-white/10 mb-6">
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <label class="block text-white/70 font-semibold mb-2">輸出目錄</label>
-                  <input v-model="localConfig.output.output_dir" type="text" placeholder="./output"
-                    class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
-                </div>
-
-                <div>
-                  <label class="block text-white/70 font-semibold mb-2">最大歷史紀錄數</label>
-                  <input v-model.number="localConfig.output.max_history" type="number" min="5" max="100"
-                    class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
-                </div>
-
-                <div class="md:col-span-2">
-                  <label class="block text-white/70 font-semibold mb-3">輸出格式</label>
-                  <div class="flex flex-wrap gap-6">
-                    <label class="flex items-center gap-2 cursor-pointer">
-                      <input v-model="localConfig.output.output_srt" type="checkbox" class="w-5 h-5 accent-blue-500" />
-                      <span class="text-white">SRT 字幕</span>
-                    </label>
-                    <label class="flex items-center gap-2 cursor-pointer">
-                      <input v-model="localConfig.output.output_txt" type="checkbox" class="w-5 h-5 accent-blue-500" />
-                      <span class="text-white">純文字</span>
-                    </label>
-                    <label class="flex items-center gap-2 cursor-pointer">
-                      <input v-model="localConfig.output.output_ass" type="checkbox" class="w-5 h-5 accent-blue-500" />
-                      <span class="text-white">ASS 字幕</span>
-                    </label>
-                  </div>
-                </div>
-
-                <div class="md:col-span-2">
-                  <label class="block text-white/70 font-semibold mb-2">
-                    自訂輸出檔案路徑
-                    <span class="text-white/40 font-normal text-xs ml-2">（選填，留空則根據上方目錄與格式自動命名）</span>
-                  </label>
-                  <input v-model="localConfig.output_notification.output_file_path" type="text"
-                    placeholder="例如：F:\subtitle\result.srt（留空則自動生成）"
-                    class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
-                  <p class="text-white/40 text-xs mt-1">填寫後以此路徑為準，覆蓋自動生成的路徑。副檔名決定輸出格式（.srt/.txt/.ass）</p>
-                </div>
-
-                <div class="md:col-span-2">
-                  <label class="flex items-center gap-2 cursor-pointer group">
-                    <input v-model="localConfig.output_notification.hide_transcribe_result" type="checkbox" class="w-5 h-5 accent-blue-500" />
-                    <div class="flex flex-col">
-                      <span class="text-white group-hover:text-blue-300 transition">隱藏 Whisper 轉錄結果</span>
-                      <span class="text-white/50 text-xs">開啟後只輸出翻譯結果，不顯示原始轉錄文字</span>
-                    </div>
-                  </label>
-                </div>
-              </div>
-            </div>
-
-            <!-- 通知設定 -->
-            <h3 class="text-lg font-bold text-white mb-4">🔔 通知推播</h3>
-
-            <!-- Discord -->
-            <div class="bg-white/5 rounded-xl p-4 border border-white/10 mb-4">
-              <div class="flex items-center justify-between mb-4">
-                <h4 class="text-blue-300 font-semibold">Discord Webhook</h4>
-                <label class="flex items-center gap-2 cursor-pointer">
-                  <input v-model="localConfig.output_notification.discord_enabled" type="checkbox" class="w-5 h-5 accent-blue-500" />
-                  <span class="text-white">啟用</span>
-                </label>
-              </div>
-              <div>
-                <input v-model="localConfig.output_notification.discord_webhook_url" :disabled="!localConfig.output_notification.discord_enabled" type="text" placeholder="https://discord.com/api/webhooks/..."
-                  :class="[
-                    'w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400',
-                    !localConfig.output_notification.discord_enabled ? 'opacity-50 cursor-not-allowed' : ''
-                  ]" />
-              </div>
-            </div>
-
-            <!-- Telegram -->
-            <div class="bg-white/5 rounded-xl p-4 border border-white/10">
-              <div class="flex items-center justify-between mb-4">
-                <h4 class="text-blue-300 font-semibold">Telegram Bot</h4>
-                <label class="flex items-center gap-2 cursor-pointer">
-                  <input v-model="localConfig.output_notification.telegram_enabled" type="checkbox" class="w-5 h-5 accent-blue-500" />
-                  <span class="text-white">啟用</span>
-                </label>
-              </div>
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label class="block text-white/70 text-sm mb-1">Bot Token</label>
-                  <input v-model="localConfig.output_notification.telegram_bot_token" :disabled="!localConfig.output_notification.telegram_enabled" type="password" placeholder="123456:ABC-DEF..."
-                    :class="[
-                      'w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400',
-                      !localConfig.output_notification.telegram_enabled ? 'opacity-50 cursor-not-allowed' : ''
-                    ]" />
-                </div>
-                <div>
-                  <label class="block text-white/70 text-sm mb-1">Chat ID</label>
-                  <input v-model="localConfig.output_notification.telegram_chat_id" :disabled="!localConfig.output_notification.telegram_enabled" type="text" placeholder="@channel_name 或 -123456789"
-                    :class="[
-                      'w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400',
-                      !localConfig.output_notification.telegram_enabled ? 'opacity-50 cursor-not-allowed' : ''
-                    ]" />
-                </div>
-              </div>
-            </div>
-          </div>
+          <OutputSettingsTab v-if="activeTab === 'output'" />
         </div>
 
 
@@ -4220,151 +3532,4 @@ async function handleFileChange(event: Event) {
   </div>
 </template>
 
-<style scoped>
-.apple-settings {
-  --apple-surface: var(--fw-surface);
-  --apple-border: var(--fw-border);
-  display: flex;
-  flex-direction: column;
-  gap: 1.25rem;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  min-width: 0;
-  color: var(--fw-text);
-}
-.apple-page-header { padding: .5rem 0 .75rem; }
-.apple-page-header h2 { font-size: 1.75rem; font-weight: 650; letter-spacing: -.025em; line-height: 1.25; }
-.apple-page-header p { margin-top: .6rem; color: var(--fw-text-secondary); font-size: .875rem; line-height: 1.6; }
-.apple-settings > div:not(.apple-backend-choice),
-.apple-settings > section,
-.apple-disclosure {
-  background: var(--apple-surface);
-  background-image: none;
-  border: 1px solid var(--apple-border);
-  border-radius: 1rem;
-  padding: 1.4rem;
-}
-.apple-settings h3, .apple-settings h4, .apple-settings .commercial-section-title {
-  color: var(--fw-text);
-  font-size: 1rem;
-  font-weight: 600;
-  letter-spacing: -.01em;
-}
-.apple-settings h3 { margin-bottom: 1rem; }
-.apple-settings :deep(button),
-.apple-settings input:not([type="checkbox"]),
-.apple-settings summary { min-height: 44px; }
-.apple-settings :deep(button) { border-radius: .65rem; transition: background-color 120ms ease, border-color 120ms ease; touch-action: manipulation; }
-.apple-settings :deep(button:active:not(:disabled)) { filter: brightness(1.15); }
-.apple-settings :deep(button:focus-visible),
-.apple-settings input:focus-visible,
-.apple-settings textarea:focus-visible,
-.apple-settings summary:focus-visible {
-  outline: 2px solid var(--fw-primary);
-  outline-offset: 3px;
-}
-.apple-settings input:not([type="checkbox"]), .apple-settings textarea {
-  min-width: 0;
-  border-color: rgba(255,255,255,.15);
-  background: var(--fw-surface-subtle);
-  border-radius: .65rem;
-  font-size: .875rem;
-}
-.apple-settings input[type="checkbox"] { accent-color: var(--fw-primary); flex-shrink: 0; }
-.apple-settings :deep(.text-white\/40), .apple-settings :deep(.text-white\/50) { color: var(--fw-text-secondary); }
-.apple-settings :deep(.text-white\/70) { color: var(--fw-text-secondary); }
-.apple-settings :deep(.text-orange-300), .apple-settings :deep(.text-orange-200),
-.apple-settings :deep(.text-green-300), .apple-settings :deep(.text-cyan-200) { color: var(--fw-text-secondary); }
-.apple-settings :deep(.bg-orange-600), .apple-settings :deep(.bg-cyan-600) { background-color: var(--fw-primary); }
-.apple-disclosure { padding: 0; }
-.apple-disclosure > summary, .apple-inline-disclosure > summary {
-  cursor: pointer;
-  padding: .85rem 1.4rem;
-  color: var(--fw-text);
-  font-size: .9rem;
-  font-weight: 600;
-  line-height: 1.6;
-}
-.apple-disclosure > summary span { float: right; padding-left: 1rem; color: var(--fw-text-secondary); font-size: .8rem; font-weight: 400; }
-.apple-disclosure[open] > summary { border-bottom: 1px solid var(--apple-border); }
-.apple-disclosure-body { padding: 1.25rem 1.4rem; }
-.apple-inline-disclosure { border: 1px solid var(--apple-border); border-radius: .7rem; }
-.apple-inline-disclosure > summary { padding: .5rem .8rem; }
-.apple-inline-disclosure .apple-disclosure-body { padding: .5rem .8rem 1rem; }
-.apple-current-service { display: flex; gap: 1rem; justify-content: space-between; align-items: center; }
-.apple-current-service h3 { margin-bottom: .4rem; }
-.apple-current-service p { color: var(--fw-text-secondary); font-size: .875rem; }
-.apple-endpoint-copy { display: flex; flex-direction: column; text-align: right; font-size: .8rem; line-height: 1.7; color: var(--fw-text-secondary); overflow-wrap: anywhere; min-width: 0; }
-.apple-backend-choice { display: grid; grid-template-columns: 1fr 1fr; gap: .35rem; padding: .35rem; background: var(--fw-surface-subtle); border: 1px solid var(--apple-border); border-radius: .85rem; }
-.apple-backend-choice button { font-size: .875rem; }
-.apple-backend-choice button[aria-pressed="true"] { background: var(--fw-primary-soft); box-shadow: 0 1px 3px #0004; }
-.apple-asr > .bg-cyan-500\/10 { padding: .9rem 1.25rem; }
-.apple-translation > div > .commercial-section-title { margin-bottom: 1rem; }
-.apple-translation :deep(.flex-1) { min-width: 0; }
-@media (max-width: 720px) {
-  .apple-settings > div:not(.apple-backend-choice), .apple-settings > section { padding: 1rem; }
-  .apple-page-header h2 { font-size: 1.5rem; }
-  .apple-current-service { align-items: flex-start; flex-direction: column; }
-  .apple-endpoint-copy { text-align: left; }
-  .apple-disclosure > summary { padding: .8rem 1rem; }
-  .apple-disclosure > summary span { float: none; display: block; padding-left: 1rem; }
-  .apple-disclosure-body { padding: 1rem; }
-  .apple-disclosure-body .flex.items-center.justify-between { flex-wrap: wrap; gap: .75rem; }
-  .apple-disclosure-body .flex.items-center.justify-between > .flex-1 { flex-basis: 100%; }
-  .apple-disclosure-body .flex.items-center.justify-between > .flex.gap-2 { margin-left: 0; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .apple-settings :deep(*), .apple-settings :deep(*::before), .apple-settings :deep(*::after) { transition: none !important; animation: none !important; }
-}
-@media (prefers-reduced-transparency: reduce) {
-  .apple-settings > div:not(.apple-backend-choice), .apple-settings > section, .apple-disclosure { background: var(--fw-surface); }
-}
-@media (prefers-contrast: more) {
-  .apple-settings { --apple-border: #8696ad; }
-  .apple-settings :deep(.text-white\/40), .apple-settings :deep(.text-white\/50) { color: #c4cfde; }
-}
-.settings-paint-section {
-  contain: layout style;
-}
-
-.settings-paint-section > :not(.llama-settings) {
-  /* Qt WebEngine 在長頁面使用 paint containment 時可能短暫漏畫 tile。 */
-  contain: layout style;
-}
-
-.tooltip-container {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  cursor: pointer;
-}
-
-.tooltip-text {
-  visibility: hidden;
-  position: absolute;
-  bottom: 125%;
-  left: 50%;
-  transform: translateX(-50%);
-  background-color: rgba(15, 23, 42, 0.95);
-  color: #fff;
-  text-align: left;
-  padding: 8px 12px;
-  border-radius: 8px;
-  width: 260px;
-  font-size: 0.75rem;
-  line-height: 1.25rem;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3);
-  z-index: 50;
-  opacity: 0;
-  transition: opacity 0.2s ease, transform 0.2s ease;
-  pointer-events: none;
-  font-weight: normal;
-}
-
-.tooltip-container:hover .tooltip-text {
-  visibility: visible;
-  opacity: 1;
-  transform: translateX(-50%) translateY(-2px);
-}
-</style>
-```
+<style scoped src="../components/settings/settings-shared.css"></style>

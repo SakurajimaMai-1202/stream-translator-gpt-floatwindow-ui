@@ -8,15 +8,37 @@ from pathlib import Path
 from time import monotonic
 from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QApplication, QFileDialog
 from PyQt6.QtWebEngineWidgets import QWebEngineView
-from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings, QWebEngineScript
+from PyQt6.QtWebEngineCore import (
+    QWebEnginePage, QWebEngineSettings, QWebEngineScript,
+    QWebEngineProfile, QWebEngineUrlRequestInterceptor,
+)
 from PyQt6.QtWebChannel import QWebChannel
 from PyQt6.QtCore import Qt, QUrl, QTimer, QPoint, QRect, QEvent, QObject, pyqtSlot, pyqtSignal
 from PyQt6.QtGui import QIcon, QCursor, QMouseEvent, QWheelEvent, QKeyEvent, QColor, QDesktopServices
 import logging
 
 import ui_perf
+from backend.core.admin_auth import TOKEN_HEADER
 
 logger = logging.getLogger(__name__)
+
+
+class AdminTokenInterceptor(QWebEngineUrlRequestInterceptor):
+    """只向本機管理後端與開發前端的指定 origin 傳送權杖。"""
+
+    def __init__(self, token: str, backend_port: int, frontend_port: int | None = None):
+        super().__init__(QWebEngineProfile.defaultProfile())
+        ports = {backend_port}
+        if frontend_port is not None:
+            ports.add(frontend_port)
+        self._origins = {("http", host, port) for host in ("127.0.0.1", "localhost") for port in ports}
+        self._token = token.encode("utf-8")
+
+    def interceptRequest(self, info):
+        url = info.requestUrl()
+        origin = (url.scheme().lower(), url.host().lower(), url.port(80))
+        if origin in self._origins:
+            info.setHttpHeader(TOKEN_HEADER.encode("ascii"), self._token)
 
 
 class SubtitleBridge(QObject):

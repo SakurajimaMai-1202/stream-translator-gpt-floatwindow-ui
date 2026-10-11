@@ -12,9 +12,10 @@ import logging
 import re
 import codecs
 from pathlib import Path
+from backend.core.admin_auth import TOKEN_ENV, get_admin_token
 from backend.core.admin_host import get_admin_host
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import QProcess, QTimer, pyqtSignal, QObject
+from PyQt6.QtCore import QProcess, QProcessEnvironment, QTimer, pyqtSignal, QObject
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +98,11 @@ class BackendProcess(QObject):
         
         # 啟動新的後端程序
         self.process = QProcess()
+        process_env = QProcessEnvironment.systemEnvironment()
+        token = get_admin_token()
+        if token:
+            process_env.insert(TOKEN_ENV, token)
+        self.process.setProcessEnvironment(process_env)
         self._start_attempts = 0
         self._startup_started_at = time.monotonic()
         self._stop_requested = False
@@ -233,9 +239,10 @@ class FrontendServer(QObject):
     stopped = pyqtSignal()
     error = pyqtSignal(str)
     
-    def __init__(self, frontend_dir: Path, port: int = 5173):
+    def __init__(self, frontend_dir: Path, port: int = 5173, backend_port: int = 8001):
         super().__init__()
         self.frontend_dir = frontend_dir
+        self.backend_port = backend_port
         self.port = port
         self.actual_port = port  # 實際使用的端口
         self.process = None
@@ -254,6 +261,9 @@ class FrontendServer(QObject):
             return
         
         self.process = QProcess()
+        process_env = QProcessEnvironment.systemEnvironment()
+        process_env.insert("FLOATWINDOW_BACKEND_PORT", str(self.backend_port))
+        self.process.setProcessEnvironment(process_env)
         self.process.setWorkingDirectory(str(self.frontend_dir))
         
         # Windows 使用 npm.cmd

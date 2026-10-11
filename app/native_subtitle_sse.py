@@ -9,6 +9,7 @@ from typing import Any
 from PyQt6.QtCore import QObject, QTimer, QUrl, pyqtSignal
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 
+from backend.core.admin_auth import TOKEN_HEADER, get_admin_token
 from sse_parser import SseEventParser
 
 
@@ -23,9 +24,10 @@ class NativeSubtitleSseClient(QObject):
     asrReadyChanged = pyqtSignal(bool)
     connectionStateChanged = pyqtSignal(str)
 
-    def __init__(self, base_url: str, parent: QObject | None = None) -> None:
+    def __init__(self, base_url: str, parent: QObject | None = None, *, token: str | None = None) -> None:
         super().__init__(parent)
         self.base_url = base_url.rstrip("/")
+        self._token = get_admin_token() if token is None else token
         self._manager = QNetworkAccessManager(self)
         self._poll_timer = QTimer(self)
         self._poll_timer.setSingleShot(True)
@@ -74,6 +76,8 @@ class NativeSubtitleSseClient(QObject):
         request = QNetworkRequest(QUrl(f"{self.base_url}{path}"))
         request.setRawHeader(b"Accept", b"application/json, text/event-stream")
         request.setRawHeader(b"Cache-Control", b"no-cache")
+        if self._token:
+            request.setRawHeader(TOKEN_HEADER.encode("ascii"), self._token.encode("utf-8"))
         return request
 
     def _request_active_task(self) -> None:

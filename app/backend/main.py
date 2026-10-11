@@ -11,6 +11,7 @@ import threading
 
 from backend.api import routes
 from backend.config import settings
+from backend.core.admin_auth import DEV_ORIGIN_REGEX, get_admin_token, register_admin_auth
 from backend.core.logging_setup import configure_logging
 from backend.static_files import resolve_static_file
 
@@ -23,6 +24,8 @@ logger.info(f"Backend log 檔案: {LOG_FILE}")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """應用程式生命週期管理"""
+    if not get_admin_token():
+        logger.warning("未設定 FLOATWINDOW_ADMIN_TOKEN，管理 API 未啟用驗證。")
     # ── 啟動 ──────────────────────────────────────────────
     # 1) 探測是否有現有的 llama 伺服器
     from backend.api.llama import probe_existing_llama_server
@@ -68,11 +71,13 @@ async def health_check():
 # CORS 設定
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 開發階段允許所有來源
+    allow_origin_regex=DEV_ORIGIN_REGEX,  # 僅允許本機開發前端
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+register_admin_auth(app, settings.API_PREFIX)
 
 # 註冊路由
 routes.register_routes(app)

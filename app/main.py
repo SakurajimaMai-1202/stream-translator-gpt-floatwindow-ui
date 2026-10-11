@@ -54,6 +54,7 @@ if "--update-health-check" in sys.argv:
     manager.to_main_args(probe_config)
     sys.exit(0)
 
+from backend.core.admin_auth import TOKEN_HEADER, ensure_admin_token
 from backend.core.admin_host import get_admin_host
 from backend.core.logging_setup import configure_logging
 import ui_perf
@@ -63,7 +64,7 @@ from webview_rendering import (
     resolve_render_mode as resolve_webview_render_mode,
 )
 from services import BackendProcess, FrontendServer
-from windows import HomeWindow, SettingsWindow, FloatingSubtitleWindow, SubtitleSettingsWindow
+from windows import HomeWindow, SettingsWindow, FloatingSubtitleWindow, SubtitleSettingsWindow, AdminTokenInterceptor
 from native_subtitle import NativeSubtitleWindow
 from native_subtitle_sse import NativeSubtitleSseClient
 
@@ -104,6 +105,7 @@ class UI2Application:
     """UI2 應用程式管理器"""
     
     def __init__(self, dev_mode: bool = True, disable_gpu: bool = False):
+        self.admin_token = ensure_admin_token()
         self.dev_mode = dev_mode
         self.disable_gpu = disable_gpu
         if self.disable_gpu:
@@ -153,7 +155,7 @@ class UI2Application:
         
         # 開發模式需要 Vite 開發伺服器
         if self.dev_mode:
-            self.frontend = FrontendServer(self.frontend_dir, port=5173)
+            self.frontend = FrontendServer(self.frontend_dir, port=5173, backend_port=self.backend_port)
             self.frontend.started.connect(self._on_frontend_started)
             self.frontend.error.connect(self._on_frontend_error)
     
@@ -213,6 +215,13 @@ class UI2Application:
         else:
             base_url = f"http://127.0.0.1:{self.backend_port}"
 
+        # 所有視窗使用預設 profile；保留 Python 引用，避免 interceptor 被回收。
+        from PyQt6.QtWebEngineCore import QWebEngineProfile
+        self.admin_interceptor = AdminTokenInterceptor(
+            self.admin_token, self.backend_port,
+            self.frontend_port if self.dev_mode else None,
+        )
+        QWebEngineProfile.defaultProfile().setUrlRequestInterceptor(self.admin_interceptor)
         self.base_url = base_url
         
         logger.info(f"建立主視窗 (Base URL: {base_url})")
@@ -276,6 +285,7 @@ class UI2Application:
             import requests
             response = requests.post(
                 f"http://127.0.0.1:{self.backend_port}/api/llama/server/stop",
+                headers={TOKEN_HEADER: self.admin_token},
                 timeout=2
             )
             if response.status_code == 200:
@@ -336,7 +346,7 @@ class UI2Application:
             self.subtitle_window.update_recording_state(self.home_window.bridge.is_recording)
             # 原生字幕直接連 FastAPI，不繞過 Vite/WebView proxy。
             backend_url = f"http://127.0.0.1:{self.backend_port}"
-            self.subtitle_sse_client = NativeSubtitleSseClient(backend_url, self.subtitle_window)
+            self.subtitle_sse_client = NativeSubtitleSseClient(backend_url, self.subtitle_window, token=self.admin_token)
             self.subtitle_sse_client.taskStarted.connect(self.subtitle_window.begin_task)
             self.subtitle_sse_client.asrReadyChanged.connect(self.subtitle_window.update_asr_ready)
             self.subtitle_sse_client.subtitleReceived.connect(self.subtitle_window.update_subtitle_json)

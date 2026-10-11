@@ -26,7 +26,7 @@ export default defineConfig({
     strictPort: false,  // 如果端口被佔用，自動使用下一個可用端口
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:8001',
+        target: `http://127.0.0.1:${process.env.FLOATWINDOW_BACKEND_PORT || '8001'}`,
         changeOrigin: true
       }
     }

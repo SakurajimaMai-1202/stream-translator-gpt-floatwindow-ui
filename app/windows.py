@@ -5,6 +5,7 @@ PyQt6 視窗管理器
 
 import sys
 from pathlib import Path
+from urllib.parse import quote
 from time import monotonic
 from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QApplication, QFileDialog
 from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -18,7 +19,7 @@ from PyQt6.QtGui import QIcon, QCursor, QMouseEvent, QWheelEvent, QKeyEvent, QCo
 import logging
 
 import ui_perf
-from backend.core.admin_auth import TOKEN_HEADER
+from backend.core.admin_auth import TOKEN_HEADER, get_admin_token
 
 logger = logging.getLogger(__name__)
 
@@ -73,9 +74,24 @@ class HomeBridge(QObject):
     recordingStateUpdated = pyqtSignal(bool)
     appUpdateRequested = pyqtSignal(str, str)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, base_url: str = ""):
         super().__init__(parent)
         self.is_recording = False
+        self.base_url = base_url.rstrip("/")
+
+    @pyqtSlot(result=bool)
+    def openInBrowser(self) -> bool:
+        """以本次啟動的 token 在系統瀏覽器登入管理介面（寫入 HttpOnly cookie）。"""
+        token = get_admin_token()
+        if not self.base_url or not token:
+            logger.warning("無法在瀏覽器開啟：缺少後端位址或管理 token")
+            return False
+        url = QUrl(f"{self.base_url}/api/auth/session?token={quote(token, safe='')}")
+        if not QDesktopServices.openUrl(url):
+            logger.warning("系統瀏覽器開啟失敗")
+            return False
+        logger.info("已在系統瀏覽器開啟管理介面")
+        return True
 
     @pyqtSlot()
     def openSubtitleWindow(self):
@@ -353,7 +369,7 @@ class HomeWindow(WebViewWindow):
 
         # 設定 WebChannel 以便與 JavaScript 通訊
         self.channel = QWebChannel()
-        self.bridge = HomeBridge()
+        self.bridge = HomeBridge(base_url=base_url)
         self.channel.registerObject("pyqt", self.bridge)
         self.web_view.page().setWebChannel(self.channel)
 
@@ -464,7 +480,7 @@ class SubtitleSettingsWindow(QMainWindow):
 
         # 讓獨立字幕設定視窗可直接把變更送到原生字幕 renderer。
         self.channel = QWebChannel()
-        self.bridge = HomeBridge()
+        self.bridge = HomeBridge(base_url=base_url)
         self.channel.registerObject("pyqt", self.bridge)
         self.web_view.page().setWebChannel(self.channel)
         if callable(on_settings_updated):

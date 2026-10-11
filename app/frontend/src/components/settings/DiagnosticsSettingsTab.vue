@@ -1,10 +1,32 @@
 <script setup lang="ts">
+import { onBeforeUnmount, onMounted, ref } from 'vue';
 import { useSettingsContext } from '../../composables/settings/settingsContext';
 import { useTranslationStore } from '../../stores/translation';
 import { runtimeApi } from '../../services/api';
 
 const { diagnosticsBusy } = useSettingsContext();
 const store = useTranslationStore();
+// 只有桌面程式的 WebView 有 Qt 橋接；一般瀏覽器開啟時不顯示此按鈕。
+// window.pyqt 在 DocumentReady 後非同步建立，重新整理後可能稍晚才出現。
+const canOpenInBrowser = ref(false);
+let bridgeProbe: ReturnType<typeof setInterval> | null = null;
+onMounted(() => {
+  let attempts = 0;
+  const probe = () => {
+    canOpenInBrowser.value = typeof (window as any).pyqt?.openInBrowser === 'function';
+    if ((canOpenInBrowser.value || ++attempts >= 20) && bridgeProbe) clearInterval(bridgeProbe);
+  };
+  bridgeProbe = setInterval(probe, 250);
+  probe();
+});
+onBeforeUnmount(() => { if (bridgeProbe) clearInterval(bridgeProbe); });
+
+function openInBrowser() {
+  (window as any).pyqt.openInBrowser((opened: boolean) => {
+    if (opened) store.statusMessage = '已在瀏覽器開啟管理介面';
+    else store.errorMessage = '無法在瀏覽器開啟管理介面，請查看 app.log';
+  });
+}
 
 async function exportRuntimeDiagnostics() {
   if (diagnosticsBusy.value) return;
@@ -58,6 +80,16 @@ async function exportRuntimeDiagnostics() {
               <p class="mt-2 text-xs leading-5 text-white/40">報告不包含 API Key、Cookie 或字幕內容，也不會下載模型或修改設定。</p>
               <button type="button" @click="exportRuntimeDiagnostics" :disabled="diagnosticsBusy" class="mt-4 px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-white font-semibold">
                 {{ diagnosticsBusy ? '正在建立報告…' : '匯出 Runtime 診斷報告' }}
+              </button>
+            </div>
+            <div v-if="canOpenInBrowser" class="rounded-xl border border-white/10 bg-white/5 p-5">
+              <h3 class="text-lg font-semibold text-cyan-300">在瀏覽器開啟管理介面</h3>
+              <p class="mt-2 text-sm leading-6 text-white/60">
+                管理 API 需要啟動驗證，直接在瀏覽器輸入網址會無法讀取設定。此按鈕會以本次啟動的權杖登入並在預設瀏覽器開啟。
+              </p>
+              <p class="mt-2 text-xs leading-5 text-white/40">權杖只對本次啟動有效，重新啟動程式後需再按一次。</p>
+              <button type="button" @click="openInBrowser" class="mt-4 px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-semibold">
+                在瀏覽器開啟
               </button>
             </div>
           </div>

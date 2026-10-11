@@ -12,6 +12,7 @@ import threading
 from backend.api import routes
 from backend.config import settings
 from backend.core.logging_setup import configure_logging
+from backend.static_files import resolve_static_file
 
 # 設定日誌
 LOG_FILE = configure_logging("backend", reset_log_names=["translator_stderr", "llama"])
@@ -135,8 +136,8 @@ if index_file.exists():
     @app.get("/{full_path:path}", include_in_schema=False)
     async def spa_fallback(full_path: str):
         # 嘗試返回靜態檔案
-        candidate = static_root / full_path
-        if candidate.exists() and candidate.is_file():
+        candidate = resolve_static_file(static_root, full_path)
+        if candidate is not None:
             return FileResponse(candidate)
         # 否則返回 index.html (SPA fallback)
         return FileResponse(index_file)

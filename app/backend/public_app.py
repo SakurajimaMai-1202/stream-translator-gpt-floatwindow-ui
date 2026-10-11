@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.core.translator import active_translations, get_task
 from backend.api.config import get_config_manager
+from backend.static_files import resolve_static_file
 
 logger = logging.getLogger(__name__)
 
@@ -163,8 +164,8 @@ def mount_static(static_root: Path):
             # 跳過 /api 路徑（避免遮蔽 API 路由）
             if full_path.startswith("api/"):
                 raise HTTPException(status_code=404, detail="Not found")
-            candidate = static_root / full_path
-            if candidate.exists() and candidate.is_file():
+            candidate = resolve_static_file(static_root, full_path)
+            if candidate is not None:
                 return FileResponse(candidate)
             return FileResponse(index_file)
 

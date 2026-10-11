@@ -54,6 +54,7 @@ if "--update-health-check" in sys.argv:
     manager.to_main_args(probe_config)
     sys.exit(0)
 
+from backend.core.admin_host import get_admin_host
 from backend.core.logging_setup import configure_logging
 import ui_perf
 from webview_rendering import (
@@ -541,7 +542,7 @@ def run_backend_directly(port: int):
     # configured separately, so disable only uvicorn's console log config.
     uvicorn.run(
         app,
-        host="0.0.0.0",
+        host=get_admin_host(),
         port=port,
         log_level="info",
         access_log=False,

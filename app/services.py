@@ -12,6 +12,7 @@ import logging
 import re
 import codecs
 from pathlib import Path
+from backend.core.admin_host import get_admin_host
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QProcess, QTimer, pyqtSignal, QObject
 
@@ -113,10 +114,11 @@ class BackendProcess(QObject):
             # 開發模式：使用 uvicorn 模組並從專案根目錄啟動
             self.process.setWorkingDirectory(str(self.backend_dir.parent))
             self.process.setProgram(sys.executable)
+            admin_host = get_admin_host()
             args = [
                 "-m", "uvicorn",
                 "backend.main:app",
-                "--host", "0.0.0.0",
+                "--host", admin_host,
                 "--port", str(self.port),
                 "--no-access-log"
             ]
@@ -124,7 +126,7 @@ class BackendProcess(QObject):
                 args.append("--reload")
             self.process.setArguments(args)
             reload_note = " --reload" if "--reload" in args else ""
-            logger.info(f"啟動後端 (Dev): {sys.executable} -m uvicorn backend.main:app --host 0.0.0.0 --port {self.port}{reload_note}")
+            logger.info(f"啟動後端 (Dev): {sys.executable} -m uvicorn backend.main:app --host {admin_host} --port {self.port}{reload_note}")
 
         if getattr(sys, 'frozen', False):
             self.process.setWorkingDirectory(str(self.backend_dir))

@@ -4,7 +4,7 @@ Llama.cpp 整合 API
 提供 llama.cpp 模型管理和推論功能
 可供 UI2 和 llama launcher 共用
 """
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Request
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Literal, Union
 from pathlib import Path
@@ -18,7 +18,7 @@ import socket
 from functools import lru_cache
 from backend.config import settings
 from backend.core.external_process import run_external, popen_external
-from backend.core.llama_runtime_installer import active_runtime_executable, installer, list_latest_variants
+from backend.core.llama_runtime_installer import active_runtime_executable, installer, list_latest_variants, llama_root
 from backend.core.llama_model_installer import model_installer
 from backend.core.llama_devices import enumerate_devices, select_device, supports_device_selection, update_gpu_evidence, gpu_logging_args
 from backend.core.logging_setup import configure_dedicated_file_logger
@@ -332,7 +332,7 @@ async def list_models(model_dir: Optional[str] = None):
         raise HTTPException(status_code=500, detail=f"列出模型失敗: {str(e)}")
 
 @router.post("/server/start")
-async def start_server(config: ServerConfig, background_tasks: BackgroundTasks):
+async def start_server(config: ServerConfig, background_tasks: BackgroundTasks, request: Request):
     """
     啟動 llama.cpp 伺服器
     """
@@ -351,6 +351,8 @@ async def start_server(config: ServerConfig, background_tasks: BackgroundTasks):
         raise HTTPException(status_code=400, detail=f"模型文件不存在: {config.model_path}")
     
     server_exe = _resolve_custom_runtime(config.server_exe) if config.server_exe else _find_llama_server()
+    if config.server_exe:
+        _guard_custom_runtime(server_exe, request)
     if not server_exe or not server_exe.is_file():
         raise HTTPException(status_code=400, detail="找不到 llama-server.exe，請在設定中指定路徑或確認安裝位置")
     selection = dict(mode="cpu", selected_device=None, confirmed=False,
@@ -565,8 +567,10 @@ async def get_available_port(preferred: int = 8081):
 
 
 @router.get("/runtime/devices")
-async def get_runtime_devices(server_exe: Optional[str] = None, allow_integrated_gpu: bool = False):
+async def get_runtime_devices(request: Request, server_exe: Optional[str] = None, allow_integrated_gpu: bool = False):
     executable = _resolve_custom_runtime(server_exe) if server_exe else _find_llama_server()
+    if server_exe:
+        _guard_custom_runtime(executable, request)
     if not executable or not executable.is_file():
         return dict(devices=[], error="找不到 llama-server.exe，請先安裝或選擇 Runtime。", server_exe=str(executable or ""))
     return await asyncio.to_thread(enumerate_devices, str(executable), allow_integrated_gpu)
@@ -649,6 +653,21 @@ def _configured_llama_server() -> tuple[Optional[Path], bool]:
     return (_resolve_custom_runtime(configured), True) if configured else (None, False)
 
 
+def _guard_custom_runtime(executable: Path, request: Request) -> None:
+    """僅允許受管理、已設定或本機直接指定的 llama Runtime。"""
+    executable = executable.resolve()
+    if executable.is_relative_to(llama_root().resolve()):
+        return
+    if executable.name.lower() in {"llama-server.exe", "llama-server"}:
+        configured, _ = _configured_llama_server()
+        if configured and os.path.normcase(str(executable)) == os.path.normcase(str(configured.resolve())):
+            return
+        if (request.client and request.client.host in {"127.0.0.1", "::1"}
+                and not any(header in request.headers for header in ("X-Forwarded-For", "X-Real-IP", "Forwarded"))):
+            return
+    raise HTTPException(status_code=403, detail="不允許執行此 Runtime，請使用受管理或已設定的 llama-server，或由本機直接指定路徑。")
+
+
 def _find_llama_server() -> Optional[Path]:
     configured, explicit = _configured_llama_server()
     if explicit:
@@ -667,9 +686,10 @@ def _find_llama_server() -> Optional[Path]:
 
 
 @router.post("/runtime/validate")
-async def validate_runtime_path(request: RuntimePathRequest):
-    executable = _resolve_custom_runtime(request.server_exe)
-    if executable.name.lower() != "llama-server.exe" or not executable.is_file():
+async def validate_runtime_path(payload: RuntimePathRequest, request: Request):
+    executable = _resolve_custom_runtime(payload.server_exe)
+    _guard_custom_runtime(executable, request)
+    if executable.name.lower() not in {"llama-server.exe", "llama-server"} or not executable.is_file():
         raise HTTPException(status_code=400, detail=f"找不到 llama-server.exe: {executable}")
     try:
         result = await asyncio.to_thread(

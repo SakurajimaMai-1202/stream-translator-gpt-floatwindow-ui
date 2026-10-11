@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from fastapi import Request
 
 from backend.api import llama
 from backend.api import config as config_api
@@ -49,6 +50,7 @@ def test_failed_server_reports_missing_tensor_instead_of_exit_summary(monkeypatc
     asyncio.run(llama.start_server(
         llama.ServerConfig(model_path=str(model), server_exe=str(runtime)),
         llama.BackgroundTasks(),
+        Request({"type": "http", "client": ("127.0.0.1", 12345), "headers": []}),
     ))
     for run in pending:
         run()
@@ -119,7 +121,10 @@ def test_custom_runtime_directory_resolves_to_server(monkeypatch, tmp_path):
         lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="version: test\n", stderr=""),
     )
     assert llama._find_llama_server() == executable.resolve()
-    result = asyncio.run(llama.validate_runtime_path(llama.RuntimePathRequest(server_exe=str(runtime_dir))))
+    result = asyncio.run(llama.validate_runtime_path(
+        llama.RuntimePathRequest(server_exe=str(runtime_dir)),
+        Request({"type": "http", "client": ("127.0.0.1", 12345), "headers": []}),
+    ))
     assert result["path"] == str(executable.resolve())
 
 
@@ -137,7 +142,10 @@ def test_custom_runtime_directory_without_server_does_not_fallback(monkeypatch, 
     monkeypatch.setattr(config_api, "get_config_manager", lambda: ConfigManager())
     assert llama._find_llama_server() is None
     with pytest.raises(llama.HTTPException, match="llama-server.exe"):
-        asyncio.run(llama.validate_runtime_path(llama.RuntimePathRequest(server_exe=str(runtime_dir))))
+        asyncio.run(llama.validate_runtime_path(
+            llama.RuntimePathRequest(server_exe=str(runtime_dir)),
+            Request({"type": "http", "client": ("127.0.0.1", 12345), "headers": []}),
+        ))
 
 
 def test_validate_model_path_checks_gguf_header(tmp_path):

@@ -23,7 +23,7 @@ def _clean_flags(monkeypatch):
 
 
 def test_windows_defaults_to_gpu_compositing_with_cpu_raster():
-    assert resolve_render_mode(_args(), "", platform="win32") == "gpu-safe"
+    assert resolve_render_mode(_args(), "", platform="win32") == "software"
     assert resolve_render_mode(_args(), "", platform="linux") == "gpu"
 
 

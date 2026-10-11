@@ -4,12 +4,12 @@
 以便單元測試直接驗證旗標組合。
 
 模式：
-- ``gpu-safe``（Windows 預設）：保留 GPU 合成，但由 CPU 光柵化網頁內容並
-  停用 zero-copy。破圖與殘影多來自 GPU 光柵化／zero-copy 路徑，而 Qt
-  WebEngine 的軟體合成路徑實測只送出約每秒 15 幀，捲動與下拉選單明顯
-  卡頓，且與 CSS 內容無關。
+- ``software``（Windows 預設）：完整軟體渲染。Qt WebEngine 的軟體合成實測
+  約每秒 15 幀，捲動與下拉選單較不流暢，但不會破圖。
+- ``gpu-safe``：保留 GPU 合成，由 CPU 光柵化網頁內容並停用 zero-copy，
+  可達 60 幀。實測 Qt WebEngine 6.9–6.11 的 GPU 合成路徑在內容變化或
+  視窗縮放後仍會漏畫或整片變黑（Chrome 本身不會），因此不再作為預設。
 - ``gpu``：完整 GPU 渲染。
-- ``software``：完整軟體渲染，供驅動仍有問題的環境退回。
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ def resolve_render_mode(args, configured: str, platform: str = sys.platform) -> 
         return "gpu"
     if configured:
         return configured
-    return "gpu-safe" if platform == "win32" else "gpu"
+    return "software" if platform == "win32" else "gpu"
 
 
 def apply_render_mode(mode: str, args, platform: str = sys.platform) -> bool:

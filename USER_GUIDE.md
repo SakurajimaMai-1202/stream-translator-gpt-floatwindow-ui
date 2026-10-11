@@ -195,6 +195,6 @@ GGUF 是翻譯模型檔，llama.cpp 執行環境負責載入模型，兩者都�
 | 字幕落後或排隊 | 使用較小模型、減少同時使用的本機模型，確認 CPU／GPU 負載。 |
 | 固定譯名不一致 | 原文是否正確；正確時使用翻譯術語表，誤辨時使用 ASR 修正。 |
 | 手機開不了字幕頁 | 是否在同一區網、是否使用區網 IP、防火牆與路由器隔離設定。 |
-| 控制介面破圖、殘影或灰底閃爍 | 在 `config.yaml` 的 `ui` 區段加入 `webview_rendering: software` 後重新啟動，改用軟體渲染；捲動會較不流暢。也可用 `--disable-gpu` 啟動暫時測試。 |
+| 控制介面捲動或下拉選單不流暢 | Windows 預設使用軟體渲染以避免破圖，約每秒 15 幀。想要更流暢可在 `config.yaml` 的 `ui` 區段加入 `webview_rendering: gpu-safe` 後重新啟動（GPU 合成，部分環境在展開區塊或縮放視窗後可能破圖、殘影）；`--enable-webview-gpu` 則改用完整 GPU 渲染。 |
 
 若仍無法解決，可在 [GitHub Issues](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/issues) 提供版本、套件類型、作業系統、音源、模型及錯誤訊息。日誌通常位於程式附近的 `logs` 資料夾；分享前請移除 API Key、Cookies 與私人網址。

@@ -2,6 +2,7 @@ import asyncio
 import io
 import tarfile
 from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 
 from backend.core import model_download_manager as module
@@ -12,8 +13,10 @@ def test_cpu_archive_uses_shared_downloader_and_extracts(monkeypatch, tmp_path):
     monkeypatch.setattr(module, 'ensure_model_storage', lambda: tmp_path)
     monkeypatch.setitem(module.SHERPA_CPU_BUNDLES, 'fixture', ('test-model', ('model.onnx',)))
     calls = []
+    cancel_event = Event()
 
     def download(self, url, destination):
+        assert self._cancel is cancel_event
         calls.append((url, destination))
         destination.parent.mkdir(parents=True, exist_ok=True)
         with tarfile.open(destination, 'w:bz2') as archive:
@@ -22,7 +25,7 @@ def test_cpu_archive_uses_shared_downloader_and_extracts(monkeypatch, tmp_path):
             archive.addfile(member, io.BytesIO(b'model'))
 
     monkeypatch.setattr(module.HttpDownloader, 'download', download)
-    asyncio.run(manager._download_sherpa_archive('task', 'fixture'))
+    asyncio.run(manager._download_sherpa_archive('task', 'fixture', cancel_event))
     assert calls[0][1].name.endswith('.part')
     assert (tmp_path / 'sherpa-onnx/test-model/model.onnx').read_bytes() == b'model'
 
@@ -42,7 +45,7 @@ def test_hf_prefetch_precedes_native_snapshot(monkeypatch, tmp_path):
         return str(tmp_path)
 
     monkeypatch.setattr(huggingface_hub, 'snapshot_download', snapshot)
-    asyncio.run(module.ModelDownloadManager()._download_from_hf('task', 'test/model'))
+    asyncio.run(module.ModelDownloadManager()._download_from_hf('task', 'test/model', Event()))
     assert calls == ['prefetch', 'snapshot']
 
 

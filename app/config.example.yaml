@@ -119,9 +119,30 @@ translation:
   hy_mt2_provider: existing
   hy_mt2_lm_studio_url: http://127.0.0.1:1234/v1
   hy_mt2_lm_studio_model: ''
+  hy_mt2_lm_studio_api_key: ''
   hy_mt2_llama_cpp_url: http://127.0.0.1:8081/v1
   hy_mt2_llama_cpp_model: ''
+  hy_mt2_llama_cpp_api_key: ''
   hy_mt2_glossary_folder: ''
+  hy_mt2_glossary_preset: ''
+  index_translate_optimizer_enabled: false
+  index_translate_context_window: 3
+  index_translate_max_context_chars: 1000
+  index_translate_max_terms: 10
+  index_translate_style: true
+  index_translate_style_text: '使用自然、簡潔的台灣繁體中文直播字幕；保留原文語氣，不要補充原文沒有的資訊；只輸出譯文。'
+  index_translate_preferences: ''
+  index_translate_debug: false
+  index_translate_provider: existing
+  index_translate_lm_studio_url: http://127.0.0.1:1234/v1
+  index_translate_lm_studio_model: ''
+  index_translate_lm_studio_api_key: ''
+  index_translate_llama_cpp_url: http://127.0.0.1:8081/v1
+  index_translate_llama_cpp_model: ''
+  index_translate_llama_cpp_api_key: ''
+  index_translate_glossary_folder: ''
+  index_translate_glossary_preset: ''
+  translation_glossary_scope: null
   paired_subtitle_mode: true
   deduplicate_asr_overlap: true
   subtitle_assembler_enabled: true

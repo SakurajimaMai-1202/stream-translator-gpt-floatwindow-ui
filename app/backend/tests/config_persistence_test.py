@@ -117,10 +117,23 @@ def test_all_settings_view_bindings_exist_in_yaml_and_defaults():
         r'v-model(?:\.\w+)*="localConfig\.([^\"]+)"',
         source,
     )))
+    resolved_paths = []
+    for binding in paths:
+        family_binding = re.fullmatch(
+            r"translation\[familySettings \+ '(_\w+)'\]", binding,
+        )
+        if family_binding:
+            resolved_paths.extend(
+                f"translation.{family}{family_binding.group(1)}"
+                for family in ("hy_mt2", "index_translate")
+            )
+        else:
+            resolved_paths.append(binding)
+
     example = yaml.safe_load(EXAMPLE_CONFIG.read_text(encoding="utf-8"))
 
     assert len(paths) >= 60
-    for dotted_path in paths:
+    for dotted_path in resolved_paths:
         for config in (example, ConfigManager.DEFAULT_CONFIG):
             value = config
             for key in dotted_path.split("."):
@@ -319,7 +332,7 @@ def test_subtitle_latency_style_has_independent_color():
     defaults = ConfigManager.DEFAULT_CONFIG["subtitle_settings"]
 
     assert defaults["showLatency"] is True
-    assert defaults["latencyColor"] == "#7DD3FC"
+    assert defaults["latencyColor"] == "#AAFF00"
 
 
 def test_local_llm_enabled_resets_on_new_application_session(tmp_path):

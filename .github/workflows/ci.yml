@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: windows-latest
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: |
+            app/requirements.txt
+            stream-translator-gpt/requirements.txt
+      - name: Install CPU PyTorch
+        run: python -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+      - name: Install backend dependencies
+        run: python -m pip install -r app/requirements.txt pytest
+      - name: Backend tests
+        working-directory: app
+        run: python -m pytest backend/tests -q
+      - name: Engine tests
+        working-directory: stream-translator-gpt
+        env:
+          PYTHONPATH: '${{ github.workspace }}\app'
+        run: python -m pytest -q
+
+  frontend:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: app/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: app/frontend/package-lock.json
+      - run: npm ci
+      - name: Typecheck and build
+        run: npm run build
+
+  frontend-regressions:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: app/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: app/frontend/package-lock.json
+      - run: npm ci
+      - name: Regression scripts
+        shell: pwsh
+        run: |
+          Get-ChildItem tests/*.cjs | ForEach-Object {
+            node $_.FullName
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }

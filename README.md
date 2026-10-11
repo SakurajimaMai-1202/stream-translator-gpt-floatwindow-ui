@@ -173,6 +173,22 @@ CPU 模式使用對應的 sherpa-onnx 模型，無法直接沿用 GPU 權重。�
 - [開發與打包文件](app/packaging/README.md)
 - [文件索引](app/docs/README.md)
 
+### CI / 測試
+
+推送至 `main` 或建立／更新 Pull Request 時，CI 會在 Windows 執行測試。
+本機請使用 Python 3.13、Node.js 24，在儲存庫根目錄以 PowerShell 執行：
+
+```powershell
+$env:PYTHONUTF8 = "1"
+python -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+python -m pip install -r app/requirements.txt pytest
+Push-Location app; python -m pytest backend/tests -q; Pop-Location
+$env:PYTHONPATH = Join-Path (Get-Location).Path "app"
+Push-Location stream-translator-gpt; python -m pytest -q; Pop-Location
+Push-Location app/frontend; npm ci; npm run build
+Get-ChildItem tests/*.cjs | ForEach-Object { node $_.FullName; if ($LASTEXITCODE -ne 0) { throw "回歸測試失敗：$($_.Name)" } }; Pop-Location
+```
+
 ### 專案來源
 
 - 核心專案：[ionic-bond/stream-translator-gpt](https://github.com/ionic-bond/stream-translator-gpt)

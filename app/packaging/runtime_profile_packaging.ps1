@@ -37,12 +37,19 @@ function Set-RuntimeProfileInConfigText {
     # common regex API convention where -1 means unlimited.  Keep every YAML
     # line so the runtime block can be located and rewritten.
     $lines = $ConfigText -split "\r?\n"
+    $inLlama = $false
     $inRuntime = $false
     $profileUpdated = $false
     $devicePolicyUpdated = $false
     $devicePolicy = if ($RuntimeProfile -eq "cpu") { "cpu" } else { "auto_discrete" }
     for ($index = 0; $index -lt $lines.Count; $index++) {
         $line = $lines[$index]
+        if ($line -match '^[^\s#]') {
+            $inLlama = $line -match '^llama:\s*$'
+        }
+        if ($RuntimeProfile -eq "cuda" -and $inLlama -and $line -match '^(  n_gpu_layers:[ \t]*)\d+([ \t]*(?:#.*)?)$') {
+            $lines[$index] = "$($Matches[1])99$($Matches[2])"
+        }
         if ($line -match '^\S[^:]*:\s*$') {
             $inRuntime = $line -match '^runtime:\s*$'
             continue

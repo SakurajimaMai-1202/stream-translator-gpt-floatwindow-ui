@@ -6,6 +6,7 @@ import { defineStore } from 'pinia';
 import { ref, computed, watch, nextTick } from 'vue';
 import { llamaApi, type ModelInfo, type ServerConfig, type ServerStatus } from '../services/llamaApi';
 import { configApi } from '../services/api';
+import { useTranslationStore } from './translation';
 
 const LOCAL_LLM_SESSION_KEY = 'stream-translator:local-llm-enabled';
 
@@ -26,6 +27,11 @@ export interface ModelSeries {
 }
 
 export const useLlamaStore = defineStore('llama', () => {
+  const translationStore = useTranslationStore();
+  const configProfile = ref('');
+  const defaultGpuLayers = computed(() =>
+    (translationStore.runtimeStatus?.profile ?? configProfile.value) === 'cuda' ? 99 : 0);
+
   // State
   const models = ref<ModelInfo[]>([]);
   const serverStatus = ref<ServerStatus>({
@@ -71,7 +77,7 @@ export const useLlamaStore = defineStore('llama', () => {
     host: '127.0.0.1',
     port: 8081,
     n_ctx: 2048,
-    n_gpu_layers: 0,
+    n_gpu_layers: defaultGpuLayers.value,
     gpu_device: 'auto',
     gpu_device_name: '',
     allow_integrated_gpu: false,
@@ -293,6 +299,9 @@ export const useLlamaStore = defineStore('llama', () => {
     isApplyingRemoteConfig.value = true;
     try {
       const config = await configApi.getConfig();
+      configProfile.value = config.runtime?.profile || '';
+      if (!translationStore.runtimeStatus) await translationStore.loadRuntimeStatus();
+      if (!config.llama) serverConfig.value.n_gpu_layers = defaultGpuLayers.value;
       if (config.llama) {
         // 更新伺服器配置
         const llamaConfig = config.llama;
@@ -302,7 +311,7 @@ export const useLlamaStore = defineStore('llama', () => {
           host: llamaConfig.host || '127.0.0.1',
           port: llamaConfig.port ?? 8081,
           n_ctx: llamaConfig.n_ctx ?? 2048,
-          n_gpu_layers: llamaConfig.n_gpu_layers ?? 0,
+          n_gpu_layers: llamaConfig.n_gpu_layers ?? defaultGpuLayers.value,
           gpu_device: llamaConfig.gpu_device || 'auto',
           gpu_device_name: llamaConfig.gpu_device_name || '',
           allow_integrated_gpu: llamaConfig.allow_integrated_gpu === true,
@@ -707,6 +716,7 @@ export const useLlamaStore = defineStore('llama', () => {
     customModelSeries,
 
     // Computed
+    defaultGpuLayers,
     isServerRunning,
     isServerReady,
     currentModel,

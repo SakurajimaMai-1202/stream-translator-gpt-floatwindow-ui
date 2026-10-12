@@ -3,6 +3,7 @@ import os
 import re
 from pathlib import Path
 
+import pytest
 import yaml
 
 from backend.core.config_manager import ConfigManager
@@ -51,6 +52,50 @@ REMOVED_AUDIO_KEYS = {
 def _settings_source():
     sources = [SETTINGS_VIEW, *sorted(SETTINGS_COMPONENTS.glob("*.vue"))]
     return "\n".join(source.read_text(encoding="utf-8") for source in sources)
+
+
+@pytest.mark.parametrize("profile, expected", [("cuda", 99), ("cpu", 0), ("rocm", 0)])
+@pytest.mark.parametrize("packaged", [True, False])
+def test_new_config_gpu_layers_follow_runtime_profile(tmp_path, monkeypatch, profile, expected, packaged):
+    monkeypatch.setattr("backend.core.config_manager.get_packaged_runtime_profile", lambda: profile if packaged else None)
+    if not packaged:
+        monkeypatch.setitem(ConfigManager.DEFAULT_CONFIG["runtime"], "profile", profile)
+    config_path = tmp_path / "config.yaml"
+    manager = ConfigManager(config_path)
+    assert manager.get_config()["llama"]["n_gpu_layers"] == expected
+    assert yaml.safe_load(config_path.read_text(encoding="utf-8"))["llama"]["n_gpu_layers"] == expected
+    assert ConfigManager.DEFAULT_CONFIG["llama"]["n_gpu_layers"] == 0
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("saved_layers", [0, 12])
+def test_cuda_preserves_saved_gpu_layers(tmp_path, monkeypatch, legacy, saved_layers):
+    monkeypatch.setattr("backend.core.config_manager.get_packaged_runtime_profile", lambda: "cuda")
+    config_path = tmp_path / "config.yaml"
+    saved_path = tmp_path / "data" / "config.yaml" if legacy else config_path
+    saved_path.parent.mkdir(parents=True, exist_ok=True)
+    saved_path.write_text(yaml.safe_dump({"llama": {"n_gpu_layers": saved_layers}}), encoding="utf-8")
+    manager = ConfigManager(config_path)
+    assert manager.get_config()["llama"]["n_gpu_layers"] == saved_layers
+    assert ConfigManager(config_path).get_config()["llama"]["n_gpu_layers"] == saved_layers
+
+
+@pytest.mark.parametrize("profile, expected", [("cuda", 99), ("cpu", 0), ("rocm", 0)])
+def test_reset_gpu_layers_matches_first_run(tmp_path, monkeypatch, profile, expected):
+    monkeypatch.setattr("backend.core.config_manager.get_packaged_runtime_profile", lambda: profile)
+    config_path = tmp_path / "config.yaml"
+    manager = ConfigManager(config_path)
+    manager.update_section("llama", {"n_gpu_layers": 12})
+    manager.reset_to_defaults()
+    assert manager.get_config()["llama"]["n_gpu_layers"] == expected
+    assert ConfigManager(config_path).get_config()["llama"]["n_gpu_layers"] == expected
+
+
+def test_packaging_template_has_unique_direct_llama_gpu_layers():
+    text = EXAMPLE_CONFIG.read_text(encoding="utf-8")
+    sections = re.findall(r"^llama:[ \t]*\n((?:(?:[ \t#].*|)\n)*)", text, re.MULTILINE)
+    assert len(sections) == 1
+    assert re.findall(r"^  n_gpu_layers:[ \t]*(\d+)[ \t]*(?:#.*)?$", sections[0], re.MULTILINE) == ["0"]
 
 
 def test_config_changes_survive_new_manager(tmp_path):

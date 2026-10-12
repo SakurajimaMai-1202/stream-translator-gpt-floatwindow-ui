@@ -761,7 +761,7 @@ async function installSelectedRuntime() {
 
 const DEFAULT_TUNING: Required<Pick<ServerConfig, 'n_ctx' | 'n_gpu_layers' | 'n_threads' | 'n_parallel' | 'top_k' | 'top_p' | 'temp' | 'repeat_penalty' | 'n_predict' | 'flash_attn' | 'no_mmap'>> = {
   n_ctx: 2048,
-  n_gpu_layers: 0,
+  get n_gpu_layers() { return llamaStore.defaultGpuLayers; },
   n_threads: 4,
   n_parallel: 1,
   top_k: 40,

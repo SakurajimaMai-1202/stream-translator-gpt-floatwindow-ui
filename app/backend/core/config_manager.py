@@ -373,10 +373,16 @@ class ConfigManager:
                 return self._deep_copy(self.DEFAULT_CONFIG)
         else:
             # 首次執行，建立預設配置
-            default = self._deep_copy(self.DEFAULT_CONFIG)
+            default = self._profile_defaults()
             self._save(default)
             return default
     
+    def _profile_defaults(self) -> Dict[str, Any]:
+        """Defaults for first run and explicit reset, never for loaded configs."""
+        config = self._enforce_packaged_runtime(self._deep_copy(self.DEFAULT_CONFIG))
+        config['llama']['n_gpu_layers'] = 99 if config['runtime']['profile'] == 'cuda' else 0
+        return config
+
     def _deep_copy(self, obj: Any) -> Any:
         """深度複製物件"""
         return copy.deepcopy(obj)
@@ -1327,6 +1333,6 @@ class ConfigManager:
 
     def reset_to_defaults(self):
         """重置為預設配置"""
-        self.config = self._enforce_packaged_runtime(self._deep_copy(self.DEFAULT_CONFIG))
+        self.config = self._profile_defaults()
         self.save()
         self._file_signature = self._get_file_signature()

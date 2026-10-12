@@ -92,3 +92,119 @@ def test_manual_stop_ends_unknown_metadata_wait(monkeypatch):
     getter.loop(output)
     assert len(calls) == 2
     assert output.get() is None
+
+
+@pytest.mark.parametrize('status', ['live', 'unknown'])
+@pytest.mark.parametrize('failure', [FileNotFoundError('missing executable'), RuntimeError('Unsupported URL')])
+def test_permanent_open_error_raises(monkeypatch, status, failure, capsys):
+    getter = audio_getter.StreamAudioGetter('https://example.com/live', 'ba', '', '')
+    monkeypatch.setattr(getter, '_source_status', lambda: status)
+    def fail(*args):
+        raise failure
+    monkeypatch.setattr(audio_getter, '_open_stream', fail)
+    with pytest.raises(RuntimeError, match='串流設定錯誤'):
+        getter.loop(queue.SimpleQueue())
+    assert '串流設定錯誤' in capsys.readouterr().out
+
+
+def test_unsupported_url_stderr_is_fatal(monkeypatch):
+    getter = audio_getter.StreamAudioGetter('https://example.com/live', 'ba', '', '')
+    monkeypatch.setattr(getter, '_source_status', lambda: 'unknown')
+    failed = SimpleNamespace(poll=lambda: 1, _stderr_tail=b'ERROR: Unsupported URL: https://secret')
+    monkeypatch.setattr(audio_getter, '_open_stream', lambda *args: (failed, None))
+    monkeypatch.setattr(getter, '_read_stream_frames', lambda: iter(()))
+    with pytest.raises(RuntimeError, match='網址無效') as error:
+        getter.loop(queue.SimpleQueue())
+    assert 'secret' not in str(error.value)
+
+
+@pytest.mark.parametrize('message', ['connection reset', 'HTTP Error 503', 'generic EOF'])
+def test_transient_connection_errors_keep_retrying(monkeypatch, message):
+    getter = audio_getter.StreamAudioGetter('https://example.com/live', 'ba', '', '')
+    getter.YOUTUBE_RECONNECT_DELAY_SECONDS = 0
+    monkeypatch.setattr(getter, '_source_status', lambda: 'live')
+    attempts = []
+    def fail(*args):
+        attempts.append(True)
+        if len(attempts) == 8:
+            getter.stop()
+        raise RuntimeError(message)
+    monkeypatch.setattr(audio_getter, '_open_stream', fail)
+    getter.loop(queue.SimpleQueue())
+    assert len(attempts) == 8
+
+
+@pytest.mark.parametrize('delivered_audio', [False, True])
+def test_repeated_ambiguous_error_cap_only_before_first_audio(monkeypatch, delivered_audio):
+    getter = audio_getter.StreamAudioGetter('https://example.com/live', 'ba', '', '')
+    getter.YOUTUBE_RECONNECT_DELAY_SECONDS = 0
+    monkeypatch.setattr(getter, '_source_status', lambda: 'live')
+    attempts = []
+    def open_stream(*args):
+        attempts.append(True)
+        if delivered_audio and len(attempts) == 1:
+            return None, None
+        if len(attempts) == 9:
+            getter.stop()
+        raise RuntimeError('Unable to extract audio format')
+    monkeypatch.setattr(audio_getter, '_open_stream', open_stream)
+    monkeypatch.setattr(getter, '_read_stream_frames', lambda: iter([b'\0' * getter.byte_size]))
+    if delivered_audio:
+        getter.loop(queue.SimpleQueue())
+        assert len(attempts) == 9
+    else:
+        with pytest.raises(RuntimeError, match='串流設定錯誤'):
+            getter.loop(queue.SimpleQueue())
+        assert len(attempts) == 5
+
+
+def test_metadata_permanent_error_is_fatal(monkeypatch):
+    getter = audio_getter.StreamAudioGetter('https://example.com/live', 'ba', '', '')
+    monkeypatch.setattr(audio_getter, '_build_ytdlp_command', lambda *a, **kw: ['yt-dlp'])
+    monkeypatch.setattr(audio_getter.subprocess, 'run', lambda *a, **kw:
+                        SimpleNamespace(returncode=1, stdout='', stderr='HTTP Error 403: Forbidden'))
+    with pytest.raises(RuntimeError, match='串流設定錯誤'):
+        getter.loop(queue.SimpleQueue())
+
+
+def test_stderr_is_drained_with_bounded_tail():
+    process = SimpleNamespace(stderr=io.BytesIO(b'x' * 20000 + b'Unsupported URL'))
+    audio_getter._capture_stream_stderr(process)
+    process._stderr_thread.join(timeout=2)
+    assert not process._stderr_thread.is_alive()
+    assert len(process._stderr_tail) == 8192
+    assert process._stderr_tail.endswith(b'Unsupported URL')
+
+
+@pytest.mark.parametrize('message', [
+    'No module named yt_dlp', 'Requested format is not available',
+    'HTTP Error 404: Not Found', 'This video is private',
+    'members-only content', 'Sign in to confirm your age', 'Invalid URL',
+])
+def test_explicit_permanent_error_patterns(message):
+    getter = audio_getter.StreamAudioGetter('https://example.com/live', 'ba', '', '')
+    with pytest.raises(RuntimeError, match='串流設定錯誤'):
+        getter._check_stream_error(message)
+
+
+def test_missing_cookies_is_ignored_with_warning(tmp_path, capsys):
+    # Public streams still work without cookies; a stale path must not block them.
+    assert audio_getter._resolve_cookie_file('https://example.com/live', str(tmp_path / 'missing.txt')) is None
+    assert 'Cookies' in capsys.readouterr().out
+
+
+def test_permanent_error_after_audio_keeps_reconnecting():
+    getter = audio_getter.StreamAudioGetter('https://example.com/live', 'ba', '', '')
+    getter._received_audio = True
+    getter._check_stream_error('ERROR: HTTP Error 403: Forbidden')
+
+
+def test_different_or_transient_errors_reset_startup_cap():
+    getter = audio_getter.StreamAudioGetter('https://example.com/live', 'ba', '', '')
+    for _ in range(4):
+        getter._check_stream_error('Unable to extract audio')
+    getter._check_stream_error('HTTP Error 503')
+    for _ in range(4):
+        getter._check_stream_error('Unable to extract audio')
+    getter._check_stream_error('Unable to extract different audio')
+    assert getter._startup_failures == 1

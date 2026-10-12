@@ -2,6 +2,7 @@ import importlib.util
 import json
 import os
 import queue
+import re
 import shutil
 import signal
 import subprocess
@@ -17,6 +18,36 @@ import ffmpeg
 import numpy as np
 
 from .common import AUDIO_STREAM_GAP, SAMPLE_RATE, SAMPLES_PER_FRAME, FRAME_DURATION, LoopWorkerBase, INFO, WARNING, ERROR
+
+
+# Definite configuration failures; ambiguous extractor/decoder failures need repetition.
+_STREAM_CONFIG_ERRORS = (
+    (r'unsupported url|invalid url|not a valid url', '網址無效或不受支援', True),
+    (r'no module named [\'"]?yt_dlp|ffmpeg.*(?:not found|not installed)', '缺少 yt-dlp 或 ffmpeg', True),
+    (r'requested format.*not available', '要求的音訊格式無法使用', True),
+    (r'(?:http(?: error)?|server returned)\s*(?:403|404)\b', '來源拒絕存取或不存在（403／404）', True),
+    (r'this video is private|private video|members.only|sign in to confirm', '來源需要登入或會員權限', True),
+    (r'cookies?.*(?:no such file|not found)', 'Cookies 檔案不存在', True),
+    (r'unable to extract|invalid data found when processing input', '無法解析來源音訊', False),
+)
+
+
+def _capture_stream_stderr(process):
+    process._stderr_tail = b''
+
+    def drain():
+        try:
+            while True:
+                chunk = process.stderr.read(1024)
+                if not chunk:
+                    break
+                process._stderr_tail = (process._stderr_tail + chunk)[-8192:]
+        except (OSError, ValueError):
+            pass
+
+    thread = threading.Thread(target=drain, daemon=True, name='stream-stderr')
+    process._stderr_thread = thread
+    thread.start()
 
 
 def _is_twitter_url(url: str) -> bool:
@@ -268,23 +299,32 @@ def _open_stream(url: str, format: str, cookies: str, proxy: str, cwd: str):
         env['PATH'] = runtime_dir + os.pathsep + env.get('PATH', '')
 
     try:
-        ytdlp_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, cwd=cwd, env=env)
+        ytdlp_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd, env=env)
     except FileNotFoundError as e:
-        raise RuntimeError(
+        raise FileNotFoundError(
             '無法啟動 yt-dlp。請確認已安裝 yt_dlp 套件，或可執行檔可由系統找到。'
         ) from e
 
+    _capture_stream_stderr(ytdlp_process)
+
     try:
         ffmpeg_cmd = os.path.join(ffmpeg_dir, 'ffmpeg.exe') if ffmpeg_dir else 'ffmpeg'
-        ffmpeg_process = (ffmpeg.input('pipe:', loglevel='panic').output('pipe:',
+        ffmpeg_process = (ffmpeg.input('pipe:', loglevel='error').output('pipe:',
                                                                          format='f32le',
                                                                          acodec='pcm_f32le',
                                                                          ac=1,
                                                                          ar=SAMPLE_RATE).run_async(pipe_stdin=True,
                                                                                                   pipe_stdout=True,
+                                                                                                  pipe_stderr=True,
                                                                                                   cmd=ffmpeg_cmd))
-    except ffmpeg.Error as e:
-        raise RuntimeError(f'Failed to load audio: {e.stderr.decode()}') from e
+    except ffmpeg.Error as exc:
+        StreamAudioGetter._stop_process(ytdlp_process)
+        raise RuntimeError('ffmpeg 無法啟動') from exc
+    except OSError:
+        StreamAudioGetter._stop_process(ytdlp_process)
+        raise
+
+    _capture_stream_stderr(ffmpeg_process)
 
     thread = threading.Thread(
         target=_transport,
@@ -304,18 +344,23 @@ class StreamAudioGetter(LoopWorkerBase):
 
     def _source_status(self):
         """Return live, finite, ended, or unknown; transport EOF is not proof."""
-        cmd = _build_ytdlp_command(
-            self.url, self.format, self.cookies, self.proxy,
-            ffmpeg_dir=_resolve_ffmpeg_dir(), js_runtime_arg=_resolve_js_runtime_arg())
-        cmd.extend(['--skip-download', '--dump-single-json', '--no-playlist'])
-        # Metadata is bounded and must not inherit infinite fragment retries.
         try:
+            cmd = _build_ytdlp_command(
+                self.url, self.format, self.cookies, self.proxy,
+                ffmpeg_dir=_resolve_ffmpeg_dir(), js_runtime_arg=_resolve_js_runtime_arg())
+            cmd.extend(['--skip-download', '--dump-single-json', '--no-playlist'])
+            # Metadata is bounded and must not inherit infinite fragment retries.
             result = subprocess.run(cmd, capture_output=True, text=True,
                                     encoding='utf-8', timeout=15)
             if result.returncode:
+                self._check_stream_error(getattr(result, 'stderr', ''))
                 return 'unknown'
             info = json.loads(result.stdout)
+        except FileNotFoundError as exc:
+            self._check_stream_error('', exc)
+            raise
         except (OSError, ValueError, subprocess.TimeoutExpired):
+            self._check_stream_error('')
             return 'unknown'
         status = info.get('live_status')
         if status in ('post_live', 'was_live'):
@@ -339,6 +384,35 @@ class StreamAudioGetter(LoopWorkerBase):
         self._stop_event = threading.Event()
         self.byte_size = round(SAMPLES_PER_FRAME * 4)  # Factor 4 comes from float32 (4 bytes per sample)
         self.running = True
+        self._received_audio = False
+        self._startup_error = None
+        self._startup_failures = 0
+
+    def _check_stream_error(self, text, exc=None):
+        reason = None
+        permanent = False
+        if isinstance(exc, FileNotFoundError):
+            reason, permanent = '缺少 yt-dlp 或 ffmpeg 執行檔', True
+        else:
+            for pattern, label, definite in _STREAM_CONFIG_ERRORS:
+                if re.search(pattern, text, re.IGNORECASE):
+                    reason, permanent = label, definite
+                    break
+        if reason and not permanent and not self._received_audio:
+            signature = text.strip()
+            self._startup_failures = self._startup_failures + 1 if signature == self._startup_error else 1
+            self._startup_error = signature
+            permanent = self._startup_failures >= 5
+        elif not reason:
+            self._startup_error = None
+            self._startup_failures = 0
+        # A live source that already delivered audio keeps reconnecting until
+        # the user stops it; expired fragment URLs (403) are routine there.
+        if permanent and not self._received_audio:
+            # Never echo raw stderr: URLs, cookies and headers can contain credentials.
+            message = f'串流設定錯誤，無法開啟來源：{reason}'
+            print(f'{ERROR}{message}', flush=True)
+            raise RuntimeError(message) from exc
 
     @staticmethod
     def _stop_process(process) -> None:
@@ -362,7 +436,9 @@ class StreamAudioGetter(LoopWorkerBase):
         self._stop_process(ffmpeg_process)
         self._stop_process(ytdlp_process)
         current_thread = threading.current_thread()
-        for thread in (reader_thread, transport_thread):
+        for thread in (reader_thread, transport_thread,
+                       getattr(ffmpeg_process, '_stderr_thread', None),
+                       getattr(ytdlp_process, '_stderr_thread', None)):
             if thread and thread is not current_thread and thread.is_alive():
                 thread.join(timeout=2)
         self.ffmpeg_process = None
@@ -425,10 +501,13 @@ class StreamAudioGetter(LoopWorkerBase):
             print(f'{INFO}Opening stream: {self.url}')
             stalled = False
             stream_failed = False
+            failure = None
+            processes = ()
             try:
                 self.ffmpeg_process, self.ytdlp_process = _open_stream(
                     self.url, self.format, self.cookies, self.proxy, self.temp_dir
                 )
+                processes = (self.ffmpeg_process, self.ytdlp_process)
                 for in_bytes in self._read_stream_frames():
                     if not self.running:
                         break
@@ -440,6 +519,9 @@ class StreamAudioGetter(LoopWorkerBase):
                         if sleep_time > 0:
                             time.sleep(sleep_time)
                     frame_count += 1
+                    self._received_audio = True
+                    self._startup_error = None
+                    self._startup_failures = 0
                     output_queue.put(audio)
                 stream_failed = any(
                     process and process.poll() not in (None, 0)
@@ -453,11 +535,18 @@ class StreamAudioGetter(LoopWorkerBase):
                 # the first post-reconnect frame arrives.
                 output_queue.put(AUDIO_STREAM_GAP)
             except (OSError, RuntimeError) as exc:
-                if source_status in ('finite', 'ended'):
-                    raise
-                print(f'{WARNING}串流連線失敗，稍後重試：{exc}')
+                failure = exc
             finally:
                 self._close_stream()
+
+            if self.running:
+                stderr = '\n'.join(getattr(process, '_stderr_tail', b'').decode('utf-8', errors='replace')
+                                   for process in processes)
+                self._check_stream_error((str(failure) if failure else '') + '\n' + stderr, failure)
+                if failure is not None:
+                    if source_status in ('finite', 'ended'):
+                        raise failure
+                    print(f'{WARNING}串流連線失敗，稍後重試：{failure}')
 
             if self.running and source_status in ('finite', 'ended') and (stalled or stream_failed):
                 raise RuntimeError('有限音訊來源讀取失敗；未確認正常結束，無法安全從頭重播。')

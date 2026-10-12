@@ -26,27 +26,30 @@ executed from the packaged ASR runtime rather than the user's PATH.
 Build all three profiles from one shared frontend/PyInstaller GUI artifact:
 
 ```powershell
-.\build_all_profiles.ps1 -Version 1.4.9 -Mode Quick -ReuseRuntimeCache
-.\build_all_profiles.ps1 -Version 1.4.9 -Mode Final -ReuseRuntimeCache -CompressionLevel 7 -SplitSizeMiB 1900
+.\build_all_profiles.ps1 -Version 1.5.0 -Mode Quick -ReuseRuntimeCache
+.\build_all_profiles.ps1 -Version 1.5.0 -Mode Final -ReuseRuntimeCache -CompressionLevel 7 -SplitSizeMiB 1900
 ```
 
-After a packaging-stage failure, keep a previously completed shared GUI and
-resume without rerunning Vite/PyInstaller:
+After a packaging-stage failure, rerun the build with the validated runtime
+caches. Vite/PyInstaller always rebuilds the shared GUI; `-ReuseSharedGui` is
+disabled:
 
 ```powershell
-.\build_all_profiles.ps1 -Version 1.4.9 -Mode Quick -ReuseRuntimeCache
+.\build_all_profiles.ps1 -Version 1.5.0 -Mode Quick -ReuseRuntimeCache
 ```
 
 If all three profile folders and App Update archives already passed their
-individual builds, resume only validation and asset collection:
+individual builds, reuse those artifacts for validation and asset collection.
+The shared GUI is still rebuilt:
 
 ```powershell
-.\build_all_profiles.ps1 -Version 1.4.9 -Mode Quick -ReuseRuntimeCache -ReuseProfileArtifacts
+.\build_all_profiles.ps1 -Version 1.5.0 -Mode Quick -ReuseRuntimeCache -ReuseProfileArtifacts
 ```
 
 `Quick` builds the shared GUI once, validates and assembles all three profile
-folders, and creates core-only App Update archives without compressing Full
-packages or copying unchanged ASR runtime dependencies.
+folders, and creates App Update archives without compressing Full packages.
+The default `runtime_replace` mode includes the complete profile runtime; pass
+`-UpdateMode app_only` to create core-only App Update archives.
 `Final` additionally creates standard Deflate ZIP files with multithreaded
 7-Zip, splits each Full ZIP into `.partNN` files, recombines the parts, checks
 the original/recombined SHA256, tests the recombined ZIP, and writes a release
@@ -58,10 +61,10 @@ demand, so an obsolete bundled server is never shipped with a profile package.
 
 App Update manifests use schema 2 and declare one of two modes:
 
-- `app_only` (default) places `Stream Translator.exe`, `_internal`,
+- `app_only` places `Stream Translator.exe`, `_internal`,
   `_js_runtime`, and the updater at the ZIP root. It must not contain
   `_runtime`, so the installed CPU/CUDA/ROCm runtime is preserved verbatim.
-- `runtime_replace` also includes a complete profile-matched `_runtime` with
+- `runtime_replace` (default) also includes a complete profile-matched `_runtime` with
   `python.exe` and `runtime-version.json`. The updater swaps that directory as
   one rollback unit. Use `-UpdateMode runtime_replace` when Python, Torch,
   CUDA/ROCm, ONNX Runtime, or another ABI-sensitive dependency changes.
@@ -74,7 +77,9 @@ reuse an older Analysis result, otherwise a newly built Vite bundle can be
 silently omitted from the packaged executable.
 
 The three-profile command always reuses and validates the existing
-`cuda-runtime`, `cpu-runtime`, and `rocm-runtime` caches. Rebuild a changed
+`cuda-runtime`, `cpu-runtime`, and `rocm-runtime` caches for profile assembly.
+Without `-ReuseRuntimeCache`, it first invokes the CPU runtime-cache builder;
+with the switch, it validates the existing CPU cache instead. Rebuild a changed
 runtime separately with the correct profile-specific Build Python before
 running the unified release command.
 
@@ -150,7 +155,7 @@ Validate built artifacts from `app`:
 
 ```powershell
 .\validate_runtime_artifact.ps1 -Profile cuda
-.\validate_runtime_artifact.ps1 -Profile cpu -ExpectedTorchBackend none
+.\packaging\validate_runtime_artifact.ps1 -Profile cpu -ExpectedTorchBackend none
 .\validate_runtime_artifact.ps1 -Profile rocm
 ```
 
@@ -163,12 +168,14 @@ default, so users can switch between the packaged GPU runtime and sherpa-onnx
 CPU ASR without another install. Build all profiles with:
 
 ```powershell
-.\build_all_profiles.ps1 -Version 1.4.9 -Mode Final
+.\build_all_profiles.ps1 -Version 1.5.0 -Mode Final
 ```
 
 For a deliberately smaller GPU-only artifact, opt out explicitly with
-`-IncludeCpuAsrSidecar:$false`. Artifact validation should use
-`validate_runtime_artifact.ps1 -Profile <cuda|rocm> -RequireCpuAsrSidecar` for
-the standard full packages.
+`-IncludeCpuAsrSidecar:$false` on `build_release.ps1` or `build_all_profiles.ps1`.
+For standard full packages, run artifact validation from `app` with
+`.\packaging\validate_runtime_artifact.ps1 -Profile cuda -RequireCpuAsrSidecar`
+(or `-Profile rocm`). `-RequireCpuAsrSidecar` belongs to this packaging validator,
+not the root-level wrapper or the build scripts.
 
 See `app/docs/PACKAGING_zh-TW.md` for the profile matrix, package names, and build Python requirements.

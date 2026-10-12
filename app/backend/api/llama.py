@@ -41,6 +41,7 @@ class LlamaState:
         self.gpu_selection: Dict[str, Any] = {}
         
 llama_state = LlamaState()
+_server_start_lock = asyncio.Lock()
 
 
 def _select_server_error(current: Optional[str], line: str) -> Optional[str]:
@@ -201,6 +202,10 @@ async def probe_existing_llama_server() -> bool:
                     logger.debug("探測 llama 模型清單失敗", exc_info=True)
                     pass
 
+            # Do not overwrite a start that began while the probe was awaiting I/O.
+            if _server_start_lock.locked() or llama_state.is_running:
+                return False
+
             # 更新全域狀態
             llama_state.is_running = True
             llama_state.is_ready = True
@@ -339,6 +344,13 @@ async def start_server(config: ServerConfig, background_tasks: BackgroundTasks, 
     """
     啟動 llama.cpp 伺服器
     """
+    if _server_start_lock.locked():
+        raise HTTPException(status_code=409, detail="伺服器正在啟動中")
+    async with _server_start_lock:
+        return await _start_server(config, background_tasks, request)
+
+
+async def _start_server(config: ServerConfig, background_tasks: BackgroundTasks, request: Request):
     if llama_state.is_running:
         raise HTTPException(status_code=400, detail="伺服器已在執行中")
     
@@ -503,30 +515,50 @@ async def start_server(config: ServerConfig, background_tasks: BackgroundTasks, 
         logger.error(f"Failed to start server: {e}")
         # 確保清理
         if 'process' in locals() and process:
-            process.kill()
-        llama_state.is_running = False
+            try:
+                try:
+                    process.kill()
+                finally:
+                    process.wait(timeout=5)
+            except Exception:
+                logger.exception("Failed to clean up llama-server after startup failure")
+            finally:
+                if llama_state.server_process is process:
+                    llama_state.server_process = None
+                    llama_state.is_running = False
+                    llama_state.is_ready = False
+                    llama_state.server_url = None
+                    llama_state.current_model = None
+                    llama_state.gpu_selection = {}
         raise HTTPException(status_code=500, detail=f"伺服器啟動失敗: {str(e)}")
 
 @router.post("/server/stop")
 async def stop_server():
     """停止 llama.cpp 伺服器"""
+    if _server_start_lock.locked():
+        raise HTTPException(status_code=409, detail="伺服器正在啟動中，請稍後再停止")
     if not llama_state.is_running:
         raise HTTPException(status_code=400, detail="伺服器未執行")
     
+    process = llama_state.server_process
+    if process is None:
+        raise HTTPException(status_code=409, detail="此伺服器並非由本應用程式啟動，請手動關閉伺服器")
+
     try:
-        if llama_state.server_process:
-            llama_state.server_process.terminate()
-            try:
-                llama_state.server_process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                llama_state.server_process.kill()
-        
-        llama_state.server_process = None
-        llama_state.is_running = False
-        llama_state.is_ready = False  # 重置就緒狀態
-        llama_state.server_url = None
-        llama_state.current_model = None
-        llama_state.gpu_selection = {}
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+
+        if llama_state.server_process is process:
+            llama_state.server_process = None
+            llama_state.is_running = False
+            llama_state.is_ready = False  # 重置就緒狀態
+            llama_state.server_url = None
+            llama_state.current_model = None
+            llama_state.gpu_selection = {}
         
         return {"status": "stopped"}
         

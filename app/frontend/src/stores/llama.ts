@@ -211,7 +211,8 @@ export const useLlamaStore = defineStore('llama', () => {
       successMessage.value = '伺服器已停止';
       setTimeout(() => successMessage.value = '', 2000);
     } catch (error: any) {
-      errorMessage.value = `停止伺服器失敗: ${error.message}`;
+      const msg = error.response?.data?.detail || error.message;
+      errorMessage.value = `停止伺服器失敗: ${msg}`;
       throw error;
     } finally {
       isLoading.value = false;

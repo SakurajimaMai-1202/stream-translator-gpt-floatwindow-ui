@@ -281,3 +281,197 @@ def test_translation_uses_saved_model_sampling_parameters(monkeypatch):
     assert captured["top_k"] == 20
     assert captured["repeat_penalty"] == 1.05
     assert captured["max_tokens"] == 768
+
+
+def _fake_server_launch(monkeypatch, tmp_path):
+    import asyncio
+    import io
+    import threading
+
+    model = tmp_path / "model.gguf"
+    runtime = tmp_path / "llama-server.exe"
+    model.write_bytes(b"GGUF")
+    runtime.write_bytes(b"runtime")
+    processes = []
+    pending = []
+    original_thread = threading.Thread
+
+    class DeferredThread:
+        def __new__(cls, target, args=(), **kwargs):
+            if target.__name__ not in {"log_output", "monitor_process"}:
+                return original_thread(target=target, args=args, **kwargs)
+            return super().__new__(cls)
+
+        def __init__(self, target, args=(), **kwargs):
+            self.target, self.args = target, args
+
+        def start(self):
+            pending.append(self.target.__name__)
+
+    def fake_popen(*args, **kwargs):
+        events = []
+        process = SimpleNamespace(
+            pid=123 + len(processes), stdout=io.StringIO(""), stderr=io.StringIO(""),
+            kill=lambda: events.append("kill"),
+            wait=lambda timeout=None: events.append(("wait", timeout)) or 0,
+            events=events,
+        )
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(llama, "llama_state", llama.LlamaState())
+    monkeypatch.setattr(llama, "_server_start_lock", asyncio.Lock())
+    monkeypatch.setattr(llama, "_find_llama_server", lambda: runtime)
+    monkeypatch.setattr(llama, "popen_external", fake_popen)
+    monkeypatch.setattr(llama, "supports_device_selection", lambda *args: False)
+    monkeypatch.setattr(llama, "_flash_attn_args", lambda *args: [])
+    monkeypatch.setattr(llama, "configure_dedicated_file_logger", lambda *args: llama.logger)
+    monkeypatch.setattr(threading, "Thread", DeferredThread)
+    config = llama.ServerConfig(model_path=str(model))
+    request = Request({"type": "http", "client": ("127.0.0.1", 12345), "headers": []})
+    return config, request, processes, DeferredThread
+
+
+def test_concurrent_server_starts_spawn_once_and_stop_rejects_starting(monkeypatch, tmp_path):
+    import asyncio
+    import pytest
+
+    config, request, processes, _ = _fake_server_launch(monkeypatch, tmp_path)
+    original_to_thread = asyncio.to_thread
+
+    async def scenario():
+        resolving = asyncio.Event()
+        release = asyncio.Event()
+
+        async def slow_to_thread(func, *args, **kwargs):
+            if func is llama.supports_device_selection:
+                resolving.set()
+                await release.wait()
+                return False
+            return await original_to_thread(func, *args, **kwargs)
+
+        monkeypatch.setattr(asyncio, "to_thread", slow_to_thread)
+
+        async def second_start():
+            await resolving.wait()
+            try:
+                with pytest.raises(llama.HTTPException) as stopped:
+                    await llama.stop_server()
+                assert stopped.value.status_code == 409
+                assert "啟動中" in stopped.value.detail
+                assert processes == []
+                return await llama.start_server(config, llama.BackgroundTasks(), request)
+            finally:
+                release.set()
+
+        results = await asyncio.gather(
+            llama.start_server(config, llama.BackgroundTasks(), request),
+            second_start(), return_exceptions=True,
+        )
+        assert results[0]["status"] == "started"
+        assert isinstance(results[1], llama.HTTPException)
+        assert results[1].status_code == 409
+        assert "啟動中" in results[1].detail
+        assert len(processes) == 1
+        assert llama.llama_state.server_process is processes[0]
+        assert not llama._server_start_lock.locked()
+        with pytest.raises(llama.HTTPException) as running:
+            await llama.start_server(config, llama.BackgroundTasks(), request)
+        assert "執行中" in running.value.detail
+        assert len(processes) == 1
+
+    asyncio.run(scenario())
+
+
+def test_failed_start_kills_waits_and_allows_retry(monkeypatch, tmp_path):
+    import asyncio
+    import pytest
+
+    config, request, processes, thread = _fake_server_launch(monkeypatch, tmp_path)
+    original_start = thread.start
+
+    def fail_monitor(self):
+        if self.target.__name__ == "monitor_process":
+            raise RuntimeError("monitor thread failed")
+        original_start(self)
+
+    monkeypatch.setattr(thread, "start", fail_monitor)
+
+    async def scenario():
+        with pytest.raises(llama.HTTPException) as failed:
+            await llama.start_server(config, llama.BackgroundTasks(), request)
+        assert failed.value.status_code == 500
+        assert processes[0].events == ["kill", ("wait", 5)]
+        assert llama.llama_state.server_process is None
+        assert not llama.llama_state.is_running
+        assert not llama.llama_state.is_ready
+        assert not llama._server_start_lock.locked()
+        monkeypatch.setattr(thread, "start", original_start)
+        result = await llama.start_server(config, llama.BackgroundTasks(), request)
+        assert result["status"] == "started"
+        assert len(processes) == 2
+        assert llama.llama_state.server_process is processes[1]
+
+    asyncio.run(scenario())
+
+
+def test_start_validation_error_releases_lock(monkeypatch, tmp_path):
+    import asyncio
+    import pytest
+
+    config, request, processes, _ = _fake_server_launch(monkeypatch, tmp_path)
+
+    async def scenario():
+        with pytest.raises(llama.HTTPException) as failed:
+            await llama.start_server(llama.ServerConfig(), llama.BackgroundTasks(), request)
+        assert failed.value.status_code == 400
+        assert not llama._server_start_lock.locked()
+        assert processes == []
+        assert (await llama.start_server(config, llama.BackgroundTasks(), request))["status"] == "started"
+
+    asyncio.run(scenario())
+
+
+def test_failed_start_does_not_clear_newer_process_state(monkeypatch, tmp_path):
+    import asyncio
+    import pytest
+
+    config, request, processes, thread = _fake_server_launch(monkeypatch, tmp_path)
+    newer = object()
+
+    def fail_monitor(self):
+        if self.target.__name__ == "monitor_process":
+            llama.llama_state.server_process = newer
+            llama.llama_state.is_ready = True
+            raise RuntimeError("monitor thread failed")
+
+    monkeypatch.setattr(thread, "start", fail_monitor)
+    with pytest.raises(llama.HTTPException):
+        asyncio.run(llama.start_server(config, llama.BackgroundTasks(), request))
+    assert processes[0].events == ["kill", ("wait", 5)]
+    assert llama.llama_state.server_process is newer
+    assert llama.llama_state.is_running
+    assert llama.llama_state.is_ready
+    assert not llama._server_start_lock.locked()
+
+
+def test_stop_adopted_external_server_preserves_state(monkeypatch):
+    import asyncio
+    import pytest
+
+    state = llama.LlamaState()
+    state.is_running = True
+    state.is_ready = True
+    state.server_url = "http://127.0.0.1:8081"
+    state.current_model = "external.gguf"
+    state.gpu_selection = {"mode": "external"}
+    before = vars(state).copy()
+    monkeypatch.setattr(llama, "llama_state", state)
+    monkeypatch.setattr(llama, "_server_start_lock", asyncio.Lock())
+
+    with pytest.raises(llama.HTTPException) as stopped:
+        asyncio.run(llama.stop_server())
+    assert stopped.value.status_code == 409
+    assert "並非由本應用程式啟動" in stopped.value.detail
+    assert "手動關閉" in stopped.value.detail
+    assert vars(state) == before

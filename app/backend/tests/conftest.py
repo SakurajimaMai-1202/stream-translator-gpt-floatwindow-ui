@@ -4,3 +4,14 @@ try:
     import torch  # noqa: F401
 except Exception:
     pass
+
+
+import pytest
+
+
+@pytest.fixture(scope="session", autouse=True)
+def isolated_log_dir(tmp_path_factory):
+    log_dir = tmp_path_factory.mktemp("logs")
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("STREAM_TRANSLATOR_LOG_DIR", str(log_dir))
+        yield log_dir

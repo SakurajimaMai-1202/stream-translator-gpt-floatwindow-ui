@@ -85,6 +85,7 @@ async def _hf_cancel_stops_worker_and_blocks_restart(monkeypatch, tmp_path, back
     from types import SimpleNamespace
     import backend.core.model_download_manager as module
 
+    monkeypatch.setattr(module, "WORKER_STOP_TIMEOUT_SECONDS", 0.2)
     manager = ModelDownloadManager()
     entered, stopping, release, exited = (Event() for _ in range(4))
     snapshots = []
@@ -115,6 +116,9 @@ async def _hf_cancel_stops_worker_and_blocks_restart(monkeypatch, tmp_path, back
         await _wait_until(stopping.is_set)
         with pytest.raises(ValueError, match="上一次下載仍在停止中，請稍後再試"):
             await manager.start_download("qwen3-asr", "Qwen/Qwen3-ASR-1.7B", backend)
+        assert not manager._workers[task_id].done()
+        assert not exited.is_set()
+        assert len(manager.list_tasks()) == 1
         manager._update_task(task_id, status="completed", progress=1, message="late")
         assert manager.get_task(task_id).status == "cancelling"
     finally:
@@ -324,3 +328,99 @@ def test_download_process_uses_requested_timeout(monkeypatch, tmp_path):
         manager._run_download_process(["python", "-c", "import funasr"], Event(), timeout=60)
     assert error.value.timeout == 60
     assert stopped == [process]
+
+
+def test_restart_waits_for_cancelling_worker(monkeypatch):
+    asyncio.run(_restart_waits_for_cancelling_worker(monkeypatch))
+
+
+async def _restart_waits_for_cancelling_worker(monkeypatch):
+    manager = ModelDownloadManager()
+    entered = asyncio.Event()
+    exited = asyncio.Event()
+    running = set()
+    starts = []
+
+    async def download(task_id, model_id, cancel_event):
+        assert not running
+        if starts:
+            assert exited.is_set()
+        running.add(task_id)
+        starts.append(task_id)
+        entered.set()
+        try:
+            while not cancel_event.is_set():
+                await asyncio.sleep(0.01)
+            await asyncio.sleep(0.5)
+            raise InterruptedError("Download cancelled")
+        finally:
+            running.remove(task_id)
+            exited.set()
+
+    monkeypatch.setattr(manager, "_download_sherpa_archive", download)
+    old_id = await manager.start_download("sensevoice", "iic/SenseVoiceSmall", "cpu")
+    old_worker = manager._workers[old_id]
+    await asyncio.wait_for(entered.wait(), timeout=1)
+    manager.cancel(old_id)
+    entered.clear()
+    new_id = await manager.start_download("sensevoice", "iic/SenseVoiceSmall", "cpu")
+    new_worker = manager._workers[new_id]
+    try:
+        assert old_worker.done()
+        assert exited.is_set()
+        assert manager.get_task(old_id).status == "cancelled"
+        assert new_id != old_id
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        assert starts == [old_id, new_id]
+        assert running == {new_id}
+    finally:
+        manager.cancel(new_id)
+        await asyncio.wait_for(new_worker, timeout=2)
+
+
+def test_live_download_is_not_duplicated(monkeypatch):
+    asyncio.run(_live_download_is_not_duplicated(monkeypatch))
+
+
+async def _live_download_is_not_duplicated(monkeypatch):
+    manager = ModelDownloadManager()
+    entered = asyncio.Event()
+
+    async def download(task_id, repo_id, cancel_event):
+        entered.set()
+        while not cancel_event.is_set():
+            await asyncio.sleep(0.01)
+        raise InterruptedError("Download cancelled")
+
+    monkeypatch.setattr(manager, "_download_from_hf", download)
+    task_id = await manager.start_download("faster-whisper", "tiny")
+    worker = manager._workers[task_id]
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        # The repo alias must claim the same backend model key.
+        with pytest.raises(ValueError, match="上一次下載仍在停止中，請稍後再試"):
+            await manager.start_download("faster-whisper", "Systran/faster-whisper-tiny")
+        assert list(manager._workers) == [task_id]
+        assert len(manager.list_tasks()) == 1
+        assert not worker.done()
+    finally:
+        manager.cancel(task_id)
+        await asyncio.wait_for(worker, timeout=1)
+
+
+def test_dedicated_logger_uses_isolated_log_dir(isolated_log_dir):
+    from pathlib import Path
+    from backend.core.logging_setup import configure_dedicated_file_logger, resolve_log_dir
+
+    assert resolve_log_dir() == isolated_log_dir
+    logger = configure_dedicated_file_logger("test.download.isolated", "test_download")
+    try:
+        logger.warning("isolated download log")
+        for handler in logger.handlers:
+            handler.flush()
+            assert Path(handler.baseFilename).parent == isolated_log_dir
+        assert "isolated download log" in (isolated_log_dir / "test_download.log").read_text(encoding="utf-8")
+    finally:
+        for handler in list(logger.handlers):
+            logger.removeHandler(handler)
+            handler.close()

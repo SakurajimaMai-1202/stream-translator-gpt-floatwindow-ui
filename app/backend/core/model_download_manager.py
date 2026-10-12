@@ -32,6 +32,8 @@ from backend.core.portable_paths import (
 
 logger = logging.getLogger(__name__)
 
+WORKER_STOP_TIMEOUT_SECONDS = 15
+
 SHERPA_CPU_BUNDLES = {
     "nvidia/parakeet-tdt-0.6b-v3": ("sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8", ("encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt")),
     "nvidia/parakeet-tdt_ctc-0.6b-ja": ("sherpa-onnx-nemo-parakeet-tdt_ctc-0.6b-ja-35000-int8", ("model.int8.onnx", "tokens.txt")),
@@ -260,6 +262,20 @@ class ModelDownloadManager:
         )
 
         model_key = (compute_backend, self._normalize_repo_id(engine, normalized_model_id))
+        with self._lock:
+            old_task_id = self._model_workers.get(model_key)
+            old_task = self._tasks.get(old_task_id)
+            old_event = self._cancel_events.get(old_task_id)
+            stopping = (old_task is not None and old_task.status in {"cancelling", "cancelled"}) or (
+                old_event is not None and old_event.is_set()
+            )
+            old_worker = self._workers.get(old_task_id) if stopping else None
+
+        # Do not hold the threading lock or cancel the old worker while waiting.
+        # This reference stays awaitable even if its finally removes it meanwhile.
+        if old_worker is not None:
+            await asyncio.wait({old_worker}, timeout=WORKER_STOP_TIMEOUT_SECONDS)
+
         with self._lock:
             if model_key in self._model_workers:
                 raise ValueError("上一次下載仍在停止中，請稍後再試")

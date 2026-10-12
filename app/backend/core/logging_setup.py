@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -27,6 +28,9 @@ _RESETTED_LOG_FILES: set[Path] = set()
 
 def resolve_log_dir() -> Path:
     """取得 log 目錄。打包模式放在執行檔旁，開發模式放在 app/logs。"""
+    override = os.environ.get("STREAM_TRANSLATOR_LOG_DIR")
+    if override:
+        return Path(override).expanduser().resolve()
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent / "logs"
     return settings.BASE_DIR / "logs"

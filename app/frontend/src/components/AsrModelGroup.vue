@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, reactive } from 'vue';
 import { useModelDownloadStore } from '../stores/modelDownload';
 import type { ModelComputeBackend, ModelEngine } from '../services/api';
 
@@ -16,6 +16,7 @@ const props = withDefaults(defineProps<{
 });
 
 const modelDownloadStore = useModelDownloadStore();
+const cancellingModels = reactive(new Set<string>());
 const visibleModels = computed(() => props.models || []);
 
 function getTask(modelId: string) {
@@ -49,12 +50,14 @@ function canCancel(modelId: string) {
 }
 
 function canAct(modelId: string) {
+  if (cancellingModels.has(modelId)) return false;
   if (modelDownloadStore.isDownloaded(props.engine, modelId, props.computeBackend)) return false;
   const task = getTask(modelId);
   return task?.status !== 'cancelling';
 }
 
 function actionText(modelId: string) {
+  if (cancellingModels.has(modelId)) return '取消中';
   if (modelDownloadStore.isDownloaded(props.engine, modelId, props.computeBackend)) return '已下載';
   const task = getTask(modelId);
   if (task?.status === 'failed') return '重試下載';
@@ -64,10 +67,16 @@ function actionText(modelId: string) {
 }
 
 async function onAction(modelId: string) {
+  if (!canAct(modelId)) return;
   try {
     const task = getTask(modelId);
     if (task && canCancel(modelId)) {
-      await modelDownloadStore.cancelTask(task.task_id);
+      cancellingModels.add(modelId);
+      try {
+        await modelDownloadStore.cancelTask(task.task_id);
+      } finally {
+        cancellingModels.delete(modelId);
+      }
     } else {
       await modelDownloadStore.startDownload(props.engine, modelId, props.computeBackend);
     }

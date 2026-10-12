@@ -21,7 +21,9 @@ export const useModelDownloadStore = defineStore('modelDownload', () => {
 
   const taskMap = computed(() => {
     return tasks.value.reduce<Record<string, ModelDownloadTask>>((acc, task) => {
-      acc[`${task.compute_backend}:${task.engine}:${task.model_id}`] = task;
+      // Tasks arrive newest-first; older cancelled tasks must not hide live ones.
+      const key = `${task.compute_backend}:${task.engine}:${task.model_id}`;
+      if (!acc[key]) acc[key] = task;
       return acc;
     }, {});
   });
@@ -39,6 +41,7 @@ export const useModelDownloadStore = defineStore('modelDownload', () => {
     if (JSON.stringify(tasks.value) !== JSON.stringify(nextTasks)) {
       tasks.value = nextTasks;
     }
+    if (activeTasks.value.length > 0) startPolling();
   }
 
   async function loadDownloadedModels() {
@@ -119,6 +122,7 @@ export const useModelDownloadStore = defineStore('modelDownload', () => {
 
   async function cancelTask(taskId: string) {
     await modelApi.cancelTask(taskId);
+    startPolling();
     await loadTasks();
   }
 
@@ -150,11 +154,11 @@ export const useModelDownloadStore = defineStore('modelDownload', () => {
       const hasActive = activeTasks.value.length > 0;
       if (!hasActive) {
         await loadDownloadedModels();
-        stopPolling();
+        if (activeTasks.value.length === 0) stopPolling();
       }
     } catch (error: any) {
       errorMessage.value = `輪詢任務失敗: ${error?.message || error}`;
-      stopPolling();
+      if (activeTasks.value.length === 0) stopPolling();
     }
   }
 

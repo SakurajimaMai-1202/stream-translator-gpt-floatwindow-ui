@@ -2,6 +2,7 @@ import json
 import os
 import queue
 import time
+import threading
 from urllib.parse import urlencode, urlparse, urlunparse
 
 import requests
@@ -99,6 +100,7 @@ class ResultExporter(LoopWorkerBase):
         self.telegram_queue = None
         self.file_queue = None
         self._file_thread = None
+        self._file_stop_event = threading.Event()
         self.subtitle_share_queue = None
         self.subtitle_share_push_url = normalize_subtitle_share_push_url(subtitle_share_push_url)
         self.subtitle_share_token = subtitle_share_token
@@ -198,15 +200,33 @@ class ResultExporter(LoopWorkerBase):
 
     def _write_message_to_file(self, file_path: str):
         is_srt = file_path.lower().endswith('.srt')
+        stop_retries = 0
+
+        def retry():
+            nonlocal stop_retries
+            if self._file_stop_event.is_set():
+                if stop_retries >= 10:
+                    print(f'{WARNING}字幕檔案仍無法寫入，停止重試；尚未儲存的字幕將遺失。', flush=True)
+                    return False
+                stop_retries += 1
+            time.sleep(1)
+            return True
+
+        parent = os.path.dirname(os.path.abspath(file_path))
         # Initialize once per task; a retry must never truncate saved subtitles.
+        parent_ready = False
         while True:
             try:
+                if not parent_ready:
+                    os.makedirs(parent, exist_ok=True)
+                    parent_ready = True
                 with open(file_path, 'wb'):
                     pass
                 break
             except OSError as exc:
-                print(f'{WARNING}Subtitle file unavailable; retrying in 1s: {exc}', flush=True)
-                time.sleep(1)
+                print(f'{WARNING}字幕檔案無法開啟，1 秒後重試： {exc}', flush=True)
+                if not retry():
+                    return
         while True:
             text = self.file_queue.get()
             if text is None:
@@ -218,7 +238,15 @@ class ResultExporter(LoopWorkerBase):
             # numbering even if Windows temporarily denies access to the file.
             while True:
                 try:
-                    with open(file_path, 'r+b') as f:
+                    try:
+                        handle = open(file_path, 'r+b')
+                    except FileNotFoundError:
+                        # Append mode cannot truncate a file recreated by another writer.
+                        offset = None
+                        with open(file_path, 'ab'):
+                            pass
+                        handle = open(file_path, 'r+b')
+                    with handle as f:
                         if offset is None:
                             f.seek(0, os.SEEK_END)
                             offset = f.tell()
@@ -237,7 +265,8 @@ class ResultExporter(LoopWorkerBase):
                     break
                 except OSError as exc:
                     print(f'{WARNING}Subtitle file write failed; retaining cue and retrying in 1s: {exc}', flush=True)
-                    time.sleep(1)
+                    if not retry():
+                        return
 
     def _send_event_to_subtitle_share(self):
         headers = {'Authorization': f'Bearer {self.subtitle_share_token}'}
@@ -265,6 +294,7 @@ class ResultExporter(LoopWorkerBase):
                 if self.telegram_queue:
                     self.telegram_queue.put(None)
                 if self.file_queue:
+                    self._file_stop_event.set()
                     self.file_queue.put(None)
                     if self._file_thread is not None:
                         self._file_thread.join()

@@ -43,23 +43,34 @@ function statusClass(modelId: string) {
   return 'is-active';
 }
 
-function canStart(modelId: string) {
+function canCancel(modelId: string) {
+  const task = getTask(modelId);
+  return !!task && ['pending', 'downloading'].includes(task.status);
+}
+
+function canAct(modelId: string) {
   if (modelDownloadStore.isDownloaded(props.engine, modelId, props.computeBackend)) return false;
   const task = getTask(modelId);
-  return !task || !['pending', 'downloading', 'cancelling'].includes(task.status);
+  return task?.status !== 'cancelling';
 }
 
 function actionText(modelId: string) {
   if (modelDownloadStore.isDownloaded(props.engine, modelId, props.computeBackend)) return '已下載';
   const task = getTask(modelId);
   if (task?.status === 'failed') return '重試下載';
-  if (task && ['pending', 'downloading', 'cancelling'].includes(task.status)) return '處理中';
+  if (task?.status === 'cancelling') return '取消中';
+  if (canCancel(modelId)) return '取消下載';
   return '下載';
 }
 
-async function startDownload(modelId: string) {
+async function onAction(modelId: string) {
   try {
-    await modelDownloadStore.startDownload(props.engine, modelId, props.computeBackend);
+    const task = getTask(modelId);
+    if (task && canCancel(modelId)) {
+      await modelDownloadStore.cancelTask(task.task_id);
+    } else {
+      await modelDownloadStore.startDownload(props.engine, modelId, props.computeBackend);
+    }
   } catch {
     // The shared store exposes the actionable error in the management page.
   }
@@ -86,10 +97,10 @@ function description(modelId: string) {
           </div>
           <button
             type="button"
-            @click="startDownload(modelId)"
-            :disabled="!canStart(modelId)"
+            @click="onAction(modelId)"
+            :disabled="!canAct(modelId)"
             :aria-label="`${actionText(modelId)} ${modelId}`"
-            :class="['model-action', { 'is-installed': modelDownloadStore.isDownloaded(engine, modelId, computeBackend) }]"
+            :class="['model-action', { 'is-installed': modelDownloadStore.isDownloaded(engine, modelId, computeBackend), 'is-cancel': canCancel(modelId) }]"
           >
             {{ actionText(modelId) }}
           </button>
@@ -132,7 +143,7 @@ function description(modelId: string) {
 .model-state { display:inline-block;margin-top:.5rem;font-size:.75rem;line-height:1.4; }
 .is-idle { color:var(--fw-text-secondary); }.is-ready { color:#9bddb9; }.is-error,.download-error { color:#f4b6bb; }.is-active { color:#9abff6; }
 .model-action { flex-shrink:0;min-width:96px;min-height:44px;border:1px solid #598cc066;border-radius:10px;background:var(--fw-primary-soft);color:var(--fw-text);font:inherit;font-size:.875rem;font-weight:600;padding:.6rem 1rem;cursor:pointer;touch-action:manipulation;transition:background 120ms ease,transform 100ms ease; }
-.model-action:hover:not(:disabled) { background:#335b8d; }.model-action:active:not(:disabled) { background:#3d679a;transform:scale(.98); }.model-action:focus-visible { outline:2px solid var(--fw-primary);outline-offset:3px; }.model-action:disabled { opacity:.55;cursor:not-allowed; }.model-action.is-installed { background:#ffffff06;border-color:#ffffff18;color:var(--fw-text-secondary); }
+.model-action:hover:not(:disabled) { background:#335b8d; }.model-action:active:not(:disabled) { background:#3d679a;transform:scale(.98); }.model-action:focus-visible { outline:2px solid var(--fw-primary);outline-offset:3px; }.model-action:disabled { opacity:.55;cursor:not-allowed; }.model-action.is-installed { background:#ffffff06;border-color:#ffffff18;color:var(--fw-text-secondary); }.model-action.is-cancel { background:#ffffff06;border-color:#f4b6bb66;color:#f4b6bb; }.model-action.is-cancel:hover:not(:disabled) { background:#f4b6bb1a; }
 .download-progress { margin-top:.9rem; }.progress-track { height:5px;border-radius:5px;overflow:hidden;background:var(--fw-border); }.progress-fill { height:100%;background:var(--fw-primary); }.progress-message,.download-error { margin:.4rem 0 0;font-size:.75rem;line-height:1.5;overflow-wrap:anywhere; }.progress-message { color:var(--fw-text-secondary); }
 @media(max-width:640px) { .group-heading { padding:1rem; }.model-item { padding:1rem; }.model-row { gap:.75rem; }.model-action { min-width:80px;padding:.6rem .75rem; } }
 @media(prefers-reduced-motion:reduce) { .model-action { transition:none; }.model-action:active:not(:disabled) { transform:none; } }

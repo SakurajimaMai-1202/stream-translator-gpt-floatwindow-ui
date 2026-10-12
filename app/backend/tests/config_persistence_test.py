@@ -197,6 +197,24 @@ def test_native_vad_uses_its_validated_six_second_max_without_changing_legacy():
     assert manager.to_main_args(config)["max_audio_length"] == 6.0
 
 
+def test_openai_transcription_model_uses_new_key_then_legacy_then_default():
+    manager = ConfigManager.__new__(ConfigManager)
+    config = json.loads(json.dumps(ConfigManager.DEFAULT_CONFIG))
+    config["transcription"].update({
+        "backend": "openai-api",
+        "openai_transcription_model": "gpt-4o-transcribe",
+        "openai_model": "gpt-4o-mini-transcribe",
+    })
+
+    assert manager.to_main_args(config)["openai_transcription_model"] == "gpt-4o-transcribe"
+
+    del config["transcription"]["openai_transcription_model"]
+    assert manager.to_main_args(config)["openai_transcription_model"] == "gpt-4o-mini-transcribe"
+
+    del config["transcription"]["openai_model"]
+    assert manager.to_main_args(config)["openai_transcription_model"] == "whisper-1"
+
+
 def test_translation_pipeline_controls_are_supported_by_runtime_cli_contract():
     translator_source = TRANSLATOR_SOURCE.read_text(encoding="utf-8")
     runtime_source = RUNTIME_MAIN_SOURCE.read_text(encoding="utf-8")

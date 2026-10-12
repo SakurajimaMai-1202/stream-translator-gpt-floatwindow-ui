@@ -928,7 +928,7 @@ class ConfigManager:
             'use_sensevoice_asr': transcription_backend == 'sensevoice',
             'use_fun_asr': transcription_backend == 'fun-asr-nano',
             'use_nemo_asr': transcription_backend == 'parakeet-ctc-ja',
-            'openai_transcription_model': config['transcription'].get('openai_model', 'whisper-1'),
+            'openai_transcription_model': config['transcription'].get('openai_transcription_model', config['transcription'].get('openai_model', 'whisper-1')),
             'whisper_filters': config['transcription'].get('whisper_filters', []),
             'disable_transcription_context': config['transcription'].get('disable_transcription_context', False),
             'transcription_initial_prompt': config['transcription'].get('transcription_initial_prompt', ''),

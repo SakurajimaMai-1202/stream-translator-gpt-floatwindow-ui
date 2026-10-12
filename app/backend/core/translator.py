@@ -53,6 +53,29 @@ def _redact_command_args(cmd: List[str]) -> List[str]:
     return redacted
 
 
+def _diagnostic_status(line, recent, now, cmd):
+    """Return a sanitized, rate-limited warning/error status event."""
+    match = re.match(r'^\[(WARNING|ERROR)\]\s*(.*)$', line)
+    if not match:
+        return None
+    level, message = match.group(1).lower(), match.group(2)
+    for original, masked in zip(cmd, _redact_command_args(cmd)):
+        if original and original != masked:
+            message = message.replace(original, '<redacted>')
+    # Free-text diagnostics can include signed URLs, proxy credentials or headers.
+    message = re.sub(r'(?i)https?://\S+|socks[45]h?://\S+', '<redacted-url>', message)
+    if re.search(r'(?i)(?:api[_ -]?key|token|cookie|authorization|password|secret)[\x22\x27]?\s*[=:]|\bBearer\s+|--[\w-]*(?:key|token|cookie|password|secret)\b', message):
+        message = '診斷訊息含敏感欄位，內容已隱藏。'
+    key = (level, message)
+    if key in recent and now - recent[key] < 30:
+        return None
+    for old in list(recent):
+        if now - recent[old] >= 30:
+            del recent[old]
+    recent[key] = now
+    return {"type": "status", "data": {"message": message, "level": level}}
+
+
 def _parse_structured_subtitle_event(line: str) -> Optional[Dict[str, Any]]:
     if not line.startswith(_SUBTITLE_EVENT_PREFIX):
         return None
@@ -638,6 +661,7 @@ class TranslationContext:
             def read_output():
                 import time
                 pending_subtitles = {}  # timestamp -> dict
+                diagnostic_messages = {}
                 structured_timestamps = {}
                 hide_transcribe_result = self.config.get('output_notification', {}).get('hide_transcribe_result', False)
                 try:
@@ -682,6 +706,11 @@ class TranslationContext:
 
                         clean_line, latency_metrics = _extract_latency_metrics(clean_line)
                         
+                        diagnostic = _diagnostic_status(clean_line, diagnostic_messages, time.monotonic(), cmd)
+                        if diagnostic is not None:
+                            getattr(logger, diagnostic["data"]["level"])("%s", diagnostic["data"]["message"])
+                            self._broadcast(diagnostic)
+
                         # 處理並過濾日誌行
                         if any(marker in clean_line for marker in ['[INFO]', '[ERROR]', '[WARNING]', '[DEBUG]']):
                             if '[INFO]' in clean_line:

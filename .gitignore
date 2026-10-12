@@ -130,8 +130,8 @@ reproduce_issue.py
 test_api.py
 
 # ── 根目錄開發/測試腳本（不上傳）────────────────────────────
-test_*.py
-test_*.bat
+/test_*.py
+/test_*.bat
 run_auto_capture.py
 測試*.py
 測試*.bat

@@ -6,6 +6,7 @@ import logging
 import hashlib
 import json
 import os
+import re
 import shutil
 import tempfile
 import threading
@@ -76,11 +77,35 @@ class AppUpdateManager:
         self._cancel = threading.Event()
         self._expected_digest = ""
         self._assets: list[dict[str, Any]] = []
+        self._checksum_assets: list[dict[str, Any]] = []
         self._archive: Path | None = None
         self._staging: Path | None = None
+        self._check_interrupted()
+
+    @staticmethod
+    def _pending_journal() -> dict | None:
+        path = get_app_root() / ".app-update" / "apply-journal.json"
+        try:
+            journal = json.loads(path.read_text(encoding="utf-8-sig"))
+            return journal if journal.get("status") in {"applying", "rollback_failed"} else None
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError, TypeError, AttributeError):
+            return {"backup": f"請查看 {path}（紀錄無法讀取）"}
+
+    def _check_interrupted(self) -> bool:
+        journal = self._pending_journal()
+        if journal is None:
+            return False
+        message = (f"更新中斷，備份：{journal.get('backup', '請查看 apply-journal.json')}。"
+                   "請關閉主程式並執行 StreamTranslatorUpdater.exe 回復上一版本。")
+        self._set(status="interrupted", error=message, message=message, available=False, ready_to_apply=False)
+        return True
 
     @staticmethod
     def _cleanup_previous_backup() -> None:
+        if AppUpdateManager._pending_journal() is not None:
+            return
         app_root = get_app_root().resolve()
         result_path = app_root / ".app-update" / "update-result.json"
         try:
@@ -106,6 +131,8 @@ class AppUpdateManager:
         return str(settings.APP_VERSION)
 
     def status(self) -> dict[str, Any]:
+        if self._state.status == "interrupted" and self._pending_journal() is None:
+            self._set(status="idle", error="", message="")
         with self._lock:
             return asdict(self._state)
 
@@ -129,6 +156,8 @@ class AppUpdateManager:
         return urllib.request.urlopen(urllib.request.Request(url, headers=request_headers), timeout=60)
 
     def check(self, *, release_api: str | None = None) -> dict[str, Any]:
+        if self._check_interrupted():
+            return self.status()
         profile = self._state.profile
         if profile not in ASSET_NAMES:
             self._set(status="unsupported", error="App updates are available only in packaged CPU/CUDA/ROCm builds")
@@ -142,10 +171,17 @@ class AppUpdateManager:
             asset_name = ASSET_NAMES[profile]
             release_assets = list(release.get("assets", []))
             asset = next((item for item in release_assets if item.get("name") == asset_name), None)
-            parts = sorted(
-                (item for item in release_assets if str(item.get("name") or "").startswith(asset_name + ".part")),
-                key=lambda item: str(item.get("name") or ""),
-            )
+            indexed_parts = []
+            for item in release_assets:
+                match = re.fullmatch(re.escape(asset_name) + r"\.part(\d+)", str(item.get("name") or ""))
+                if match:
+                    indexed_parts.append((int(match[1]), item))
+            indexed_parts.sort(key=lambda entry: entry[0])
+            if not asset and [index for index, _ in indexed_parts] != list(range(1, len(indexed_parts) + 1)):
+                raise RuntimeError("Release update parts are missing or duplicated")
+            parts = [item for _, item in indexed_parts]
+            self._checksum_assets = [item for item in release_assets
+                                     if re.fullmatch(r"SHA256SUMS.*\.txt", str(item.get("name") or ""))]
             selected_assets = [asset] if asset else parts
             if not latest or not selected_assets:
                 raise RuntimeError(f"Release does not contain {asset_name}")
@@ -173,6 +209,8 @@ class AppUpdateManager:
         return self.status()
 
     def start_download(self) -> dict[str, Any]:
+        if self._check_interrupted():
+            return self.status()
         with self._lock:
             if self._worker is not None and self._worker.is_alive():
                 return asdict(self._state)
@@ -259,6 +297,8 @@ class AppUpdateManager:
 
     def _download_and_stage(self) -> None:
         try:
+            if self._check_interrupted():
+                return
             update_root = get_app_root() / ".app-update"
             downloads = update_root / "downloads"
             downloads.mkdir(parents=True, exist_ok=True)
@@ -268,6 +308,25 @@ class AppUpdateManager:
                 "size": self._state.asset_size,
                 "digest": f"sha256:{self._expected_digest}",
             }]
+            checksums = {}
+            for checksum_asset in self._checksum_assets:
+                with self._open_url(str(checksum_asset.get("browser_download_url") or "")) as response:
+                    payload = response.read()
+                digest = str(checksum_asset.get("digest") or "")
+                if digest.startswith("sha256:") and hashlib.sha256(payload).hexdigest() != digest[7:].lower():
+                    raise RuntimeError("Checksum list SHA-256 mismatch")
+                for line in payload.decode("utf-8-sig").splitlines():
+                    match = re.fullmatch(r"([a-fA-F0-9]{64})\s+\*?(.+)", line.strip())
+                    if match:
+                        name, digest = match[2], match[1].lower()
+                        if name in checksums and checksums[name] != digest:
+                            raise RuntimeError("Conflicting SHA-256 checksum lists")
+                        checksums[name] = digest
+            if any(re.fullmatch(re.escape(self._state.asset_name) + r"\.part(\d+)", item["name"]) for item in assets):
+                listed_parts = {name for name in checksums
+                                if re.fullmatch(re.escape(self._state.asset_name) + r"\.part(\d+)", name)}
+                if not listed_parts.issubset({item["name"] for item in assets}):
+                    raise RuntimeError("Release update parts are missing or duplicated")
             downloaded_parts: list[Path] = []
             total_size = sum(int(item.get("size") or 0) for item in assets)
             completed_size = 0
@@ -313,6 +372,8 @@ class AppUpdateManager:
                         f"size expected={expected_size or 'unknown'}, actual={actual_size}; "
                         f"SHA-256 expected={expected_part or 'unknown'}, actual={actual_part}"
                     )
+                if asset["name"] in checksums and actual_part != checksums[asset["name"]]:
+                    raise RuntimeError(f"Update part SHA-256 mismatch: {asset['name']}")
                 downloaded_parts.append(part)
                 completed_size += part.stat().st_size
                 self._set(bytes_downloaded=completed_size, bytes_total=total_size, progress=(completed_size / total_size * 0.75) if total_size else 0.25)
@@ -331,6 +392,13 @@ class AppUpdateManager:
             if len(downloaded_parts) == 1 and self._expected_digest and actual != self._expected_digest:
                 archive.unlink(missing_ok=True)
                 raise RuntimeError(f"Application update SHA-256 mismatch: expected {self._expected_digest}, got {actual}")
+            if archive.name in checksums and actual != checksums[archive.name]:
+                archive.unlink(missing_ok=True)
+                raise RuntimeError("Merged application update SHA-256 mismatch")
+            with zipfile.ZipFile(archive) as bundle:
+                bad_entry = bundle.testzip()
+                if bad_entry:
+                    raise RuntimeError(f"Application update ZIP integrity check failed: {bad_entry}")
             staging = update_root / f"staging-{self._state.latest_version}"
             if staging.exists():
                 shutil.rmtree(staging)
@@ -347,6 +415,8 @@ class AppUpdateManager:
             self._set(status="error", message="Application update preparation failed", error=str(exc))
 
     def create_apply_plan(self) -> dict[str, Any]:
+        if self._check_interrupted():
+            raise RuntimeError(self._state.error)
         if not self._state.ready_to_apply or self._staging is None:
             raise RuntimeError("Application update is not ready to apply")
         app_root = get_app_root().resolve()

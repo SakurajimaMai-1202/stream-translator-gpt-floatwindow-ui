@@ -37,10 +37,11 @@ class Worker(QThread):
     completed = pyqtSignal(str)
     failed = pyqtSignal(str)
 
-    def __init__(self, plan_path: Path, preview: bool = False):
+    def __init__(self, plan_path: Path, preview: bool = False, recovery_root: Path | None = None):
         super().__init__()
         self.plan_path = plan_path
         self.preview = preview
+        self.recovery_root = recovery_root
 
     def step(self, value: int, message: str) -> None:
         self.progress.emit(value, message)
@@ -222,6 +223,142 @@ class Worker(QThread):
         validate_update_runtime(manifest, runtime if mode == "runtime_replace" else app_root / "_runtime")
         return plan, manifest, app_root, staging, items, mode
 
+    @staticmethod
+    def write_journal(app_root: Path, journal: dict) -> None:
+        path = app_root / ".app-update" / "apply-journal.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".json.tmp")
+        with temporary.open("w", encoding="utf-8") as stream:
+            json.dump(journal, stream, ensure_ascii=False, indent=2)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+
+    @staticmethod
+    def pending_journal(app_root: Path) -> dict | None:
+        path = app_root / ".app-update" / "apply-journal.json"
+        if not path.exists():
+            return None
+        journal = json.loads(path.read_text(encoding="utf-8-sig"))
+        return journal if journal.get("status") in {"applying", "rollback_failed"} else None
+
+    @staticmethod
+    def reconcile_journal(app_root: Path, journal: dict) -> None:
+        pending = journal.get("pending")
+        if not pending:
+            return
+        action, name = pending["action"], pending["name"]
+        if name not in ALLOWED:
+            raise RuntimeError("回復紀錄包含不允許的項目")
+        saved = Path(journal["backup"]) / name
+        target = app_root / name
+        if action == "move" and saved.exists():
+            if name not in journal["moved"]:
+                journal["moved"].append(name)
+        elif action == "install" and target.exists():
+            if name not in journal["installed"]:
+                journal["installed"].append(name)
+        elif action == "remove" and not target.exists():
+            if name in journal["installed"]:
+                journal["installed"].remove(name)
+        elif action == "restore" and not saved.exists() and target.exists():
+            if name in journal["moved"]:
+                journal["moved"].remove(name)
+        journal.pop("pending", None)
+        Worker.write_journal(app_root, journal)
+
+    @staticmethod
+    def apply_item(app_root: Path, item: Path, journal: dict) -> None:
+        target = app_root / item.name
+        if target.exists():
+            journal["pending"] = {"action": "move", "name": item.name}
+            Worker.write_journal(app_root, journal)
+            Worker.rename_with_retry(target, Path(journal["backup"]) / item.name)
+            journal["moved"].append(item.name)
+            journal.pop("pending")
+            Worker.write_journal(app_root, journal)
+        journal["pending"] = {"action": "install", "name": item.name}
+        Worker.write_journal(app_root, journal)
+        Worker.rename_with_retry(item, target)
+        journal["installed"].append(item.name)
+        journal.pop("pending")
+        Worker.write_journal(app_root, journal)
+
+    @staticmethod
+    def rollback(app_root: Path, journal: dict) -> list[str]:
+        errors = []
+        backup = Path(journal["backup"])
+        try:
+            if not backup.is_dir():
+                raise RuntimeError(f"備份目錄不存在；未刪除任何檔案：{backup}")
+            if backup.resolve().parent != app_root.resolve().parent or not backup.name.startswith(".stream-translator-backup-"):
+                raise RuntimeError(f"備份路徑無效：{backup}")
+            if any(name not in ALLOWED for name in journal["installed"] + journal["moved"]):
+                raise RuntimeError("回復紀錄包含不允許的項目")
+            Worker.reconcile_journal(app_root, journal)
+            for action, key in [("remove", "installed"), ("restore", "moved")]:
+                for name in reversed(journal[key][:]):
+                    target = app_root / name
+                    try:
+                        if action == "restore" and (target.exists() or not (backup / name).exists()):
+                            raise RuntimeError(f"無法回復：備份項目遺失或目標仍存在：{name}")
+                        journal["pending"] = {"action": action, "name": name}
+                        Worker.write_journal(app_root, journal)
+                        if action == "remove":
+                            Worker.remove_with_retry(target)
+                        else:
+                            if target.exists():
+                                raise RuntimeError(f"回復目標仍存在：{target}")
+                            Worker.rename_with_retry(backup / name, target)
+                        journal[key].remove(name)
+                        journal.pop("pending", None)
+                        Worker.write_journal(app_root, journal)
+                    except Exception as exc:
+                        errors.append(f"{name}：{exc}")
+                        Worker.reconcile_journal(app_root, journal)
+        except Exception as exc:
+            errors.append(str(exc))
+        journal["status"] = "rollback_failed" if errors else "rolled_back"
+        journal["errors"] = errors[:]
+        try:
+            Worker.write_journal(app_root, journal)
+        except Exception as exc:
+            errors.append(f"無法寫入回復紀錄：{exc}")
+        return errors
+
+    def report_failure(self, message: str, app_root: Path, journal: dict | None, errors: list[str]) -> None:
+        if errors:
+            detail = ("更新失敗；回復未完成\n" + "；".join(errors) +
+                      f"\n程式備份：{journal.get('backup', '未建立') if journal else '未建立'}" +
+                      f"\n使用者設定備份：{journal.get('user_backup', '未建立') if journal else '未建立'}" +
+                      f"\n請關閉主程式，將程式備份中的資料夾與檔案複製回安裝目錄：{app_root}。" +
+                      "\n如需還原設定，將使用者設定備份的 config.yaml 與 cookies 資料夾複製回安裝目錄；外部 Cookies 請複製回原設定路徑。")
+        elif journal:
+            detail = "更新失敗；上一版本已回復並重新啟動"
+        else:
+            detail = "更新失敗；尚未套用更新"
+        self.log.emit(detail)
+        self.failed.emit(message + "\n" + detail)
+
+    def recover(self, app_root: Path) -> bool:
+        journal = self.pending_journal(app_root)
+        if journal is None:
+            return False
+        self.step(8, "偵測到中斷的更新；正在回復上一版本，暫停新更新")
+        errors = []
+        try:
+            self.wait_for_processes(installation_processes(app_root))
+            errors = self.rollback(app_root, journal)
+            if not errors:
+                subprocess.Popen([str(app_root / "Stream Translator.exe")], cwd=app_root)
+        except Exception as exc:
+            errors.append(str(exc))
+        if errors:
+            self.report_failure("中斷的更新需要回復", app_root, journal, errors)
+        else:
+            self.completed.emit("上一版本已回復並重新啟動；請重新準備更新包")
+        return True
+
     def run(self) -> None:
         if self.preview:
             for value, message in [(8, "等待主程式結束"), (18, "備份使用者設定"), (35, "驗證更新套件"), (60, "套用更新"), (82, "啟動健康檢查"), (100, "更新完成")]:
@@ -230,11 +367,19 @@ class Worker(QThread):
             self.completed.emit("預覽完成；未修改任何檔案")
             return
         backup = None
-        moved: list[str] = []
-        installed: list[str] = []
+        proc = None
+        journal = None
         items: list[Path] = []
         app_root = None
         try:
+            if self.recovery_root is not None:
+                app_root = self.recovery_root.resolve()
+                self.recover(app_root)
+                return
+            raw_plan = json.loads(self.plan_path.read_text(encoding="utf-8-sig"))
+            app_root = Path(raw_plan["app_root"]).resolve()
+            if self.recover(app_root):
+                return
             plan, _manifest, app_root, _staging, items, mode = self.validate_plan(self.plan_path)
             self.step(8, "等待 Stream Translator 與後端完全關閉")
             process_ids = [int(plan.get("parent_pid") or 0), int(plan.get("backend_pid") or 0)]
@@ -245,15 +390,14 @@ class Worker(QThread):
             self.step(30, f"準備 {mode} 回復點")
             backup = app_root.parent / f".stream-translator-backup-{plan['version']}-{int(time.time())}"
             backup.mkdir()
+            journal = {"status": "applying", "version": str(plan["version"]), "update_mode": mode,
+                       "backup": str(backup), "user_backup": str(user_backup), "moved": [], "installed": [],
+                       "started_at": time.strftime("%Y-%m-%dT%H:%M:%S")}
+            self.write_journal(app_root, journal)
             apply_label = "套用程式更新（保留 Runtime）" if mode == "app_only" else "套用程式與 Runtime 更新"
             self.step(52, apply_label)
             for item in items:
-                target = app_root / item.name
-                if target.exists():
-                    self.rename_with_retry(target, backup / item.name)
-                    moved.append(item.name)
-                self.rename_with_retry(item, target)
-                installed.append(item.name)
+                self.apply_item(app_root, item, journal)
             self.step(72, "驗證新版 GUI 與 DLL")
             exe = app_root / plan["executable"]
             creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
@@ -279,6 +423,8 @@ class Worker(QThread):
                 raise RuntimeError(f"新版程式啟動失敗，退出碼 {proc.returncode}")
             result = {"status": "completed", "version": str(plan["version"]), "update_mode": mode, "backup": str(backup), "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S")}
             (app_root / ".app-update" / "update-result.json").write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+            journal["status"] = "completed"
+            self.write_journal(app_root, journal)
             self.step(100, "更新完成，Stream Translator 已重新啟動")
             self.completed.emit(f"已更新至 v{plan['version']}")
         except Exception as exc:
@@ -286,36 +432,26 @@ class Worker(QThread):
             self.log.emit(f"更新失敗：{exc}\n正在回復上一版本")
             rollback_errors = []
             try:
-                if app_root and backup:
-                    for name in reversed(installed):
-                        target = app_root / name
-                        if target.exists():
-                            try:
-                                self.remove_with_retry(target)
-                            except Exception as rollback_exc:
-                                logger.debug("移除新版更新檔案失敗", exc_info=True)
-                                rollback_errors.append(str(rollback_exc))
-                    for name in reversed(moved):
-                        saved = backup / name
-                        if saved.exists():
-                            target = app_root / name
-                            if target.exists():
-                                rollback_errors.append(f"回復目標仍存在：{target}")
-                                continue
-                            try:
-                                self.rename_with_retry(saved, target)
-                            except Exception as rollback_exc:
-                                logger.debug("回復舊版更新檔案失敗", exc_info=True)
-                                rollback_errors.append(str(rollback_exc))
-                    old = app_root / "Stream Translator.exe"
-                    if old.exists() and not rollback_errors:
-                        subprocess.Popen([str(old)], cwd=app_root)
-            except Exception as rollback:
-                logger.debug("回復更新或重啟舊版失敗", exc_info=True)
-                rollback_errors.append(str(rollback))
-            if rollback_errors:
-                self.log.emit("回復未完全成功：" + "；".join(rollback_errors))
-            self.failed.emit(str(exc))
+                if proc is not None and proc.poll() is None:
+                    proc.terminate()
+                    proc.wait(timeout=30)
+                if journal:
+                    rollback_errors = self.rollback(app_root, journal)
+            except Exception as rollback_exc:
+                rollback_errors.append(str(rollback_exc))
+                if journal:
+                    journal["status"] = "rollback_failed"
+                    journal["errors"] = rollback_errors[:]
+                    try:
+                        self.write_journal(app_root, journal)
+                    except Exception as journal_exc:
+                        rollback_errors.append(str(journal_exc))
+            if journal and not rollback_errors:
+                try:
+                    subprocess.Popen([str(app_root / "Stream Translator.exe")], cwd=app_root)
+                except Exception as restart:
+                    rollback_errors.append(f"上一版本已回復，但重新啟動失敗：{restart}")
+            self.report_failure(str(exc), app_root, journal, rollback_errors)
 
 
 class PrepareWorker(QThread):
@@ -433,6 +569,8 @@ class Window(QDialog):
         layout.addLayout(row)
         if plan or preview:
             self.start_worker(plan, preview)
+        elif installation:
+            self.start_recovery(Path(installation))
 
     def select_path(self, field, directory):
         if directory:
@@ -442,7 +580,23 @@ class Window(QDialog):
         if path:
             field.setText(path)
 
+    def start_recovery(self, root):
+        try:
+            pending = Worker.pending_journal(root)
+        except Exception:
+            pending = True  # Let the worker report an unreadable journal; block new updates.
+        if not pending:
+            return False
+        self.start_btn.setEnabled(False)
+        self.close_btn.setEnabled(False)
+        for control in self.manual_controls:
+            control.setEnabled(False)
+        self.start_worker(recovery_root=root)
+        return True
+
     def prepare_or_apply(self):
+        if self.install_edit.text().strip() and self.start_recovery(Path(self.install_edit.text().strip())):
+            return
         if self.plan:
             root = Path(json.loads(Path(self.plan).read_text(encoding="utf-8"))["app_root"])
             try:
@@ -493,8 +647,8 @@ class Window(QDialog):
             control.setEnabled(True)
         QMessageBox.critical(self, "更新包驗證失敗", message)
 
-    def start_worker(self, plan=None, preview=False):
-        self.worker = Worker(Path(plan) if plan else Path(), preview)
+    def start_worker(self, plan=None, preview=False, recovery_root=None):
+        self.worker = Worker(Path(plan) if plan else Path(), preview, recovery_root)
         self.worker.progress.connect(self.on_progress)
         self.worker.log.connect(self.details.append)
         self.worker.completed.connect(self.done_ok)
@@ -510,7 +664,8 @@ class Window(QDialog):
         self.close_btn.setEnabled(True)
 
     def done_fail(self, message):
-        self.status.setText("更新失敗；已嘗試回復上一版本")
+        self.status.setText(message)
+        self.status.setWordWrap(True)
         self.close_btn.setEnabled(True)
         QMessageBox.critical(self, "更新失敗", message)
 

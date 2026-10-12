@@ -62,6 +62,12 @@ def prepare_package(selected: Path, app_root: Path, allowed: set[str], progress=
                 if name in checksums and checksums[name] != digest:
                     raise RuntimeError("目錄內存在互相矛盾的 SHA-256 清單；請保留對應版本的清單")
                 checksums[name] = digest
+    archive_name = re.sub(r"\.part\d+$", "", selected.name, flags=re.I)
+    if archive_name != selected.name:
+        listed_parts = {name for name in checksums
+                        if re.fullmatch(re.escape(archive_name) + r"\.part(\d+)", name, re.I)}
+        if not listed_parts.issubset({part.name for part in parts}):
+            raise RuntimeError("SHA-256 清單列出的更新分割包缺少檔案")
     for part in parts:
         progress(5, f"驗證 {part.name}")
         if checksums and part.name not in checksums:
@@ -86,11 +92,14 @@ def prepare_package(selected: Path, app_root: Path, allowed: set[str], progress=
                 for part in parts:
                     with part.open("rb") as stream:
                         shutil.copyfileobj(stream, output, 8 * 1024 * 1024)
-            if archive.name in checksums and sha256(archive) != checksums[archive.name]:
-                raise RuntimeError("合併後的 ZIP SHA-256 驗證失敗")
+        if archive_name in checksums and sha256(archive) != checksums[archive_name]:
+            raise RuntimeError("合併後的 ZIP SHA-256 驗證失敗")
         staging = work / "staging"
         staging.mkdir()
         with zipfile.ZipFile(archive) as bundle:
+            bad_entry = bundle.testzip()
+            if bad_entry:
+                raise RuntimeError(f"ZIP 完整性檢查失敗：{bad_entry}")
             entries = bundle.infolist()
             seen = set()
             for entry in entries:

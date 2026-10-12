@@ -13,7 +13,7 @@ APP_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(APP_DIR))
 
 from backend.core import app_update_manager as update_module
-from updater import Worker
+from updater import Window, Worker
 
 
 class AppUpdateManagerTest(unittest.TestCase):
@@ -432,6 +432,234 @@ class AppUpdateManagerTest(unittest.TestCase):
             self.assertEqual(attempts, 2)
             self.assertFalse(source.exists())
             self.assertEqual((destination / "locked.pyd").read_bytes(), b"native module")
+
+    def test_pending_journal_preserves_backup_and_blocks_updates(self):
+        with tempfile.TemporaryDirectory(dir=APP_DIR) as temp_dir:
+            parent = Path(temp_dir)
+            root = parent / "install"
+            work = root / ".app-update"
+            work.mkdir(parents=True)
+            backup = parent / ".stream-translator-backup-test"
+            backup.mkdir()
+            (backup / "old.txt").write_text("old", encoding="utf-8")
+            (work / "update-result.json").write_text(json.dumps({"status": "completed", "backup": str(backup)}), encoding="utf-8")
+            for status in ("applying", "rollback_failed"):
+                with self.subTest(status=status):
+                    Worker.write_journal(root, {"status": status, "backup": str(backup)})
+                    with mock.patch.object(update_module, "get_app_root", return_value=root):
+                        manager = update_module.AppUpdateManager()
+                        self.assertEqual(manager.status()["status"], "interrupted")
+                        self.assertEqual(manager.check()["status"], "interrupted")
+                        self.assertIn(str(backup), manager.status()["error"])
+                        self.assertIn("StreamTranslatorUpdater.exe", manager.status()["error"])
+                        self.assertTrue((backup / "old.txt").exists())
+                        self.assertTrue((work / "update-result.json").exists())
+
+    def test_part_selection_filters_sorts_and_rejects_gaps_or_duplicates(self):
+        with tempfile.TemporaryDirectory(dir=APP_DIR) as temp_dir:
+            root = Path(temp_dir)
+            name = update_module.ASSET_NAMES["cuda"]
+            for suffixes, valid in [
+                ([f".part{i}" for i in range(10, 0, -1)] + [".part01.sha256"], True),
+                ([".part1", ".part3"], False),
+                ([".part01", ".part1"], False),
+                ([".part0", ".part1"], False),
+            ]:
+                with self.subTest(suffixes=suffixes):
+                    release = root / "release.json"
+                    release.write_text(json.dumps({"tag_name": "v1.4.1", "assets": [
+                        {"name": name + suffix, "digest": "sha256:" + "0" * 64}
+                        for suffix in suffixes
+                    ]}), encoding="utf-8")
+                    with mock.patch.object(update_module, "get_app_root", return_value=root), mock.patch.object(
+                        update_module, "get_packaged_runtime_profile", return_value="cuda"
+                    ), mock.patch.object(update_module.settings, "APP_VERSION", "1.4.0"):
+                        manager = update_module.AppUpdateManager()
+                        result = manager.check(release_api=str(release))
+                    if valid:
+                        self.assertEqual([asset["name"] for asset in manager._assets], [name + f".part{i}" for i in range(1, 11)])
+                    else:
+                        self.assertEqual(result["error"], "Release update parts are missing or duplicated")
+
+    def test_split_archive_checksum_list_and_zip_integrity(self):
+        for failure in ("digest", "missing_last", "truncated", "valid"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory(dir=APP_DIR) as temp_dir:
+                root = Path(temp_dir)
+                archive, release_path = self._fixture(root)
+                payload = archive.read_bytes()
+                assets = []
+                checksums = []
+                split = len(payload) // 2
+                for index, content in enumerate((payload[:split], payload[split:]), 1):
+                    part = root / f"{archive.name}.part{index}"
+                    part.write_bytes(content)
+                    digest = hashlib.sha256(content).hexdigest()
+                    assets.append({"name": part.name, "browser_download_url": str(part), "size": len(content), "digest": "sha256:" + digest})
+                    checksums.append(f"{digest}  {part.name}")
+                if failure in {"missing_last", "truncated"}:
+                    assets.pop()
+                if failure != "truncated":
+                    checksums.append(f"{'0' * 64 if failure == 'digest' else hashlib.sha256(payload).hexdigest()}  {archive.name}")
+                    checksum_file = root / "SHA256SUMS-v1.4.1.txt"
+                    checksum_file.write_text("\n".join(checksums), encoding="utf-8")
+                    assets.append({"name": checksum_file.name, "browser_download_url": str(checksum_file)})
+                release_path.write_text(json.dumps({"tag_name": "v1.4.1", "assets": assets}), encoding="utf-8")
+                with mock.patch.object(update_module, "get_app_root", return_value=root), mock.patch.object(
+                    update_module, "get_packaged_runtime_profile", return_value="cuda"
+                ), mock.patch.object(update_module.settings, "APP_VERSION", "1.4.0"):
+                    manager = update_module.AppUpdateManager()
+                    manager.check(release_api=str(release_path))
+                    manager._download_and_stage()
+                    result = manager.status()
+                self.assertEqual(result["status"], "ready" if failure == "valid" else "error", result)
+                if failure == "digest":
+                    self.assertIn("Merged application update SHA-256 mismatch", result["error"])
+                elif failure == "missing_last":
+                    self.assertIn("parts are missing", result["error"])
+                elif failure == "truncated":
+                    self.assertIn("zip", result["error"].lower())
+
+    def _rollback_fixture(self, parent):
+        root = parent / "install"
+        root.mkdir()
+        backup = parent / ".stream-translator-backup-test"
+        backup.mkdir()
+        (root / "_runtime").mkdir()
+        (root / "_runtime" / "python.exe").write_bytes(b"new runtime")
+        (backup / "_runtime").mkdir()
+        (backup / "_runtime" / "python.exe").write_bytes(b"old runtime")
+        (root / "Stream Translator.exe").write_bytes(b"new exe")
+        (backup / "Stream Translator.exe").write_bytes(b"old exe")
+        (root / "config.yaml").write_bytes(b"untouched settings")
+        journal = {"status": "applying", "version": "1.4.1", "update_mode": "runtime_replace",
+                   "backup": str(backup), "user_backup": str(root / ".app-update/user-backups/before-test"),
+                   "moved": ["_runtime", "Stream Translator.exe"],
+                   "installed": ["_runtime", "Stream Translator.exe"], "started_at": "test"}
+        Worker.write_journal(root, journal)
+        return root, backup, journal
+
+    def test_rollback_restores_runtime_and_records_each_step(self):
+        with tempfile.TemporaryDirectory(dir=APP_DIR) as temp_dir:
+            root, backup, journal = self._rollback_fixture(Path(temp_dir))
+            snapshots = []
+            write = Worker.write_journal
+
+            def record(app_root, state):
+                write(app_root, state)
+                snapshots.append(json.loads((app_root / ".app-update/apply-journal.json").read_text(encoding="utf-8")))
+
+            with mock.patch.object(Worker, "write_journal", side_effect=record):
+                self.assertEqual(Worker.rollback(root, journal), [])
+            self.assertEqual((root / "_runtime/python.exe").read_bytes(), b"old runtime")
+            self.assertEqual((root / "Stream Translator.exe").read_bytes(), b"old exe")
+            self.assertEqual((root / "config.yaml").read_bytes(), b"untouched settings")
+            finished_steps = [state for state in snapshots if not state.get("pending")]
+            self.assertEqual([(len(state["installed"]), len(state["moved"])) for state in finished_steps],
+                             [(1, 2), (0, 2), (0, 1), (0, 0), (0, 0)])
+            self.assertEqual(journal["status"], "rolled_back")
+
+    def test_rollback_failure_reports_errors_and_backup_paths(self):
+        with tempfile.TemporaryDirectory(dir=APP_DIR) as temp_dir:
+            root, backup, journal = self._rollback_fixture(Path(temp_dir))
+            with mock.patch.object(Worker, "remove_with_retry", side_effect=PermissionError("locked")):
+                errors = Worker.rollback(root, journal)
+            self.assertTrue(errors)
+            self.assertEqual(journal["status"], "rollback_failed")
+            self.assertEqual((backup / "_runtime/python.exe").read_bytes(), b"old runtime")
+            messages = []
+            worker = Worker(Path("unused"))
+            worker.failed.connect(messages.append)
+            worker.report_failure("失敗", root, journal, errors)
+            self.assertIn("回復未完成", messages[0])
+            self.assertIn("locked", messages[0])
+            self.assertIn(str(backup), messages[0])
+            self.assertIn(journal["user_backup"], messages[0])
+            self.assertIn("複製回安裝目錄", messages[0])
+            window = mock.Mock()
+            with mock.patch("updater.QMessageBox.critical") as dialog:
+                Window.done_fail(window, messages[0])
+            window.status.setText.assert_called_once_with(messages[0])
+            dialog.assert_called_once_with(window, "更新失敗", messages[0])
+            self.assertEqual(Worker.rollback(root, journal), [])
+
+    def test_missing_backup_never_deletes_installed_files(self):
+        with tempfile.TemporaryDirectory(dir=APP_DIR) as temp_dir:
+            root, backup, journal = self._rollback_fixture(Path(temp_dir))
+            journal["backup"] = str(backup.with_name(".stream-translator-backup-missing"))
+            with mock.patch.object(Worker, "remove_with_retry") as remove:
+                errors = Worker.rollback(root, journal)
+            self.assertTrue(errors)
+            remove.assert_not_called()
+            self.assertEqual((root / "_runtime/python.exe").read_bytes(), b"new runtime")
+
+    def test_recovery_runs_before_plan_validation(self):
+        with tempfile.TemporaryDirectory(dir=APP_DIR) as temp_dir:
+            root, backup, journal = self._rollback_fixture(Path(temp_dir))
+            (root / "_js_runtime").mkdir()
+            (root / "_js_runtime/new.txt").write_text("new", encoding="utf-8")
+            journal["installed"].append("_js_runtime")
+            Worker.write_journal(root, journal)
+            plan = root / ".app-update/apply-plan.json"
+            plan.write_text(json.dumps({"app_root": str(root)}), encoding="utf-8")
+            worker = Worker(plan)
+            messages = []
+            worker.completed.connect(messages.append)
+            with mock.patch.object(worker, "wait_for_processes"), mock.patch("updater.installation_processes", return_value=[]), \
+                 mock.patch("updater.subprocess.Popen") as restart, mock.patch.object(worker, "validate_plan") as validate:
+                worker.run()
+            validate.assert_not_called()
+            restart.assert_called_once()
+            self.assertIn("已回復並重新啟動", messages[0])
+            self.assertEqual((root / "Stream Translator.exe").read_bytes(), b"old exe")
+            self.assertIsNone(Worker.pending_journal(root))
+            self.assertFalse((root / "_js_runtime").exists())
+
+    def test_apply_records_each_move_and_install(self):
+        with tempfile.TemporaryDirectory(dir=APP_DIR) as temp_dir:
+            parent = Path(temp_dir)
+            root, backup, journal = self._rollback_fixture(parent)
+            self.assertEqual(Worker.rollback(root, journal), [])
+            journal["status"] = "applying"
+            staging = root / ".app-update/staging"
+            staging.mkdir()
+            item = staging / "Stream Translator.exe"
+            item.write_bytes(b"next exe")
+            snapshots = []
+            write = Worker.write_journal
+
+            def record(app_root, state):
+                write(app_root, state)
+                snapshots.append(json.loads((app_root / ".app-update/apply-journal.json").read_text(encoding="utf-8")))
+
+            with mock.patch.object(Worker, "write_journal", side_effect=record):
+                Worker.apply_item(root, item, journal)
+            self.assertEqual(snapshots[0]["pending"]["action"], "move")
+            self.assertEqual(snapshots[1]["moved"], [item.name])
+            self.assertEqual(snapshots[2]["pending"]["action"], "install")
+            self.assertEqual(snapshots[3]["installed"], [item.name])
+
+    def test_recovery_reconciles_crash_between_rename_and_journal_write(self):
+        for action in ("move", "install", "remove", "restore"):
+            with self.subTest(action=action), tempfile.TemporaryDirectory(dir=APP_DIR) as temp_dir:
+                root, backup, journal = self._rollback_fixture(Path(temp_dir))
+                name = "Stream Translator.exe"
+                if action == "move":
+                    (root / name).unlink()
+                    journal["moved"].remove(name)
+                    journal["installed"].remove(name)
+                elif action == "install":
+                    journal["installed"].remove(name)
+                elif action == "remove":
+                    (root / name).unlink()
+                else:
+                    (root / name).unlink()
+                    (backup / name).rename(root / name)
+                    journal["installed"].remove(name)
+                journal["pending"] = {"action": action, "name": name}
+                Worker.write_journal(root, journal)
+                self.assertEqual(Worker.rollback(root, journal), [])
+                self.assertEqual((root / name).read_bytes(), b"old exe")
+
 
 
 if __name__ == "__main__":

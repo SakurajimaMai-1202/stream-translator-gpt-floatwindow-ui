@@ -591,28 +591,44 @@ class LlamaRuntimeInstaller:
             self._set(state="activating", message="正在啟用新的 Runtime", progress=0.95)
             backup = target.with_name(target.name + f".backup-{self._status.job_id[:8]}")
             moved_existing = False
+            activated = False
             try:
                 if backup.exists():
                     shutil.rmtree(backup)
                 if target.exists():
-                    target.replace(backup)
+                    try:
+                        target.replace(backup)
+                    except OSError as exc:
+                        raise RuntimeError("目前的 Runtime 正在使用中，請先停止本機翻譯伺服器後再重新安裝") from exc
                     moved_existing = True
                 staging.replace(target)
+                activated = True
                 relative = target.relative_to(root)
                 self._write_active_marker(root, relative)
             except Exception:
-                if target.exists():
-                    shutil.rmtree(target)
-                if moved_existing and backup.exists():
-                    backup.replace(target)
-                if previous_runtime:
-                    self._write_active_marker(root, Path(previous_runtime))
-                elif marker.exists():
-                    marker.unlink()
+                rollback_error = None
+                try:
+                    if activated and target.exists():
+                        shutil.rmtree(target)
+                    if moved_existing and backup.exists():
+                        if target.exists():
+                            raise RuntimeError("無法移除新的 Runtime")
+                        backup.replace(target)
+                except Exception as exc:
+                    rollback_error = exc
+                try:
+                    if previous_runtime:
+                        self._write_active_marker(root, Path(previous_runtime))
+                    elif marker.exists():
+                        marker.unlink()
+                finally:
+                    if rollback_error is not None:
+                        if moved_existing:
+                            raise RuntimeError(f"無法還原原有 Runtime，備份保留於：{backup}") from rollback_error
+                        raise rollback_error
                 raise
             finally:
-                if staging.exists():
-                    shutil.rmtree(staging)
+                shutil.rmtree(staging, ignore_errors=True)
             if backup.exists():
                 shutil.rmtree(backup)
         return target / "llama-server.exe"

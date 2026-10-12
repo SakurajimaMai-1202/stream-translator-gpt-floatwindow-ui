@@ -401,12 +401,14 @@ def test_digest_failure_never_activates_runtime(monkeypatch, tmp_path):
     assert installer.status()["files"][0]["state"] == "error"
 
 
-def test_activation_failure_restores_previous_runtime(monkeypatch, tmp_path):
+@pytest.mark.parametrize("failure", ["backup", "staging", "marker"])
+def test_activation_failure_restores_previous_runtime(monkeypatch, tmp_path, failure):
     payload = _runtime_zip_bytes()
     root = tmp_path / "llama"
     target = root / "runtimes" / "b1-cpu"
     target.mkdir(parents=True)
     (target / "llama-server.exe").write_bytes(b"old-runtime")
+    (target / "ggml.dll").write_bytes(b"old-dll")
     marker = root / "active-runtime.txt"
     marker.write_text(str(Path("runtimes") / "b1-cpu"), encoding="utf-8")
     monkeypatch.setattr(runtime, "llama_root", lambda: root)
@@ -420,7 +422,10 @@ def test_activation_failure_restores_previous_runtime(monkeypatch, tmp_path):
 
     def fail_new_marker_once(marker_root, relative):
         marker_calls.append(str(relative))
-        if len(marker_calls) == 1:
+        if failure == "marker" and len(marker_calls) == 1:
+            assert (target / "llama-server.exe").read_bytes() == b"new-runtime"
+            (target / "new-only.txt").write_bytes(b"new")
+            (marker_root / "active-runtime.txt").write_text("failed-marker", encoding="utf-8")
             raise OSError("simulated marker failure")
         (marker_root / "active-runtime.txt").write_text(str(relative), encoding="utf-8")
 
@@ -433,7 +438,27 @@ def test_activation_failure_restores_previous_runtime(monkeypatch, tmp_path):
     installer.begin("cpu")
     installer._set(files=[runtime.asdict(runtime.FileInstallStatus(name="runtime.zip"))])
 
-    with pytest.raises(OSError, match="marker failure"):
+    staging = target.with_name(target.name + f".installing-{installer._status.job_id[:8]}")
+    backup = target.with_name(target.name + f".backup-{installer._status.job_id[:8]}")
+    original_replace = Path.replace
+    replace_error = PermissionError(f"simulated {failure} failure")
+
+    def fail_replace(source, destination):
+        if failure == "backup" and source == target:
+            assert destination == backup
+            raise replace_error
+        if failure == "staging" and source == staging:
+            assert destination == target
+            assert not target.exists()
+            assert (backup / "llama-server.exe").read_bytes() == b"old-runtime"
+            marker.write_text("failed-marker", encoding="utf-8")
+            raise replace_error
+        return original_replace(source, destination)
+
+    monkeypatch.setattr(Path, "replace", fail_replace)
+    error_type = RuntimeError if failure == "backup" else OSError
+    message = "目前的 Runtime 正在使用中，請先停止本機翻譯伺服器後再重新安裝" if failure == "backup" else f"{failure} failure"
+    with pytest.raises(error_type, match=message) as caught:
         installer._download_and_install("b1", {
             "id": "cpu",
             "assets": [{
@@ -445,7 +470,14 @@ def test_activation_failure_restores_previous_runtime(monkeypatch, tmp_path):
             }],
         })
 
+    if failure == "backup":
+        assert caught.value.__cause__ is replace_error
+    assert target.is_dir()
     assert (target / "llama-server.exe").read_bytes() == b"old-runtime"
+    assert (target / "ggml.dll").read_bytes() == b"old-dll"
+    assert not (target / "new-only.txt").exists()
+    assert not staging.exists()
+    assert len(marker_calls) == (2 if failure == "marker" else 1)
     assert marker.read_text(encoding="utf-8") == str(Path("runtimes") / "b1-cpu")
     assert not list((root / "runtimes").glob("*.backup-*"))
 

@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+from stream_translator_gpt.qwen3_asr_postprocess import is_traditional_chinese_target, normalize_chinese_script
 from stream_translator_gpt.common import TranslationTask
 from stream_translator_gpt.llm_translator import LLMClient, normalize_translation_output
 
@@ -12,6 +13,11 @@ from stream_translator_gpt.llm_translator import LLMClient, normalize_translatio
 ])
 @pytest.mark.parametrize("target,prompt", [
     ("Traditional Chinese", "custom prompt"),
+    *[(target, "custom prompt") for target in (
+        "zh-Hant-TW", "zh-HK", "zh_TW", "zh-MO", "zh-Hant-HK",
+        "Traditional Chinese (Taiwan)", "繁體中文（台灣）",
+    )],
+    *[(None, "Translate into " + target) for target in ("zh-hk", "zh_hk", "繁中", "正體中文")],
     ("zh-TW", "custom prompt"), ("zh_Hant", "custom prompt"),
     ("繁體中文", "custom prompt"), (None, "翻譯成繁體中文"),
 ])
@@ -34,7 +40,7 @@ def test_all_providers_normalize_before_publishing(provider, model, target, prom
 
 
 def test_other_targets_are_unchanged():
-    for target in ("Japanese", "English", "Simplified Chinese", None):
+    for target in ("Japanese", "English", "Simplified Chinese", "zh-CN", "zh-Hans", "zh-SG", None):
         assert normalize_translation_output("软件", target) == "软件"
 
 
@@ -76,3 +82,29 @@ def test_config_passes_target_even_with_custom_prompt(tmp_path):
     })
     args = manager.to_main_args(config)
     assert args["translation_target_language"] == "Traditional Chinese"
+
+
+@pytest.mark.parametrize("target", [
+    "zh-Hant-TW", "zh-HK", "zh_TW", "zh-MO", "zh-Hant-HK",
+    "zh-HK-x-local", "zh-MO-x-local", "yue-Hant-HK",
+    "Traditional Chinese (Taiwan)", "Chinese (Traditional Chinese)",
+    "繁體中文（台灣）", "繁体中文", "繁體", "繁体",
+])
+def test_traditional_target_helper_and_asr_conversion(target):
+    assert is_traditional_chinese_target(target)
+    assert normalize_chinese_script("软件", target) == "軟體"
+
+
+@pytest.mark.parametrize("target", [
+    "zh-CN", "zh-Hans", "zh-Hans-CN", "zh-SG", "zh", "Chinese",
+    "Simplified Chinese", "简体中文", "簡體中文", None, "",
+])
+def test_non_traditional_target_helper(target):
+    assert not is_traditional_chinese_target(target)
+    assert normalize_translation_output("软件", target) == "软件"
+
+
+def test_unknown_prompt_does_not_default_to_traditional():
+    client = LLMClient("GPT", "custom", "Translate this", 0, None, False)
+    assert client.translation_target_language is None
+    assert normalize_translation_output("软件", client.translation_target_language) == "软件"

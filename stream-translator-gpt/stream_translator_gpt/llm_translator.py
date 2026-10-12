@@ -20,7 +20,7 @@ from .translation_policy import (
     _matching_glossary,
 )
 from .translation_glossary_auditor import TranslationGlossaryAuditor
-from .qwen3_asr_postprocess import normalize_chinese_script, _TRADITIONAL_CHINESE, strip_unknown_token
+from .qwen3_asr_postprocess import normalize_chinese_script, is_traditional_chinese_target, strip_unknown_token
 
 class TranslationOutputConversionError(RuntimeError):
     code = "translation_script_conversion_failed"
@@ -29,9 +29,9 @@ class TranslationOutputConversionError(RuntimeError):
 def normalize_translation_output(text: str, target_language: str | None) -> str:
     text = strip_unknown_token(text)
     language = str(target_language or "").strip().lower().replace("_", "-")
-    if language in _TRADITIONAL_CHINESE:
+    if is_traditional_chinese_target(language):
         try:
-            return normalize_chinese_script(text, language)
+            return normalize_chinese_script(text, "zh-tw")
         except Exception as exc:
             if "opencc" in str(exc).lower() and any(
                     word in str(exc).lower() for word in ("requires", "no module", "unavailable")):
@@ -151,7 +151,7 @@ class LLMClient():
         if translation_target_language is None:
             # Legacy CLI callers express the target only through the prompt.
             import re
-            if re.search(r"繁[體体]中文|traditional\s+chinese|zh[-_]hant|zh[-_]tw", prompt, re.IGNORECASE):
+            if re.search(r"繁[體体]中文|traditional\s+chinese|zh[-_]hant|zh[-_]tw|zh[-_]hk|繁中|正體中文", prompt, re.IGNORECASE):
                 self.translation_target_language = "Traditional Chinese"
         self.history_size = history_size
         self.proxy = str(proxy).strip() if proxy and str(proxy).strip() else None
@@ -415,6 +415,9 @@ class LLMClient():
 
     def _validate_hy_mt2_output(self, task: TranslationTask) -> str | None:
         if not self.family_optimizer_enabled:
+            if not (task.translation or "").strip():
+                self._record_translation_failure(task, ValueError("empty_output"))
+                return "empty_output"
             return None
         request = getattr(task, "_family_request", None)
         if request is None:
@@ -658,6 +661,8 @@ class LLMClient():
                 translation_task.translation = normalize_translation_output(
                     translation_task.translation, self.translation_target_language,
                 )
+            if not translation_task.translation_failed and not (translation_task.translation or "").strip():
+                self._record_translation_failure(translation_task, ValueError("empty_output"))
         except Exception as exc:
             self._record_translation_failure(translation_task, exc)
             print(f'[ERROR] Translation pipeline: {exc}', flush=True)

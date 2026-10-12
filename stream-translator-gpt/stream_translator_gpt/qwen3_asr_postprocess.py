@@ -28,6 +28,18 @@ _SIMPLIFIED_CHINESE = {
 }
 
 
+def is_traditional_chinese_target(language: str | None) -> bool:
+    """Recognize Traditional Chinese names and regional/script tags."""
+    language = str(language or "").strip().lower().replace("_", "-")
+    return (
+        language in _TRADITIONAL_CHINESE
+        or language.startswith(("zh-hant", "zh-tw", "zh-hk", "zh-mo"))
+        or "hant" in language.split("-")
+        or "traditional chinese" in language
+        or "繁體" in language or "繁体" in language
+    )
+
+
 @lru_cache(maxsize=2)
 def _opencc(config: str) -> Any:
     try:
@@ -58,7 +70,7 @@ def normalize_chinese_script(text: object, output_language: str | None) -> str:
     normalized = str(text or "").strip()
 
     language = str(output_language or "").strip().lower().replace("_", "-")
-    if language in _TRADITIONAL_CHINESE:
+    if is_traditional_chinese_target(language):
         return _opencc("s2twp").convert(normalized)
     if language in _SIMPLIFIED_CHINESE:
         return _opencc("t2s").convert(normalized)

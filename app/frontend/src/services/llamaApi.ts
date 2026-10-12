@@ -39,6 +39,7 @@ export interface ServerConfig {
 }
 
 export interface ServerStatus {
+  default_gpu_layers?: number;
   gpu_selection?: {
     mode: 'cpu' | 'gpu' | 'external' | 'unknown';
     selected_device: RuntimeDevice | null;

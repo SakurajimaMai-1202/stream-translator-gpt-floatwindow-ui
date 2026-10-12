@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable, Literal
 
@@ -380,6 +381,22 @@ def _merge_gpu_detections(*groups: Iterable[GpuDevice]) -> list[GpuDevice]:
         elif merged[existing_index].memory_mb is None and device.memory_mb is not None:
             merged[existing_index] = device
     return merged
+
+
+@lru_cache(maxsize=1)
+def default_llama_gpu_layers() -> int:
+    """Process-wide first-run/reset default, without Torch or a llama runtime."""
+    try:
+        # DXGI has better integrated/discrete classification than adapter names.
+        devices = detect_windows_dxgi_adapters()
+        if not devices:
+            devices = _merge_gpu_detections(
+                detect_nvidia_smi_gpus(), detect_windows_video_controllers()
+            )
+        return 99 if any(not device.is_integrated for device in devices) else 0
+    except Exception:
+        logger.debug("Detecting the default llama GPU offload failed", exc_info=True)
+        return 0
 
 
 def detect_gpus(include_windows_fallback: bool = True, *, force_refresh: bool = False) -> list[GpuDevice]:

@@ -15,6 +15,7 @@ import time
 from contextlib import contextmanager
 from backend.config import settings
 from backend.core.cookie_manager import resolve_cookie_path
+from backend.core.hardware_detector import default_llama_gpu_layers
 from backend.core.runtime_profiles import (
     effective_asr_compute_backend,
     get_asr_capabilities,
@@ -354,19 +355,25 @@ class ConfigManager:
             try:
                 with open(self.config_path, 'r', encoding='utf-8') as f:
                     config = yaml.safe_load(f) or {}
-                    # 與預設值合併（新增遺漏的欄位）
-                    merged = self._merge_with_defaults(config)
-                    # 舊版設定遷移（例如 localllm -> llama）
-                    migrated, changed = self._migrate_legacy_config(merged)
-                    if changed or migrated != config:
-                        try:
-                            with self._config_lock():
-                                self._save(migrated)
-                        except OSError as save_error:
-                            # A transient Windows sharing violation must not
-                            # discard a successfully parsed user config.
-                            print(f"配置已載入，但更新後的配置暫時無法寫回: {save_error}")
-                    return migrated
+                # 與預設值合併（新增遺漏的欄位）
+                merged = self._merge_with_defaults(config)
+                # 舊版設定遷移（例如 localllm -> llama）
+                migrated, changed = self._migrate_legacy_config(merged)
+                # Only full-package templates opt into this one-time default.
+                llama = migrated.get('llama', {})
+                if llama.pop('first_run_gpu_default', False) is True:
+                    if llama.get('gpu_layers_default_applied') is not True and llama.get('n_gpu_layers') == 0:
+                        llama['n_gpu_layers'] = default_llama_gpu_layers()
+                    llama['gpu_layers_default_applied'] = True
+                if changed or migrated != config:
+                    try:
+                        with self._config_lock():
+                            self._save(migrated)
+                    except OSError as save_error:
+                        # A transient Windows sharing violation must not
+                        # discard a successfully parsed user config.
+                        print(f"配置已載入，但更新後的配置暫時無法寫回: {save_error}")
+                return migrated
             except Exception as e:
                 logger.debug("載入配置失敗", exc_info=True)
                 print(f"配置載入失敗: {e}，使用預設值")
@@ -380,7 +387,7 @@ class ConfigManager:
     def _profile_defaults(self) -> Dict[str, Any]:
         """Defaults for first run and explicit reset, never for loaded configs."""
         config = self._enforce_packaged_runtime(self._deep_copy(self.DEFAULT_CONFIG))
-        config['llama']['n_gpu_layers'] = 99 if config['runtime']['profile'] in ('cuda', 'rocm') else 0
+        config['llama']['n_gpu_layers'] = default_llama_gpu_layers()
         return config
 
     def _deep_copy(self, obj: Any) -> Any:

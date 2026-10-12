@@ -17,6 +17,7 @@ import time
 import socket
 from functools import lru_cache
 from backend.config import settings
+from backend.core.hardware_detector import default_llama_gpu_layers
 from backend.core.external_process import run_external, popen_external
 from backend.core.llama_runtime_installer import active_runtime_executable, installer, list_latest_variants, llama_root
 from backend.core.llama_model_installer import model_installer
@@ -263,6 +264,7 @@ class ServerStatus(BaseModel):
     current_model: Optional[str]
     last_error: Optional[str] = None
     pid: Optional[int]
+    default_gpu_layers: int = 0
     resources: Dict[str, Any] = Field(default_factory=dict)
     performance: Dict[str, Any] = Field(default_factory=dict)
     runtime: Dict[str, Any] = Field(default_factory=dict)
@@ -570,9 +572,10 @@ async def stop_server():
 @router.get("/server/status", response_model=ServerStatus)
 async def get_server_status():
     """獲取伺服器狀態"""
-    resources, runtime = await asyncio.gather(
+    resources, runtime, default_gpu_layers = await asyncio.gather(
         asyncio.to_thread(_collect_resource_status),
         asyncio.to_thread(_get_llama_runtime_info),
+        asyncio.to_thread(default_llama_gpu_layers),
     )
     return ServerStatus(
         is_running=llama_state.is_running,
@@ -581,6 +584,7 @@ async def get_server_status():
         current_model=llama_state.current_model,
         last_error=llama_state.last_error,
         pid=llama_state.server_process.pid if llama_state.server_process else None,
+        default_gpu_layers=default_gpu_layers,
         resources=resources,
         performance=llama_state.last_inference,
         runtime=runtime,

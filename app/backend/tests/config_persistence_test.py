@@ -7,6 +7,7 @@ import pytest
 import yaml
 
 from backend.core.config_manager import ConfigManager
+from backend.core import hardware_detector
 from backend.core.translator import _extract_latency_metrics, _parse_structured_subtitle_event
 
 
@@ -54,12 +55,14 @@ def _settings_source():
     return "\n".join(source.read_text(encoding="utf-8") for source in sources)
 
 
-@pytest.mark.parametrize("profile, expected", [("cuda", 99), ("cpu", 0), ("rocm", 99)])
+@pytest.mark.parametrize("profile", ["cuda", "cpu", "rocm"])
+@pytest.mark.parametrize("expected", [0, 99])
 @pytest.mark.parametrize("packaged", [True, False])
-def test_new_config_gpu_layers_follow_runtime_profile(tmp_path, monkeypatch, profile, expected, packaged):
+def test_new_config_gpu_layers_follow_hardware(tmp_path, monkeypatch, profile, expected, packaged):
     monkeypatch.setattr("backend.core.config_manager.get_packaged_runtime_profile", lambda: profile if packaged else None)
     if not packaged:
         monkeypatch.setitem(ConfigManager.DEFAULT_CONFIG["runtime"], "profile", profile)
+    monkeypatch.setattr("backend.core.config_manager.default_llama_gpu_layers", lambda: expected)
     config_path = tmp_path / "config.yaml"
     manager = ConfigManager(config_path)
     assert manager.get_config()["llama"]["n_gpu_layers"] == expected
@@ -70,6 +73,9 @@ def test_new_config_gpu_layers_follow_runtime_profile(tmp_path, monkeypatch, pro
 @pytest.mark.parametrize("legacy", [False, True])
 @pytest.mark.parametrize("saved_layers", [0, 12])
 def test_cuda_preserves_saved_gpu_layers(tmp_path, monkeypatch, legacy, saved_layers):
+    def unexpected_detection():
+        pytest.fail("Existing config must not probe or change the GPU default")
+    monkeypatch.setattr("backend.core.config_manager.default_llama_gpu_layers", unexpected_detection)
     monkeypatch.setattr("backend.core.config_manager.get_packaged_runtime_profile", lambda: "cuda")
     config_path = tmp_path / "config.yaml"
     saved_path = tmp_path / "data" / "config.yaml" if legacy else config_path
@@ -80,8 +86,10 @@ def test_cuda_preserves_saved_gpu_layers(tmp_path, monkeypatch, legacy, saved_la
     assert ConfigManager(config_path).get_config()["llama"]["n_gpu_layers"] == saved_layers
 
 
-@pytest.mark.parametrize("profile, expected", [("cuda", 99), ("cpu", 0), ("rocm", 99)])
+@pytest.mark.parametrize("profile", ["cuda", "cpu", "rocm"])
+@pytest.mark.parametrize("expected", [0, 99])
 def test_reset_gpu_layers_matches_first_run(tmp_path, monkeypatch, profile, expected):
+    monkeypatch.setattr("backend.core.config_manager.default_llama_gpu_layers", lambda: expected)
     monkeypatch.setattr("backend.core.config_manager.get_packaged_runtime_profile", lambda: profile)
     config_path = tmp_path / "config.yaml"
     manager = ConfigManager(config_path)
@@ -89,6 +97,85 @@ def test_reset_gpu_layers_matches_first_run(tmp_path, monkeypatch, profile, expe
     manager.reset_to_defaults()
     assert manager.get_config()["llama"]["n_gpu_layers"] == expected
     assert ConfigManager(config_path).get_config()["llama"]["n_gpu_layers"] == expected
+
+
+@pytest.mark.parametrize("integrated, expected", [([False], 99), ([True, False], 99), ([True], 0), ([], 0)])
+@pytest.mark.parametrize("detector", ["detect_windows_dxgi_adapters", "detect_nvidia_smi_gpus", "detect_windows_video_controllers"])
+def test_default_llama_gpu_layers_lightweight_and_cached(monkeypatch, integrated, expected, detector):
+    calls = []
+    devices = [hardware_detector.GpuDevice(i, f"Fake GPU {i}", "unknown", "unknown", is_integrated=value)
+               for i, value in enumerate(integrated)]
+    def detect():
+        calls.append(True)
+        return devices
+    def forbidden():
+        pytest.fail("GPU default must not probe Torch or runtime Python")
+    for name in ("detect_windows_dxgi_adapters", "detect_nvidia_smi_gpus", "detect_windows_video_controllers"):
+        monkeypatch.setattr(hardware_detector, name, detect if name == detector else lambda: [])
+    monkeypatch.setattr(hardware_detector, "detect_torch_gpus", forbidden)
+    monkeypatch.setattr(hardware_detector, "detect_runtime_python_gpus", forbidden)
+    hardware_detector.default_llama_gpu_layers.cache_clear()
+    try:
+        assert hardware_detector.default_llama_gpu_layers() == expected
+        assert hardware_detector.default_llama_gpu_layers() == expected
+        assert len(calls) == 1
+    finally:
+        hardware_detector.default_llama_gpu_layers.cache_clear()
+
+
+@pytest.mark.parametrize("detector", ["detect_windows_dxgi_adapters", "detect_nvidia_smi_gpus", "detect_windows_video_controllers"])
+def test_default_llama_gpu_layers_exception_is_cached_zero(monkeypatch, detector):
+    calls = []
+    def fail():
+        calls.append(True)
+        raise RuntimeError("Detection failed")
+    for name in ("detect_windows_dxgi_adapters", "detect_nvidia_smi_gpus", "detect_windows_video_controllers"):
+        monkeypatch.setattr(hardware_detector, name, fail if name == detector else lambda: [])
+    hardware_detector.default_llama_gpu_layers.cache_clear()
+    try:
+        assert hardware_detector.default_llama_gpu_layers() == 0
+        assert hardware_detector.default_llama_gpu_layers() == 0
+        assert len(calls) == 1
+    finally:
+        hardware_detector.default_llama_gpu_layers.cache_clear()
+
+
+@pytest.mark.parametrize("profile", ["cuda", "cpu", "rocm"])
+@pytest.mark.parametrize("expected", [0, 99])
+def test_packaged_gpu_default_is_consumed_once(tmp_path, monkeypatch, profile, expected):
+    monkeypatch.setattr("backend.core.config_manager.get_packaged_runtime_profile", lambda: profile)
+    calls = []
+    def detect():
+        calls.append(True)
+        return expected
+    monkeypatch.setattr("backend.core.config_manager.default_llama_gpu_layers", detect)
+    config_path = tmp_path / "config.yaml"
+    template = yaml.safe_load(EXAMPLE_CONFIG.read_text(encoding="utf-8"))
+    template["llama"]["first_run_gpu_default"] = True
+    config_path.write_text(yaml.safe_dump(template), encoding="utf-8")
+    manager = ConfigManager(config_path)
+    saved = yaml.safe_load(config_path.read_text(encoding="utf-8"))["llama"]
+    assert saved["n_gpu_layers"] == expected
+    assert saved["gpu_layers_default_applied"] is True
+    assert "first_run_gpu_default" not in saved
+    # A subsequent explicit CPU choice must survive another launch.
+    manager.update_section("llama", {"n_gpu_layers": 0})
+    assert ConfigManager(config_path).get_config()["llama"]["n_gpu_layers"] == 0
+    assert calls == [True]
+
+
+@pytest.mark.parametrize("saved_layers, applied", [(12, False), (0, True)])
+def test_packaged_gpu_marker_preserves_user_value(tmp_path, monkeypatch, saved_layers, applied):
+    def forbidden():
+        pytest.fail("Already chosen GPU layers must not be replaced")
+    monkeypatch.setattr("backend.core.config_manager.default_llama_gpu_layers", forbidden)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump({"llama": {
+        "n_gpu_layers": saved_layers, "first_run_gpu_default": True,
+        "gpu_layers_default_applied": applied,
+    }}), encoding="utf-8")
+    assert ConfigManager(config_path).get_config()["llama"]["n_gpu_layers"] == saved_layers
+    assert "first_run_gpu_default" not in yaml.safe_load(config_path.read_text(encoding="utf-8"))["llama"]
 
 
 def test_packaging_template_has_unique_direct_llama_gpu_layers():

@@ -41,14 +41,20 @@ function Set-RuntimeProfileInConfigText {
     $inRuntime = $false
     $profileUpdated = $false
     $devicePolicyUpdated = $false
+    $gpuLayersUpdated = $false
     $devicePolicy = if ($RuntimeProfile -eq "cpu") { "cpu" } else { "auto_discrete" }
     for ($index = 0; $index -lt $lines.Count; $index++) {
         $line = $lines[$index]
         if ($line -match '^[^\s#]') {
             $inLlama = $line -match '^llama:\s*$'
         }
-        if ($RuntimeProfile -in @("cuda", "rocm") -and $inLlama -and $line -match '^(  n_gpu_layers:[ \t]*)\d+([ \t]*(?:#.*)?)$') {
-            $lines[$index] = "$($Matches[1])99$($Matches[2])"
+        if ($inLlama -and $line -match '^(  n_gpu_layers:[ \t]*)\d+([ \t]*(?:#.*)?)$') {
+            # Resolve on the user's machine, not the packaging machine/profile.
+            $lines[$index] = "$($Matches[1])0$($Matches[2])`n  first_run_gpu_default: true"
+            $gpuLayersUpdated = $true
+        }
+        if ($inLlama -and $line -match '^  (first_run_gpu_default|gpu_layers_default_applied):') {
+            $lines[$index] = ""
         }
         if ($line -match '^\S[^:]*:\s*$') {
             $inRuntime = $line -match '^runtime:\s*$'
@@ -65,6 +71,9 @@ function Set-RuntimeProfileInConfigText {
         }
     }
 
+    if (-not $gpuLayersUpdated) {
+        throw "llama.n_gpu_layers not found in config template"
+    }
     if (-not $profileUpdated) {
         throw "runtime.profile not found in config template"
     }

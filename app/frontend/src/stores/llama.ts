@@ -6,7 +6,6 @@ import { defineStore } from 'pinia';
 import { ref, computed, watch, nextTick } from 'vue';
 import { llamaApi, type ModelInfo, type ServerConfig, type ServerStatus } from '../services/llamaApi';
 import { configApi } from '../services/api';
-import { useTranslationStore } from './translation';
 
 const LOCAL_LLM_SESSION_KEY = 'stream-translator:local-llm-enabled';
 
@@ -27,11 +26,6 @@ export interface ModelSeries {
 }
 
 export const useLlamaStore = defineStore('llama', () => {
-  const translationStore = useTranslationStore();
-  const configProfile = ref('');
-  const defaultGpuLayers = computed(() =>
-    ['cuda', 'rocm'].includes(translationStore.runtimeStatus?.profile ?? configProfile.value) ? 99 : 0);
-
   // State
   const models = ref<ModelInfo[]>([]);
   const serverStatus = ref<ServerStatus>({
@@ -44,6 +38,7 @@ export const useLlamaStore = defineStore('llama', () => {
     performance: {},
     runtime: { installed: false, path: '', version: '讀取中…', download_url: 'https://github.com/ggml-org/llama.cpp/releases/latest' }
   });
+  const defaultGpuLayers = computed(() => serverStatus.value.default_gpu_layers ?? 0);
   const selectedModelPath = ref<string>('');
   const modelDirectory = ref<string>('');
   const recentModelPaths = ref<string[]>([]);
@@ -299,8 +294,7 @@ export const useLlamaStore = defineStore('llama', () => {
     isApplyingRemoteConfig.value = true;
     try {
       const config = await configApi.getConfig();
-      configProfile.value = config.runtime?.profile || '';
-      if (!translationStore.runtimeStatus) await translationStore.loadRuntimeStatus();
+      await refreshServerStatus();
       if (!config.llama) serverConfig.value.n_gpu_layers = defaultGpuLayers.value;
       if (config.llama) {
         // 更新伺服器配置
@@ -667,7 +661,6 @@ export const useLlamaStore = defineStore('llama', () => {
       await loadSystemPresets(); // 載入系統預設配置
       // 注意：不再呼叫 loadCustomPresets()，因為 loadConfig() 已從 YAML 中讀取 custom_presets
       // loadCustomPresets() 會從舊的 API 端點取得資料，可能覆蓋 YAML 中的資料
-      await refreshServerStatus();
 
       // 根據已載入的配置設定 selectedPreset（不觸發 watch）
       const savedSelectedPreset = selectedPreset.value; // loadConfig 已設定

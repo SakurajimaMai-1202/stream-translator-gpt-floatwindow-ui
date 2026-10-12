@@ -30,7 +30,7 @@ export const useLlamaStore = defineStore('llama', () => {
   const translationStore = useTranslationStore();
   const configProfile = ref('');
   const defaultGpuLayers = computed(() =>
-    (translationStore.runtimeStatus?.profile ?? configProfile.value) === 'cuda' ? 99 : 0);
+    ['cuda', 'rocm'].includes(translationStore.runtimeStatus?.profile ?? configProfile.value) ? 99 : 0);
 
   // State
   const models = ref<ModelInfo[]>([]);

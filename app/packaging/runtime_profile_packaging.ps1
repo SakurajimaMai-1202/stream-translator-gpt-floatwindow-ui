@@ -47,7 +47,7 @@ function Set-RuntimeProfileInConfigText {
         if ($line -match '^[^\s#]') {
             $inLlama = $line -match '^llama:\s*$'
         }
-        if ($RuntimeProfile -eq "cuda" -and $inLlama -and $line -match '^(  n_gpu_layers:[ \t]*)\d+([ \t]*(?:#.*)?)$') {
+        if ($RuntimeProfile -in @("cuda", "rocm") -and $inLlama -and $line -match '^(  n_gpu_layers:[ \t]*)\d+([ \t]*(?:#.*)?)$') {
             $lines[$index] = "$($Matches[1])99$($Matches[2])"
         }
         if ($line -match '^\S[^:]*:\s*$') {

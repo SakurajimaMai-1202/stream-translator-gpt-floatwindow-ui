@@ -54,7 +54,7 @@ def _settings_source():
     return "\n".join(source.read_text(encoding="utf-8") for source in sources)
 
 
-@pytest.mark.parametrize("profile, expected", [("cuda", 99), ("cpu", 0), ("rocm", 0)])
+@pytest.mark.parametrize("profile, expected", [("cuda", 99), ("cpu", 0), ("rocm", 99)])
 @pytest.mark.parametrize("packaged", [True, False])
 def test_new_config_gpu_layers_follow_runtime_profile(tmp_path, monkeypatch, profile, expected, packaged):
     monkeypatch.setattr("backend.core.config_manager.get_packaged_runtime_profile", lambda: profile if packaged else None)
@@ -80,7 +80,7 @@ def test_cuda_preserves_saved_gpu_layers(tmp_path, monkeypatch, legacy, saved_la
     assert ConfigManager(config_path).get_config()["llama"]["n_gpu_layers"] == saved_layers
 
 
-@pytest.mark.parametrize("profile, expected", [("cuda", 99), ("cpu", 0), ("rocm", 0)])
+@pytest.mark.parametrize("profile, expected", [("cuda", 99), ("cpu", 0), ("rocm", 99)])
 def test_reset_gpu_layers_matches_first_run(tmp_path, monkeypatch, profile, expected):
     monkeypatch.setattr("backend.core.config_manager.get_packaged_runtime_profile", lambda: profile)
     config_path = tmp_path / "config.yaml"

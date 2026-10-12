@@ -380,7 +380,7 @@ class ConfigManager:
     def _profile_defaults(self) -> Dict[str, Any]:
         """Defaults for first run and explicit reset, never for loaded configs."""
         config = self._enforce_packaged_runtime(self._deep_copy(self.DEFAULT_CONFIG))
-        config['llama']['n_gpu_layers'] = 99 if config['runtime']['profile'] == 'cuda' else 0
+        config['llama']['n_gpu_layers'] = 99 if config['runtime']['profile'] in ('cuda', 'rocm') else 0
         return config
 
     def _deep_copy(self, obj: Any) -> Any:

@@ -4,6 +4,8 @@ import fnmatch
 import logging
 import os
 import shutil
+import signal
+import tempfile
 import subprocess
 import sys
 import tarfile
@@ -105,6 +107,7 @@ class ModelDownloadManager:
         self._tasks: Dict[str, ModelDownloadTask] = {}
         self._workers: Dict[str, asyncio.Task] = {}
         self._cancel_events: Dict[str, Event] = {}
+        self._model_workers: Dict[tuple, str] = {}
         self._lock = Lock()
 
     def _now(self) -> datetime:
@@ -170,6 +173,8 @@ class ModelDownloadManager:
         with self._lock:
             task = self._tasks.get(task_id)
             if not task:
+                return
+            if task.status in {"cancelling", "cancelled"} and status != "cancelled":
                 return
 
             if status is not None:
@@ -254,7 +259,11 @@ class ModelDownloadManager:
             updated_at=now,
         )
 
+        model_key = (compute_backend, self._normalize_repo_id(engine, normalized_model_id))
         with self._lock:
+            if model_key in self._model_workers:
+                raise ValueError("上一次下載仍在停止中，請稍後再試")
+            self._model_workers[model_key] = task_id
             self._tasks[task_id] = task
 
         cancel_event = Event()
@@ -273,11 +282,13 @@ class ModelDownloadManager:
         download_logger.info("Starting task=%s backend=%s engine=%s model=%s source=%s",
                              task_id, compute_backend, engine, model_id, source)
         try:
+            if cancel_event.is_set():
+                raise asyncio.CancelledError
             self._update_task(task_id, status="downloading", progress=0.05, message="準備下載")
             if compute_backend == "cpu":
                 await self._download_sherpa_archive(task_id, model_id, cancel_event)
             elif engine == "sensevoice":
-                await self._download_sensevoice_from_modelscope(task_id, model_id)
+                await self._download_sensevoice_from_modelscope(task_id, model_id, cancel_event)
             else:
                 repo_id = self._normalize_repo_id(engine, model_id)
                 await self._download_from_hf(task_id, repo_id, cancel_event)
@@ -292,11 +303,17 @@ class ModelDownloadManager:
             logger.exception("模型下載失敗 task_id=%s", task_id)
             download_logger.exception("Failed task=%s backend=%s model=%s source=%s",
                                       task_id, compute_backend, model_id, source)
-            self._update_task(task_id, status="failed", message="下載失敗", error=str(e))
+            if cancel_event.is_set():
+                self._update_task(task_id, status="cancelled", message="下載已取消")
+            else:
+                self._update_task(task_id, status="failed", message="下載失敗", error=str(e))
         finally:
             with self._lock:
                 self._workers.pop(task_id, None)
                 self._cancel_events.pop(task_id, None)
+                model_key = (compute_backend, self._normalize_repo_id(engine, model_id))
+                if self._model_workers.get(model_key) == task_id:
+                    self._model_workers.pop(model_key)
 
     async def _download_sherpa_archive(self, task_id: str, model_id: str, cancel_event: Event) -> None:
         bundle, required_paths = SHERPA_CPU_BUNDLES[model_id]
@@ -308,9 +325,10 @@ class ModelDownloadManager:
             state = {"total": 0, "blob_dir": None}
 
             def blocking_hf_download() -> None:
+                self._check_cancelled(cancel_event)
                 if target.exists() and all((target / name).exists() for name in required_paths):
                     return
-                from huggingface_hub import HfApi, snapshot_download
+                from huggingface_hub import HfApi
 
                 repo_id = SHERPA_HF_REPOS[model_id]
                 allow_patterns = ["*.onnx", "tokenizer/*", "LICENSE*", "README*"]
@@ -324,13 +342,15 @@ class ModelDownloadManager:
                 cache_dir = get_huggingface_hub_cache()
                 state["blob_dir"] = cache_dir / f"models--{repo_id.replace('/', '--')}" / "blobs"
                 prefetch_large_files(repo_id, info, cache_dir,
-                                     lambda name: any(fnmatch.fnmatch(name, p) for p in allow_patterns))
-                snapshot = snapshot_download(
+                                     lambda name: any(fnmatch.fnmatch(name, p) for p in allow_patterns),
+                                     cancel_event=cancel_event)
+                snapshot = self._snapshot_download(cancel_event,
                     repo_id=repo_id,
                     cache_dir=str(cache_dir),
                     allow_patterns=allow_patterns,
                     max_workers=4,
                 )
+                self._check_cancelled(cancel_event)
                 shutil.copytree(snapshot, target, dirs_exist_ok=True)
                 missing = [name for name in required_paths if not (target / name).exists()]
                 if missing:
@@ -382,7 +402,8 @@ class ModelDownloadManager:
         state = {"total": 0, "blob_dir": None}
 
         def blocking_download():
-            from huggingface_hub import HfApi, snapshot_download
+            self._check_cancelled(cancel_event)
+            from huggingface_hub import HfApi
 
             cache_dir = get_huggingface_hub_cache()
             cache_dir.mkdir(parents=True, exist_ok=True)
@@ -390,8 +411,8 @@ class ModelDownloadManager:
             state["blob_dir"] = repo_cache / "blobs"
             info = HfApi().model_info(repo_id, files_metadata=True)
             state["total"] = sum(int(sibling.size or 0) for sibling in info.siblings)
-            prefetch_large_files(repo_id, info, cache_dir)
-            return snapshot_download(
+            prefetch_large_files(repo_id, info, cache_dir, cancel_event=cancel_event)
+            return self._snapshot_download(cancel_event,
                 repo_id=repo_id,
                 max_workers=4,
                 cache_dir=str(cache_dir),
@@ -401,8 +422,6 @@ class ModelDownloadManager:
 
         download = asyncio.create_task(asyncio.to_thread(blocking_download))
         while not download.done():
-            if cancel_event.is_set():
-                raise asyncio.CancelledError
             total = state["total"]
             blob_dir = state["blob_dir"]
             if total > 0 and isinstance(blob_dir, Path):
@@ -411,6 +430,68 @@ class ModelDownloadManager:
             await asyncio.sleep(0.5)
         path = await download
         self._update_task(task_id, progress=0.95, message=f"模型已快取至 {path}")
+
+    @staticmethod
+    def _check_cancelled(cancel_event: Event) -> None:
+        if cancel_event.is_set():
+            raise InterruptedError("Download cancelled")
+
+    @staticmethod
+    def _stop_download_process(process) -> None:
+        if os.name == "nt":
+            try:
+                subprocess.run(
+                    ["taskkill", "/T", "/F", "/PID", str(process.pid)],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    creationflags=subprocess.CREATE_NO_WINDOW, timeout=5,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                process.kill()
+        else:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=5)
+
+    def _run_download_process(self, command, cancel_event: Event, *, env=None, timeout=1800) -> str:
+        self._check_cancelled(cancel_event)
+        env = dict(os.environ if env is None else env)
+        env["PYTHONIOENCODING"] = "utf-8"
+        # Files avoid pipe backpressure even when the SDK writes verbose logs.
+        with tempfile.TemporaryFile() as output:
+            process = subprocess.Popen(
+                command, cwd=str(get_app_root()), env=env,
+                stdout=output, stderr=subprocess.STDOUT,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                start_new_session=os.name != "nt",
+            )
+            deadline = time.monotonic() + timeout
+            try:
+                while process.poll() is None:
+                    self._check_cancelled(cancel_event)
+                    if time.monotonic() >= deadline:
+                        raise subprocess.TimeoutExpired(command, timeout)
+                    cancel_event.wait(0.5)
+                self._check_cancelled(cancel_event)
+            finally:
+                if process.poll() is None:
+                    self._stop_download_process(process)
+            output.seek(0)
+            result = output.read().decode("utf-8", errors="replace")
+            if process.returncode != 0:
+                raise RuntimeError(f"Model download failed: {result}")
+            return result
+
+    def _snapshot_download(self, cancel_event: Event, **kwargs) -> str:
+        from huggingface_hub import snapshot_download
+
+        self._check_cancelled(cancel_event)
+        path = snapshot_download(**kwargs)
+        self._check_cancelled(cancel_event)
+        return path
 
     def cancel(self, task_id: str) -> ModelDownloadTask:
         with self._lock:
@@ -423,20 +504,19 @@ class ModelDownloadManager:
             task.message = "正在取消下載"
             task.updated_at = self._now()
             event = self._cancel_events.get(task_id)
-            worker = self._workers.get(task_id)
             if event:
+                # Keep the coroutine alive until its thread/process has exited.
                 event.set()
-            if worker:
-                worker.cancel()
             return copy.deepcopy(task)
 
-    async def _download_sensevoice_from_modelscope(self, task_id: str, model_id: str) -> None:
+    async def _download_sensevoice_from_modelscope(self, task_id: str, model_id: str, cancel_event: Event) -> None:
         self._update_task(task_id, progress=0.15, message="Preparing ModelScope download")
 
         def blocking_download():
             cache_dir = self._get_modelscope_cache_dir()
             cache_dir.mkdir(parents=True, exist_ok=True)
-            python_exe = self._resolve_sensevoice_download_python()
+            self._check_cancelled(cancel_event)
+            python_exe = self._resolve_sensevoice_download_python(cancel_event)
             script = (
                 "from funasr import AutoModel\n"
                 f"AutoModel(model={model_id!r}, trust_remote_code=True, device='cpu', disable_update=True)\n"
@@ -446,28 +526,11 @@ class ModelDownloadManager:
             env["MODELSCOPE_DOWNLOAD_PARALLEL_WORKERS"] = "4"
             env["MODELSCOPE_DOWNLOAD_PARALLELS"] = "4"
             env["MODELSCOPE_DOWNLOAD_PARALLEL_THRESHOLD_MB"] = "16"
-            result = subprocess.run(
-                [python_exe, "-c", script],
-                cwd=str(get_app_root()),
-                env=env,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=1800,
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-            )
-            if result.returncode != 0:
-                raise RuntimeError(
-                    "SenseVoice ModelScope download failed with "
-                    f"{python_exe}: {result.stderr or result.stdout}"
-                )
+            self._run_download_process([python_exe, "-c", script], cancel_event, env=env)
             return self._get_modelscope_model_dir(model_id)
 
-        for step in (0.25, 0.45, 0.65, 0.85):
-            self._update_task(task_id, progress=step, message="Downloading from ModelScope")
-            await asyncio.sleep(0.05)
+        self._check_cancelled(cancel_event)
+        self._update_task(task_id, message="Downloading from ModelScope")
 
         path = await asyncio.to_thread(blocking_download)
         self._update_task(task_id, progress=0.95, message=f"SenseVoice model downloaded: {path}")
@@ -501,7 +564,7 @@ class ModelDownloadManager:
             (cache_dir / namespace / name).resolve(),
         ]
 
-    def _resolve_sensevoice_download_python(self) -> str:
+    def _resolve_sensevoice_download_python(self, cancel_event: Event) -> str:
         app_root = get_app_root()
         candidates = [
             app_root / "_runtime" / "python.exe",
@@ -513,14 +576,13 @@ class ModelDownloadManager:
         for candidate in candidates:
             if not candidate.exists():
                 continue
-            result = subprocess.run(
-                [str(candidate), "-c", "import funasr"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-            )
-            if result.returncode == 0:
-                return str(candidate)
+            try:
+                self._run_download_process(
+                    [str(candidate), "-c", "import funasr"], cancel_event, timeout=60,
+                )
+            except RuntimeError:
+                continue
+            return str(candidate)
         raise RuntimeError("No Python runtime with FunASR is available for SenseVoice download")
 
     def _directory_size(self, path: Path) -> int:

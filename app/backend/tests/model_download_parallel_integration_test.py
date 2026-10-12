@@ -36,7 +36,13 @@ def test_hf_prefetch_precedes_native_snapshot(monkeypatch, tmp_path):
     info = SimpleNamespace(sha='a' * 40, siblings=[])
     monkeypatch.setattr(module, 'get_huggingface_hub_cache', lambda: tmp_path)
     monkeypatch.setattr(huggingface_hub, 'HfApi', lambda: SimpleNamespace(model_info=lambda *a, **k: info))
-    monkeypatch.setattr(module, 'prefetch_large_files', lambda *a: calls.append('prefetch'))
+    event = Event()
+
+    def prefetch(*args, cancel_event):
+        assert cancel_event is event
+        calls.append('prefetch')
+
+    monkeypatch.setattr(module, 'prefetch_large_files', prefetch)
 
     def snapshot(**kwargs):
         calls.append('snapshot')
@@ -45,20 +51,22 @@ def test_hf_prefetch_precedes_native_snapshot(monkeypatch, tmp_path):
         return str(tmp_path)
 
     monkeypatch.setattr(huggingface_hub, 'snapshot_download', snapshot)
-    asyncio.run(module.ModelDownloadManager()._download_from_hf('task', 'test/model', Event()))
+    asyncio.run(module.ModelDownloadManager()._download_from_hf('task', 'test/model', event))
     assert calls == ['prefetch', 'snapshot']
 
 
 def test_modelscope_subprocess_enables_range_downloads(monkeypatch, tmp_path):
     manager = module.ModelDownloadManager()
     monkeypatch.setattr(manager, '_get_modelscope_cache_dir', lambda: tmp_path)
-    monkeypatch.setattr(manager, '_resolve_sensevoice_download_python', lambda: 'python')
+    cancel_event = Event()
+    monkeypatch.setattr(manager, '_resolve_sensevoice_download_python', lambda event: 'python')
 
-    def run(*args, **kwargs):
+    def popen(*args, **kwargs):
         env = kwargs['env']
         assert env['MODELSCOPE_DOWNLOAD_PARALLEL_WORKERS'] == '4'
+        assert env['MODELSCOPE_DOWNLOAD_PARALLELS'] == '4'
         assert env['MODELSCOPE_DOWNLOAD_PARALLEL_THRESHOLD_MB'] == '16'
-        return SimpleNamespace(returncode=0)
+        return SimpleNamespace(returncode=0, poll=lambda: 0)
 
-    monkeypatch.setattr(module.subprocess, 'run', run)
-    asyncio.run(manager._download_sensevoice_from_modelscope('task', 'iic/SenseVoiceSmall'))
+    monkeypatch.setattr(module.subprocess, 'Popen', popen)
+    asyncio.run(manager._download_sensevoice_from_modelscope('task', 'iic/SenseVoiceSmall', cancel_event))

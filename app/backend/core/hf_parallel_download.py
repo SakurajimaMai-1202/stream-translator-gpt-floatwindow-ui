@@ -10,16 +10,22 @@ from .http_downloader import HttpDownloader, DOWNLOAD_CHUNK_SIZE
 logger = logging.getLogger(__name__)
 
 
-def prefetch_large_files(repo_id, info, cache_dir: Path, allow_file=lambda _: True):
+def prefetch_large_files(repo_id, info, cache_dir: Path, allow_file=lambda _: True, *, cancel_event=None):
     from huggingface_hub import hf_hub_url
     from huggingface_hub.utils import WeakFileLock, validate_repo_id
 
+    def check_cancelled():
+        if cancel_event is not None and cancel_event.is_set():
+            raise InterruptedError("Download cancelled")
+
+    check_cancelled()
     # An immutable revision and LFS digest are required before writing a blob.
     validate_repo_id(repo_id)
     if not re.fullmatch('[0-9a-f]{40}', getattr(info, 'sha', '') or ''):
         return
     folder = f"models--{repo_id.replace('/', '--')}"
     for entry in info.siblings:
+        check_cancelled()
         if not allow_file(entry.rfilename) or int(entry.size or 0) < 2 * DOWNLOAD_CHUNK_SIZE:
             continue
         lfs = getattr(entry, 'lfs', None)
@@ -41,11 +47,14 @@ def prefetch_large_files(repo_id, info, cache_dir: Path, allow_file=lambda _: Tr
             try:
                 # No credentials are forwarded to CDN redirects. Gated/private
                 # repositories fall back to the SDK's authenticated downloader.
-                HttpDownloader().download(url, partial)
+                HttpDownloader(cancel_event=cancel_event).download(url, partial)
+            except InterruptedError:
+                raise
             except (OSError, urllib.error.URLError) as exc:
                 logger.warning('Parallel prefetch unavailable for %s; using Hugging Face downloader: %s',
                                entry.rfilename, type(exc).__name__)
                 continue
+            check_cancelled()
             with partial.open('rb') as stream:
                 actual = hashlib.file_digest(stream, 'sha256').hexdigest()
             if partial.stat().st_size != entry.size or actual != digest:

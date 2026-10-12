@@ -31,6 +31,11 @@ defineProps<{ name: string }>();
     <template v-else-if="name === 'desktop'"><rect x="3" y="4" width="18" height="12" rx="1"/><path d="M8 20h8M12 16v4"/></template>
     <template v-else-if="name === 'mobile'"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/></template>
     <template v-else-if="name === 'warning'"><path d="m12 3 10 18H2zM12 9v5M12 18h.01"/></template>
+    <template v-else-if="name === 'close'"><path d="M6 6l12 12M18 6 6 18"/></template>
+    <template v-else-if="name === 'info'"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></template>
+    <template v-else-if="name === 'error'"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></template>
+    <template v-else-if="name === 'app-audio'"><rect x="3" y="4" width="18" height="16" rx="1"/><path d="M3 8h18M7 15v-2M10 17v-6M13 16v-4M16 14v-1"/></template>
+    <template v-else-if="name === 'subtitle-window'"><rect x="3" y="4" width="18" height="16" rx="1"/><path d="M7 14h10M9 17h6"/></template>
     <template v-else><path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5"/></template>
   </svg>
 </template>

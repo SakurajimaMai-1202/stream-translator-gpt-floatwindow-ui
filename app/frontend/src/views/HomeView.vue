@@ -471,7 +471,7 @@ const backendOptions = computed<UiSelectOption[]>(() => {
     { value: 'none', label: '不翻譯' },
     { value: 'gpt', label: 'OpenAI GPT' },
     { value: 'gemini', label: 'Google Gemini' },
-    { value: 'llama', label: '🦙 Llama (本地)' }
+    { value: 'llama', label: 'Llama（本機／相容服務）' }
   ];
 
   const customModels = store.config?.translation?.custom_models || [];
@@ -494,6 +494,13 @@ const selectedQwen3AsrModel = ref('Qwen/Qwen3-ASR-1.7B');  // 🆕 新增: Qwen3
 const selectedSenseVoiceModel = ref('iic/SenseVoiceSmall');
 const selectedFunAsrModel = ref('FunAudioLLM/Fun-ASR-Nano-2512');
 const selectedParakeetModel = ref('nvidia/parakeet-tdt_ctc-0.6b-ja');
+const selectedOpenAiTranscriptionModel = ref('whisper-1');
+const OPENAI_TRANSCRIPTION_MODELS = ['whisper-1', 'gpt-4o-transcribe', 'gpt-4o-mini-transcribe'];
+const openAiTranscriptionModelOptions = computed<UiSelectOption[]>(() => {
+  const current = selectedOpenAiTranscriptionModel.value;
+  const models = OPENAI_TRANSCRIPTION_MODELS.includes(current) ? OPENAI_TRANSCRIPTION_MODELS : [...OPENAI_TRANSCRIPTION_MODELS, current];
+  return models.map((model) => ({ value: model, label: model }));
+});
 const selectedInputLanguage = ref('auto');
 const selectedOutputLanguage = ref('Traditional Chinese');
 const selectedBackend = ref('gpt');
@@ -557,6 +564,26 @@ const localLlmStatusDescription = computed(() => {
   if (llamaStore.localLlmEnabled && llamaStore.serverStatus.last_error) return llamaStore.serverStatus.last_error;
   return '開啟後會啟動 llama.cpp，關閉則不使用本地模型';
 });
+
+// The toggle means "this app runs llama-server"; the 'llama' backend means
+// "use a llama-compatible endpoint", which may also be LM Studio.
+const localLlmUsageHint = computed<'external' | 'idle' | null>(() => {
+  const backend = selectedBackend.value;
+  const usesLlamaBackend = translationEnabled.value && (backend === 'llama' || backend === 'localllm');
+  if (usesLlamaBackend && !llamaStore.localLlmEnabled) return 'external';
+  const usesNoLocalModel = !translationEnabled.value || ['none', 'gpt', 'gemini'].includes(backend);
+  if (usesNoLocalModel && !externalFamilyEndpoint.value && (llamaStore.localLlmEnabled || llamaStore.isServerRunning)) return 'idle';
+  return null;
+});
+
+async function stopLocalLlm() {
+  try {
+    await llamaStore.setLocalLlmEnabled(false);
+    addLog('已停用本地 LLM');
+  } catch (error: any) {
+    addLog(`本地 LLM 停止失敗: ${error.response?.data?.detail || error.message}`);
+  }
+}
 
 // 自動保存 debounce timer
 const runtimeCapabilities = computed(() => store.runtimeStatus?.asr_capabilities || store.runtimeStatus?.capabilities || null);
@@ -673,6 +700,7 @@ function buildHomeConfigSnapshotFromConfig(cfg: Config): string {
     selectedSenseVoiceModel: cfg.transcription?.sensevoice_model || 'iic/SenseVoiceSmall',
     selectedFunAsrModel: cfg.transcription?.fun_asr_model || 'FunAudioLLM/Fun-ASR-Nano-2512',
     selectedParakeetModel: cfg.transcription?.nemo_asr_model || 'nvidia/parakeet-tdt_ctc-0.6b-ja',
+    selectedOpenAiTranscriptionModel: cfg.transcription?.openai_transcription_model || 'whisper-1',
     selectedInputLanguage: normalizeInputLanguage(cfg.transcription?.language),
     selectedOutputLanguage: cfg.translation?.target_language || 'Traditional Chinese',
     selectedBackend: cfg.translation?.backend || 'gpt',
@@ -694,6 +722,7 @@ function buildHomeConfigSnapshotFromRefs(): string {
     selectedSenseVoiceModel: selectedSenseVoiceModel.value,
     selectedFunAsrModel: selectedFunAsrModel.value,
     selectedParakeetModel: selectedParakeetModel.value,
+    selectedOpenAiTranscriptionModel: selectedOpenAiTranscriptionModel.value,
     selectedInputLanguage: selectedInputLanguage.value,
     selectedOutputLanguage: selectedOutputLanguage.value,
     selectedBackend: selectedBackend.value,
@@ -716,6 +745,7 @@ async function saveHomeConfigToBackend(requireSuccess = false) {
       sensevoice_model: selectedSenseVoiceModel.value,
       fun_asr_model: selectedFunAsrModel.value,
       nemo_asr_model: selectedParakeetModel.value,
+      openai_transcription_model: selectedOpenAiTranscriptionModel.value,
       nemo_asr_dtype: store.config.transcription?.nemo_asr_dtype || 'bfloat16',
       language: !interfaceMode.isSimple && engine === 'parakeet-ctc-ja'
         ? parakeetLanguageForModel(selectedParakeetModel.value)
@@ -920,6 +950,7 @@ async function applyConfigToRefs(cfg: Config) {
     selectedSenseVoiceModel.value = cfg.transcription?.sensevoice_model || 'iic/SenseVoiceSmall';
     selectedFunAsrModel.value = cfg.transcription?.fun_asr_model || 'FunAudioLLM/Fun-ASR-Nano-2512';
     selectedParakeetModel.value = cfg.transcription?.nemo_asr_model || 'nvidia/parakeet-tdt_ctc-0.6b-ja';
+    selectedOpenAiTranscriptionModel.value = cfg.transcription?.openai_transcription_model || 'whisper-1';
     selectedTranscriptionEngine.value = getTranscriptionEngineFromConfig(cfg);
     coerceRuntimeLimitedSelections();
     selectedInputLanguage.value = normalizeInputLanguage(cfg.transcription?.language);
@@ -1137,6 +1168,7 @@ onMounted(async () => {
       selectedSenseVoiceModel,
       selectedFunAsrModel,
       selectedParakeetModel,
+      selectedOpenAiTranscriptionModel,
       selectedInputLanguage,
       selectedOutputLanguage,
       selectedBackend,
@@ -1421,7 +1453,7 @@ function clearLogs() {
           </div>
           <div class="flex flex-wrap items-center gap-2 sm:gap-3">
           <!-- Status dot -->
-          <div class="flex items-center gap-1.5 bg-white/5 px-2.5 py-0.5 rounded-full border border-white/10 text-[10px]">
+          <div class="flex items-center gap-1.5 bg-white/5 px-2.5 py-0.5 rounded-full border border-white/10 text-xs">
             <div :class="[
               'w-1.5 h-1.5 rounded-full',
               store.isRunning ? 'bg-green-400 animate-pulse shadow shadow-green-400/50' : 'bg-gray-500'
@@ -1432,7 +1464,7 @@ function clearLogs() {
           </div>
 
           <!-- Configuration Status dot -->
-          <div class="flex items-center gap-1.5 bg-white/5 px-2.5 py-0.5 rounded-full border border-white/10 text-[10px]">
+          <div class="flex items-center gap-1.5 bg-white/5 px-2.5 py-0.5 rounded-full border border-white/10 text-xs">
             <div :class="[
               'w-1.5 h-1.5 rounded-full',
               hasErrors ? 'bg-red-400 animate-pulse' : (configWarnings.length > 0 ? 'bg-yellow-400 animate-pulse' : 'bg-green-400')
@@ -1445,10 +1477,10 @@ function clearLogs() {
         </div>
         </div>
         <div class="flex min-w-0 items-center gap-2 max-md:w-full max-md:justify-between">
-          <div v-if="store.currentUrl" class="text-white/40 text-[10px] truncate max-w-xs sm:max-w-md font-mono bg-white/5 px-2.5 py-0.5 rounded-lg border border-white/5">
+          <div v-if="store.currentUrl" class="text-white/60 text-xs truncate max-w-xs sm:max-w-md font-mono bg-white/5 px-2.5 py-0.5 rounded-lg border border-white/5">
             {{ store.currentUrl }}
           </div>
-          <button type="button" class="rounded-lg border border-cyan-400/20 bg-cyan-400/10 px-2.5 py-1 text-[10px] font-bold text-cyan-200 transition hover:bg-cyan-400/20" @click="router.push('/guide')">
+          <button type="button" class="rounded-lg border border-cyan-400/20 bg-cyan-400/10 px-2.5 py-1 text-xs font-bold text-cyan-200 transition hover:bg-cyan-400/20" @click="router.push('/guide')">
             使用教學
           </button>
         </div>
@@ -1472,43 +1504,35 @@ function clearLogs() {
 
       <div v-if="showFfmpegWarning" class="mb-4 p-3.5 bg-yellow-950/70 border border-yellow-500/30 text-yellow-200 rounded-xl flex justify-between items-start gap-3">
         <div class="flex-1">
-          <div class="font-bold text-sm">⚠️ 未偵測到 ffmpeg</div>
+          <div class="flex items-center gap-1.5 font-bold text-sm"><AppIcon name="warning" class="h-4 w-4" /> 未偵測到 ffmpeg</div>
           <p class="text-xs text-yellow-100/70 mt-1 leading-relaxed">
             目前系統找不到 ffmpeg，可先安裝或確認路徑。這不會阻止 UI 啟動，但音訊處理可能失敗。
           </p>
         </div>
-        <button @click="ffmpegWarningDismissed = true" class="text-yellow-400/60 hover:text-white transition font-bold text-lg leading-none p-1">✕</button>
+        <button type="button" aria-label="關閉" @click="ffmpegWarningDismissed = true" class="text-yellow-300/80 hover:text-white transition p-1"><AppIcon name="close" class="h-4 w-4" /></button>
       </div>
 
       <section v-if="showReadinessChecklist" class="mb-4 rounded-xl border border-white/10 bg-slate-950/70 p-4" aria-labelledby="readiness-title">
         <div class="flex items-center justify-between gap-3">
           <div>
             <h2 id="readiness-title" class="text-base font-bold text-white">開始前確認</h2>
-            <p class="mt-1 text-sm text-white/55">確認音訊來源和語音辨識準備完成後，就可以開始使用。</p>
+            <p class="mt-1 text-sm text-white/65">確認音訊來源和語音辨識準備完成後，就可以開始使用。</p>
           </div>
           <button type="button" class="rounded-lg border border-white/15 px-3 py-2 text-sm text-white/75 hover:bg-white/5" @click="interfaceMode.mode = null; interfaceMode.pendingMode = null; interfaceMode.onboardingStep = 'mode'">繼續設定</button>
         </div>
         <div class="mt-3 grid gap-2 sm:grid-cols-2">
           <div v-for="item in readinessItems" :key="item.label" class="rounded-lg border border-white/10 bg-white/[0.03] p-3">
             <p class="text-sm font-bold text-white"><span :class="item.status === 'ready' ? 'text-emerald-300' : item.status === 'error' ? 'text-red-300' : 'text-amber-300'">{{ item.status === 'ready' ? '已完成' : item.status === 'error' ? '需要處理' : '待確認' }}</span> · {{ item.label }}</p>
-            <p class="mt-1 text-sm leading-5 text-white/55">{{ item.detail }}</p>
+            <p class="mt-1 text-sm leading-5 text-white/65">{{ item.detail }}</p>
           </div>
         </div>
-      </section>
-
-      <section class="mb-4 flex flex-col gap-3 rounded-xl border border-white/10 bg-white/5 p-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h2 class="text-base font-bold text-white">預覽字幕樣式</h2>
-          <p class="mt-1 text-sm leading-5 text-white/60">用範例字幕調整位置、字級、顏色和背景透明度。範例內容不會保留。</p>
-        </div>
-        <button type="button" class="shrink-0 rounded-lg bg-white/10 px-4 py-2.5 text-sm font-bold text-white hover:bg-white/15" @click="router.push('/subtitle-style')">預覽字幕樣式</button>
       </section>
 
       <!-- 配置警告面板 (僅在有警告/錯誤時動態顯示) -->
       <div v-if="configWarnings.length > 0" class="mb-4 p-4 rounded-xl bg-slate-950/90 border"
         :class="hasErrors ? 'border-red-500/30 bg-red-500/10' : 'border-yellow-500/30 bg-yellow-500/10'">
         <div class="flex items-center gap-2 mb-2">
-          <span class="text-base">{{ hasErrors ? '❌' : '⚠️' }}</span>
+          <AppIcon :name="hasErrors ? 'error' : 'warning'" :class="['h-4 w-4', hasErrors ? 'text-red-300' : 'text-yellow-300']" />
           <span class="font-bold text-white text-xs tracking-wider uppercase">配置檢查</span>
         </div>
         <ul class="space-y-1.5">
@@ -1520,7 +1544,7 @@ function clearLogs() {
               {{ warning.message }}
             </span>
             <button v-if="warning.page" type="button" @click="goToWarningPage(warning.page)"
-              class="px-2 py-0.5 bg-white/10 hover:bg-white/20 text-white rounded text-[10px] transition border border-white/5">
+              class="px-2 py-0.5 bg-white/10 hover:bg-white/20 text-white rounded text-xs transition border border-white/5">
               {{ warning.actionLabel || '前往設定' }}
             </button>
           </li>
@@ -1529,13 +1553,13 @@ function clearLogs() {
 
       <!-- Error/Status Messages -->
       <div v-if="store.errorMessage" class="mb-4 p-3.5 bg-red-950/80 border border-red-500/30 text-red-200 rounded-xl flex justify-between items-center text-sm">
-        <span class="flex items-center gap-2"><span>❌</span> {{ store.errorMessage }}</span>
-        <button @click="store.clearError()" class="text-red-400 hover:text-white transition font-bold text-lg p-1">✕</button>
+        <span class="flex items-center gap-2"><AppIcon name="error" class="h-4 w-4 shrink-0" /> {{ store.errorMessage }}</span>
+        <button type="button" aria-label="關閉" @click="store.clearError()" class="text-red-300 hover:text-white transition p-1"><AppIcon name="close" class="h-4 w-4" /></button>
       </div>
 
       <div v-if="store.statusMessage" class="mb-4 p-3.5 bg-green-950/80 border border-green-500/30 text-green-200 rounded-xl flex justify-between items-center text-sm">
-        <span class="flex items-center gap-2"><span>ℹ️</span> {{ store.statusMessage }}</span>
-        <button @click="store.clearStatus()" class="text-green-400 hover:text-white transition font-bold text-lg p-1">✕</button>
+        <span class="flex items-center gap-2"><AppIcon name="info" class="h-4 w-4 shrink-0" /> {{ store.statusMessage }}</span>
+        <button type="button" aria-label="關閉" @click="store.clearStatus()" class="text-green-300 hover:text-white transition p-1"><AppIcon name="close" class="h-4 w-4" /></button>
       </div>
 
       <!-- Dashboard Grid Layout -->
@@ -1565,7 +1589,7 @@ function clearLogs() {
                 >
                   <AppIcon name="url" class="source-card-icon" />
                   <span class="font-bold text-xs">URL 串流</span>
-                  <span class="text-[11px] text-white/40 mt-1 hidden sm:inline-block leading-tight">播放網路直播流</span>
+                  <span class="text-xs text-white/60 mt-1 hidden sm:inline-block leading-tight">播放網路直播流</span>
                 </button>
                 <button
                   @click="audioSource = 'file'; onAudioSourceChange()"
@@ -1581,7 +1605,7 @@ function clearLogs() {
                 >
                   <AppIcon name="file" class="source-card-icon" />
                   <span class="font-bold text-xs"><span class="md:hidden">電腦</span>本地檔案</span>
-                  <span class="text-[11px] text-white/40 mt-1 hidden sm:inline-block leading-tight">轉譯本機影音檔</span>
+                  <span class="text-xs text-white/60 mt-1 hidden sm:inline-block leading-tight">轉譯本機影音檔</span>
                 </button>
                 <button
                   @click="audioSource = 'microphone'; onAudioSourceChange()"
@@ -1597,7 +1621,7 @@ function clearLogs() {
                 >
                   <AppIcon name="microphone" class="source-card-icon" />
                   <span class="font-bold text-xs"><span class="md:hidden">電腦</span>麥克風</span>
-                  <span class="text-[11px] text-white/40 mt-1 hidden sm:inline-block leading-tight">錄製麥克風輸入</span>
+                  <span class="text-xs text-white/60 mt-1 hidden sm:inline-block leading-tight">錄製麥克風輸入</span>
                 </button>
                 <button
                   @click="audioSource = 'system_audio'; onAudioSourceChange()"
@@ -1613,14 +1637,14 @@ function clearLogs() {
                 >
                   <AppIcon name="system-audio" class="source-card-icon" />
                   <span class="font-bold text-xs"><span class="md:hidden">電腦</span>系統音訊</span>
-                  <span class="text-[11px] text-white/40 mt-1 hidden sm:inline-block leading-tight">捕獲系統播放音</span>
+                  <span class="text-xs text-white/60 mt-1 hidden sm:inline-block leading-tight">捕獲系統播放音</span>
                 </button>
                 <button type="button" @click="audioSource = 'process_audio'; onAudioSourceChange()"
                   :disabled="sourceControlsLocked"
                   :class="['flex flex-col items-center justify-center p-3 rounded-xl border text-center transition-colors', audioSource === 'process_audio' ? 'border-blue-500/80 bg-blue-500/10 text-white' : 'bg-white/5 border-white/10 text-white/70 hover:bg-white/10', sourceControlsLocked ? 'opacity-50 cursor-not-allowed' : '']">
-                  <AppIcon name="system-audio" class="source-card-icon" />
+                  <AppIcon name="app-audio" class="source-card-icon" />
                   <span class="font-bold text-xs">指定應用程式音訊</span>
-                  <span class="text-[11px] text-white/40 mt-1 hidden sm:inline-block leading-tight">選擇要收音的視窗</span>
+                  <span class="text-xs text-white/60 mt-1 hidden sm:inline-block leading-tight">選擇要收音的視窗</span>
                 </button>
               </div>
             </div>
@@ -1659,7 +1683,7 @@ function clearLogs() {
                 class="hidden"
                 @change="handleLocalFileInputChange"
               />
-              <p v-if="audioSource === 'file'" class="text-white/40 text-[10px] mt-1.5 tracking-wide">
+              <p v-if="audioSource === 'file'" class="text-white/60 text-xs mt-1.5 tracking-wide">
                 支援 MP4、MKV、WebM、MOV、MP3、WAV 等格式；桌面版按鈕會開啟原生檔案選擇器。
               </p>
             </div>
@@ -1703,8 +1727,8 @@ function clearLogs() {
                   <AppIcon name="refresh" :class="['h-4 w-4', isLoadingDevices ? 'animate-spin' : '']" />
                 </button>
               </div>
-              <p v-if="availableDevices.length > 0" class="text-white/40 text-[10px] mt-1.5 tracking-wide">
-                ✓ 偵測到 {{ availableDevices.length }} 個音訊裝置
+              <p v-if="availableDevices.length > 0" class="text-white/60 text-xs mt-1.5 tracking-wide">
+                已偵測到 {{ availableDevices.length }} 個音訊裝置
               </p>
             </div>
 
@@ -1734,7 +1758,7 @@ function clearLogs() {
             <!-- 快速設定 (輸入語言, 啟用翻譯, 目標語言) -->
             <p v-if="interfaceMode.isSimple" class="mb-3 text-xs text-indigo-200" role="status">
               {{ simpleAsrModel(selectedInputLanguage) === 'iic/SenseVoiceSmall' ? 'CPU ASR · SenseVoice Small' : simpleAsrModel(selectedInputLanguage) ? (selectedInputLanguage === 'ja' ? 'CPU ASR · Parakeet 日文 0.6B' : 'CPU ASR · Parakeet v3 多語言 0.6B') : '請選擇輸入語言，以自動配置 CPU ASR 模型。' }}
-              <span class="block mt-1 text-white/50">中文使用 SenseVoice，日文使用 Parakeet 日文模型，其餘 25 種支援語言使用 Parakeet v3。其他語言請切換進階模式。</span>
+              <span class="block mt-1 text-white/65">中文使用 SenseVoice，日文使用 Parakeet 日文模型，其餘 25 種支援語言使用 Parakeet v3。其他語言請切換進階模式。</span>
             </p>
             <div class="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
               <!-- 輸入語言 -->
@@ -1746,19 +1770,29 @@ function clearLogs() {
                   :disabled="store.isRunning || isInputLanguageLocked"
                   button-class="bg-white/5 border border-white/15 hover:bg-white/10 text-xs rounded-xl"
                 />
-                <p v-if="isInputLanguageLocked" class="text-amber-300/80 text-[11px] mt-1">
+                <p v-if="isInputLanguageLocked" class="text-amber-300/80 text-xs mt-1">
                   此模型為專用語言模型，輸入語言已自動鎖定。
                 </p>
               </div>
 
               <!-- 啟用翻譯與目標語言 -->
               <div class="flex flex-col">
-                <div class="flex items-center justify-between mb-1.5">
-                  <label class="commercial-field-label">目標語言</label>
-                  <label class="flex items-center gap-1 cursor-pointer text-[10px] text-white/45 hover:text-white/80 transition">
-                    <input type="checkbox" v-model="translationEnabled" :disabled="store.isRunning" class="w-3 h-3 accent-blue-500 rounded bg-white/5 border-white/15" />
-                    <span>翻譯</span>
-                  </label>
+                <div class="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+                  <label class="commercial-field-label !mb-0">目標語言</label>
+                  <div class="inline-flex rounded-lg border border-white/15 bg-white/5 p-0.5" role="group" aria-label="轉譯模式">
+                    <button
+                      v-for="option in [{ value: false, label: '僅轉錄' }, { value: true, label: '轉錄＋翻譯' }]"
+                      :key="option.label"
+                      type="button"
+                      class="translation-mode-option rounded-md px-3 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50"
+                      :class="translationEnabled === option.value ? 'bg-blue-600 text-white' : 'text-white/65 hover:text-white'"
+                      :aria-pressed="translationEnabled === option.value"
+                      :disabled="store.isRunning"
+                      @click="translationEnabled = option.value"
+                    >
+                      {{ option.label }}
+                    </button>
+                  </div>
                 </div>
                 <UiSelect
                   v-model="selectedOutputLanguage"
@@ -1782,81 +1816,84 @@ function clearLogs() {
                 :disabled="store.isRunning || !translationEnabled"
                 button-class="bg-white/5 border border-white/15 text-xs rounded-xl disabled:opacity-40"
               />
-              <p class="mt-1 text-xs text-white/50">選擇翻譯服務或模型；API 金鑰等選項可在翻譯詳細設定中調整。</p>
+              <p class="mt-1 text-xs text-white/65">選擇翻譯服務或模型；API 金鑰等選項可在翻譯詳細設定中調整。</p>
             </div>
             <div v-if="!interfaceMode.isSimple" class="mb-5">
               <button
                 @click="showAdvancedConfig = !showAdvancedConfig"
                 type="button"
-                class="flex min-h-10 w-full items-center justify-between gap-2 rounded-xl border border-indigo-400/15 bg-indigo-400/5 px-3 text-left text-[10px] font-semibold text-indigo-300 transition hover:bg-white/15/10 md:min-h-0 md:w-auto md:border-0 md:bg-transparent md:px-0 md:text-indigo-400"
+                class="flex min-h-10 w-full items-center justify-between gap-2 rounded-xl border border-indigo-400/15 bg-indigo-400/5 px-3 text-left text-xs font-semibold text-indigo-300 transition hover:bg-white/15/10 md:min-h-0 md:w-auto md:border-0 md:bg-transparent md:px-0 md:text-indigo-400"
               >
-                <span>{{ showAdvancedConfig ? '▼ 收起進階配置' : '▶ 展開進階配置（引擎與模型）' }}</span>
-                <span v-if="!showAdvancedConfig" class="truncate text-[11px] text-white/40 md:hidden">{{ selectedTranscriptionEngine }}</span>
+                <span>{{ showAdvancedConfig ? '收起進階配置' : '展開進階配置（引擎與模型）' }}</span>
+                <span v-if="!showAdvancedConfig" class="truncate text-xs text-white/60 md:hidden">{{ selectedTranscriptionEngine }}</span>
               </button>
 
               <Transition name="fade-slide">
                 <div v-show="showAdvancedConfig" class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-3 p-3 bg-white/5 rounded-xl border border-white/5">
                   <div class="flex flex-col">
-                    <label class="text-white/50 text-[11px] font-bold tracking-wider mb-1">ASR 運算模式</label>
+                    <label class="text-white/65 text-xs font-bold tracking-wider mb-1">ASR 運算模式</label>
                     <UiSelect
                       v-model="selectedAsrComputeBackend"
                       :options="asrComputeBackendOptions"
                       :disabled="store.isRunning || store.runtimeStatus?.profile === 'cpu'"
-                      button-class="bg-white/5 border border-white/10 text-[10px] rounded-lg"
+                      button-class="bg-white/5 border border-white/10 text-xs rounded-lg"
                     />
                   </div>
                   <!-- 轉錄引擎 -->
                   <div class="flex flex-col">
-                    <label class="text-white/50 text-[11px] font-bold tracking-wider mb-1">轉錄引擎</label>
+                    <label class="text-white/65 text-xs font-bold tracking-wider mb-1">轉錄引擎</label>
                     <UiSelect
                       v-model="selectedTranscriptionEngine"
                       :options="transcriptionEngineOptions"
                       :disabled="store.isRunning"
-                      button-class="bg-white/5 border border-white/10 text-[10px] rounded-lg"
+                      button-class="bg-white/5 border border-white/10 text-xs rounded-lg"
                     />
                   </div>
 
                   <!-- 模型選擇 -->
                   <div class="flex flex-col">
-                    <label class="text-white/50 text-[11px] font-bold tracking-wider mb-1">模型選擇</label>
+                    <label class="text-white/65 text-xs font-bold tracking-wider mb-1">模型選擇</label>
                     <UiSelect
                       v-if="selectedTranscriptionEngine === 'faster-whisper' || selectedTranscriptionEngine === 'simul-streaming' || selectedTranscriptionEngine === 'faster-whisper-simul'"
                       v-model="selectedWhisperModel"
                       :options="whisperModelOptions"
                       :disabled="store.isRunning"
-                      button-class="bg-white/5 border border-white/10 text-[10px] rounded-lg"
+                      button-class="bg-white/5 border border-white/10 text-xs rounded-lg"
                     />
                     <UiSelect
                       v-else-if="selectedTranscriptionEngine === 'qwen3-asr'"
                       v-model="selectedQwen3AsrModel"
                       :options="qwen3AsrModelOptions"
                       :disabled="store.isRunning"
-                      button-class="bg-white/5 border border-white/10 text-[10px] rounded-lg"
+                      button-class="bg-white/5 border border-white/10 text-xs rounded-lg"
                     />
                     <UiSelect
                       v-else-if="selectedTranscriptionEngine === 'sensevoice'"
                       v-model="selectedSenseVoiceModel"
                       :options="senseVoiceModelOptions"
                       :disabled="store.isRunning"
-                      button-class="bg-white/5 border border-white/10 text-[10px] rounded-lg"
+                      button-class="bg-white/5 border border-white/10 text-xs rounded-lg"
                     />
                     <UiSelect
                       v-else-if="selectedTranscriptionEngine === 'fun-asr-nano'"
                       v-model="selectedFunAsrModel"
                       :options="funAsrModelOptions"
                       :disabled="store.isRunning"
-                      button-class="bg-white/5 border border-white/10 text-[10px] rounded-lg"
+                      button-class="bg-white/5 border border-white/10 text-xs rounded-lg"
                     />
                     <UiSelect
                       v-else-if="selectedTranscriptionEngine === 'parakeet-ctc-ja'"
                       v-model="selectedParakeetModel"
                       :options="parakeetModelOptions"
                       :disabled="store.isRunning"
-                      button-class="bg-white/5 border border-white/10 text-[10px] rounded-lg"
+                      button-class="bg-white/5 border border-white/10 text-xs rounded-lg"
                     />
-                    <input v-else-if="selectedTranscriptionEngine === 'openai-api'"
-                      value="whisper-1" disabled
-                      class="w-full px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-white/40 cursor-not-allowed text-[10px]"
+                    <UiSelect
+                      v-else-if="selectedTranscriptionEngine === 'openai-api'"
+                      v-model="selectedOpenAiTranscriptionModel"
+                      :options="openAiTranscriptionModelOptions"
+                      :disabled="store.isRunning"
+                      button-class="bg-white/5 border border-white/10 text-xs rounded-lg"
                     />
                   </div>
 
@@ -1867,9 +1904,9 @@ function clearLogs() {
                       v-model="selectedBackend"
                       :options="backendOptions"
                       :disabled="store.isRunning || !translationEnabled"
-                      button-class="bg-white/5 border border-white/10 text-[10px] rounded-lg disabled:opacity-40"
+                      button-class="bg-white/5 border border-white/10 text-xs rounded-lg disabled:opacity-40"
                     />
-                    <p class="mt-1 text-[11px] text-cyan-200/55">翻譯開關開啟後，ASR 只負責把聲音轉成文字；這裡的模型才負責翻譯成目標語言。</p>
+                    <p class="mt-1 text-xs text-cyan-200/75">翻譯開關開啟後，ASR 只負責把聲音轉成文字；這裡的模型才負責翻譯成目標語言。</p>
                   </div>
                 </div>
               </Transition>
@@ -1882,22 +1919,22 @@ function clearLogs() {
             >
               <div class="flex items-center justify-between gap-3">
                 <div class="min-w-0">
-                  <div class="flex items-center gap-2 text-[10px] font-bold text-cyan-200">
+                  <div class="flex items-center gap-2 text-xs font-bold text-cyan-200">
                     <AppIcon :name="selectedAsrDownloadTask && ['pending', 'downloading'].includes(selectedAsrDownloadTask.status) ? 'download' : 'model_management'" class="h-4 w-4" />
                     <span>{{ selectedAsrDownloadTask && ['pending', 'downloading'].includes(selectedAsrDownloadTask.status) ? 'ASR 模型下載中' : '尚未下載 ASR 模型' }}</span>
                     <span v-if="selectedAsrDownloadTask && ['pending', 'downloading'].includes(selectedAsrDownloadTask.status)" class="rounded-full bg-cyan-400/10 px-2 py-0.5 text-cyan-300">
                       {{ (modelDownloadStore.displayProgress(selectedAsrDownloadTask) * 100).toFixed(1) }}%
                     </span>
                   </div>
-                  <p class="mt-1 truncate text-[11px] font-semibold text-white/80">{{ selectedAsrModelId }}</p>
-                  <p class="mt-0.5 text-[11px] text-white/40">
+                  <p class="mt-1 truncate text-xs font-semibold text-white/80">{{ selectedAsrModelId }}</p>
+                  <p class="mt-0.5 text-xs text-white/60">
                     {{ selectedAsrDownloadTask?.error || selectedAsrDownloadTask?.message || '開始轉譯時會提醒並可自動下載，完成後接續啟動。' }}
                   </p>
                 </div>
                 <button
                   v-if="!selectedAsrDownloadTask || !['pending', 'downloading'].includes(selectedAsrDownloadTask.status)"
                   type="button"
-                  class="flex-shrink-0 rounded-lg bg-cyan-600 px-3 py-1.5 text-[10px] font-bold text-white transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:opacity-50"
+                  class="flex-shrink-0 rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-bold text-white transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:opacity-50"
                   :disabled="isPreparingAsrModel"
                   @click="downloadSelectedAsrModel"
                 >
@@ -1940,8 +1977,9 @@ function clearLogs() {
                 @click="openSubtitleWindow"
                 class="home-inline-subtitle-button px-5 py-3.5 bg-white/10 hover:bg-white/15 text-white font-semibold rounded-xl transition-all shadow-md shadow-cyan-600/10 flex items-center justify-center gap-1.5 text-sm"
                 title="開啟字幕懸浮視窗"
+                aria-label="開啟字幕視窗"
               >
-                🪟 <span class="hidden sm:inline">字幕視窗</span>
+                <AppIcon name="subtitle-window" class="h-4 w-4" /> <span class="hidden sm:inline">字幕視窗</span>
               </button>
             </div>
 
@@ -1967,12 +2005,12 @@ function clearLogs() {
                   <div class="mb-1 flex flex-wrap items-center gap-2">
                     <h3 class="text-xs font-bold tracking-wide text-white">本地 LLM 翻譯</h3>
                     <span
-                      class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold"
+                      class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-bold"
                       :class="llamaStore.isServerReady
                         ? 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300'
                         : llamaStore.isServerRunning || llamaStore.isLoading
                           ? 'border-amber-400/25 bg-amber-400/10 text-amber-300'
-                          : 'border-white/10 bg-white/5 text-white/40'"
+                          : 'border-white/10 bg-white/5 text-white/60'"
                     >
                       <span
                         class="h-1.5 w-1.5 rounded-full"
@@ -1981,11 +2019,19 @@ function clearLogs() {
                       {{ localLlmStatusLabel }}
                     </span>
                   </div>
-                  <p class="truncate text-[11px] font-semibold" :class="llamaStore.selectedModelPath ? 'text-cyan-200/90' : 'text-amber-300/80'">
+                  <p class="truncate text-xs font-semibold" :class="llamaStore.selectedModelPath ? 'text-cyan-200/90' : 'text-amber-300/80'">
                     {{ localLlmModelName }}
                   </p>
-                  <p class="mt-0.5 max-w-[560px] truncate text-[11px] text-white/35" :title="localLlmStatusDescription">
+                  <p class="mt-0.5 max-w-[560px] truncate text-xs text-white/60" :title="localLlmStatusDescription">
                     {{ localLlmStatusDescription }}
+                  </p>
+                  <p v-if="localLlmUsageHint === 'external'" class="mt-1.5 text-xs leading-5 text-cyan-200/90" role="status">
+                    翻譯後端為 Llama，但本機伺服器未開啟：將使用外部 llama 相容服務（例如 LM Studio）。
+                    <button type="button" class="ml-1 underline underline-offset-2 hover:text-white" @click="router.push({ path: '/settings', query: { tab: 'translation' } })">查看服務位址</button>
+                  </p>
+                  <p v-else-if="localLlmUsageHint === 'idle'" class="mt-1.5 flex flex-wrap items-center gap-2 text-xs leading-5 text-amber-200/90" role="status">
+                    <span>目前翻譯未使用本機模型，伺服器仍在佔用顯存。</span>
+                    <button type="button" class="local-llm-inline-action rounded-md border border-amber-300/30 px-2 text-amber-100 hover:bg-amber-300/10 disabled:opacity-50" :disabled="llamaStore.isLoading" @click="stopLocalLlm">停止伺服器</button>
                   </p>
                 </div>
               </div>
@@ -1995,7 +2041,7 @@ function clearLogs() {
                 :class="llamaStore.isLoading || (!llamaStore.selectedModelPath && !llamaStore.localLlmEnabled) ? 'cursor-not-allowed opacity-45' : 'cursor-pointer'"
                 :title="!llamaStore.selectedModelPath ? '請先到 LLM 模型管理選擇模型' : llamaStore.localLlmEnabled ? '關閉本地 LLM' : '啟動本地 LLM'"
               >
-                <span class="text-[10px] font-bold" :class="llamaStore.localLlmEnabled ? 'text-emerald-300' : 'text-white/45'">
+                <span class="text-xs font-bold" :class="llamaStore.localLlmEnabled ? 'text-emerald-300' : 'text-white/65'">
                   {{ llamaStore.localLlmEnabled ? '開啟' : '關閉' }}
                 </span>
                 <span class="relative inline-flex">
@@ -2023,9 +2069,9 @@ function clearLogs() {
             <div class="mb-3 flex items-start justify-between gap-3">
               <div>
                 <h2 class="text-sm font-bold text-white">浮動字幕窗</h2>
-                <p class="mt-1 text-xs leading-relaxed text-white/45">字幕顯示於獨立桌面視窗，主視窗專注於轉譯控制。</p>
+                <p class="mt-1 text-xs leading-relaxed text-white/65">字幕顯示於獨立桌面視窗，主視窗專注於轉譯控制。</p>
               </div>
-              <span class="rounded-md border border-cyan-400/20 bg-cyan-400/10 px-2 py-1 text-[10px] font-semibold text-cyan-200">獨立視窗</span>
+              <span class="rounded-md border border-cyan-400/20 bg-cyan-400/10 px-2 py-1 text-xs font-semibold text-cyan-200">獨立視窗</span>
             </div>
             <button
               type="button"
@@ -2040,8 +2086,8 @@ function clearLogs() {
               class="mt-3 flex w-full items-center justify-between border-t border-white/10 bg-transparent px-0 pt-3 text-left text-xs text-white/60 hover:text-white"
               @click="router.push('/subtitle-style')"
             >
-              <span>字體、配色、透明度與顯示方式</span>
-              <span class="text-blue-300">字幕外觀 →</span>
+              <span>調整字幕外觀（字型、配色、透明度、位置）</span>
+              <span class="text-blue-300" aria-hidden="true">→</span>
             </button>
           </div>
 
@@ -2054,14 +2100,14 @@ function clearLogs() {
               </h2>
               <button
                 @click="clearLogs"
-                class="text-[10px] text-white/40 hover:text-white/80 transition-colors flex items-center gap-1 px-2.5 py-1 bg-white/5 hover:bg-white/10 rounded-lg border border-white/5"
+                class="text-xs text-white/60 hover:text-white/80 transition-colors flex items-center gap-1 px-2.5 py-1 bg-white/5 hover:bg-white/10 rounded-lg border border-white/5"
               >
                 <AppIcon name="trash" class="h-4 w-4" /> 清除
               </button>
             </div>
-            <div ref="logContainer" class="min-h-0 flex-1 overflow-y-auto bg-black/40 rounded-xl p-3 font-mono text-[11px] leading-relaxed custom-scrollbar border border-white/5">
+            <div ref="logContainer" class="min-h-0 flex-1 overflow-y-auto bg-black/40 rounded-xl p-3 font-mono text-xs leading-relaxed custom-scrollbar border border-white/5">
               <div v-for="(log, idx) in logs" :key="idx" class="mb-1 break-words text-green-400/80 last:mb-0">{{ log }}</div>
-              <div v-if="logs.length === 0" class="text-white/20 h-full flex items-center justify-center italic">暫無執行日誌，等待啟動...</div>
+              <div v-if="logs.length === 0" class="text-white/60 h-full flex items-center justify-center italic">暫無執行日誌，等待啟動...</div>
             </div>
           </div>
 
@@ -2073,7 +2119,7 @@ function clearLogs() {
                 <AppIcon name="url" class="h-4 w-4" /> 字幕分享服務
               </h2>
               <button @click="toggleSubtitleSharing" :disabled="isUpdatingSubtitleSharing || !subtitleSharingStatusKnown"
-                class="px-2 py-1 text-[10px] rounded-lg transition duration-200 border"
+                class="px-2 py-1 text-xs rounded-lg transition duration-200 border"
                 :class="subtitleSharingEnabled
                   ? 'bg-emerald-600/80 hover:bg-emerald-600 border-emerald-500/30 text-white'
                   : 'bg-rose-600/80 hover:bg-rose-600 border-rose-500/30 text-white'">
@@ -2086,19 +2132,19 @@ function clearLogs() {
             </div>
 
             <div v-else-if="subtitleSharingEnabled" class="space-y-2.5">
-              <p class="text-white/40 text-[11px] leading-tight">廣播服務已運行於連接埠 {{ publicPort }}。此連結僅顯示字幕，無設定權限。</p>
+              <p class="text-white/60 text-xs leading-tight">廣播服務已運行於連接埠 {{ publicPort }}。此連結僅顯示字幕，無設定權限。</p>
 
               <div class="space-y-2">
                 <!-- 電腦版 -->
                 <div class="flex items-center gap-2.5 bg-white/5 rounded-xl p-2.5 border border-white/5 group hover:bg-white/10 transition duration-200">
                   <AppIcon name="desktop" class="h-5 w-5 text-blue-300" />
                   <div class="flex-1 min-w-0">
-                    <div class="text-white/60 text-[10px] font-bold">電腦端字幕</div>
-                    <div class="text-white/35 text-[11px] truncate font-mono mt-0.5">{{ getPublicBase() }}/desktop</div>
+                    <div class="text-white/60 text-xs font-bold">電腦端字幕</div>
+                    <div class="text-white/60 text-xs truncate font-mono mt-0.5">{{ getPublicBase() }}/desktop</div>
                   </div>
                   <button @click="copyLink('/desktop')"
                     class="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs rounded-lg transition-all font-semibold shadow-sm shadow-indigo-600/10">
-                    {{ activeCopyPath === '/desktop' ? '✓' : '複製' }}
+                    {{ activeCopyPath === '/desktop' ? '已複製' : '複製' }}
                   </button>
                 </div>
 
@@ -2106,20 +2152,20 @@ function clearLogs() {
                 <div class="flex items-center gap-2.5 bg-white/5 rounded-xl p-2.5 border border-white/5 group hover:bg-white/10 transition duration-200">
                   <AppIcon name="mobile" class="h-5 w-5 text-blue-300" />
                   <div class="flex-1 min-w-0">
-                    <div class="text-white/60 text-[10px] font-bold">行動端字幕</div>
-                    <div class="text-white/35 text-[11px] truncate font-mono mt-0.5">{{ getPublicBase() }}/mobile</div>
+                    <div class="text-white/60 text-xs font-bold">行動端字幕</div>
+                    <div class="text-white/60 text-xs truncate font-mono mt-0.5">{{ getPublicBase() }}/mobile</div>
                   </div>
                   <button @click="copyLink('/mobile')"
                     class="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs rounded-lg transition-all font-semibold shadow-sm shadow-indigo-600/10">
-                    {{ activeCopyPath === '/mobile' ? '✓' : '複製' }}
+                    {{ activeCopyPath === '/mobile' ? '已複製' : '複製' }}
                   </button>
                 </div>
               </div>
-              <p class="text-white/30 text-[11px] text-center tracking-wide mt-1">請確保本機防火牆允許對外存取此連接埠</p>
+              <p class="text-white/60 text-xs text-center tracking-wide mt-1">請確保本機防火牆允許對外存取此連接埠</p>
             </div>
 
-            <div v-else class="p-3 rounded-xl border border-rose-500/20 bg-rose-500/5 text-rose-300 text-[10px] leading-relaxed text-center">
-              🚫 字幕廣播服務目前已關閉，外部裝置將無法存取字幕網頁。
+            <div v-else class="p-3 rounded-xl border border-rose-500/20 bg-rose-500/5 text-rose-300 text-xs leading-relaxed text-center">
+              字幕廣播服務目前已關閉，外部裝置將無法存取字幕網頁。
             </div>
           </div>
 
@@ -2135,11 +2181,11 @@ function clearLogs() {
     <div class="mobile-action-bar fixed inset-x-0 bottom-0 z-30 border-t border-white/10 bg-slate-950/95 px-3 pb-3 pt-2 shadow-[0_-12px_35px_rgba(2,6,23,0.8)] backdrop-blur md:hidden">
       <div class="mx-auto flex max-w-7xl items-center gap-2">
         <div class="min-w-0 flex-1">
-          <div class="flex items-center gap-1.5 text-[10px] font-bold text-white/80">
+          <div class="flex items-center gap-1.5 text-xs font-bold text-white/80">
             <span :class="store.isRunning ? 'text-green-400' : 'text-slate-500'">●</span>
             <span>{{ store.isRunning ? '即時轉譯中' : '準備啟動' }}</span>
           </div>
-          <p class="mt-0.5 truncate text-[11px] text-white/40">
+          <p class="mt-0.5 truncate text-xs text-white/60">
             {{ selectedInputLanguage }} → {{ translationEnabled ? selectedOutputLanguage : '僅轉錄' }}
           </p>
         </div>
@@ -2150,7 +2196,7 @@ function clearLogs() {
           :disabled="isLoading || isPreparingAsrModel || !isConfigReady"
           @click="handleStart"
         >
-          {{ isPreparingAsrModel ? '⬇️ 下載模型中' : isLoading ? '⏳ 啟動中' : '▶️ 開始轉譯' }}
+          <span class="inline-flex items-center justify-center gap-1.5"><AppIcon :name="isPreparingAsrModel ? 'download' : 'play'" class="h-4 w-4" />{{ isPreparingAsrModel ? '下載模型中' : isLoading ? '啟動中…' : '開始轉譯' }}</span>
         </button>
         <button
           v-else
@@ -2159,7 +2205,7 @@ function clearLogs() {
           :disabled="isLoading"
           @click="handleStop"
         >
-          {{ isLoading ? '⏳ 停止中' : '⏹️ 停止轉譯' }}
+          <span class="inline-flex items-center justify-center gap-1.5"><AppIcon name="stop" class="h-4 w-4" />{{ isLoading ? '停止中…' : '停止轉譯' }}</span>
         </button>
       </div>
     </div>
@@ -2212,6 +2258,8 @@ function clearLogs() {
 .home-primary-action:disabled, .home-stop-action:disabled { background: var(--fw-surface-secondary, #202b3a); color: var(--fw-muted, #9ba8ba); }
 .home-stop-action { background: #b84249; box-shadow: none; }
 .commercial-home button { min-height: 44px; }
+.commercial-home .translation-mode-option { min-height: 36px; }
+.commercial-home .local-llm-inline-action { min-height: 28px; }
 .commercial-home button:focus-visible { outline: 2px solid var(--fw-accent, #3479d9); outline-offset: 3px; }
 .commercial-home .source-card-icon { opacity: .85; }
 @media (prefers-reduced-motion: reduce) {

@@ -268,6 +268,9 @@ def run_inprocess_pipeline(url: str,
 
     slicer = create_slicer(options)
     translator = create_translator(options)
+    # Each invocation owns one source/session; reset before any worker starts.
+    if translator is not None:
+        translator.llm_client.reset_context()
     segmenter = create_subtitle_segmenter(options)
     # The segmenter decides which ASR results actually enter translation.
     # Printing earlier leaves untranslated rows behind for discarded overlaps.

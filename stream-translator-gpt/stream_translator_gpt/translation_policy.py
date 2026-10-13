@@ -292,11 +292,26 @@ class ValidationIssue:
 
 
 def validate_translation(request: TranslationRequest, translation: str,
-                         history: tuple[tuple[str, str], ...] = ()) -> tuple[ValidationIssue, ...]:
+                         history: tuple[tuple[str, str], ...] = (),
+                         normalize_output=None, raw_translation=None) -> tuple[ValidationIssue, ...]:
     from .hy_mt2_output_validation import repeats_previous_translation
     issues = []
     if not str(translation or "").strip():
         return (ValidationIssue("empty_output"),)
+    leak_text = translation if raw_translation is None else str(raw_translation or "")
+    if any(marker in leak_text and marker not in request.source_text
+           for marker in ("【源文】", "【约束要求】", "【硬性要求】", "〖背景資訊", "<think>")):
+        issues.append(ValidationIssue("prompt_leakage"))
+    if normalize_output is None:
+        from .qwen3_asr_postprocess import is_traditional_chinese_target, normalize_chinese_script
+        normalize_output = lambda text: (normalize_chinese_script(text, "zh-tw")
+            if is_traditional_chinese_target(request.target_language) else text)
+    translation = normalize_output(translation)
+    if not str(translation or "").strip():
+        return tuple(issues) + (ValidationIssue("empty_output"),)
+    from dataclasses import replace
+    request = replace(request, glossary={source: normalize_output(target) if target else target
+                      for source, target in (request.glossary or {}).items()})
     target_language = str(request.target_language or "").strip().lower().replace("_", "-")
     if target_language in {"traditional chinese", "simplified chinese", "chinese", "zh", "zh-tw", "zh-hant", "zh-cn", "zh-hans", "繁體中文", "繁体中文", "简体中文"}:
         # Only reject exact Japanese copies. Names and explicitly preserved spans
@@ -348,9 +363,6 @@ def validate_translation(request: TranslationRequest, translation: str,
                 if not any(issue.code == 'context_echo_rejected' for issue in issues):
                     issues.append(ValidationIssue('context_echo_rejected'))
                 break
-    if any(marker in translation and marker not in request.source_text
-           for marker in ("【源文】", "【约束要求】", "【硬性要求】", "〖背景資訊", "<think>")):
-        issues.append(ValidationIssue("prompt_leakage"))
     if repeats_previous_translation(request.source_text, translation, history):
         issues.append(ValidationIssue("context_echo_rejected"))
     if any(target not in translation for target in _matching_glossary(request.source_text, request.glossary or {}, len(request.glossary or {})).values() if target):

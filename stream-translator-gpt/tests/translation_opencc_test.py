@@ -108,3 +108,65 @@ def test_unknown_prompt_does_not_default_to_traditional():
     client = LLMClient("GPT", "custom", "Translate this", 0, None, False)
     assert client.translation_target_language is None
     assert normalize_translation_output("软件", client.translation_target_language) == "软件"
+
+
+@pytest.mark.parametrize("output,reason", [
+    ("\u3010\u7ea6\u675f\u8981\u6c42\u3011\u8f6f\u4ef6", "prompt_leakage"),
+    ("\u8f6f\u4ef6", None),
+    ("\u8edf\u9ad4", None),
+    ("missing", "fixed_term_missing"),
+])
+def test_optimizer_checks_raw_leaks_and_converted_glossary(output, reason):
+    client = LLMClient("GPT", "HY-MT2", "custom", 0, None, False,
+        translation_target_language="zh-Hant-TW", model_family="hy_mt2",
+        hy_mt2_optimizer_enabled=True, glossary={"software": "\u8f6f\u4ef6"})
+    class Provider:
+        def translate(self, client, task):
+            task.translation = output
+            client._prepare_prompt(task)
+            client._validate_hy_mt2_output(task)
+    client.provider_adapter = Provider()
+    task = TranslationTask(np.zeros(0, dtype=np.float32), (0, 1))
+    task.transcript = "software"
+    client.translate(task)
+    if reason:
+        assert reason in task.translation_validation_reasons
+        assert task.translation == ""
+    else:
+        assert task.translation == "\u8edf\u9ad4"
+        assert not task.translation_failed
+
+
+def test_auditor_converts_glossary_targets(tmp_path):
+    from types import SimpleNamespace
+    from stream_translator_gpt.translation_glossary_auditor import TranslationGlossaryAuditor
+    auditor = TranslationGlossaryAuditor({"software": "\u8f6f\u4ef6"}, enabled=True,
+        audit_log_path=tmp_path / "audit.log", issues_path=tmp_path / "issues.json",
+        normalize_output=lambda text: normalize_translation_output(text, "zh-Hant-HK"))
+    try:
+        result = auditor.audit(SimpleNamespace(transcript="software", translation="\u8edf\u9ad4"))
+        assert result[0]["compliant"]
+        assert not auditor._records
+    finally:
+        auditor._handler.close()
+
+
+@pytest.mark.parametrize("family", ["hy_mt2", "index_translate"])
+def test_validator_forwards_raw_reply_outside_converter(monkeypatch, family):
+    client = LLMClient("GPT", "custom", "Translate", 0, None, False,
+        model_family=family, translation_target_language="zh-Hant-TW",
+        hy_mt2_optimizer_enabled=family == "hy_mt2",
+        index_translate_optimizer_enabled=family == "index_translate")
+    calls = []
+    def convert(text, target):
+        calls.append((text, target))
+        return text
+    monkeypatch.setattr("stream_translator_gpt.llm_translator.normalize_translation_output", convert)
+    task = TranslationTask(np.zeros(0, dtype=np.float32), (0, 1))
+    task.transcript = "source"
+    task.translation = "answer"
+    client._prepare_prompt(task)
+    raw = "\u3010\u7ea6\u675f\u8981\u6c42\u3011 answer"
+    assert client._validate_hy_mt2_output(task, raw) == "prompt_leakage"
+    assert calls == [("answer", "zh-Hant-TW")]
+    assert task.translation == ""

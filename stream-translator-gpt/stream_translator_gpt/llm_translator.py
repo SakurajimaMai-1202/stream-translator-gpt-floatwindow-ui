@@ -160,6 +160,7 @@ class LLMClient():
         self.glossary_auditor = TranslationGlossaryAuditor(
             self.glossary,
             enabled=glossary_audit_enabled,
+            normalize_output=lambda text: normalize_translation_output(text, self.translation_target_language),
         )
         provider = provider or (
             "gemini" if llm_type == self.LLM_TYPE.GEMINI else (
@@ -380,7 +381,8 @@ class LLMClient():
             preserve_elements=tuple(dict.fromkeys(re.findall(r"https?://[^\s<>]+|(?<!\w)@[A-Za-z0-9_]+", text))))
         reasons = getattr(task, "translation_validation_reasons", ())
         if not self.family_optimizer_enabled and task.translation_error != "preview_deadline_expired":
-            diagnostic_reasons = tuple(issue.code for issue in validate_translation(diagnostic_request, task.translation, history))
+            diagnostic_reasons = tuple(issue.code for issue in validate_translation(diagnostic_request, task.translation, history,
+                normalize_output=lambda text: normalize_translation_output(text, self.translation_target_language)))
             reasons = tuple(dict.fromkeys(tuple(reasons) + diagnostic_reasons))
         if task.translation_failed and not reasons:
             reasons = ("translation_request_failed",)
@@ -413,7 +415,9 @@ class LLMClient():
             task.translation_validation_rejected = True
             task._family_repair = False
 
-    def _validate_hy_mt2_output(self, task: TranslationTask) -> str | None:
+    def _validate_hy_mt2_output(self, task: TranslationTask, raw_translation=None) -> str | None:
+        # Preserve the pre-validation token cleanup without converting leak markers.
+        task.translation = strip_unknown_token(task.translation)
         if not self.family_optimizer_enabled:
             if not (task.translation or "").strip():
                 self._record_translation_failure(task, ValueError("empty_output"))
@@ -428,7 +432,9 @@ class LLMClient():
         else:
             with self._history_lock:
                 history = tuple(self.history_pairs)
-            reasons = tuple(issue.code for issue in validate_translation(request, task.translation, history))
+            reasons = tuple(issue.code for issue in validate_translation(request, task.translation, history,
+                normalize_output=lambda text: normalize_translation_output(text, self.translation_target_language),
+                raw_translation=raw_translation))
         task.translation_validation_reasons = reasons
         if not reasons:
             task.translation_error = None
@@ -533,10 +539,11 @@ class LLMClient():
                 raw_content,
                 prepared.output_format,
             )
+            translation_task.translation = parsed_translation
+            validation_reason = self._validate_hy_mt2_output(translation_task, raw_content)
             translation_task.translation = normalize_translation_output(
-                parsed_translation, self.translation_target_language,
+                translation_task.translation, self.translation_target_language,
             )
-            validation_reason = self._validate_hy_mt2_output(translation_task)
             if self.hy_mt2_debug:
                 print(f'[DEBUG] [FAMILY OPTIMIZER] RAW_OUTPUT={raw_content!r} VALIDATION={validation_reason!r}',
                       file=sys.stderr, flush=True)
@@ -634,11 +641,11 @@ class LLMClient():
 
         try:
             response = client.models.generate_content(model=self.model, contents=messages, config=config)
+            translation_task.translation = parse_translation_output(response.text, prepared.output_format)
+            self._validate_hy_mt2_output(translation_task, response.text)
             translation_task.translation = normalize_translation_output(
-                parse_translation_output(response.text, prepared.output_format),
-                self.translation_target_language,
+                translation_task.translation, self.translation_target_language,
             )
-            self._validate_hy_mt2_output(translation_task)
         except Exception as e:
             self._record_translation_failure(translation_task, e)
             print(e)

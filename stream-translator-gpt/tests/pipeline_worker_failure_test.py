@@ -62,3 +62,22 @@ def test_pipeline_does_not_wait_forever_after_asr_failure(monkeypatch, fail):
     else:
         assert pipeline_runner.run_inprocess_pipeline('test.wav', {}, ASR()) == 0
     assert getter.stopped
+
+
+def test_pipeline_resets_translation_session_before_capture(monkeypatch):
+    from types import SimpleNamespace
+    events = []
+    monkeypatch.setattr(pipeline_runner.ClientPool, 'init', lambda **_: None)
+    monkeypatch.setattr(pipeline_runner, 'create_slicer', lambda *_: object())
+    monkeypatch.setattr(pipeline_runner, 'create_translator', lambda *_: SimpleNamespace(
+        llm_client=SimpleNamespace(reset_context=lambda: events.append('reset'))))
+    monkeypatch.setattr(pipeline_runner, 'create_subtitle_segmenter', lambda *_: object())
+    monkeypatch.setattr(pipeline_runner, 'create_exporter', lambda *_: object())
+    def capture(*_):
+        events.append('capture')
+        raise RuntimeError('stop before workers')
+    monkeypatch.setattr(pipeline_runner, 'create_audio_getter', capture)
+    for source in ('first.wav', 'second.wav'):
+        with pytest.raises(RuntimeError, match='stop before workers'):
+            pipeline_runner.run_inprocess_pipeline(source, {}, SimpleNamespace())
+    assert events == ['reset', 'capture', 'reset', 'capture']

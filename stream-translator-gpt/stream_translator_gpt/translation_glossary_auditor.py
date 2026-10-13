@@ -41,7 +41,9 @@ class TranslationGlossaryAuditor:
         enabled: bool = False,
         audit_log_path: str | Path | None = None,
         issues_path: str | Path | None = None,
+        normalize_output=None,
     ) -> None:
+        self.normalize_output = normalize_output or (lambda text: text)
         self.enabled = bool(enabled and glossary)
         self.glossary = {
             str(source).strip(): str(target).strip()
@@ -89,7 +91,7 @@ class TranslationGlossaryAuditor:
         source_text = str(getattr(task, "transcript", "") or "")
         translation = str(getattr(task, "translation", "") or "")
         normalized_source_text = _normalize(source_text)
-        normalized_translation = _normalize(translation)
+        normalized_translation = _normalize(self.normalize_output(translation))
         results = []
         timestamp = datetime.now(timezone.utc).isoformat()
 
@@ -98,7 +100,7 @@ class TranslationGlossaryAuditor:
                 normalized_source = _normalize(source_term)
                 if not normalized_source or normalized_source not in normalized_source_text:
                     continue
-                normalized_expected = _normalize(expected)
+                normalized_expected = _normalize(self.normalize_output(expected))
                 compliant = bool(normalized_expected and normalized_expected in normalized_translation)
                 payload = {
                     "timestamp": timestamp,

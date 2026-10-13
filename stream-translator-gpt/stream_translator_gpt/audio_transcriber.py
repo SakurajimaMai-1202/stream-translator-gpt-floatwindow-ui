@@ -127,6 +127,7 @@ class AudioTranscriber(LoopWorkerBase):
         self.asr_engine = asr_engine or self.__class__.__name__
         self.asr_model = asr_model
         self.asr_output_language = asr_output_language
+        self._script_conversion_warned = False
         self.asr_correction_learning_enabled = bool(asr_correction_learning_enabled)
         configure_asr_correction_logging(self.asr_correction_log_enabled)
         self.term_corrector = ASRTermCorrector(
@@ -195,7 +196,15 @@ class AudioTranscriber(LoopWorkerBase):
                     asr_started_at - task.latency_trace.asr_queued_at
                 ) * 1000
             text, tokens = self.transcribe(task.audio, initial_prompt=initial_prompt)
-            text = normalize_chinese_script(text, self.asr_output_language)
+            try:
+                text = normalize_chinese_script(text, self.asr_output_language)
+            except Exception as exc:
+                # Never emit text in the wrong script when conversion fails.
+                text = ""
+                if not self._script_conversion_warned:
+                    self._script_conversion_warned = True
+                    print(f'{WARNING}ASR script conversion failed; output cleared: {exc}',
+                          file=sys.stderr, flush=True)
             task.latency_trace.asr_finished_at = time.perf_counter()
             task.asr_latency_ms = (task.latency_trace.asr_finished_at - asr_started_at) * 1000
             task.latency_trace.asr_inference_accumulated_ms = task.asr_latency_ms

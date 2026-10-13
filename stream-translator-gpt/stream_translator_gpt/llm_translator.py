@@ -603,7 +603,8 @@ class LLMClient():
 
         ApiKeyPool.use_google_api()
 
-        http_options = {}
+        # Google Gen AI expresses transport timeouts in milliseconds.
+        http_options = {'timeout': int(self.request_timeout * 1000)}
         if self.proxy:
             http_options['client_args'] = {'proxy': self.proxy}
 

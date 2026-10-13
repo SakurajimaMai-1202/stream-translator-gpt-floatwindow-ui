@@ -24,7 +24,7 @@ def test_source_metadata_classification(monkeypatch, metadata, expected):
     assert getter._source_status() == expected
 
 
-@pytest.mark.parametrize('initial,expected_opens', [('finite', 1), ('live', 2), ('unknown', 2)])
+@pytest.mark.parametrize('initial,expected_opens', [('finite', 1), ('live', 3), ('unknown', 2)])
 def test_eof_retries_until_confirmed_end_but_never_replays_vod(monkeypatch, initial, expected_opens):
     getter = audio_getter.StreamAudioGetter('https://example.com/live', 'ba', '', '')
     getter.YOUTUBE_RECONNECT_DELAY_SECONDS = 0
@@ -212,7 +212,7 @@ def test_different_or_transient_errors_reset_startup_cap():
     assert getter._startup_failures == 1
 
 
-@pytest.mark.parametrize('initial', ['unknown', 'live'])
+@pytest.mark.parametrize('initial', ['unknown'])
 def test_permanently_unknown_eof_is_bounded(monkeypatch, initial):
     getter = audio_getter.StreamAudioGetter('https://example.com/video', 'ba', '', '')
     getter.YOUTUBE_RECONNECT_DELAY_SECONDS = 0
@@ -220,6 +220,7 @@ def test_permanently_unknown_eof_is_bounded(monkeypatch, initial):
     def status():
         calls.append(True)
         assert len(calls) <= 1 + getter.MAX_UNKNOWN_EOF_CHECKS
+        getter._metadata_answered = True
         return initial if len(calls) == 1 else 'unknown'
     monkeypatch.setattr(getter, '_source_status', status)
     opens = []

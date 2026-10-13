@@ -345,6 +345,7 @@ class StreamAudioGetter(LoopWorkerBase):
 
     def _source_status(self):
         """Return live, finite, ended, or unknown; transport EOF is not proof."""
+        self._metadata_answered = False
         try:
             cmd = _build_ytdlp_command(
                 self.url, self.format, self.cookies, self.proxy,
@@ -363,6 +364,9 @@ class StreamAudioGetter(LoopWorkerBase):
         except (OSError, ValueError, subprocess.TimeoutExpired):
             self._check_stream_error('')
             return 'unknown'
+        if not isinstance(info, dict):
+            return 'unknown'
+        self._metadata_answered = True
         status = info.get('live_status')
         if status in ('post_live', 'was_live'):
             return 'ended'
@@ -386,6 +390,7 @@ class StreamAudioGetter(LoopWorkerBase):
         self.byte_size = round(SAMPLES_PER_FRAME * 4)  # Factor 4 comes from float32 (4 bytes per sample)
         self.running = True
         self._received_audio = False
+        self._metadata_answered = False
         self._startup_error = None
         self._startup_failures = 0
 
@@ -501,6 +506,7 @@ class StreamAudioGetter(LoopWorkerBase):
         frame_count = 0
         start_time = time.monotonic()
         source_status = self._source_status()
+        confirmed_live = source_status == 'live'
         gap_started_at = None
         last_frame_received_at = None
         while self.running:
@@ -531,7 +537,7 @@ class StreamAudioGetter(LoopWorkerBase):
                     self._startup_failures = 0
                     missing = 0.0
                     if gap_started_at is not None:
-                        if source_status == 'live':
+                        if confirmed_live:
                             # Include the stalled read, not just reconnect work.
                             # Only the resumed frame adds media since the last receipt.
                             missing = max(0.0, frame_received_at - gap_started_at
@@ -585,15 +591,23 @@ class StreamAudioGetter(LoopWorkerBase):
                 raise RuntimeError('有限音訊來源讀取失敗；未確認正常結束，無法安全從頭重播。')
             if not self.running or source_status in ('finite', 'ended'):
                 break
-            # Unknown metadata is not permission to replay a possible VOD.
-            # Reopen only a confirmed live; unavailable metadata must not hang EOF.
+            # Remember live confirmation across outages. For a possible VOD,
+            # only successful metadata answers without a live flag count as EOF
+            # evidence; failed requests must remain retryable.
             unknown_checks = 0
             while self.running:
                 source_status = self._source_status()
-                if source_status != 'unknown':
+                confirmed_live = confirmed_live or source_status == 'live'
+                if source_status != 'unknown' or confirmed_live:
                     break
-                unknown_checks += 1
+                if self._metadata_answered:
+                    unknown_checks += 1
+                else:
+                    unknown_checks = 0
                 if unknown_checks >= self.MAX_UNKNOWN_EOF_CHECKS:
+                    print(f'{WARNING}Ending source after EOF/stall: '
+                          f'{unknown_checks} successful metadata checks returned no live flag; '
+                          'source was never confirmed live.', flush=True)
                     source_status = 'ended'
                     break
                 print(f'{WARNING}無法確認來源狀態，等待後重新確認…')

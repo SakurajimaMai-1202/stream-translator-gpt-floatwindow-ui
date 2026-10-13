@@ -173,6 +173,164 @@ class CpuAsrSidecarManagerTest(unittest.TestCase):
             self.assertEqual(status["status"], "completed")
             self.assertTrue(status["restart_required"])
 
+    def test_import_excludes_other_imports_and_downloads(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "sidecar.zip"
+            archive.write_bytes(b"fake archive")
+            manager = sidecar_module.CpuAsrSidecarManager()
+            entered, release = threading.Event(), threading.Event()
+            failures = []
+
+            def extract(*_):
+                entered.set()
+                if not release.wait(5):
+                    raise RuntimeError("test import timed out")
+
+            def importing():
+                try:
+                    manager.import_archive(str(archive))
+                except BaseException as exc:
+                    failures.append(exc)
+
+            with mock.patch.object(manager, "_safe_extract", side_effect=extract), \
+                 mock.patch.object(manager, "_install"), \
+                 mock.patch.object(manager, "status", return_value={}):
+                worker = threading.Thread(target=importing)
+                worker.start()
+                try:
+                    self.assertTrue(entered.wait(5))
+                    with self.assertRaises(RuntimeError):
+                        manager.start(asset_url="offline")
+                    with self.assertRaises(RuntimeError):
+                        manager.import_archive(str(archive))
+                finally:
+                    release.set()
+                    worker.join(5)
+                self.assertFalse(worker.is_alive())
+                self.assertEqual(failures, [])
+                self.assertIsNone(manager._worker)
+                manager.import_archive(str(archive))
+
+    def test_active_download_rejects_start_and_import(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "sidecar.zip"
+            archive.touch()
+            manager = sidecar_module.CpuAsrSidecarManager()
+            manager._worker = mock.Mock()
+            manager._worker.is_alive.return_value = True
+            with self.assertRaises(RuntimeError):
+                manager.start(asset_url="offline")
+            with self.assertRaises(RuntimeError):
+                manager.import_archive(str(archive))
+
+    @staticmethod
+    def _fake_validate(runtime):
+        if not (runtime / "python.exe").is_file():
+            raise RuntimeError("incomplete runtime")
+
+    def test_install_failure_preserves_old_runtime(self):
+        for failure in (OSError("copy failed"), KeyboardInterrupt()):
+            with self.subTest(failure=type(failure).__name__), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                target, source = root / "target", root / "source"
+                target.mkdir()
+                source.mkdir()
+                (target / "python.exe").write_text("old")
+                (source / "python.exe").write_text("new")
+                with mock.patch.object(sidecar_module, "get_cpu_asr_runtime_path", return_value=target), \
+                     mock.patch.object(sidecar_module.CpuAsrSidecarManager, "_validate_runtime", side_effect=self._fake_validate):
+                    manager = sidecar_module.CpuAsrSidecarManager()
+                    if isinstance(failure, OSError):
+                        with mock.patch.object(sidecar_module.shutil, "copytree", side_effect=failure):
+                            with self.assertRaises(OSError):
+                                manager._install(source)
+                    else:
+                        def validate(runtime):
+                            self._fake_validate(runtime)
+                            if runtime == target and (runtime / "python.exe").read_text() == "new":
+                                raise failure
+                        with mock.patch.object(manager, "_validate_runtime", side_effect=validate):
+                            with self.assertRaises(KeyboardInterrupt):
+                                manager._install(source)
+                    self.assertEqual((target / "python.exe").read_text(), "old")
+                    self.assertFalse(target.with_name("target.backup").exists())
+
+    def test_manager_startup_restores_missing_or_incomplete_runtime(self):
+        for incomplete in (False, True):
+            with self.subTest(incomplete=incomplete), tempfile.TemporaryDirectory() as temporary:
+                target = Path(temporary) / "target"
+                backup = target.with_name("target.backup")
+                backup.mkdir()
+                (backup / "python.exe").write_text("old")
+                if incomplete:
+                    target.mkdir()
+                    (target / "partial").touch()
+                with mock.patch.object(sidecar_module, "get_cpu_asr_runtime_path", return_value=target), \
+                     mock.patch.object(sidecar_module.CpuAsrSidecarManager, "_validate_runtime", side_effect=self._fake_validate):
+                    sidecar_module.CpuAsrSidecarManager()
+                self.assertEqual((target / "python.exe").read_text(), "old")
+                self.assertFalse(backup.exists())
+
+    def test_invalid_backup_is_quarantined_and_fresh_repair_succeeds(self):
+        for repair in ("import", "start"):
+            for incomplete in (False, True):
+                with self.subTest(repair=repair, incomplete=incomplete), tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary)
+                    target = root / "target"
+                    backup = target.with_name("target.backup")
+                    backup.mkdir()
+                    (backup / "partial").write_text("preserved invalid backup")
+                    if incomplete:
+                        target.mkdir()
+                        (target / "partial").touch()
+                    archive = root / "sidecar.zip"
+                    with zipfile.ZipFile(archive, "w") as bundle:
+                        bundle.writestr("_runtime_cpu_asr/python.exe", "new")
+                    with mock.patch.object(sidecar_module, "get_cpu_asr_runtime_path", return_value=target), \
+                         mock.patch.object(sidecar_module.CpuAsrSidecarManager, "_validate_runtime", side_effect=self._fake_validate):
+                        with self.assertLogs(sidecar_module.logger, level="WARNING") as logs:
+                            manager = sidecar_module.CpuAsrSidecarManager()
+                        self.assertIn("Quarantined invalid", " ".join(logs.output))
+                        self.assertFalse(backup.exists())
+                        quarantined = list(root.glob("target.backup.invalid-*"))
+                        self.assertEqual(len(quarantined), 1)
+                        self.assertEqual((quarantined[0] / "partial").read_text(), "preserved invalid backup")
+                        if repair == "import":
+                            status = manager.import_archive(str(archive))
+                        else:
+                            def download(_, destination):
+                                destination.write_bytes(archive.read_bytes())
+                            # Both network operations are faked; extraction,
+                            # digest verification and installation remain real.
+                            digest = manager._sha256(archive)
+                            with mock.patch.object(manager, "_download", side_effect=download), \
+                                 mock.patch.object(manager, "_expected_sha256", return_value=digest):
+                                manager.start(asset_url="offline")
+                                worker = manager._worker
+                                if worker is not None:
+                                    worker.join(5)
+                                    self.assertFalse(worker.is_alive())
+                                status = manager.status()
+                        self.assertEqual(status["status"], "completed")
+                        self.assertTrue(status["healthy"])
+                        self.assertEqual((target / "python.exe").read_text(), "new")
+                        self.assertTrue(quarantined[0].is_dir())
+
+    def test_successful_install_removes_backup_and_staging(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            target, source = root / "target", root / "source"
+            target.mkdir()
+            source.mkdir()
+            (target / "python.exe").write_text("old")
+            (source / "python.exe").write_text("new")
+            with mock.patch.object(sidecar_module, "get_cpu_asr_runtime_path", return_value=target), \
+                 mock.patch.object(sidecar_module.CpuAsrSidecarManager, "_validate_runtime", side_effect=self._fake_validate):
+                sidecar_module.CpuAsrSidecarManager()._install(source)
+            self.assertEqual((target / "python.exe").read_text(), "new")
+            self.assertFalse(target.with_name("target.backup").exists())
+            self.assertEqual(list(root.glob("target.staging-*")), [])
+
     def test_import_archive_rejects_non_zip(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             source = Path(temp_dir) / "runtime.txt"

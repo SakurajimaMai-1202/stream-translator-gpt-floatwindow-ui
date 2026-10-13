@@ -15,6 +15,9 @@ _JAPANESE_RE = re.compile(r'[\u3040-\u30ff]')
 _DEPENDENT_JAPANESE_TAIL_RE = re.compile(r'(なんて|だって|って|[がをにへ])$')
 
 
+OVERLAP_DEDUP_WINDOW_SECONDS = 1.5
+
+
 def is_punctuation_only(text: str) -> bool:
     text = str(text or "").strip()
     return bool(text) and all(unicodedata.category(char)[0] in {"P", "Z"} for char in text)
@@ -66,6 +69,7 @@ class SubtitleSegmenter(LoopWorkerBase):
         self.assembler_max_duration = max(0.1, float(assembler_max_duration))
         self.assembler_gap_threshold = max(0.0, float(assembler_gap_threshold))
         self.previous_transcript = ""
+        self.previous_time_range: tuple[float, float] | None = None
         self.print_result = bool(print_result)
         self.output_timestamps = bool(output_timestamps)
         print(f'[Assembler] policy=bounded-v2 enabled={self.assembler_enabled} '
@@ -86,11 +90,21 @@ class SubtitleSegmenter(LoopWorkerBase):
         if task.latency_trace.assembler_received_at is None:
             task.latency_trace.assembler_received_at = time.perf_counter()
         transcript = str(task.transcript or "").strip()
-        if self.deduplicate_overlap:
-            transcript = remove_text_overlap(self.previous_transcript, transcript)
         if not transcript or is_punctuation_only(transcript):
             return None
-        self.previous_transcript = _join_text(self.previous_transcript, transcript)[-500:]
+        original_transcript = transcript
+        if self.deduplicate_overlap and self.previous_time_range is not None:
+            previous_start, previous_end = self.previous_time_range
+            gap = max(0.0, task.time_range[0] - previous_end)
+            if (task.time_range[0] >= previous_start
+                    and gap <= OVERLAP_DEDUP_WINDOW_SECONDS):
+                transcript = remove_text_overlap(self.previous_transcript, transcript)
+        # Compare only with the immediately preceding ASR segment, even if it
+        # was a full boundary re-emission and will not be emitted again.
+        self.previous_transcript = original_transcript
+        self.previous_time_range = tuple(task.time_range)
+        if not transcript or is_punctuation_only(transcript):
+            return None
         task.transcript = transcript
         print(f'[Assembler] received trace={task.latency_trace.trace_id} '
               f'at={task.latency_trace.assembler_received_at:.6f} '

@@ -417,3 +417,67 @@ def test_subtitle_assembler_merges_adjacent_incomplete_segments():
     assert merged.transcript == "もし明日雨なら室内に変更します。"
     assert merged.time_range == (0.0, 4.0)
     assert output_queue.get() is None
+
+
+def test_cjk_boundary_re_emission_is_trimmed_within_time_window():
+    for start in (1.0, 2.5):
+        segmenter = SubtitleSegmenter(assembler_enabled=False)
+        first = _task(1)
+        first.transcript = "今日は新しいゲームを"
+        first.time_range = (0.0, 1.0)
+        second = _task(2)
+        second.transcript = "新しいゲームを始めます"
+        second.time_range = (start, start + 1.0)
+
+        assert segmenter._prepare(first) is first
+        assert segmenter._prepare(second) is second
+        assert second.transcript == "始めます"
+
+
+def test_cjk_repeated_prefix_after_time_window_is_kept():
+    for start in (2.51, 6.0):
+        segmenter = SubtitleSegmenter(assembler_enabled=False)
+        first = _task(1)
+        first.transcript = "今日は新しいゲームを"
+        first.time_range = (0.0, 1.0)
+        second = _task(2)
+        second.transcript = "新しいゲームを始めます"
+        second.time_range = (start, start + 1.0)
+
+        assert segmenter._prepare(first) is first
+        assert segmenter._prepare(second) is second
+        assert second.transcript == "新しいゲームを始めます"
+
+
+def test_fully_overlapping_cjk_segment_seconds_later_is_emitted():
+    segmenter = SubtitleSegmenter(assembler_enabled=False)
+    first = _task(1)
+    first.transcript = "みんな頑張れ"
+    first.time_range = (0.0, 1.0)
+    repeated = _task(2)
+    repeated.transcript = first.transcript
+    repeated.time_range = (6.0, 7.0)
+    incoming = queue.SimpleQueue()
+    outgoing = queue.SimpleQueue()
+    for task in (first, repeated, None):
+        incoming.put(task)
+
+    segmenter.loop(incoming, outgoing)
+
+    assert outgoing.get() is first
+    assert outgoing.get() is repeated
+    assert repeated.transcript == "みんな頑張れ"
+    assert outgoing.get() is None
+
+
+def test_cjk_overlap_inside_previous_segment_is_kept():
+    segmenter = SubtitleSegmenter(assembler_enabled=False)
+    first = _task(1)
+    first.transcript = "新しいゲームを今日は始めます"
+    second = _task(2)
+    second.transcript = "新しいゲームを始めます"
+    second.time_range = (1.0, 2.0)
+
+    assert segmenter._prepare(first) is first
+    assert segmenter._prepare(second) is second
+    assert second.transcript == "新しいゲームを始めます"

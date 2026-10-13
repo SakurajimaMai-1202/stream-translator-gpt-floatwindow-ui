@@ -38,7 +38,7 @@ def test_metadata_requests_blob_details_and_returns_verified_asset(monkeypatch):
         "url": f"https://huggingface.co/api/models/{models.REPOSITORY}?blobs=true",
         "timeout": 30,
     }
-    assert url.endswith("/resolve/main/Hy-MT2-7B.i1-Q6_K.gguf")
+    assert url.endswith("/resolve/main/Hy-MT2-7B-Q6_K.gguf")
     assert size == 456
     assert digest == expected
 

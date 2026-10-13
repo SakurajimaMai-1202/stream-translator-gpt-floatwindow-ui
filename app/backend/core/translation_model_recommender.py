@@ -85,12 +85,12 @@ MODEL_CATALOG: tuple[dict[str, Any], ...] = (
     {
         "id": "hy-mt2-7b",
         "name": "Hy-MT2 7B",
-        "repo": "mradermacher/Hy-MT2-7B-i1-GGUF",
-        "url": "https://huggingface.co/mradermacher/Hy-MT2-7B-i1-GGUF/tree/main",
-        "recommended_quant": "i1-Q4_K_M",
-        "model_size_gb": 4.7,
-        "minimum_quant": "i1-IQ3_S",
-        "minimum_size_gb": 3.46,
+        "repo": "unsloth/Hy-MT2-7B-GGUF",
+        "url": "https://huggingface.co/unsloth/Hy-MT2-7B-GGUF/tree/main",
+        "recommended_quant": "UD-Q4_K_XL",
+        "model_size_gb": 4.78,
+        "minimum_quant": "UD-IQ3_XXS",
+        "minimum_size_gb": 3.13,
         "category": "translation",
         "app_preferred": True,
         "app_preference_reason": "本程式具備 Hy-MT2 專用提示詞、術語與上下文策略，建議優先使用。",
@@ -182,25 +182,25 @@ def build_translation_model_recommendations(devices: Iterable[GpuDevice]) -> dic
     if supported_gpu and tier_id == "unknown":
         simple_setup = {
             "supported": True, "model_id": "hy-mt2-iq3-xxs",
-            "filename": "Hy-MT2-7B.i1-IQ3_XXS.gguf", "quant": "i1-IQ3_XXS",
+            "filename": "Hy-MT2-7B-UD-IQ3_XXS.gguf", "quant": "UD-IQ3_XXS",
             "reason": f"偵測到 {selected.name}，但無法可靠讀取 VRAM；先使用較小量化。",
         }
     elif supported_gpu and tier_id == "8gb_plus":
         simple_setup = {
             "supported": True, "model_id": "hy-mt2-q6-k",
-            "filename": "Hy-MT2-7B.i1-Q6_K.gguf", "quant": "i1-Q6_K",
+            "filename": "Hy-MT2-7B-Q6_K.gguf", "quant": "Q6_K",
             "reason": f"偵測到 {selected.name}，屬於 {tier_label}，使用高品質量化。",
         }
     elif supported_gpu and tier_id == "4_to_8gb":
         simple_setup = {
             "supported": True, "model_id": "hy-mt2-iq4-nl",
-            "filename": "Hy-MT2-7B.i1-IQ4_NL.gguf", "quant": "i1-IQ4_NL",
+            "filename": "Hy-MT2-7B-IQ4_NL.gguf", "quant": "IQ4_NL",
             "reason": f"偵測到 {selected.name}，屬於 {tier_label}，使用兼顧品質與顯存的量化。",
         }
     elif supported_gpu and tier_id == "under_4gb":
         simple_setup = {
             "supported": True, "model_id": "hy-mt2-iq3-xxs",
-            "filename": "Hy-MT2-7B.i1-IQ3_XXS.gguf", "quant": "i1-IQ3_XXS",
+            "filename": "Hy-MT2-7B-UD-IQ3_XXS.gguf", "quant": "UD-IQ3_XXS",
             "reason": f"偵測到 {selected.name}，屬於 {tier_label}；使用 GPU Runtime 與最省資源量化。",
         }
     else:

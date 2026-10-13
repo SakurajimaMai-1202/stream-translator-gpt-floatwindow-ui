@@ -74,8 +74,8 @@ def test_sakura_models_are_labeled_for_novel_and_game_text():
 def test_hymt2_uses_official_sampling_recommendation():
     result = build_translation_model_recommendations([gpu("NVIDIA GeForce RTX", 12288)])
     model = next(model for model in result["models"] if model["id"] == "hy-mt2-7b")
-    assert model["repo"] == "mradermacher/Hy-MT2-7B-i1-GGUF"
-    assert model["recommended_quant"] == "i1-Q4_K_M"
+    assert model["repo"] == "unsloth/Hy-MT2-7B-GGUF"
+    assert model["recommended_quant"] == "UD-Q4_K_XL"
     assert model["deployment_config"] == {
         "temp": 0.7, "top_p": 0.6, "top_k": 20, "repeat_penalty": 1.05,
         "n_ctx": 4096, "n_predict": 4096
@@ -93,11 +93,11 @@ def test_vram_recommendations_are_derived_from_reference_quant_file_sizes():
     models = {model["id"]: model for model in result["models"]}
     assert (models["gemma-4-e2b-qat"]["model_size_gb"], models["gemma-4-e2b-qat"]["min_vram_gb"], models["gemma-4-e2b-qat"]["comfortable_vram_gb"]) == (2.62, 4, 6)
     assert (models["gemma-4-e4b-qat"]["model_size_gb"], models["gemma-4-e4b-qat"]["min_vram_gb"], models["gemma-4-e4b-qat"]["comfortable_vram_gb"]) == (4.22, 4, 8)
-    assert (models["hy-mt2-7b"]["model_size_gb"], models["hy-mt2-7b"]["min_vram_gb"], models["hy-mt2-7b"]["comfortable_vram_gb"]) == (4.7, 6, 8)
+    assert (models["hy-mt2-7b"]["model_size_gb"], models["hy-mt2-7b"]["min_vram_gb"], models["hy-mt2-7b"]["comfortable_vram_gb"]) == (4.78, 4, 8)
     assert (models["sakura-14b-qwen3-v15"]["model_size_gb"], models["sakura-14b-qwen3-v15"]["min_vram_gb"], models["sakura-14b-qwen3-v15"]["comfortable_vram_gb"]) == (8.18, 10, 12)
     assert (models["gemma-4-e2b-qat"]["minimum_quant"], models["gemma-4-e2b-qat"]["minimum_size_gb"]) == ("UD-Q2_K_XL", 2.19)
     assert (models["gemma-4-e4b-qat"]["minimum_quant"], models["gemma-4-e4b-qat"]["minimum_size_gb"]) == ("UD-Q2_K_XL", 3.22)
-    assert (models["hy-mt2-7b"]["minimum_quant"], models["hy-mt2-7b"]["minimum_size_gb"]) == ("i1-IQ3_S", 3.46)
+    assert (models["hy-mt2-7b"]["minimum_quant"], models["hy-mt2-7b"]["minimum_size_gb"]) == ("UD-IQ3_XXS", 3.13)
 
 
 def test_hymt2_is_first_when_it_fits_but_does_not_override_hardware_fit():
@@ -124,7 +124,7 @@ def test_simple_setup_uses_small_model_for_four_gb_nvidia():
     result = build_translation_model_recommendations([gpu("NVIDIA GeForce RTX", 4096)])
     assert result["simple_setup"]["supported"] is True
     assert result["simple_setup"]["model_id"] == "hy-mt2-iq4-nl"
-    assert result["simple_setup"]["quant"] == "i1-IQ4_NL"
+    assert result["simple_setup"]["quant"] == "IQ4_NL"
     assert result["vram_tier"] == "4_to_8gb"
 
 
@@ -132,7 +132,7 @@ def test_simple_setup_uses_q6_model_for_eight_gb_nvidia():
     result = build_translation_model_recommendations([gpu("NVIDIA GeForce RTX", 8192)])
     assert result["simple_setup"]["supported"] is True
     assert result["simple_setup"]["model_id"] == "hy-mt2-q6-k"
-    assert result["simple_setup"]["quant"] == "i1-Q6_K"
+    assert result["simple_setup"]["quant"] == "Q6_K"
     assert result["vram_tier"] == "8gb_plus"
 
 

@@ -248,6 +248,7 @@ def test_no_mmap_uses_legacy_switch_for_old_runtime(monkeypatch):
 
 def test_hymt_models_force_flash_attention_and_mmap_off():
     assert llama._is_hymt_model("Hy-MT2-7B.i1-Q6_K.gguf") is True
+    assert llama._is_hymt_model("Hy-MT2-7B-UD-Q4_K_XL.gguf") is True
     assert llama._is_hymt_model("hy_mt-translation.gguf") is True
     assert llama._effective_memory_options("Hy-MT2-7B.gguf", "auto", False) == ("off", True)
 

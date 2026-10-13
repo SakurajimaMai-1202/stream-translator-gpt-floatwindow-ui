@@ -193,18 +193,24 @@ def _backend_version_from_name(name: str, backend: str) -> str:
     return match.group(1) if match else ""
 
 
-def _asset_payload(asset: dict[str, Any], role: str) -> dict[str, Any]:
+def _asset_payload(asset: dict[str, Any], role: str, sha256_url: str = "") -> dict[str, Any]:
     return {
         "name": str(asset.get("name") or ""),
         "url": str(asset.get("browser_download_url") or ""),
         "size": int(asset.get("size") or 0),
         "digest": _asset_digest(asset),
+        "sha256_url": str(asset.get("sha256_url") or sha256_url),
         "role": role,
     }
 
 
 def _build_variants(assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Build install manifests from official release assets without fixed filenames."""
+    sidecars = {
+        str(asset.get("name") or "").lower()[:-7]: str(asset.get("browser_download_url") or "")
+        for asset in assets
+        if str(asset.get("name") or "").lower().endswith(".sha256")
+    }
     mains: dict[str, list[tuple[dict[str, Any], str]]] = {}
     cudart_assets: list[tuple[dict[str, Any], tuple[int, str]]] = []
 
@@ -253,12 +259,15 @@ def _build_variants(assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
             key=lambda item: (item[1], str(item[0].get("name") or "")),
             reverse=True,
         )[0]
-        downloads = [_asset_payload(main, "runtime")]
+        sidecar_url = sidecars.get(str(main.get("name") or "").lower(), "")
+        downloads = [_asset_payload(main, "runtime", sidecar_url)]
         compatibility_error = ""
         if variant_id.startswith("cuda"):
             dependency = [item for item in cudart_assets if item[1][1] == runtime_version]
             if dependency:
-                downloads.append(_asset_payload(dependency[0][0], "dependency"))
+                dependency_asset = dependency[0][0]
+                dependency_sidecar = sidecars.get(str(dependency_asset.get("name") or "").lower(), "")
+                downloads.append(_asset_payload(dependency_asset, "dependency", dependency_sidecar))
             else:
                 compatibility_error = "官方 Release 缺少相符的 CUDA Runtime 依賴檔"
         installable = not compatibility_error and all(item["url"] for item in downloads)
@@ -375,6 +384,7 @@ class FileInstallStatus:
     downloaded_bytes: int = 0
     total_bytes: int = 0
     sha256: str = ""
+    verified: bool = False
     error: str = ""
 
 
@@ -559,8 +569,24 @@ class LlamaRuntimeInstaller:
                             self._set(progress=min(0.7, (index + portion) / len(assets) * 0.7))
                     sha256 = digest.hexdigest()
                     expected = str(asset.get("digest") or "").lower()
-                    if expected and expected != f"sha256:{sha256}":
-                        raise RuntimeError("SHA-256 驗證失敗")
+                    verified = False
+                    if expected:
+                        if expected != f"sha256:{sha256}":
+                            raise RuntimeError("SHA-256 驗證失敗")
+                        verified = True
+                    elif asset.get("sha256_url"):
+                        sidecar = _fetch_text(str(asset["sha256_url"]))
+                        expected = sidecar.split()[0].lower() if sidecar.split() else ""
+                        if expected.startswith("sha256:"):
+                            expected = expected[7:]
+                        if not re.fullmatch(r"[0-9a-f]{64}", expected):
+                            raise RuntimeError("SHA-256 sidecar 格式無效")
+                        if expected != sha256:
+                            raise RuntimeError("SHA-256 驗證失敗")
+                        verified = True
+                    else:
+                        logger.warning("Release asset %s has no SHA-256 digest or sidecar; skipping hash verification", asset_name)
+                    self._set_file(index, verified=verified)
                     self._set_file(index, state="verifying", progress=1.0, sha256=sha256)
                     with zipfile.ZipFile(archive) as bundle:
                         self._safe_extract(bundle, extracted)

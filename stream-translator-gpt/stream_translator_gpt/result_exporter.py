@@ -306,13 +306,6 @@ class ResultExporter(LoopWorkerBase):
             from .qwen3_asr_postprocess import strip_unknown_token
             task.transcript = strip_unknown_token(task.transcript)
             task.translation = strip_unknown_token(task.translation)
-            if self.require_translation and not task.translation:
-                print(
-                    f"{WARNING}Skipping paired subtitle {task.segment_id}: translation unavailable",
-                    flush=True,
-                )
-                continue
-
             subtitle_timestamp = (
                 f'{format_srt_timestamp(task.time_range[0])} -> {format_srt_timestamp(task.time_range[1])}'
             )
@@ -402,7 +395,10 @@ class ResultExporter(LoopWorkerBase):
                     text_to_file += (task.transcript + '\n') if self.output_whisper_result else ''
                     if task.translation:
                         text_to_file += task.translation
-                    text_to_file = text_to_file.strip()
+                    if self.require_translation and not task.translation:
+                        text_to_file = text_to_file.rstrip() + '\n'
+                    else:
+                        text_to_file = text_to_file.strip()
                 else:
                     text_to_file = text_to_send
                 self.file_queue.put(text_to_file)

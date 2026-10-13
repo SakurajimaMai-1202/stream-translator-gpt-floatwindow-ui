@@ -237,7 +237,7 @@ def test_llm_client_reuses_openai_client_for_same_api_key(monkeypatch):
     assert len(created_clients) == 1
 
 
-def test_paired_exporter_skips_original_only_task():
+def test_paired_exporter_keeps_original_only_task_with_empty_translation(tmp_path):
     received = []
     exporter = ResultExporter(
         cqhttp_url=None,
@@ -245,7 +245,7 @@ def test_paired_exporter_skips_original_only_task():
         discord_webhook_url=None,
         telegram_token=None,
         telegram_chat_id=None,
-        output_file_path=None,
+        output_file_path=str(tmp_path / "captions.srt"),
         proxy=None,
         output_whisper_result=True,
         output_timestamps=False,
@@ -262,7 +262,10 @@ def test_paired_exporter_skips_original_only_task():
 
     exporter.loop(input_queue)
 
-    assert [task.segment_id for task in received] == [2]
+    assert [task.segment_id for task in received] == [1, 2]
+    subtitles = (tmp_path / "captions.srt").read_text(encoding="utf-8")
+    assert "1\n00:00:00,000 --> 00:00:01,000\nsource-1\n\n" in subtitles
+    assert "2\n00:00:00,000 --> 00:00:01,000\nsource-2\n譯文\n\n" in subtitles
 
 
 def test_subtitle_event_includes_latency_breakdown():

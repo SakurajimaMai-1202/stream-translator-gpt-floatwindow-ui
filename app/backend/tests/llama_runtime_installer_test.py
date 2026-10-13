@@ -375,6 +375,56 @@ def test_install_tracks_files_and_atomically_activates_runtime(monkeypatch, tmp_
     status = installer.status()
     assert status["files"][0]["state"] == "completed"
     assert status["files"][0]["sha256"] == sha256
+    assert status["files"][0]["verified"] is True
+
+
+def test_missing_digest_uses_sha256_sidecar(monkeypatch, tmp_path):
+    payload = _runtime_zip_bytes()
+    sha256 = hashlib.sha256(payload).hexdigest()
+    monkeypatch.setattr(runtime, "llama_root", lambda: tmp_path / "llama")
+    responses = {
+        "https://example.invalid/runtime.zip": _FakeResponse(payload),
+    }
+    monkeypatch.setattr(runtime.urllib.request, "urlopen", lambda url, **_kwargs: responses[url])
+    monkeypatch.setattr(runtime, "_fetch_text", lambda _url: f"{sha256}  runtime.zip")
+    monkeypatch.setattr(
+        runtime.LlamaRuntimeInstaller,
+        "_validate_runtime",
+        staticmethod(lambda directory: directory / "llama-server.exe"),
+    )
+    installer = runtime.LlamaRuntimeInstaller()
+    installer.begin("cpu")
+    installer._set(files=[runtime.asdict(runtime.FileInstallStatus(name="runtime.zip"))])
+
+    installer._download_and_install("b1", {"id": "cpu", "assets": [{
+        "name": "runtime.zip", "url": "https://example.invalid/runtime.zip",
+        "sha256_url": "https://example.invalid/runtime.zip.sha256", "size": len(payload),
+    }]})
+
+    assert installer.status()["files"][0]["verified"] is True
+
+
+def test_missing_digest_without_sidecar_warns_and_records_unverified(monkeypatch, tmp_path, caplog):
+    payload = _runtime_zip_bytes()
+    monkeypatch.setattr(runtime, "llama_root", lambda: tmp_path / "llama")
+    monkeypatch.setattr(runtime.urllib.request, "urlopen", lambda *_args, **_kwargs: _FakeResponse(payload))
+    monkeypatch.setattr(
+        runtime.LlamaRuntimeInstaller,
+        "_validate_runtime",
+        staticmethod(lambda directory: directory / "llama-server.exe"),
+    )
+    installer = runtime.LlamaRuntimeInstaller()
+    installer.begin("cpu")
+    installer._set(files=[runtime.asdict(runtime.FileInstallStatus(name="runtime.zip"))])
+
+    with caplog.at_level("WARNING", logger=runtime.__name__):
+        installer._download_and_install("b1", {"id": "cpu", "assets": [{
+            "name": "runtime.zip", "url": "https://example.invalid/runtime.zip",
+            "size": len(payload), "digest": "",
+        }]})
+
+    assert installer.status()["files"][0]["verified"] is False
+    assert "no SHA-256 digest or sidecar" in caplog.text
 
 
 def test_digest_failure_never_activates_runtime(monkeypatch, tmp_path):

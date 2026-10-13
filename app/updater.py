@@ -478,7 +478,11 @@ class Worker(QThread):
                     proc.terminate()
                     proc.wait(timeout=30)
                 if journal:
-                    self.wait_for_runtime_processes(app_root)
+                    try:
+                        self.wait_for_runtime_processes(app_root)
+                    except Exception as wait_exc:
+                        logger.warning("Runtime wait failed before rollback: %s", wait_exc)
+                        self.log.emit(f"Runtime wait failed; attempting rollback anyway: {wait_exc}")
                     rollback_errors = self.rollback(app_root, journal)
             except Exception as rollback_exc:
                 rollback_errors.append(str(rollback_exc))

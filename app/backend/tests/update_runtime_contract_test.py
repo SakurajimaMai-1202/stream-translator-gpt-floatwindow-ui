@@ -12,6 +12,32 @@ from updater import Worker
 
 
 class RuntimeContractTest(unittest.TestCase):
+    def test_runtime_wait_timeout_still_rolls_back_and_surfaces_failure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "install"
+            root.mkdir()
+            plan_path = root / "plan.json"
+            plan_path.write_text(json.dumps({"app_root": str(root)}))
+            worker = Worker(plan_path)
+            messages, logs = [], []
+            worker.failed.connect(messages.append)
+            worker.log.connect(logs.append)
+            plan = {"version": "test", "executable": "Stream Translator.exe"}
+            with mock.patch.object(worker, "recover", return_value=False), \
+                 mock.patch.object(worker, "validate_plan", return_value=(plan, {}, root, root, [root / "item"], "app_only")), \
+                 mock.patch.object(worker, "wait_for_processes"), \
+                 mock.patch.object(worker, "wait_for_runtime_processes", side_effect=[None, RuntimeError("runtime wait timed out")]), \
+                 mock.patch.object(worker, "backup_user_settings", return_value=root), \
+                 mock.patch.object(worker, "write_journal"), \
+                 mock.patch.object(worker, "apply_item", side_effect=RuntimeError("apply failed")), \
+                 mock.patch.object(worker, "rollback", return_value=["locked rollback file"]) as rollback:
+                worker.run()
+            rollback.assert_called_once()
+            self.assertTrue(any("runtime wait timed out" in entry for entry in logs))
+            self.assertEqual(len(messages), 1)
+            self.assertIn("apply failed", messages[0])
+            self.assertIn("locked rollback file", messages[0])
+
     def test_staging_and_updater_enforce_runtime_baseline(self):
         cases = [
             ("app_only", "1.4.9", "cuda", True, True),

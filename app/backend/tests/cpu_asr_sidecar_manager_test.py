@@ -84,6 +84,134 @@ def range_server(mode="ranges"):
 
 
 class CpuAsrSidecarManagerTest(unittest.TestCase):
+    def test_constructor_does_not_validate_existing_backup(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "target"
+            target.with_name("target.backup").mkdir()
+            with mock.patch.object(sidecar_module, "get_cpu_asr_runtime_path", return_value=target), \
+                 mock.patch.object(sidecar_module.subprocess, "run") as run, \
+                 mock.patch.object(sidecar_module.CpuAsrSidecarManager, "_validate_runtime") as validate:
+                sidecar_module.CpuAsrSidecarManager()
+                validate.assert_not_called()
+                run.assert_not_called()
+
+    def test_recovery_validation_does_not_block_status_or_allow_install(self):
+        for first_use in ("status", "start", "import"):
+            with self.subTest(first_use=first_use), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                target = root / "target"
+                target.with_name("target.backup").mkdir()
+                archive = root / "sidecar.zip"
+                archive.touch()
+                entered, release, polled = threading.Event(), threading.Event(), threading.Event()
+                failures = []
+                manager = sidecar_module.CpuAsrSidecarManager()
+
+                def validate(_):
+                    entered.set()
+                    if not release.wait(5):
+                        raise RuntimeError("validation test timed out")
+
+                def importing():
+                    try:
+                        manager.import_archive(str(archive))
+                    except Exception as exc:
+                        failures.append(exc)
+
+                def poll():
+                    manager.status()
+                    polled.set()
+
+                with mock.patch.object(sidecar_module, "get_cpu_asr_runtime_path", return_value=target), \
+                     mock.patch.object(manager, "_validate_runtime", side_effect=validate), \
+                     mock.patch.object(manager, "_download", side_effect=InterruptedError), \
+                     mock.patch.object(manager, "_safe_extract"), \
+                     mock.patch.object(manager, "_install"):
+                    if first_use == "status":
+                        manager.status()
+                        worker = manager._worker
+                    elif first_use == "start":
+                        manager.start(asset_url="offline")
+                        worker = manager._worker
+                    else:
+                        worker = threading.Thread(target=importing)
+                        worker.start()
+                    polling = threading.Thread(target=poll)
+                    try:
+                        self.assertTrue(entered.wait(2))
+                        polling.start()
+                        self.assertTrue(polled.wait(1), "status blocked on validation")
+                        with self.assertRaises(RuntimeError):
+                            manager.start(asset_url="offline")
+                        with self.assertRaises(RuntimeError):
+                            manager.import_archive(str(archive))
+                    finally:
+                        release.set()
+                        worker.join(5)
+                        if polling.ident is not None:
+                            polling.join(5)
+                    self.assertFalse(worker.is_alive())
+                    self.assertEqual(failures, [])
+
+    def test_recovery_rechecks_runtime_after_validation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "target"
+            backup = target.with_name("target.backup")
+            backup.mkdir()
+            (backup / "python.exe").write_text("old")
+            manager = sidecar_module.CpuAsrSidecarManager()
+
+            def validate(runtime):
+                if runtime == backup:
+                    # A runtime appeared while the backup was being validated.
+                    target.mkdir()
+                    (target / "python.exe").write_text("current")
+                self._fake_validate(runtime)
+
+            with mock.patch.object(sidecar_module, "get_cpu_asr_runtime_path", return_value=target), \
+                 mock.patch.object(manager, "_validate_runtime", side_effect=validate):
+                manager._restore_backup()
+            self.assertEqual((target / "python.exe").read_text(), "current")
+            self.assertTrue(backup.exists())
+
+    def test_direct_import_recovers_invalid_backup_and_returns_fresh_health(self):
+        for incomplete in (False, True):
+            with self.subTest(incomplete=incomplete), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                target = root / "target"
+                backup = target.with_name("target.backup")
+                backup.mkdir()
+                (backup / "partial").write_text("invalid backup")
+                if incomplete:
+                    target.mkdir()
+                    (target / "partial").touch()
+                archive = root / "sidecar.zip"
+                with zipfile.ZipFile(archive, "w") as bundle:
+                    bundle.writestr("_runtime_cpu_asr/python.exe", "new")
+                manager = sidecar_module.CpuAsrSidecarManager()
+
+                def validate(runtime):
+                    self.assertTrue(manager._lock.acquire(blocking=False))
+                    manager._lock.release()
+                    self._fake_validate(runtime)
+
+                extract = manager._safe_extract
+
+                def extract_after_recovery(*args):
+                    self.assertFalse(backup.exists())
+                    self.assertEqual(len(list(root.glob("target.backup.invalid-*"))), 1)
+                    extract(*args)
+
+                with mock.patch.object(sidecar_module, "get_cpu_asr_runtime_path", return_value=target), \
+                     mock.patch.object(manager, "_validate_runtime", side_effect=validate), \
+                     mock.patch.object(manager, "_safe_extract", side_effect=extract_after_recovery):
+                    status = manager.import_archive(str(archive))
+                self.assertEqual(status["status"], "completed")
+                self.assertTrue(status["healthy"])
+                self.assertTrue(manager._recovery_checked)
+                self.assertIsNone(manager._worker)
+                self.assertEqual((target / "python.exe").read_text(), "new")
+
     def test_parallel_http_download_and_resume(self):
         with range_server() as (url, payload, stats), tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'asset.part'
@@ -267,7 +395,12 @@ class CpuAsrSidecarManagerTest(unittest.TestCase):
                     (target / "partial").touch()
                 with mock.patch.object(sidecar_module, "get_cpu_asr_runtime_path", return_value=target), \
                      mock.patch.object(sidecar_module.CpuAsrSidecarManager, "_validate_runtime", side_effect=self._fake_validate):
-                    sidecar_module.CpuAsrSidecarManager()
+                    manager = sidecar_module.CpuAsrSidecarManager()
+                    manager.status()
+                    worker = manager._worker
+                    if worker is not None:
+                        worker.join(5)
+                        self.assertFalse(worker.is_alive())
                 self.assertEqual((target / "python.exe").read_text(), "old")
                 self.assertFalse(backup.exists())
 
@@ -290,6 +423,11 @@ class CpuAsrSidecarManagerTest(unittest.TestCase):
                          mock.patch.object(sidecar_module.CpuAsrSidecarManager, "_validate_runtime", side_effect=self._fake_validate):
                         with self.assertLogs(sidecar_module.logger, level="WARNING") as logs:
                             manager = sidecar_module.CpuAsrSidecarManager()
+                            manager.status()
+                            worker = manager._worker
+                            if worker is not None:
+                                worker.join(5)
+                                self.assertFalse(worker.is_alive())
                         self.assertIn("Quarantined invalid", " ".join(logs.output))
                         self.assertFalse(backup.exists())
                         quarantined = list(root.glob("target.backup.invalid-*"))

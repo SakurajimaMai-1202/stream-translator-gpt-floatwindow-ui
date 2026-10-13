@@ -46,18 +46,24 @@ class CpuAsrSidecarManager(HttpDownloader):
         self._state = SidecarInstallState()
         self._worker: threading.Thread | None = None
         self._cancel = threading.Event()
+        self._recovery_checked = False
         self._health_fingerprint: tuple[object, ...] | None = None
         self._health_result: tuple[bool, str] = (False, "CPU ASR runtime is not installed")
-        try:
-            self._restore_backup()
-        except Exception:
-            logger.warning("CPU ASR runtime backup recovery failed", exc_info=True)
 
     def status(self) -> dict[str, Any]:
-        with self._lock:
-            state = asdict(self._state)
         runtime = get_cpu_asr_runtime_path()
-        healthy, health_error = self._runtime_health(runtime)
+        with self._lock:
+            if not self._recovery_checked and self._worker is None and runtime.with_name(f"{runtime.name}.backup").exists():
+                self._worker = threading.Thread(
+                    target=self._recover_on_first_use, daemon=True,
+                    name="cpu-asr-sidecar-recovery",
+                )
+                self._worker.start()
+            state = asdict(self._state)
+            active = self._worker is not None and self._worker.is_alive()
+            health = self._health_result
+        # Validation belongs to the active worker; polls must not repeat it.
+        healthy, health_error = health if active else self._runtime_health(runtime)
         state.update({
             "installed": (runtime / "python.exe").is_file(),
             "healthy": healthy,
@@ -72,7 +78,6 @@ class CpuAsrSidecarManager(HttpDownloader):
         with self._lock:
             if self._worker is not None and self._worker.is_alive():
                 raise RuntimeError("CPU ASR Runtime download or installation is already active")
-            self._restore_backup()
             resolved_asset = asset_url or self._default_asset_url()
             resolved_sha = sha256_url or f"{resolved_asset}.sha256"
             self._cancel.clear()
@@ -108,19 +113,22 @@ class CpuAsrSidecarManager(HttpDownloader):
         with self._lock:
             if self._worker is not None and self._worker.is_alive():
                 raise RuntimeError("CPU ASR Runtime 正在下載或安裝中")
-            self._restore_backup()
             self._worker = threading.current_thread()
             self._cancel.clear()
             self._state = SidecarInstallState(
                 status="verifying", progress=0.2, message="正在檢查離線 CPU ASR Runtime 套件"
             )
         try:
+            self._recover_runtime()
             with tempfile.TemporaryDirectory(prefix="stream-translator-cpu-asr-import-") as temporary:
                 extracted = Path(temporary) / "extracted"
                 extracted.mkdir()
                 self._safe_extract(archive, extracted)
                 self._set(status="installing", progress=0.65, message="正在安裝離線 CPU ASR Runtime")
                 self._install(extracted)
+            # Refresh health while this import still owns the runtime. Status
+            # polls use the cache until the worker reservation is released.
+            self._runtime_health(get_cpu_asr_runtime_path())
             self._set(
                 status="completed", progress=1.0, message="離線 CPU ASR Runtime 已安裝",
                 error="", restart_required=True,
@@ -246,26 +254,51 @@ class CpuAsrSidecarManager(HttpDownloader):
         if result.returncode != 0:
             raise RuntimeError(f"CPU ASR sidecar import validation failed: {result.stderr[-500:]}")
 
+    def _recover_runtime(self) -> None:
+        """Recover lazily under the caller's worker reservation, outside the lock."""
+        self._restore_backup()
+        with self._lock:
+            self._recovery_checked = True
+
+    def _recover_on_first_use(self) -> None:
+        try:
+            self._recover_runtime()
+        except Exception:
+            logger.warning("CPU ASR runtime backup recovery failed", exc_info=True)
+        finally:
+            with self._lock:
+                self._worker = None
+
     def _restore_backup(self) -> None:
-        """Recover an interrupted directory swap before beginning another install."""
+        """Validate outside the state lock, then re-check before directory changes."""
         target = get_cpu_asr_runtime_path()
         backup = target.with_name(f"{target.name}.backup")
-        if not backup.exists():
-            return
-        try:
-            self._validate_runtime(target)
-        except Exception:
+        while backup.exists():
+            fingerprints = (self._runtime_fingerprint(target), self._runtime_fingerprint(backup))
+            action = "keep"
             try:
-                self._validate_runtime(backup)
+                self._validate_runtime(target)
             except Exception:
-                quarantine = backup.with_name(f"{backup.name}.invalid-{time.time_ns()}")
-                backup.rename(quarantine)
-                logger.warning("Quarantined invalid CPU ASR runtime backup at %s", quarantine, exc_info=True)
+                try:
+                    self._validate_runtime(backup)
+                    action = "restore"
+                except Exception:
+                    action = "quarantine"
+            with self._lock:
+                if not backup.exists():
+                    return
+                if fingerprints != (self._runtime_fingerprint(target), self._runtime_fingerprint(backup)):
+                    continue
+                if action == "quarantine":
+                    quarantine = backup.with_name(f"{backup.name}.invalid-{time.time_ns()}")
+                    backup.rename(quarantine)
+                    logger.warning("Quarantined invalid CPU ASR runtime backup at %s", quarantine)
+                elif action == "restore":
+                    if target.exists():
+                        shutil.rmtree(target)
+                    backup.replace(target)
+                    self._health_fingerprint = None
                 return
-            if target.exists():
-                shutil.rmtree(target)
-            backup.replace(target)
-            self._health_fingerprint = None
 
     def _install(self, extracted: Path) -> None:
         runtime = extracted
@@ -279,7 +312,7 @@ class CpuAsrSidecarManager(HttpDownloader):
             raise RuntimeError("The CPU package already contains its CPU ASR runtime")
         target.parent.mkdir(parents=True, exist_ok=True)
         backup = target.with_name(f"{target.name}.backup")
-        self._restore_backup()
+        self._recover_runtime()
         # Stage on the target filesystem so the final directory move is atomic.
         with tempfile.TemporaryDirectory(prefix=f"{target.name}.staging-", dir=target.parent) as temporary:
             staging = Path(temporary) / "runtime"
@@ -308,6 +341,7 @@ class CpuAsrSidecarManager(HttpDownloader):
 
     def _run(self, *, asset_url: str, sha256_url: str) -> None:
         try:
+            self._recover_runtime()
             download_dir = get_cpu_asr_runtime_path().parent / ".downloads"
             download_dir.mkdir(parents=True, exist_ok=True)
             archive = download_dir / f"{self._asset_name()}.part"
@@ -328,6 +362,7 @@ class CpuAsrSidecarManager(HttpDownloader):
                 self._safe_extract(archive, extracted)
                 self._install(extracted)
             archive.unlink(missing_ok=True)
+            self._runtime_health(get_cpu_asr_runtime_path())
             self._set(
                 status="completed", progress=1.0, message="CPU ASR runtime installed",
                 error="", restart_required=True,

@@ -37,7 +37,7 @@ def test_eof_retries_until_confirmed_end_but_never_replays_vod(monkeypatch, init
     output = queue.SimpleQueue()
     getter.loop(output)
     assert len(opens) == expected_opens
-    if expected_opens == 2:
+    for _ in range(expected_opens):
         assert output.get() is AUDIO_STREAM_GAP
     assert output.get() is None
 
@@ -62,6 +62,7 @@ def test_unknown_source_waits_for_metadata_without_reopening_vod(monkeypatch):
     output = queue.SimpleQueue()
     getter.loop(output)
     assert len(opens) == 1
+    assert output.get() is AUDIO_STREAM_GAP
     assert output.get() is None
 
 
@@ -91,6 +92,7 @@ def test_manual_stop_ends_unknown_metadata_wait(monkeypatch):
     output = queue.SimpleQueue()
     getter.loop(output)
     assert len(calls) == 2
+    assert output.get() is AUDIO_STREAM_GAP
     assert output.get() is None
 
 
@@ -208,3 +210,48 @@ def test_different_or_transient_errors_reset_startup_cap():
         getter._check_stream_error('Unable to extract audio')
     getter._check_stream_error('Unable to extract different audio')
     assert getter._startup_failures == 1
+
+
+@pytest.mark.parametrize('initial', ['unknown', 'live'])
+def test_permanently_unknown_eof_is_bounded(monkeypatch, initial):
+    getter = audio_getter.StreamAudioGetter('https://example.com/video', 'ba', '', '')
+    getter.YOUTUBE_RECONNECT_DELAY_SECONDS = 0
+    calls = []
+    def status():
+        calls.append(True)
+        assert len(calls) <= 1 + getter.MAX_UNKNOWN_EOF_CHECKS
+        return initial if len(calls) == 1 else 'unknown'
+    monkeypatch.setattr(getter, '_source_status', status)
+    opens = []
+    monkeypatch.setattr(audio_getter, '_open_stream', lambda *a: (opens.append(True), None))
+    monkeypatch.setattr(getter, '_read_stream_frames', lambda: iter(()))
+    monkeypatch.setattr(getter, '_close_stream', lambda: None)
+    output = queue.SimpleQueue()
+    getter.loop(output)
+    assert len(opens) == 1
+    assert len(calls) == 1 + getter.MAX_UNKNOWN_EOF_CHECKS
+    assert output.get_nowait() is AUDIO_STREAM_GAP
+    assert output.get_nowait() is None
+    assert output.empty()
+
+
+def test_eof_gap_precedes_cleanup_and_metadata(monkeypatch):
+    getter = audio_getter.StreamAudioGetter('https://example.com/live', 'ba', '', '')
+    output = queue.SimpleQueue()
+    calls = []
+    def status():
+        calls.append(True)
+        if len(calls) == 1:
+            return 'live'
+        # Represents a slow metadata provider: speech must already be flushed.
+        assert output.get_nowait() is AUDIO_STREAM_GAP
+        return 'ended'
+    monkeypatch.setattr(getter, '_source_status', status)
+    monkeypatch.setattr(audio_getter, '_open_stream', lambda *a: (None, None))
+    monkeypatch.setattr(getter, '_read_stream_frames', lambda: iter(()))
+    def close():
+        assert not output.empty()
+    monkeypatch.setattr(getter, '_close_stream', close)
+    getter.loop(output)
+    assert output.get_nowait() is None
+    assert output.empty()

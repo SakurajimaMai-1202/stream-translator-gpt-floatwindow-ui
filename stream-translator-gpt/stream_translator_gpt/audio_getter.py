@@ -341,6 +341,7 @@ class StreamAudioGetter(LoopWorkerBase):
 
     STREAM_READ_TIMEOUT_SECONDS = 8.0
     YOUTUBE_RECONNECT_DELAY_SECONDS = 1.0
+    MAX_UNKNOWN_EOF_CHECKS = 3
 
     def _source_status(self):
         """Return live, finite, ended, or unknown; transport EOF is not proof."""
@@ -523,6 +524,9 @@ class StreamAudioGetter(LoopWorkerBase):
                     self._startup_error = None
                     self._startup_failures = 0
                     output_queue.put(audio)
+                if self.running:
+                    # Flush the last speech before cleanup or slow metadata queries.
+                    output_queue.put(AUDIO_STREAM_GAP)
                 stream_failed = any(
                     process and process.poll() not in (None, 0)
                     for process in (self.ffmpeg_process, self.ytdlp_process)
@@ -553,10 +557,15 @@ class StreamAudioGetter(LoopWorkerBase):
             if not self.running or source_status in ('finite', 'ended'):
                 break
             # Unknown metadata is not permission to replay a possible VOD.
-            # Keep the task open while checking; reopen only a confirmed live.
+            # Reopen only a confirmed live; unavailable metadata must not hang EOF.
+            unknown_checks = 0
             while self.running:
                 source_status = self._source_status()
                 if source_status != 'unknown':
+                    break
+                unknown_checks += 1
+                if unknown_checks >= self.MAX_UNKNOWN_EOF_CHECKS:
+                    source_status = 'ended'
                     break
                 print(f'{WARNING}無法確認來源狀態，等待後重新確認…')
                 if self._stop_event.wait(self.YOUTUBE_RECONNECT_DELAY_SECONDS):
@@ -565,8 +574,6 @@ class StreamAudioGetter(LoopWorkerBase):
                 break
             if source_status in ('finite', 'ended'):
                 break
-            if not stalled:
-                output_queue.put(AUDIO_STREAM_GAP)
             print(f'{WARNING}來源尚未確認結束，正在重新連線…')
             if self._stop_event.wait(self.YOUTUBE_RECONNECT_DELAY_SECONDS):
                 break
@@ -635,6 +642,12 @@ class LocalFileAudioGetter(LoopWorkerBase):
 
 class DeviceAudioGetter(LoopWorkerBase):
 
+    MAX_DEVICE_FAILURES = 5
+    DEVICE_RETRY_DELAY_SECONDS = 0.25
+    DEVICE_MAX_RETRY_DELAY_SECONDS = 2.0
+    DEVICE_POLL_SECONDS = 0.05
+    DEVICE_RECOVERY_SECONDS = 1.0
+
     def __init__(self, device_index: int, recording_interval: float, use_loopback: bool = False) -> None:
         import sys
         from .common import INFO, WARNING
@@ -645,6 +658,7 @@ class DeviceAudioGetter(LoopWorkerBase):
         self.backend = 'sounddevice'  # 預設後端
         self.total_reads = 0
         self.running = True
+        self._stop_event = threading.Event()
         
         # 嘗試使用 PyAudioWPatch loopback (僅 Windows)
         if use_loopback:
@@ -668,6 +682,7 @@ class DeviceAudioGetter(LoopWorkerBase):
 
     def stop(self) -> None:
         self.running = False
+        self._stop_event.set()
     
     def _init_sounddevice(self, device_index: int) -> None:
         """初始化 SoundDevice 後端"""
@@ -762,10 +777,39 @@ class DeviceAudioGetter(LoopWorkerBase):
     def loop(self, output_queue: queue.SimpleQueue[np.array]):
         print(f'{INFO}Recording device: {self.device_name}')
         
-        if self.backend == 'pyaudiowpatch':
-            self._loop_pyaudiowpatch(output_queue)
-        else:
-            self._loop_sounddevice(output_queue)
+        failures = 0
+        try:
+            while self.running:
+                self._capture_seconds = 0.0
+                try:
+                    if self.backend == 'pyaudiowpatch':
+                        self._loop_pyaudiowpatch(output_queue)
+                    else:
+                        self._loop_sounddevice(output_queue)
+                    break
+                except Exception as exc:
+                    if not self.running:
+                        break
+                    if self._capture_seconds >= self.DEVICE_RECOVERY_SECONDS:
+                        failures = 0
+                    failures += 1
+                    if failures >= self.MAX_DEVICE_FAILURES:
+                        message = 'Audio device unavailable after repeated capture failures'
+                        print(f'{ERROR}{message}', flush=True)
+                        raise RuntimeError(message) from exc
+                    print(f'{WARNING}Audio device capture failed; retrying', flush=True)
+                    self.remaining_audio = np.array([], dtype=np.float32)
+                    output_queue.put(AUDIO_STREAM_GAP)
+                    delay = min(self.DEVICE_RETRY_DELAY_SECONDS * 2 ** (failures - 1),
+                                self.DEVICE_MAX_RETRY_DELAY_SECONDS)
+                    if self._stop_event.wait(delay):
+                        break
+        finally:
+            self.running = False
+            self._stop_event.set()
+            if self.backend == 'pyaudiowpatch':
+                self.p.terminate()
+        output_queue.put(None)
     
     def _loop_sounddevice(self, output_queue: queue.SimpleQueue[np.array]):
         """SoundDevice 後端的錄音迴圈"""
@@ -777,6 +821,7 @@ class DeviceAudioGetter(LoopWorkerBase):
             if status:
                 print(status)
 
+            self._capture_seconds += len(indata) / SAMPLE_RATE
             audio = np.concatenate([self.remaining_audio, indata.flatten().astype(np.float32)])
             num_samples = len(audio)
             num_chunks = num_samples // SAMPLES_PER_FRAME
@@ -794,10 +839,12 @@ class DeviceAudioGetter(LoopWorkerBase):
                             device=self.device_index,
                             channels=1,
                             dtype=np.float32,
-                            callback=audio_callback):
+                            callback=audio_callback) as stream:
             while self.running:
-                time.sleep(0.1)
-        output_queue.put(None)
+                if self._stop_event.wait(self.DEVICE_POLL_SECONDS):
+                    break
+                if not stream.active:
+                    raise RuntimeError('Audio input stream became inactive')
     
     def _loop_pyaudiowpatch(self, output_queue: queue.SimpleQueue[np.array]):
         """PyAudioWPatch 後端的錄音迴圈（已優化）"""
@@ -834,7 +881,11 @@ class DeviceAudioGetter(LoopWorkerBase):
         else:
             print(f'{INFO}設備採樣率 {device_sample_rate}Hz ({device_channels}ch)，無需重採樣')
 
-        frames_per_buffer = round(device_sample_rate * self.recording_interval)
+        frames_per_buffer = max(1, round(device_sample_rate * self.recording_interval))
+        native_audio = np.array([], dtype=np.float32)
+        if needs_resampling:
+            # Fixed ratio-aligned blocks decouple filtering from device read sizes.
+            resample_block = max(1, round(device_sample_rate * FRAME_DURATION / down)) * down
 
         try:
             # 以設備實際聲道數開啟串流，避免驅動層隱式轉換帶來的額外開銷
@@ -849,8 +900,17 @@ class DeviceAudioGetter(LoopWorkerBase):
 
             while self.running:
                 try:
+                    # Only read frames already available. A blocking read for the
+                    # recording interval cannot otherwise be interrupted by stop().
+                    available = stream.get_read_available()
+                    if available <= 0:
+                        if not stream.is_active():
+                            raise RuntimeError('Loopback input stream became inactive')
+                        if self._stop_event.wait(self.DEVICE_POLL_SECONDS):
+                            break
+                        continue
                     # exception_on_overflow=False：略過溢出警告，避免 Python 例外開銷
-                    data = stream.read(frames_per_buffer, exception_on_overflow=False)
+                    data = stream.read(min(frames_per_buffer, available), exception_on_overflow=False)
                     if not self.running:
                         break
                     self.total_reads += 1
@@ -862,16 +922,23 @@ class DeviceAudioGetter(LoopWorkerBase):
                         audio = audio.reshape(-1, device_channels).mean(axis=1).astype(np.float32)
 
                     # 重採樣（scipy polyphase 對整數倍率遠比 np.interp 快）
+                    self._capture_seconds += len(audio) / device_sample_rate
                     if needs_resampling:
+                        native_audio = np.concatenate([native_audio, audio])
+                        whole_samples = len(native_audio) // resample_block * resample_block
+                        if not whole_samples:
+                            continue
+                        blocks = native_audio[:whole_samples].reshape(-1, resample_block)
+                        native_audio = native_audio[whole_samples:].copy()
                         if _do_resample is not None:
-                            audio = _do_resample(audio)
+                            audio = np.concatenate([_do_resample(block) for block in blocks])
                         else:
-                            target_length = int(len(audio) * SAMPLE_RATE / device_sample_rate)
-                            audio = np.interp(
-                                np.linspace(0, len(audio) - 1, target_length),
-                                np.arange(len(audio)),
-                                audio
-                            ).astype(np.float32)
+                            target_length = resample_block // down * up
+                            positions = np.arange(target_length) * down / up
+                            audio = np.concatenate([
+                                np.interp(positions, np.arange(resample_block), block)
+                                for block in blocks
+                            ]).astype(np.float32)
 
                     # 合併剩餘樣本（只在有剩餘時才 concatenate，避免無謂分配）
                     if len(self.remaining_audio) > 0:
@@ -887,15 +954,30 @@ class DeviceAudioGetter(LoopWorkerBase):
                     self.remaining_audio = (audio[-remaining_samples:] if remaining_samples > 0
                                             else np.array([], dtype=np.float32))
 
-                except Exception as e:
-                    print(f'{WARNING}讀取音頻資料時發生錯誤：{e}')
-                    time.sleep(0.1)
+                except Exception:
+                    if not self.running:
+                        break
+                    raise
 
-        except Exception as e:
-            print(f'{ERROR}PyAudioWPatch 串流錯誤：{e}')
         finally:
+            # On stop, retain the final ratio-aligned tail too. During capture it
+            # stays buffered so read boundaries never become filter boundaries.
+            if needs_resampling and not self.running and len(native_audio):
+                count = len(native_audio) // down * down
+                if count:
+                    tail = native_audio[:count]
+                    if _do_resample is not None:
+                        tail = _do_resample(tail)
+                    else:
+                        tail = np.interp(np.arange(count // down * up) * down / up,
+                                         np.arange(count), tail).astype(np.float32)
+                    audio = np.concatenate([self.remaining_audio, tail])
+                    complete = len(audio) // SAMPLES_PER_FRAME * SAMPLES_PER_FRAME
+                    for offset in range(0, complete, SAMPLES_PER_FRAME):
+                        output_queue.put(audio[offset:offset + SAMPLES_PER_FRAME])
+                    self.remaining_audio = audio[complete:].copy()
             if 'stream' in locals():
-                stream.stop_stream()
-                stream.close()
-            self.p.terminate()
-            output_queue.put(None)
+                try:
+                    stream.stop_stream()
+                finally:
+                    stream.close()

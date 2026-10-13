@@ -162,4 +162,6 @@ def test_youtube_stream_reconnects_after_audio_stall(monkeypatch):
     assert len(opens) == 2
     assert output.get() is AUDIO_STREAM_GAP
     assert output.get().shape == (audio_getter.SAMPLES_PER_FRAME,)
+    # S6: EOF flushes the tail immediately, before the end-of-stream sentinel.
+    assert output.get() is AUDIO_STREAM_GAP
     assert output.get() is None

@@ -163,6 +163,20 @@ def test_never_live_transport_failures_end_at_wall_clock_limit(source, monkeypat
     assert output.empty()
 
 
+def test_never_live_stall_reaching_wait_limit_raises(source, monkeypatch):
+    getter, clock = source
+
+    def frames():
+        raise TimeoutError('stalled')
+
+    monkeypatch.setattr(getter, '_read_stream_frames', frames)
+    monkeypatch.setattr(getter, 'YOUTUBE_RECONNECT_DELAY_SECONDS', getter.MAX_UNKNOWN_EOF_SECONDS / 4)
+    metadata(monkeypatch, getter, clock, ['nonzero'] * 6)
+    # A mid-session stall that hits the wait limit is a failure, not a normal end.
+    with pytest.raises(RuntimeError):
+        getter.loop(AudioSourceQueue())
+
+
 def test_confirmed_live_transport_failures_beyond_limit_wait_for_stop(source, monkeypatch, capsys):
     getter, clock = source
     monkeypatch.setattr(getter, 'YOUTUBE_RECONNECT_DELAY_SECONDS', getter.MAX_UNKNOWN_EOF_SECONDS / 2)

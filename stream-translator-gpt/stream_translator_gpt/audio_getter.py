@@ -607,6 +607,9 @@ class StreamAudioGetter(LoopWorkerBase):
                 if unknown_started_at is None:
                     unknown_started_at = now
                 if now - unknown_started_at >= self.MAX_UNKNOWN_EOF_SECONDS:
+                    if stalled or stream_failed:
+                        # A mid-session stall is a failure, not a normal end of stream.
+                        raise RuntimeError('音訊串流中斷且無法確認來源狀態；已達等待上限，停止轉譯。')
                     print(f'{ERROR}Source status could not be confirmed after EOF/stall; '
                           'stopping after the metadata wait limit (source was never confirmed live).',
                           flush=True)

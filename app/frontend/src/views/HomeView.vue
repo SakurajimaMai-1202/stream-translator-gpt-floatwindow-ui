@@ -1763,7 +1763,10 @@ function clearLogs() {
             <div class="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
               <!-- 輸入語言 -->
               <div class="flex flex-col">
-                <label class="commercial-field-label">輸入語言</label>
+                <!-- Same header height as the target column so both selects line up. -->
+                <div class="language-field-header mb-1.5 flex items-center">
+                  <label class="commercial-field-label !mb-0">輸入語言</label>
+                </div>
                 <UiSelect
                   v-model="selectedInputLanguage"
                   :options="inputLanguageOptions"
@@ -1777,7 +1780,7 @@ function clearLogs() {
 
               <!-- 啟用翻譯與目標語言 -->
               <div class="flex flex-col">
-                <div class="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+                <div class="language-field-header mb-1.5 flex flex-wrap items-center justify-between gap-2">
                   <label class="commercial-field-label !mb-0">目標語言</label>
                   <div class="inline-flex rounded-lg border border-white/15 bg-white/5 p-0.5" role="group" aria-label="轉譯模式">
                     <button
@@ -2259,6 +2262,8 @@ function clearLogs() {
 .home-stop-action { background: #b84249; box-shadow: none; }
 .commercial-home button { min-height: 44px; }
 .commercial-home .translation-mode-option { min-height: 36px; }
+/* Toggle group height: 36px option + 2px padding + 1px border on each side. */
+.commercial-home .language-field-header { min-height: 42px; }
 .commercial-home .local-llm-inline-action { min-height: 28px; }
 .commercial-home button:focus-visible { outline: 2px solid var(--fw-accent, #3479d9); outline-offset: 3px; }
 .commercial-home .source-card-icon { opacity: .85; }

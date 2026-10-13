@@ -6,7 +6,7 @@ import time
 from .audio_getter import StreamAudioGetter, LocalFileAudioGetter, DeviceAudioGetter
 from .process_audio_capture import ProcessAudioGetter
 from .audio_slicer import AudioSlicer
-from .common import ClientPool, INFO, is_url, ObservableTaskQueue, PipelineWorkers, create_pipeline_backlog_monitors
+from .common import AudioSourceQueue, ClientPool, INFO, is_url, ObservableTaskQueue, PipelineWorkers, create_pipeline_backlog_monitors
 from .result_exporter import ResultExporter
 from .subtitle_segmenter import SubtitleSegmenter
 
@@ -260,7 +260,7 @@ def run_inprocess_pipeline(url: str,
                     proxy=options.get("processing_proxy"),
                     google_base_url=options.get("google_base_url"))
 
-    getter_to_slicer_queue = queue.SimpleQueue()
+    getter_to_slicer_queue = AudioSourceQueue()
     slicer_to_transcriber_queue = ObservableTaskQueue()
     transcriber_to_segmenter_queue = queue.SimpleQueue()
     segmenter_to_translator_queue = queue.SimpleQueue()

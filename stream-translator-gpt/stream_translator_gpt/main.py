@@ -14,7 +14,7 @@ if __name__ == '__main__':
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     __package__ = "stream_translator_gpt"
 
-from .common import ApiKeyPool, configure_utf8_stdio, ObservableTaskQueue, PipelineWorkers, create_pipeline_backlog_monitors, is_url, WARNING, ERROR, INFO
+from .common import AudioSourceQueue, ApiKeyPool, configure_utf8_stdio, ObservableTaskQueue, PipelineWorkers, create_pipeline_backlog_monitors, is_url, WARNING, ERROR, INFO
 from .audio_getter import (
     StreamAudioGetter,
     LocalFileAudioGetter,
@@ -244,7 +244,7 @@ def main(url, **kwargs):
         subtitle_share_token = managed_subtitle_share_server.push_token
 
     # Init queues
-    getter_to_slicer_queue = queue.SimpleQueue()
+    getter_to_slicer_queue = AudioSourceQueue()
     slicer_to_transcriber_queue = ObservableTaskQueue()
     transcriber_to_segmenter_queue = queue.SimpleQueue()
     segmenter_to_translator_queue = queue.SimpleQueue()

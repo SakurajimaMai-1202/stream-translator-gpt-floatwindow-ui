@@ -17,7 +17,7 @@ from urllib.parse import urlparse
 import ffmpeg
 import numpy as np
 
-from .common import AUDIO_STREAM_GAP, SAMPLE_RATE, SAMPLES_PER_FRAME, FRAME_DURATION, LoopWorkerBase, INFO, WARNING, ERROR, QueueBacklogMonitor
+from .common import AudioSourceQueue, AUDIO_STREAM_GAP, SAMPLE_RATE, SAMPLES_PER_FRAME, FRAME_DURATION, LoopWorkerBase, INFO, WARNING, ERROR, QueueBacklogMonitor
 
 
 # Definite configuration failures; ambiguous extractor/decoder failures need repetition.
@@ -501,6 +501,8 @@ class StreamAudioGetter(LoopWorkerBase):
         frame_count = 0
         start_time = time.monotonic()
         source_status = self._source_status()
+        gap_started_at = None
+        last_frame_received_at = None
         while self.running:
             print(f'{INFO}Opening stream: {self.url}')
             stalled = False
@@ -515,6 +517,7 @@ class StreamAudioGetter(LoopWorkerBase):
                 for in_bytes in self._read_stream_frames():
                     if not self.running:
                         break
+                    frame_received_at = time.monotonic()
                     audio = np.frombuffer(in_bytes, np.float32).flatten()
                     if self.realtime_throttle:
                         expected_time = frame_count * FRAME_DURATION
@@ -526,9 +529,24 @@ class StreamAudioGetter(LoopWorkerBase):
                     self._received_audio = True
                     self._startup_error = None
                     self._startup_failures = 0
-                    output_queue.put(audio)
+                    missing = 0.0
+                    if gap_started_at is not None:
+                        if source_status == 'live':
+                            # Include the stalled read, not just reconnect work.
+                            # Only the resumed frame adds media since the last receipt.
+                            missing = max(0.0, frame_received_at - gap_started_at
+                                          - len(audio) / SAMPLE_RATE)
+                        gap_started_at = None
+                    if isinstance(output_queue, AudioSourceQueue):
+                        output_queue.put(audio, timeline_advance=missing)
+                    else:
+                        output_queue.put(audio)
+                    last_frame_received_at = frame_received_at
                 if self.running:
                     # Flush the last speech before cleanup or slow metadata queries.
+                    if gap_started_at is None:
+                        gap_started_at = (last_frame_received_at if last_frame_received_at is not None
+                                          else time.monotonic())
                     output_queue.put(AUDIO_STREAM_GAP)
                 stream_failed = any(
                     process and process.poll() not in (None, 0)
@@ -540,9 +558,17 @@ class StreamAudioGetter(LoopWorkerBase):
                 # Flush speech collected before the transport gap now. Without
                 # this marker AudioSlicer can only discover the boundary when
                 # the first post-reconnect frame arrives.
+                if gap_started_at is None:
+                    gap_started_at = (last_frame_received_at if last_frame_received_at is not None
+                                      else time.monotonic())
                 output_queue.put(AUDIO_STREAM_GAP)
             except (OSError, RuntimeError) as exc:
                 failure = exc
+                if self.running:
+                    if gap_started_at is None:
+                        gap_started_at = (last_frame_received_at if last_frame_received_at is not None
+                                          else time.monotonic())
+                    output_queue.put(AUDIO_STREAM_GAP)
             finally:
                 self._close_stream()
 

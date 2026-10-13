@@ -20,6 +20,31 @@ FRAME_DURATION = SAMPLES_PER_FRAME / SAMPLE_RATE
 # end-of-stream marker: buffered speech must be flushed, then capture continues.
 AUDIO_STREAM_GAP = object()
 
+
+class AudioSourceQueue(queue.SimpleQueue):
+    """Keep timing metadata with a frame without changing the public item protocol.
+
+    Ordinary consumers receive ndarray / AUDIO_STREAM_GAP / None. The slicer
+    opts into get_with_timeline(); pairing inside the queue keeps queued gaps
+    and frames aligned even when the producer runs ahead of the consumer.
+    """
+
+    def put(self, item, block=True, timeout=None, *, timeline_advance=0.0):
+        super().put((item, timeline_advance), block, timeout)
+
+    def put_nowait(self, item):
+        self.put(item)
+
+    def get_with_timeline(self, block=True, timeout=None):
+        return super().get(block, timeout)
+
+    def get(self, block=True, timeout=None):
+        item, _ = self.get_with_timeline(block, timeout)
+        return item
+
+    def get_nowait(self):
+        return self.get(block=False)
+
 RED = '\033[91m'
 YELLOW = '\033[93m'
 GREEN = "\033[32m"

@@ -7,7 +7,7 @@ import time
 
 import numpy as np
 
-from .common import AUDIO_STREAM_GAP, LatencyTrace, TranslationTask, SAMPLE_RATE, FRAME_DURATION, LoopWorkerBase, WARNING
+from .common import AudioSourceQueue, AUDIO_STREAM_GAP, LatencyTrace, TranslationTask, SAMPLE_RATE, FRAME_DURATION, LoopWorkerBase, WARNING
 from .torch_setup import disable_nnpack
 
 try:
@@ -181,6 +181,7 @@ class AudioSlicer(LoopWorkerBase):
         self.continuous_no_speech_count = 0
         self.counter = 0
         self.last_slice_second = 0.0
+        self._timeline_offset = 0.0
         self.capture_started_at = None
         self.first_speech_at = None
         self.last_speech_at = None
@@ -309,7 +310,8 @@ class AudioSlicer(LoopWorkerBase):
                 if len(self.audio_buffer) > self._native_prefix_frames:
                     self.audio_buffer = self.audio_buffer[-self._native_prefix_frames:] if self._native_prefix_frames else []
                 buffered_samples = sum(len(frame) for frame in self.audio_buffer)
-                self.last_slice_second = (self._native_total_samples - buffered_samples) / SAMPLE_RATE
+                self.last_slice_second = (self._timeline_offset
+                                          + (self._native_total_samples - buffered_samples) / SAMPLE_RATE)
                 self.capture_started_at = frame_received_at
 
     def should_slice(self):
@@ -373,6 +375,7 @@ class AudioSlicer(LoopWorkerBase):
         self.last_latency_trace = trace
         slice_second = (self._native_total_samples / SAMPLE_RATE
                         if self.slicing_mode == 'omnivad_native' else self.counter * FRAME_DURATION)
+        slice_second += self._timeline_offset
         last_slice_second = self.last_slice_second
         self.last_slice_second = slice_second
         self._native_end_pending = False
@@ -402,7 +405,12 @@ class AudioSlicer(LoopWorkerBase):
                 self.slice()
 
         while True:
-            audio = input_queue.get()
+            if isinstance(input_queue, AudioSourceQueue):
+                audio, advance = input_queue.get_with_timeline()
+                self._timeline_offset += advance
+                self.last_slice_second += advance
+            else:
+                audio = input_queue.get()
             if audio is None:
                 flush_buffer()
                 output_queue.put(None)

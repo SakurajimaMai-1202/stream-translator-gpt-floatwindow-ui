@@ -14,7 +14,7 @@ if __name__ == '__main__':
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     __package__ = "stream_translator_gpt"
 
-from .common import ApiKeyPool, configure_utf8_stdio, ObservableTaskQueue, PipelineWorkers, is_url, WARNING, ERROR, INFO
+from .common import ApiKeyPool, configure_utf8_stdio, ObservableTaskQueue, PipelineWorkers, create_pipeline_backlog_monitors, is_url, WARNING, ERROR, INFO
 from .audio_getter import (
     StreamAudioGetter,
     LocalFileAudioGetter,
@@ -249,6 +249,11 @@ def main(url, **kwargs):
     transcriber_to_segmenter_queue = queue.SimpleQueue()
     segmenter_to_translator_queue = queue.SimpleQueue()
     translator_to_exporter_queue = queue.SimpleQueue() if translation_prompt else segmenter_to_translator_queue
+
+    backlog_monitors = create_pipeline_backlog_monitors(
+        getter_to_slicer_queue, slicer_to_transcriber_queue,
+        transcriber_to_segmenter_queue, segmenter_to_translator_queue,
+        translator_to_exporter_queue)
 
     # Init workers
     with ThreadPoolExecutor() as executor:
@@ -617,6 +622,8 @@ def main(url, **kwargs):
     try:
         while exporter_thread.is_alive():
             workers.raise_if_failed()
+            for monitor in backlog_monitors:
+                monitor.check()
             time.sleep(0.2)
         workers.raise_if_failed()
     except BaseException:

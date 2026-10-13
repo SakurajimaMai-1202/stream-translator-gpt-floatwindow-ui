@@ -33,3 +33,26 @@ def test_distinct_warnings_and_levels_are_not_suppressed():
     assert _diagnostic_status('[WARNING] first', recent, 0, [])
     assert _diagnostic_status('[WARNING] second', recent, 1, [])
     assert _diagnostic_status('[ERROR] first', recent, 2, [])
+
+
+def test_engine_backlog_warning_survives_backend_diagnostic_parser(monkeypatch, capsys):
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    # Capture the actual engine line, keeping the test offline and model-free.
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[3] / 'stream-translator-gpt'))
+    from stream_translator_gpt.common import QueueBacklogMonitor, QUEUE_BACKLOG_WARNING_THRESHOLD
+
+    pending = SimpleNamespace(qsize=lambda: QUEUE_BACKLOG_WARNING_THRESHOLD + 1)
+    QueueBacklogMonitor(pending, 'segmenter -> translation').check()
+    line = capsys.readouterr().out.strip()
+    assert line.startswith('[WARNING] Queue backlog')
+    event = _diagnostic_status(line, {}, 100, [])
+    assert event == {
+        'type': 'status',
+        'data': {
+            'message': f'Queue backlog at segmenter -> translation: approximately '
+                       f'{QUEUE_BACKLOG_WARNING_THRESHOLD + 1} items pending',
+            'level': 'warning',
+        },
+    }

@@ -17,7 +17,7 @@ from urllib.parse import urlparse
 import ffmpeg
 import numpy as np
 
-from .common import AUDIO_STREAM_GAP, SAMPLE_RATE, SAMPLES_PER_FRAME, FRAME_DURATION, LoopWorkerBase, INFO, WARNING, ERROR
+from .common import AUDIO_STREAM_GAP, SAMPLE_RATE, SAMPLES_PER_FRAME, FRAME_DURATION, LoopWorkerBase, INFO, WARNING, ERROR, QueueBacklogMonitor
 
 
 # Definite configuration failures; ambiguous extractor/decoder failures need repetition.
@@ -450,6 +450,7 @@ class StreamAudioGetter(LoopWorkerBase):
         """Yield PCM frames without allowing a live pipe read to block forever."""
         process = self.ffmpeg_process
         read_queue = queue.SimpleQueue()
+        backlog = QueueBacklogMonitor(read_queue, 'stream reader -> audio getter')
         finished = object()
 
         def reader():
@@ -459,6 +460,7 @@ class StreamAudioGetter(LoopWorkerBase):
                     if not chunk:
                         break
                     read_queue.put(chunk)
+                    backlog.check()
             finally:
                 read_queue.put(finished)
 
@@ -471,6 +473,7 @@ class StreamAudioGetter(LoopWorkerBase):
                 raise TimeoutError(
                     f'串流已連續 {self.STREAM_READ_TIMEOUT_SECONDS:g} 秒沒有音訊資料'
                 ) from exc
+            backlog.check()
             if chunk is finished:
                 return
             if len(chunk) == self.byte_size:

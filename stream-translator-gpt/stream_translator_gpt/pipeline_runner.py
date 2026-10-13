@@ -6,7 +6,7 @@ import time
 from .audio_getter import StreamAudioGetter, LocalFileAudioGetter, DeviceAudioGetter
 from .process_audio_capture import ProcessAudioGetter
 from .audio_slicer import AudioSlicer
-from .common import ClientPool, INFO, is_url, ObservableTaskQueue, PipelineWorkers
+from .common import ClientPool, INFO, is_url, ObservableTaskQueue, PipelineWorkers, create_pipeline_backlog_monitors
 from .result_exporter import ResultExporter
 from .subtitle_segmenter import SubtitleSegmenter
 
@@ -266,6 +266,11 @@ def run_inprocess_pipeline(url: str,
     segmenter_to_translator_queue = queue.SimpleQueue()
     translator_to_exporter_queue = queue.SimpleQueue() if options.get("translation_prompt") else segmenter_to_translator_queue
 
+    backlog_monitors = create_pipeline_backlog_monitors(
+        getter_to_slicer_queue, slicer_to_transcriber_queue,
+        transcriber_to_segmenter_queue, segmenter_to_translator_queue,
+        translator_to_exporter_queue)
+
     slicer = create_slicer(options)
     translator = create_translator(options)
     # Each invocation owns one source/session; reset before any worker starts.
@@ -304,6 +309,8 @@ def run_inprocess_pipeline(url: str,
                 if hasattr(audio_getter, "stop"):
                     audio_getter.stop()
             workers.raise_if_failed()
+            for monitor in backlog_monitors:
+                monitor.check()
             time.sleep(0.2)
         workers.raise_if_failed()
     finally:

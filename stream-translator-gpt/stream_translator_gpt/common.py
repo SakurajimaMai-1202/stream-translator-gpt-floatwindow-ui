@@ -199,6 +199,56 @@ class ObservableTaskQueue(queue.Queue):
         }
 
 
+# Item counts are approximate, diagnostic only; queues remain unbounded.
+QUEUE_BACKLOG_WARNING_THRESHOLD = 1000
+QUEUE_BACKLOG_RECOVERY_THRESHOLD = 500
+
+
+class QueueBacklogMonitor:
+    """Warn once until backlog drains below the hysteresis recovery level."""
+
+    def __init__(self, pending, stage):
+        self.pending = pending
+        self.stage = stage
+        self._warned = False
+        self._lock = threading.Lock()
+
+    def check(self):
+        # qsize is O(1) on the worker queues; never inspect or copy audio.
+        with self._lock:
+            try:
+                depth = self.pending.qsize()
+            except (AttributeError, NotImplementedError):
+                return
+            if self._warned:
+                if depth <= QUEUE_BACKLOG_RECOVERY_THRESHOLD:
+                    self._warned = False
+            elif depth > QUEUE_BACKLOG_WARNING_THRESHOLD:
+                self._warned = True
+                # Plain diagnostic prefix is the desktop's warning/status channel.
+                print(f'[WARNING] Queue backlog at {self.stage}: approximately '
+                      f'{depth} items pending', flush=True)
+
+
+def create_pipeline_backlog_monitors(getter_to_slicer, slicer_to_transcriber,
+                                     transcriber_to_segmenter, segmenter_to_translator,
+                                     translator_to_exporter):
+    """Share stage labels and queue selection across both engine entry paths."""
+    translating = translator_to_exporter is not segmenter_to_translator
+    monitors = [
+        QueueBacklogMonitor(getter_to_slicer, 'audio getter -> slicer'),
+        QueueBacklogMonitor(slicer_to_transcriber, 'slicer -> ASR'),
+        QueueBacklogMonitor(transcriber_to_segmenter, 'ASR -> segmenter'),
+        QueueBacklogMonitor(segmenter_to_translator,
+                            'segmenter -> translation' if translating
+                            else 'segmenter -> exporter'),
+    ]
+    if translating:
+        monitors.append(QueueBacklogMonitor(translator_to_exporter,
+                                           'translation -> exporter'))
+    return monitors
+
+
 class LoopWorkerBase(ABC):
 
     @abstractmethod
@@ -240,7 +290,8 @@ class PipelineWorkers:
 
 def sec2str(second: float):
     dt = datetime.fromtimestamp(second, tz=timezone.utc)
-    result = dt.strftime('%H:%M:%S')
+    hours = int(second // 3600)
+    result = f'{hours:02d}:' + dt.strftime('%M:%S')
     result += ',' + f'{int(second * 1000 % 1000):03d}'
     return result
 

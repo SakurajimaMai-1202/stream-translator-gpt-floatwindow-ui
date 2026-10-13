@@ -12,6 +12,9 @@ import json
 import os
 import tempfile
 import time
+import shutil
+from datetime import datetime
+from backend.core.config_secrets import SECRET_KEYS, restore_masked_secrets
 from contextlib import contextmanager
 from backend.config import settings
 from backend.core.cookie_manager import resolve_cookie_path
@@ -331,59 +334,60 @@ class ConfigManager:
         self.config = self._enforce_packaged_runtime(self._load_or_create())
         self._file_signature = self._get_file_signature()
     
-    def _load_or_create(self) -> Dict[str, Any]:
-        """載入配置，若不存在則建立預設值"""
-        if not self.config_path.exists():
-            legacy_config_path = self.config_path.parent / "data" / "config.yaml"
-            if legacy_config_path.exists():
-                try:
-                    with open(legacy_config_path, 'r', encoding='utf-8') as f:
-                        config = yaml.safe_load(f) or {}
-                    merged = self._merge_with_defaults(config)
-                    migrated, _changed = self._migrate_legacy_config(merged)
-                    try:
-                        with self._config_lock():
-                            self._save(migrated)
-                    except OSError as save_error:
-                        print(f"舊版配置已載入，但遷移結果暫時無法寫回: {save_error}")
-                    return migrated
-                except Exception as e:
-                    logger.debug("載入舊版配置失敗", exc_info=True)
-                    print(f"舊版配置載入失敗: {e}，使用預設值")
+    LOCK_TIMEOUT_SECONDS = 10.0
 
-        if self.config_path.exists():
-            try:
-                with open(self.config_path, 'r', encoding='utf-8') as f:
-                    config = yaml.safe_load(f) or {}
-                # 與預設值合併（新增遺漏的欄位）
-                merged = self._merge_with_defaults(config)
-                # 舊版設定遷移（例如 localllm -> llama）
-                migrated, changed = self._migrate_legacy_config(merged)
-                # Only full-package templates opt into this one-time default.
-                llama = migrated.get('llama', {})
-                if llama.pop('first_run_gpu_default', False) is True:
-                    if llama.get('gpu_layers_default_applied') is not True and llama.get('n_gpu_layers') == 0:
-                        llama['n_gpu_layers'] = default_llama_gpu_layers()
-                    llama['gpu_layers_default_applied'] = True
-                if changed or migrated != config:
+    def _load_or_create(self) -> Dict[str, Any]:
+        """Serialize first creation, recovery, and migration with other writers."""
+        with self._config_lock():
+            if not self.config_path.exists():
+                legacy = self.config_path.parent / "data" / "config.yaml"
+                if legacy.exists():
                     try:
-                        with self._config_lock():
-                            self._save(migrated)
-                    except OSError as save_error:
-                        # A transient Windows sharing violation must not
-                        # discard a successfully parsed user config.
-                        print(f"配置已載入，但更新後的配置暫時無法寫回: {save_error}")
-                return migrated
-            except Exception as e:
-                logger.debug("載入配置失敗", exc_info=True)
-                print(f"配置載入失敗: {e}，使用預設值")
-                return self._deep_copy(self.DEFAULT_CONFIG)
-        else:
-            # 首次執行，建立預設配置
-            default = self._profile_defaults()
-            self._save(default)
-            return default
-    
+                        with legacy.open(encoding='utf-8') as stream:
+                            loaded = yaml.safe_load(stream)
+                        config, _ = self._migrate_legacy_config(self._merge_with_defaults(loaded))
+                        config = self._enforce_packaged_runtime(config)
+                    except (yaml.YAMLError, UnicodeError, ValueError):
+                        logger.warning("Invalid legacy configuration; using defaults")
+                        config = self._profile_defaults()
+                else:
+                    config = self._profile_defaults()
+                self._save(config)
+                return config
+            config = self._read_current_config()
+            llama = config['llama']
+            if llama.pop('first_run_gpu_default', False) is True:
+                if llama.get('gpu_layers_default_applied') is not True and llama.get('n_gpu_layers') == 0:
+                    llama['n_gpu_layers'] = default_llama_gpu_layers()
+                llama['gpu_layers_default_applied'] = True
+            try:
+                self._save(config)
+            except OSError:
+                logger.warning("Configuration loaded but migration could not be saved")
+            return config
+
+    def _backup_path(self, kind):
+        stamp = datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+        return self.config_path.with_name(f"{self.config_path.name}.{kind}-{stamp}")
+
+    def _validate_structure(self, config):
+        """Reject invalid mapping shapes before migration or persistence."""
+        def check(value, defaults, path):
+            if not isinstance(value, dict):
+                raise ValueError(f"Configuration {path} must be a mapping")
+            for key, default in defaults.items():
+                if isinstance(default, dict) and key in value:
+                    check(value[key], default, f"{path}.{key}")
+                elif isinstance(default, list) and key in value and not isinstance(value[key], list):
+                    raise ValueError(f"Configuration {path}.{key} must be a list")
+        check(config, self.DEFAULT_CONFIG, 'root')
+        for index, model in enumerate(config.get('translation', {}).get('custom_models', [])):
+            if not isinstance(model, dict):
+                raise ValueError(f"translation.custom_models[{index}] must be a mapping")
+            for field in ('name', 'model_name', 'api_key', 'base_url', 'api_url'):
+                if field in model and model[field] is not None and not isinstance(model[field], str):
+                    raise ValueError(f"translation.custom_models[{index}].{field} must be a string or null")
+
     def _profile_defaults(self) -> Dict[str, Any]:
         """Defaults for first run and explicit reset, never for loaded configs."""
         config = self._enforce_packaged_runtime(self._deep_copy(self.DEFAULT_CONFIG))
@@ -408,6 +412,7 @@ class ConfigManager:
                     result[key] = self._deep_copy(value)
             return result
         
+        self._validate_structure(config)
         return merge(self.DEFAULT_CONFIG, config)
 
     def _deep_merge(self, base: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
@@ -554,14 +559,28 @@ class ConfigManager:
                 pass
             raise
 
-    def _read_current_config(self) -> Dict[str, Any]:
+    def _read_current_config(self, secret_source=None) -> Dict[str, Any]:
         """Read the latest disk state before a cross-process update."""
         if not self.config_path.exists():
             return self._deep_copy(self.DEFAULT_CONFIG)
 
-        with open(self.config_path, 'r', encoding='utf-8') as f:
-            loaded = yaml.safe_load(f) or {}
+        try:
+            with open(self.config_path, 'r', encoding='utf-8') as f:
+                loaded = yaml.safe_load(f)
+            self._validate_structure(loaded)
+        except (yaml.YAMLError, UnicodeError, ValueError):
+            backup = self._backup_path('corrupt')
+            self.config_path.rename(backup)
+            logger.warning("Invalid configuration moved to %s; restoring defaults", backup)
+            defaults = self._profile_defaults()
+            self._save(defaults)
+            return defaults
         merged = self._merge_with_defaults(loaded)
+        if secret_source is not None:
+            # Restore exact stored credentials, including empty values, before
+            # migration can copy legacy keys into other sections or remove them.
+            # This snapshot is read under the same lock as the mutation.
+            secret_source.update(self._deep_copy(merged))
         migrated, _changed = self._migrate_legacy_config(merged)
         return self._enforce_packaged_runtime(migrated)
 
@@ -584,13 +603,16 @@ class ConfigManager:
             # locking past EOF is supported, including an empty lock file.
             lock_file.seek(0)
 
+            deadline = time.monotonic() + self.LOCK_TIMEOUT_SECONDS
             if os.name == 'nt':
                 import msvcrt
                 while True:
                     try:
                         msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
                         break
-                    except OSError:
+                    except OSError as exc:
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError("Timed out waiting for configuration lock") from exc
                         time.sleep(0.02)
                 try:
                     yield
@@ -599,7 +621,14 @@ class ConfigManager:
                     msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
             else:
                 import fcntl
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+                while True:
+                    try:
+                        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except BlockingIOError as exc:
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError("Timed out waiting for configuration lock") from exc
+                        time.sleep(0.02)
                 try:
                     yield
                 finally:
@@ -1326,20 +1355,73 @@ class ConfigManager:
     def update_config(self, updates: Dict[str, Any]):
         """Merge updates into the latest disk state and persist them once."""
         with self._config_lock():
-            current = self._read_current_config()
+            secret_source = {}
+            current = self._read_current_config(secret_source)
+            self._validate_structure(updates)
+            updates = restore_masked_secrets(updates, secret_source or current)
             updated = self._enforce_packaged_runtime(self._deep_merge(current, updates))
-            self._save(updated)
-            signature = self._get_file_signature()
-        self.config = updated
-        self._file_signature = signature
-        return self._deep_copy(self.config)
-            
+            return self._persist_locked(updated)
+
     def update_section(self, section: str, data: Dict[str, Any]):
         """更新配置區段，保留 UI 沒送回來的既有設定。"""
         self.update_config({section: data})
 
-    def reset_to_defaults(self):
-        """重置為預設配置"""
-        self.config = self._profile_defaults()
-        self.save()
+    def replace_config(self, config: Dict[str, Any]):
+        """Replace settings with imported values plus defaults, retaining secrets."""
+        self._validate_structure(config)
+        with self._config_lock():
+            secret_source = {}
+            current = self._read_current_config(secret_source)
+            incoming = self._deep_copy(config)
+            for section in self.DEFAULT_CONFIG:
+                incoming.setdefault(section, {})
+            incoming = restore_masked_secrets(incoming, secret_source or current)
+            updated, _ = self._migrate_legacy_config(self._merge_with_defaults(incoming))
+            # Import adopts migration markers, but explicit visibility choices
+            # must survive the one-time visibility-default migration.
+            for key in ('showOriginal', 'showTranslated', 'showTimestamp', 'showLatency', 'autoScroll'):
+                if key in incoming.get('subtitle_settings', {}):
+                    updated['subtitle_settings'][key] = incoming['subtitle_settings'][key]
+            # Migration can move or fill legacy credentials. Preserve the exact
+            # imported/restored values, including deliberately empty credentials.
+            for section in ('general', 'transcription', 'translation'):
+                for key in SECRET_KEYS:
+                    if key in incoming.get(section, {}):
+                        updated[section][key] = self._deep_copy(incoming[section][key])
+            return self._persist_locked(updated)
+
+    def update_key(self, path, value=None, *, delete=False):
+        """Replace or delete one nested key in the latest disk state atomically."""
+        if not path or any(not isinstance(key, str) for key in path):
+            raise ValueError("Configuration key path must contain strings")
+        with self._config_lock():
+            current = self._read_current_config()
+            parent = current
+            for key in path[:-1]:
+                if key not in parent:
+                    if delete:
+                        raise KeyError(tuple(path))
+                    parent[key] = {}
+                parent = parent[key]
+                if not isinstance(parent, dict):
+                    raise ValueError("Configuration key parent must be a mapping")
+            if delete:
+                del parent[path[-1]]
+            else:
+                parent[path[-1]] = self._deep_copy(value)
+            self._validate_structure(current)
+            return self._persist_locked(current)
+
+    def _persist_locked(self, config):
+        updated = self._enforce_packaged_runtime(config)
+        self._save(updated)
+        self.config = updated
         self._file_signature = self._get_file_signature()
+        return self._deep_copy(updated)
+
+    def reset_to_defaults(self):
+        """Back up the exact previous file before resetting under the lock."""
+        with self._config_lock():
+            if self.config_path.exists():
+                shutil.copy2(self.config_path, self._backup_path('bak'))
+            return self._persist_locked(self._profile_defaults())

@@ -155,8 +155,8 @@ async def probe_existing_llama_server() -> bool:
 
     # 讀取設定的 host/port
     try:
-        from backend.api.config import get_config_manager
-        cfg = get_config_manager().get_config()
+        from backend.api.config import _read_config
+        cfg = (await asyncio.to_thread(_read_config))
         llama_cfg = cfg.get('llama', {})
         host = llama_cfg.get('host', '127.0.0.1')
         port = int(llama_cfg.get('port', 8081))
@@ -368,9 +368,9 @@ async def _start_server(config: ServerConfig, background_tasks: BackgroundTasks,
     if not model_path.exists():
         raise HTTPException(status_code=400, detail=f"模型文件不存在: {config.model_path}")
     
-    server_exe = _resolve_custom_runtime(config.server_exe) if config.server_exe else _find_llama_server()
+    server_exe = _resolve_custom_runtime(config.server_exe) if config.server_exe else await asyncio.to_thread(_find_llama_server)
     if config.server_exe:
-        _guard_custom_runtime(server_exe, request)
+        await asyncio.to_thread(_guard_custom_runtime, server_exe, request)
     if not server_exe or not server_exe.is_file():
         raise HTTPException(status_code=400, detail="找不到 llama-server.exe，請在設定中指定路徑或確認安裝位置")
     selection = dict(mode="cpu", selected_device=None, confirmed=False,
@@ -609,9 +609,9 @@ async def get_available_port(preferred: int = 8081):
 
 @router.get("/runtime/devices")
 async def get_runtime_devices(request: Request, server_exe: Optional[str] = None, allow_integrated_gpu: bool = False):
-    executable = _resolve_custom_runtime(server_exe) if server_exe else _find_llama_server()
+    executable = _resolve_custom_runtime(server_exe) if server_exe else await asyncio.to_thread(_find_llama_server)
     if server_exe:
-        _guard_custom_runtime(executable, request)
+        await asyncio.to_thread(_guard_custom_runtime, executable, request)
     if not executable or not executable.is_file():
         return dict(devices=[], error="找不到 llama-server.exe，請先安裝或選擇 Runtime。", server_exe=str(executable or ""))
     return await asyncio.to_thread(enumerate_devices, str(executable), allow_integrated_gpu)
@@ -620,9 +620,9 @@ async def get_runtime_devices(request: Request, server_exe: Optional[str] = None
 @router.get("/runtime/releases")
 async def get_runtime_releases():
     try:
-        from backend.api.config import get_config_manager
+        from backend.api.config import _read_config
         from backend.core.hardware_detector import detect_gpus
-        profile = str(get_config_manager().get_config().get("runtime", {}).get("profile", "cpu"))
+        profile = str((await asyncio.to_thread(_read_config)).get("runtime", {}).get("profile", "cpu"))
         devices = await asyncio.to_thread(detect_gpus)
         return await asyncio.to_thread(list_latest_variants, profile, devices)
     except Exception as exc:
@@ -648,8 +648,8 @@ async def get_runtime_install_status():
 async def install_runtime(request: RuntimeInstallRequest, background_tasks: BackgroundTasks):
     if llama_state.is_running:
         raise HTTPException(status_code=409, detail="請先停止 llama.cpp 伺服器再更新 Runtime")
-    from backend.api.config import get_config_manager
-    profile = str(get_config_manager().get_config().get("runtime", {}).get("profile", "cpu"))
+    from backend.api.config import _read_config
+    profile = str((await asyncio.to_thread(_read_config)).get("runtime", {}).get("profile", "cpu"))
     try:
         job_id = installer.begin(request.variant)
     except RuntimeError as exc:
@@ -730,7 +730,7 @@ def _find_llama_server() -> Optional[Path]:
 @router.post("/runtime/validate")
 async def validate_runtime_path(payload: RuntimePathRequest, request: Request):
     executable = _resolve_custom_runtime(payload.server_exe)
-    _guard_custom_runtime(executable, request)
+    await asyncio.to_thread(_guard_custom_runtime, executable, request)
     if executable.name.lower() not in {"llama-server.exe", "llama-server"} or not executable.is_file():
         raise HTTPException(status_code=400, detail=f"找不到 llama-server.exe: {executable}")
     try:
@@ -938,8 +938,8 @@ Text to translate:
 Translation:"""
     
     try:
-        from backend.api.config import get_config_manager
-        llama_config = get_config_manager().get_config().get("llama", {})
+        from backend.api.config import _read_config
+        llama_config = (await asyncio.to_thread(_read_config)).get("llama", {})
         result = await inference(InferenceRequest(
             prompt=prompt,
             max_tokens=int(llama_config.get("n_predict", 512)),
@@ -1029,8 +1029,8 @@ async def get_presets():
 @router.get("/presets/custom")
 async def get_custom_presets():
     """獲取用戶自訂配置列表"""
-    from backend.api.config import get_config_manager
-    config = get_config_manager().get_config()
+    from backend.api.config import _read_config
+    config = (await asyncio.to_thread(_read_config))
     from backend.core.config_secrets import mask_secrets
     return mask_secrets(config.get('llama', {}).get('custom_presets', {}))
 
@@ -1046,17 +1046,9 @@ async def get_preset(preset_name: str):
 async def save_custom_preset(name: str, config: ServerConfig):
     """保存用戶自訂配置"""
     from backend.api.config import get_config_manager
-    config_manager = get_config_manager()
+    config_manager = await asyncio.to_thread(get_config_manager)
     
-    # 獲取當前配置
-    full_config = config_manager.get_config()
-    if 'llama' not in full_config:
-        full_config['llama'] = {}
-    if 'custom_presets' not in full_config['llama']:
-        full_config['llama']['custom_presets'] = {}
-    
-    # 保存新的自訂配置（包含模型路徑和服務器參數）
-    full_config['llama']['custom_presets'][name] = {
+    preset = {
         'model_path': config.model_path,  # 保存模型路徑
         'host': config.host,
         'port': config.port,
@@ -1079,7 +1071,7 @@ async def save_custom_preset(name: str, config: ServerConfig):
     logger.info(f"Saved custom preset '{name}' with model: {config.model_path}")
     
     # 保存完整配置
-    await asyncio.to_thread(config_manager.update_section, 'llama', full_config['llama'])
+    await asyncio.to_thread(config_manager.update_key, ('llama', 'custom_presets', name), preset)
     
     return {"status": "saved", "name": name}
 
@@ -1087,20 +1079,12 @@ async def save_custom_preset(name: str, config: ServerConfig):
 async def delete_custom_preset(name: str):
     """刪除用戶自訂配置"""
     from backend.api.config import get_config_manager
-    config_manager = get_config_manager()
+    config_manager = await asyncio.to_thread(get_config_manager)
     
-    # 獲取當前配置
-    full_config = config_manager.get_config()
-    custom_presets = full_config.get('llama', {}).get('custom_presets', {})
-    
-    if name not in custom_presets:
-        raise HTTPException(status_code=404, detail=f"自訂配置不存在: {name}")
-    
-    # 刪除配置
-    del custom_presets[name]
-    full_config['llama']['custom_presets'] = custom_presets
-    
-    # 保存
-    await asyncio.to_thread(config_manager.update_section, 'llama', full_config['llama'])
-    
+    try:
+        await asyncio.to_thread(
+            config_manager.update_key, ('llama', 'custom_presets', name), delete=True)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Custom preset does not exist: {name}")
+
     return {"status": "deleted", "name": name}

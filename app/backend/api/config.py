@@ -26,6 +26,19 @@ def get_config_manager():
     return _config_manager_instance
 
 
+def _write_config(method, data=None):
+    """Resolve the manager on the worker; mutations restore secrets under their lock."""
+    manager = get_config_manager()
+    if data is None:
+        return getattr(manager, method)()
+    return getattr(manager, method)(data)
+
+
+def _read_config(method="get_config"):
+    """Keep singleton initialization and the complete read off the event loop."""
+    return getattr(get_config_manager(), method)()
+
+
 @router.get("/hy-mt2-glossary-presets")
 async def get_hy_mt2_glossary_presets():
     """Expose built-in profiles so the editor previews the runtime source of truth."""
@@ -36,12 +49,12 @@ async def get_hy_mt2_glossary_presets():
 @router.post("/hy-mt2-health")
 async def check_hy_mt2_backend():
     """Check the saved HY-MT2 endpoint with one short inference request."""
-    manager = get_config_manager()
-    config = manager.get_config()
+    manager = await asyncio.to_thread(get_config_manager)
+    config = await asyncio.to_thread(manager.get_config)
     if config.get("translation", {}).get("backend") == "none":
         raise HTTPException(status_code=400, detail="請先選擇翻譯模型")
     try:
-        args = manager.to_main_args(config)
+        args = await asyncio.to_thread(manager.to_main_args, config)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     provider = args.get("translation_provider")
@@ -93,7 +106,7 @@ async def check_hy_mt2_backend():
 async def get_config():
     """獲取完整配置"""
     try:
-        return {"success": True, "data": mask_secrets(get_config_manager().get_config())}
+        return {"success": True, "data": mask_secrets(await asyncio.to_thread(_read_config))}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -106,9 +119,8 @@ async def update_full_config(data: Dict[str, Any], request: Request):
             translation = dict(updates.get('translation') or {})
             translation['custom_models'] = updates.pop('custom_models')
             updates['translation'] = translation
-        updates = restore_masked_secrets(updates, get_config_manager().get_config())
         updated_config = await asyncio.to_thread(
-            get_config_manager().update_config,
+            _write_config, "update_config",
             updates,
         )
         await publish_app_event("config.updated", {
@@ -117,35 +129,22 @@ async def update_full_config(data: Dict[str, Any], request: Request):
             "source_client_id": request.headers.get("X-Client-Id", ""),
         })
         return {"success": True, "data": mask_secrets(updated_config)}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="Invalid configuration structure") from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/status", response_model=List[Dict[str, Any]])
 async def get_config_status():
     """獲取配置狀態警告"""
-    return get_config_manager().get_config_status()
+    return await asyncio.to_thread(_read_config, "get_config_status")
 
 @router.patch("/{section}")
 async def update_section(section: str, data: Dict[str, Any], request: Request):
     """更新配置區段"""
     try:
-        data = restore_masked_secrets(data, get_config_manager().get_config().get(section, {}))
-        # 特殊處理 llama 區段，避免覆蓋 custom_presets
-        if section == 'llama':
-            current_config = get_config_manager().get_config().get('llama', {})
-            current_presets = current_config.get('custom_presets', {})
-            incoming_presets = data.get('custom_presets')
-            
-            # Debug logging
-            logger.info(f"Updating llama section. Current presets: {list(current_presets.keys())}, Incoming presets: {list(incoming_presets.keys()) if incoming_presets else 'None'}")
-            
-            # 如果更新資料中沒有 custom_presets，但現有配置中有，則保留現有的
-            if current_presets and not incoming_presets:
-                data['custom_presets'] = current_presets
-                logger.info(f"Preserved custom_presets: {list(current_presets.keys())}")
-        
         full_config = await asyncio.to_thread(
-            get_config_manager().update_config,
+            _write_config, "update_config",
             {section: data},
         )
         await publish_app_event("config.updated", {
@@ -154,6 +153,8 @@ async def update_section(section: str, data: Dict[str, Any], request: Request):
             "source_client_id": request.headers.get("X-Client-Id", ""),
         })
         return {"success": True, "data": mask_secrets(full_config.get(section))}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="Invalid configuration structure") from e
     except Exception as e:
         logger.exception("Failed to save config section %s", section)
         raise HTTPException(status_code=500, detail=str(e))
@@ -162,8 +163,7 @@ async def update_section(section: str, data: Dict[str, Any], request: Request):
 async def reset_config(request: Request):
     """重置配置"""
     try:
-        get_config_manager().reset_to_defaults()
-        reset_config_data = get_config_manager().get_config()
+        reset_config_data = await asyncio.to_thread(_write_config, "reset_to_defaults")
         await publish_app_event("config.reset", {
             "config": mask_secrets(reset_config_data),
             "source_client_id": request.headers.get("X-Client-Id", ""),
@@ -177,7 +177,7 @@ async def export_config(include_secrets: bool = False):
     """匯出配置為 YAML 檔案"""
     try:
         # 獲取當前配置
-        config = get_config_manager().get_config()
+        config = await asyncio.to_thread(_read_config)
         
         if not include_secrets:
             config = omit_secrets(config)
@@ -206,31 +206,18 @@ async def import_config(file_content: dict, request: Request):
         if not file_content:
             raise HTTPException(status_code=400, detail="配置內容為空")
 
-        # 這裡我們做一個特殊的處理：
-        # 如果因為某些原因前端傳來的是 {"content": "yaml string"}，我們解析它
-        # 但通常我們期望前端解析好 YAML 後傳送 JSON 對象，或者我們允許上傳檔案
-        # 為了簡化前端實作（前端讀取 YAML -> 轉 OBJ -> 傳送），我們這裡直接接收 Dict
-        # 並驗證基本的 key 是否存在
-        
-        required_keys = ['general', 'input', 'transcription']
-        for key in required_keys:
-            if key not in file_content:
-                # 寬容模式：如果是 partial config，可能不報錯，但在這裡我們做全量替換
-                pass 
-        
-        # 更新配置
-        # 我們使用 update_full_config 的邏輯，但這裡我們可以直接呼叫 save
-        # 更安全的做法是逐個 section 更新
-        
-        get_config_manager().update_config(restore_masked_secrets(
-            file_content, get_config_manager().get_config()))
+        imported_config = await asyncio.to_thread(
+            _write_config, "replace_config", file_content)
             
-        imported_config = get_config_manager().get_config()
         await publish_app_event("config.imported", {
             "config": mask_secrets(imported_config),
             "source_client_id": request.headers.get("X-Client-Id", ""),
         })
         return {"success": True, "message": "配置已成功匯入"}
+    except HTTPException:
+        raise
+    except (yaml.YAMLError, ValueError) as e:
+        raise HTTPException(status_code=400, detail="Invalid configuration structure or YAML") from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"匯入配置失敗: {str(e)}")
 
@@ -251,10 +238,9 @@ async def import_config_file(request: Request, file: UploadFile = File(...)):
         if not isinstance(config_data, dict):
              raise HTTPException(status_code=400, detail="配置檔案格式不正確 (根節點必須是字典)")
              
-        get_config_manager().update_config(restore_masked_secrets(
-            config_data, get_config_manager().get_config()))
+        imported_config = await asyncio.to_thread(
+            _write_config, "replace_config", config_data)
         
-        imported_config = get_config_manager().get_config()
         await publish_app_event("config.imported", {
             "config": mask_secrets(imported_config),
             "source_client_id": request.headers.get("X-Client-Id", ""),
@@ -264,6 +250,10 @@ async def import_config_file(request: Request, file: UploadFile = File(...)):
             "message": "配置檔案已成功匯入",
             "data": mask_secrets(imported_config),
         }
+    except HTTPException:
+        raise
+    except (yaml.YAMLError, ValueError) as e:
+        raise HTTPException(status_code=400, detail="Invalid configuration structure or YAML") from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"匯入檔案失敗: {str(e)}")
 
@@ -280,7 +270,7 @@ async def test_connection(request: TestConnectionRequest):
     backend = request.backend.lower()
     if request.section not in {"translation", "transcription"}:
         raise HTTPException(status_code=400, detail="不支援的配置區段")
-    translation = get_config_manager().get_config().get(request.section, {})
+    translation = (await asyncio.to_thread(_read_config)).get(request.section, {})
     key_field = "google_api_key" if backend == "gemini" else "openai_api_key"
     api_key = restore_masked_secrets(
         {key_field: request.api_key}, translation)[key_field]

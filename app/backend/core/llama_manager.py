@@ -196,6 +196,8 @@ Translation:"""
                 result = response.json()
                 
                 translated = result.get("content", "").strip()
+                from stream_translator_gpt.translation_output import normalize_translation_output
+                translated = normalize_translation_output(translated, target_lang)
                 logger.debug(f"翻譯完成: {text[:50]}... -> {translated[:50]}...")
                 return translated
                 

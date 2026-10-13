@@ -298,19 +298,23 @@ def _recommend_variant_for_hardware(
     falls back to the CPU build.
     """
     available = {item["id"] for item in variants if item.get("installable", True)}
-    if profile == "cuda":
+    detected = devices if devices is not None else detect_gpus()
+    discrete_vendors = {device.vendor for device in detected if not device.is_integrated}
+    # Keep the package's own runtime unless detection clearly found only another
+    # vendor's discrete GPU; a missed, partial or unidentified detection must not
+    # demote it.
+    identified_only = bool(discrete_vendors) and "unknown" not in discrete_vendors
+    if profile == "cuda" and (not identified_only or "nvidia" in discrete_vendors):
         for candidate in ("cuda12", "cuda13"):
             if candidate in available:
                 return candidate, "CUDA 版本固定使用 NVIDIA CUDA llama runtime。"
         return "", "官方 Release 沒有可用的 NVIDIA CUDA llama runtime。"
-    if profile == "rocm":
+    if profile == "rocm" and (not identified_only or "amd" in discrete_vendors):
         if "vulkan" in available:
             return "vulkan", "ROCm 套件的 llama.cpp 預設使用 Vulkan；HIP 仍可手動選擇。"
         return "", "官方 Release 沒有可用的 Vulkan llama runtime，請手動選擇。"
 
-    # The CPU application has no preselected GPU ecosystem, so it detects the
-    # installed display adapter and recommends a matching standalone runtime.
-    detected = devices if devices is not None else detect_gpus()
+    # Recommend from detected hardware for every profile.
     discrete = [device for device in detected if not device.is_integrated]
     selected = max(discrete, key=lambda device: int(device.memory_mb or 0), default=None)
     tier_id, tier_label = vram_tier(selected.memory_mb if selected else None)

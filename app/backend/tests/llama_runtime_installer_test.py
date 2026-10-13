@@ -121,24 +121,69 @@ def test_cpu_profile_recommends_discrete_nvidia_runtime():
     assert variant == "cuda12"
 
 
-def test_cuda_profile_stays_on_cuda_without_hardware_detection():
+def test_cuda_profile_uses_detected_amd_hardware():
     variant, reason = runtime._recommend_variant_for_hardware(
         "cuda",
         [{"id": item} for item in ("cpu", "cuda12", "hip", "sycl", "vulkan")],
         [GpuDevice(0, "AMD Radeon RX 7900 XTX", "amd", "rocm", 24576, False)],
     )
-    assert variant == "cuda12"
-    assert "固定" in reason
+    assert variant == "vulkan"
+    assert "AMD" in reason
 
 
-def test_rocm_profile_defaults_to_vulkan_without_hardware_detection():
+def test_rocm_profile_uses_detected_nvidia_hardware():
     variant, reason = runtime._recommend_variant_for_hardware(
         "rocm",
         [{"id": item} for item in ("cpu", "cuda12", "hip", "sycl", "vulkan")],
         [GpuDevice(0, "NVIDIA RTX 4090", "nvidia", "cuda", 24576, False)],
     )
+    assert variant == "cuda12"
+    assert "NVIDIA" in reason
+
+
+def test_cuda_profile_keeps_cuda_default_when_detection_is_empty():
+    variant, _ = runtime._recommend_variant_for_hardware(
+        "cuda", [{"id": item} for item in ("cuda12", "vulkan")], [],
+    )
+    assert variant == "cuda12"
+
+
+def test_cuda_profile_keeps_cuda_when_only_integrated_gpu_is_detected():
+    variant, _ = runtime._recommend_variant_for_hardware(
+        "cuda",
+        [{"id": item} for item in ("cpu", "cuda12", "vulkan")],
+        [GpuDevice(0, "Intel UHD Graphics", "intel", "vulkan", 1024, True)],
+    )
+    assert variant == "cuda12"
+
+
+def test_cuda_profile_keeps_cuda_when_nvidia_is_among_discrete_gpus():
+    variant, _ = runtime._recommend_variant_for_hardware(
+        "cuda",
+        [{"id": item} for item in ("cpu", "cuda12", "vulkan")],
+        [
+            GpuDevice(0, "AMD Radeon RX 7900 XTX", "amd", "rocm", 24576, False),
+            GpuDevice(1, "NVIDIA RTX 4060", "nvidia", "cuda", 8192, False),
+        ],
+    )
+    assert variant == "cuda12"
+
+
+def test_rocm_profile_keeps_vulkan_default_when_detection_is_empty():
+    variant, _ = runtime._recommend_variant_for_hardware(
+        "rocm", [{"id": item} for item in ("cpu", "vulkan")], [],
+    )
     assert variant == "vulkan"
-    assert "HIP" in reason
+
+
+@pytest.mark.parametrize("profile,expected", [("cuda", "cuda12"), ("rocm", "vulkan")])
+def test_unknown_discrete_gpu_keeps_package_profile_recommendation(profile, expected):
+    variant, _ = runtime._recommend_variant_for_hardware(
+        profile,
+        [{"id": item} for item in ("cpu", "cuda12", "vulkan")],
+        [GpuDevice(0, "Unknown Display Adapter", "unknown", "unknown", 8192, False)],
+    )
+    assert variant == expected
 
 
 def test_cpu_profile_recommends_discrete_amd_runtime():

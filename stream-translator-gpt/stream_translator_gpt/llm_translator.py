@@ -21,26 +21,13 @@ from .translation_policy import (
 )
 from .translation_glossary_auditor import TranslationGlossaryAuditor
 from .qwen3_asr_postprocess import normalize_chinese_script, is_traditional_chinese_target, strip_unknown_token
-
-class TranslationOutputConversionError(RuntimeError):
-    code = "translation_script_conversion_failed"
+from .translation_output import TranslationOutputConversionError
+from .translation_output import normalize_translation_output as _normalize_translation_output
 
 
 def normalize_translation_output(text: str, target_language: str | None) -> str:
-    text = strip_unknown_token(text)
-    language = str(target_language or "").strip().lower().replace("_", "-")
-    if is_traditional_chinese_target(language):
-        try:
-            return normalize_chinese_script(text, "zh-tw")
-        except Exception as exc:
-            if "opencc" in str(exc).lower() and any(
-                    word in str(exc).lower() for word in ("requires", "no module", "unavailable")):
-                raise TranslationOutputConversionError(
-                    "OpenCC unavailable: Traditional Chinese translation requires OpenCC (opencc-python-reimplemented); "
-                    "the translation runtime is missing this dependency."
-                ) from exc
-            raise TranslationOutputConversionError("Traditional Chinese translation script conversion failed.") from exc
-    return text
+    # Resolve the converter here so tests can patch this module's normalize_chinese_script.
+    return _normalize_translation_output(text, target_language, converter=normalize_chinese_script)
 
 
 def _is_task_timeout(task: TranslationTask, timeout: float) -> bool:

@@ -950,9 +950,24 @@ Translation:"""
             stop=["\n\n"]
         ))
         
+        translated = result["text"].strip()
+        try:
+            from stream_translator_gpt.translation_output import normalize_translation_output
+            translated = normalize_translation_output(translated, request.target_lang)
+        except Exception as conversion_error:
+            from stream_translator_gpt.translation_output import TranslationOutputConversionError
+            if isinstance(conversion_error, TranslationOutputConversionError):
+                return {
+                    "original": request.text,
+                    "translated": "",
+                    "model": llama_state.current_model,
+                    "error": str(conversion_error),
+                }
+            raise
+
         return {
             "original": request.text,
-            "translated": result["text"].strip(),
+            "translated": translated,
             "model": llama_state.current_model
         }
         

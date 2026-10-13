@@ -188,6 +188,12 @@ def test_modelscope_marker_tracks_sdk_completion(monkeypatch, isolated_model_cac
     else:
         with pytest.raises(RuntimeError if outcome == "failure" else InterruptedError):
             asyncio.run(call)
+        if outcome == "cancelled":
+            # The SDK finished before the cancel was seen, so the complete model
+            # must stay visible instead of being hidden by a stale marker.
+            assert not marker.exists()
+            assert len(manager.list_downloaded_models()) == 1
+            return
         assert marker.is_file()
         assert manager.list_downloaded_models() == []
         # The on-disk marker must also survive a backend restart.
@@ -198,6 +204,28 @@ def test_modelscope_marker_tracks_sdk_completion(monkeypatch, isolated_model_cac
         asyncio.run(manager._download_sensevoice_from_modelscope("retry", model_id, event))
         assert not marker.exists()
         assert len(manager.list_downloaded_models()) == 1
+
+
+
+def test_modelscope_success_clears_marker_before_post_download_cancellation(monkeypatch, isolated_model_cache):
+    import asyncio
+    from threading import Event
+
+    manager = ModelDownloadManager()
+    model_id = "iic/SenseVoiceSmall"
+    event = Event()
+    marker = manager._get_modelscope_download_marker(model_id)
+
+    def complete_then_cancel(*args, **kwargs):
+        event.set()
+
+    monkeypatch.setattr(manager, "_resolve_sensevoice_download_python", lambda event: "fake-python")
+    monkeypatch.setattr(manager, "_run_download_process", complete_then_cancel)
+
+    with pytest.raises(InterruptedError):
+        asyncio.run(manager._download_sensevoice_from_modelscope("test", model_id, event))
+
+    assert not marker.exists()
 
 
 def test_delete_clears_modelscope_in_progress_marker(isolated_model_cache):

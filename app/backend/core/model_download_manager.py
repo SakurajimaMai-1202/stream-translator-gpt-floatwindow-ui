@@ -554,8 +554,8 @@ class ModelDownloadManager:
             # Keep the marker on failure/cancellation (including process exit).
             # Only successful SDK completion makes manager-owned downloads visible.
             self._run_download_process([python_exe, "-c", script], cancel_event, env=env)
-            self._check_cancelled(cancel_event)
             marker.unlink()
+            self._check_cancelled(cancel_event)
             return next(
                 (path for path in self._get_modelscope_model_dirs(model_id) if path.is_dir()),
                 self._get_modelscope_model_dir(model_id),

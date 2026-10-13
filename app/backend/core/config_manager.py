@@ -354,16 +354,22 @@ class ConfigManager:
                     config = self._profile_defaults()
                 self._save(config)
                 return config
-            config = self._read_current_config()
+            raw = []
+            config = self._read_current_config(raw_out=raw)
+            # Write back only when merging defaults or migrating changed what is on
+            # disk, so hand edits survive an ordinary start.
+            changed = bool(raw) and config != raw[0]
             llama = config['llama']
             if llama.pop('first_run_gpu_default', False) is True:
                 if llama.get('gpu_layers_default_applied') is not True and llama.get('n_gpu_layers') == 0:
                     llama['n_gpu_layers'] = default_llama_gpu_layers()
                 llama['gpu_layers_default_applied'] = True
-            try:
-                self._save(config)
-            except OSError:
-                logger.warning("Configuration loaded but migration could not be saved")
+                changed = True
+            if changed:
+                try:
+                    self._save(config)
+                except OSError:
+                    logger.warning("Configuration loaded but migration could not be saved")
             return config
 
     def _backup_path(self, kind):
@@ -392,6 +398,9 @@ class ConfigManager:
         """Defaults for first run and explicit reset, never for loaded configs."""
         config = self._enforce_packaged_runtime(self._deep_copy(self.DEFAULT_CONFIG))
         config['llama']['n_gpu_layers'] = default_llama_gpu_layers()
+        # Fresh defaults already use the v2 visibility defaults; mark them so the
+        # next start does not "migrate" and rewrite a just-created file.
+        config['subtitle_settings']['_visibility_defaults_v2'] = True
         return config
 
     def _deep_copy(self, obj: Any) -> Any:
@@ -559,8 +568,11 @@ class ConfigManager:
                 pass
             raise
 
-    def _read_current_config(self, secret_source=None) -> Dict[str, Any]:
-        """Read the latest disk state before a cross-process update."""
+    def _read_current_config(self, secret_source=None, raw_out=None) -> Dict[str, Any]:
+        """Read the latest disk state before a cross-process update.
+
+        raw_out, when given, receives the parsed file content as read from disk.
+        """
         if not self.config_path.exists():
             return self._deep_copy(self.DEFAULT_CONFIG)
 
@@ -575,6 +587,8 @@ class ConfigManager:
             defaults = self._profile_defaults()
             self._save(defaults)
             return defaults
+        if raw_out is not None:
+            raw_out.append(self._deep_copy(loaded))
         merged = self._merge_with_defaults(loaded)
         if secret_source is not None:
             # Restore exact stored credentials, including empty values, before

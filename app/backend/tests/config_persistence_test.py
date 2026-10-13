@@ -533,6 +533,38 @@ def test_subtitle_visibility_defaults_are_enabled_once_then_respect_user_choice(
     assert migrated_again["subtitle_settings"]["showLatency"] is False
 
 
+
+def test_loading_migrated_config_does_not_rewrite_file(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    ConfigManager(config_path)  # first start writes a complete, migrated file
+    original = "# preserve hand edits" + chr(10) + config_path.read_text(encoding="utf-8")
+    config_path.write_text(original, encoding="utf-8", newline="")
+    before = config_path.stat()
+
+    ConfigManager(config_path)
+
+    after = config_path.stat()
+    assert config_path.read_text(encoding="utf-8") == original
+    assert after.st_mtime_ns == before.st_mtime_ns
+
+
+def test_loading_config_needing_migration_writes_once(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("translation:\n  backend: localllm\n", encoding="utf-8")
+    original_save = ConfigManager._save
+    writes = []
+
+    def counting_save(self, config):
+        writes.append(config)
+        return original_save(self, config)
+
+    monkeypatch.setattr(ConfigManager, "_save", counting_save)
+    ConfigManager(config_path)
+
+    assert len(writes) == 1
+    assert yaml.safe_load(config_path.read_text(encoding="utf-8"))["translation"]["backend"] == "llama"
+
+
 def test_desktop_backend_parses_structured_subtitle_latency_event():
     payload = _parse_structured_subtitle_event(
         '__ST_SUBTITLE_EVENT__{"timestamp":"00:00:01,000 -> 00:00:02,000",'

@@ -334,10 +334,7 @@ export const useLlamaStore = defineStore('llama', () => {
         recentModelPaths.value = Array.isArray(llamaConfig.recent_model_paths) ? llamaConfig.recent_model_paths : [];
         favoriteModelPaths.value = Array.isArray(llamaConfig.favorite_model_paths) ? llamaConfig.favorite_model_paths : [];
 
-        // 載入自訂配置 (Critical: Load here to prevent data loss on auto-save)
-        if (llamaConfig.custom_presets) {
-          customPresets.value = llamaConfig.custom_presets;
-        }
+        // Custom presets load independently through their dedicated API endpoint.
 
         // 載入選擇的預設配置 (Persistence for selected preset)
         if (llamaConfig.selected_preset) {
@@ -399,7 +396,6 @@ export const useLlamaStore = defineStore('llama', () => {
         n_predict: serverConfig.value.n_predict,
         flash_attn: serverConfig.value.flash_attn,
         no_mmap: serverConfig.value.no_mmap,
-        custom_presets: customPresets.value, // Critical: Include custom presets!
         custom_model_series: customModelSeries.value // Save custom model series
     };
   }
@@ -659,8 +655,7 @@ export const useLlamaStore = defineStore('llama', () => {
     try {
       await loadConfig(); // 先從後端 YAML 讀取配置
       await loadSystemPresets(); // 載入系統預設配置
-      // 注意：不再呼叫 loadCustomPresets()，因為 loadConfig() 已從 YAML 中讀取 custom_presets
-      // loadCustomPresets() 會從舊的 API 端點取得資料，可能覆蓋 YAML 中的資料
+      await loadCustomPresets(); // Load custom presets through their dedicated API.
 
       // 根據已載入的配置設定 selectedPreset（不觸發 watch）
       const savedSelectedPreset = selectedPreset.value; // loadConfig 已設定

@@ -168,3 +168,102 @@ def test_candidate_learning_keeps_one_off_alias_pending_and_ignores_punctuation(
         assert len(candidate_log.read_text(encoding="utf-8").splitlines()) == 1
     finally:
         configure_asr_correction_learning(False)
+
+
+def test_latin_alias_requires_ascii_word_boundaries():
+    corrector = ASRTermCorrector([
+        {"canonical": "artificial intelligence", "aliases": ["AI"]},
+    ])
+
+    corrected, matches = corrector.apply_with_details(
+        "said AIM ai AI2 2AI AI_ _AI (AI)"
+    )
+
+    assert corrected == (
+        "said AIM artificial intelligence AI2 2AI AI_ _AI "
+        "(artificial intelligence)"
+    )
+    assert matches == [
+        {"alias": "ai", "canonical": "artificial intelligence"},
+        {"alias": "AI", "canonical": "artificial intelligence"},
+    ]
+
+
+def test_latin_alias_boundaries_preserve_case_sensitive_matching():
+    corrector = ASRTermCorrector([
+        {"canonical": "model", "aliases": ["AI", "3"]},
+    ], case_sensitive=True)
+
+    assert corrector.apply("ai AI AIM 3 Q3 3D") == "ai model AIM model Q3 3D"
+
+
+def test_cjk_alias_prefers_longer_match_inside_unspaced_text():
+    corrector = ASRTermCorrector([
+        {"canonical": "短名", "aliases": ["水星"]},
+        {"canonical": "すいせいさん", "aliases": ["水星さん"]},
+    ])
+
+    corrected, matches = corrector.apply_with_details("今日は水星さんと水星です")
+
+    assert corrected == "今日はすいせいさんと短名です"
+    assert matches == [
+        {"alias": "水星さん", "canonical": "すいせいさん"},
+        {"alias": "水星", "canonical": "短名"},
+    ]
+
+
+def test_single_character_cjk_aliases_are_ignored():
+    corrector = ASRTermCorrector([
+        {"canonical": "replacement", "aliases": ["星", "あ", "ア", "한"]},
+    ])
+
+    assert corrector.apply_with_details("星とあア한") == ("星とあア한", [])
+
+
+def test_aliases_in_mixed_script_text():
+    corrector = ASRTermCorrector([
+        {"canonical": "人工智慧", "aliases": ["AI"]},
+        {"canonical": "すいせいさん", "aliases": ["水星さん"]},
+        {"canonical": "模型", "aliases": ["模型ai"]},
+    ])
+
+    assert corrector.apply("說ai和水星さん，said AIM 模型AI") == (
+        "說人工智慧和すいせいさん，said AIM 模型"
+    )
+
+
+def test_multi_word_alias_does_not_match_inside_larger_words():
+    corrector = ASRTermCorrector([
+        {"canonical": "Qwen3-ASR", "aliases": ["qwen 3 asr"]},
+    ])
+    text = "xqwen 3 asr2 xqwen 3 asr qwen 3 asr2 _qwen 3 asr qwen 3 asr_"
+
+    assert corrector.apply_with_details(text) == (text, [])
+
+
+def test_standalone_multi_word_alias_still_replaces():
+    corrector = ASRTermCorrector([
+        {"canonical": "Qwen3-ASR", "aliases": ["qwen 3 asr"]},
+    ])
+
+    assert corrector.apply("Use (QWEN 3 ASR) today") == "Use (Qwen3-ASR) today"
+
+
+def test_aliases_with_hyphens_and_underscores_require_edge_boundaries():
+    corrector = ASRTermCorrector([
+        {"canonical": "model", "aliases": ["qwen-asr", "qwen_asr"]},
+    ])
+
+    assert corrector.apply(
+        "xqwen-asr qwen-asr2 xqwen_asr qwen_asr2 QWEN-ASR qwen_asr"
+    ) == "xqwen-asr qwen-asr2 xqwen_asr qwen_asr2 model model"
+
+
+def test_mixed_script_alias_guards_only_its_latin_edges():
+    corrector = ASRTermCorrector([
+        {"canonical": "模型", "aliases": ["AI模型", "模型AI"]},
+    ])
+
+    assert corrector.apply("xAI模型 AI模型x 模型AI2 x模型AI") == (
+        "xAI模型 模型x 模型AI2 x模型"
+    )

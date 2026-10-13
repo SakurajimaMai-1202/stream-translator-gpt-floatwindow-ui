@@ -383,6 +383,13 @@ class ASRTermCorrector:
                 alias = str(alias or "").strip()
                 if not alias or alias == canonical:
                     continue
+                if len(alias) < 2 and re.search(
+                    r"[\u3400-\u9fff\uf900-\ufaff\U00020000-\U000323af"
+                    r"\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9d"
+                    r"\u1100-\u11ff\u3130-\u318f\uac00-\ud7af]",
+                    alias,
+                ):
+                    continue
                 suggestion_anchors.append(alias)
                 key = alias if self.case_sensitive else alias.casefold()
                 if key in self._replacements:
@@ -397,7 +404,12 @@ class ASRTermCorrector:
         aliases.sort(key=len, reverse=True)
         flags = 0 if self.case_sensitive else re.IGNORECASE
         self._pattern = re.compile(
-            "|".join(re.escape(alias) for alias in aliases),
+            "|".join(
+                (r"(?<![A-Za-z0-9_])" if re.fullmatch(r"[A-Za-z0-9]", alias[0]) else "")
+                + re.escape(alias)
+                + (r"(?![A-Za-z0-9_])" if re.fullmatch(r"[A-Za-z0-9]", alias[-1]) else "")
+                for alias in aliases
+            ),
             flags,
         ) if aliases else None
 

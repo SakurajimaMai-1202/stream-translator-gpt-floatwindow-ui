@@ -18,6 +18,7 @@ from typing import Dict, Any, AsyncGenerator, Optional, List, FrozenSet
 from pathlib import Path
 from backend.config import settings
 from backend.core.external_process import popen_external
+from backend.core.process_lifecycle import assign_process, kill_process_tree, create_translation_job
 from backend.core.logging_setup import resolve_log_dir, resolve_log_file
 from backend.core.portable_paths import apply_model_cache_environment
 
@@ -257,6 +258,7 @@ class TranslationContext:
         self.config = config
         self.task_id = task_id
         self.process = None
+        self.process_job = None
         self.running = False
         self.asr_ready = False
         self.stop_requested = False
@@ -613,6 +615,8 @@ class TranslationContext:
                         errors='replace',
                         creationflags=creationflags
                     )
+                    assign_process(self.process)
+                    self.process_job = create_translation_job(self.process)
                     logger.info(f"Subprocess created successfully, PID: {self.process.pid}")
                 except FileNotFoundError as e:
                     logger.error(f"Failed to create subprocess - File not found: {e}")
@@ -825,6 +829,8 @@ class TranslationContext:
                     # If process has exited
                     if self.process is not None and self.process.poll() is not None:
                         return_code = self.process.poll()
+                        if self.process_job is not None:
+                            self.process_job.close()
                         logger.info(f"Process exited with code: {return_code}")
                         try:
                             stderr_thread.join(timeout=2.0)
@@ -990,10 +996,14 @@ class TranslationContext:
             persistent_config_args = None
         
         # 直接終止主進程
-        if self.process and self.process.poll() is None:
+        if self.process and (os.name == 'nt' or self.process.poll() is None):
             pid = self.process.pid
             logger.info(f"Terminating translation subprocess (PID: {pid})")
             try:
+                if os.name == 'nt':
+                    kill_process_tree(self.process, job=self.process_job)
+                    logger.info(f"Process tree {pid} terminated")
+                    return
                 self.process.terminate()
                 try:
                     self.process.wait(timeout=5.0)

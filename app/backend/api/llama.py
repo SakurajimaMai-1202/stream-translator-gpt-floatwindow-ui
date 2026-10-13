@@ -19,6 +19,7 @@ from functools import lru_cache
 from backend.config import settings
 from backend.core.hardware_detector import default_llama_gpu_layers
 from backend.core.external_process import run_external, popen_external
+from backend.core.process_lifecycle import assign_process
 from backend.core.llama_runtime_installer import active_runtime_executable, installer, list_latest_variants, llama_root
 from backend.core.llama_model_installer import model_installer
 from backend.core.llama_devices import enumerate_devices, select_device, supports_device_selection, update_gpu_evidence, gpu_logging_args
@@ -456,6 +457,7 @@ async def _start_server(config: ServerConfig, background_tasks: BackgroundTasks,
             encoding='utf-8', 
             errors='replace'
         )
+        assign_process(process)
         
         # 啟動輸出讀取線程
         llama_state.last_error = None

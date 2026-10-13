@@ -30,6 +30,7 @@ def launch(monkeypatch, tmp_path):
     monkeypatch.setattr(llama, "llama_state", llama.LlamaState())
     monkeypatch.setattr(llama, "_server_start_lock", asyncio.Lock())
     monkeypatch.setattr(llama, "popen_external", popen)
+    monkeypatch.setattr(llama, "assign_process", lambda process: captured.setdefault("assigned", process))
     monkeypatch.setattr(llama, "_flash_attn_args", lambda *args: [])
     monkeypatch.setattr(llama, "supports_device_selection", lambda *args: True)
     monkeypatch.setattr(llama, "gpu_logging_args", lambda *args: ["--verbosity", "4"])
@@ -56,6 +57,7 @@ def test_auto_discrete_single_device_and_sanitized_env(launch, monkeypatch):
     assert "LLAMA_ARG_DEVICE" not in captured["kwargs"]["env"]
     assert "LLAMA_ARG_TENSOR_SPLIT" not in captured["kwargs"]["env"]
     assert not llama.llama_state.gpu_selection["confirmed"]
+    assert captured["assigned"].pid == 12
 
 
 def test_manual_name_change_rejected_before_launch(launch):

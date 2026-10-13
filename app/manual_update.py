@@ -9,6 +9,7 @@ import stat
 import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
+from update_runtime_contract import read_update_json, validate_update_schema
 
 
 def version_tuple(value: str) -> tuple[int, ...]:
@@ -48,9 +49,9 @@ def prepare_package(selected: Path, app_root: Path, allowed: set[str], progress=
     selected, app_root = selected.resolve(), app_root.resolve()
     if not (app_root / "Stream Translator.exe").is_file() or not (app_root / "config.yaml").is_file():
         raise RuntimeError("請選取含 Stream Translator.exe 與 config.yaml 的安裝目錄")
-    installed = json.loads((app_root / "_runtime/runtime-version.json").read_text(encoding="utf-8-sig"))
+    installed = read_update_json(app_root / "_runtime/runtime-version.json")
     current_path = app_root / "app-update-build.json"
-    current = json.loads(current_path.read_text(encoding="utf-8-sig")) if current_path.is_file() else {}
+    current = read_update_json(current_path) if current_path.is_file() else {}
     current_version = str(current.get("version") or installed.get("app_version") or "")
     parts = package_parts(selected)
     checksums = {}
@@ -114,8 +115,9 @@ def prepare_package(selected: Path, app_root: Path, allowed: set[str], progress=
                 seen.add(key)
             if shutil.disk_usage(app_root).free < sum(e.file_size for e in entries) + 256 * 1024 * 1024:
                 raise RuntimeError("磁碟空間不足，無法解壓更新包")
-            manifest = json.loads(bundle.read("app-update-build.json").decode("utf-8-sig"))
-            if manifest.get("schema") not in {1, 2} or manifest.get("profile") != installed.get("profile"):
+            manifest = read_update_json(bundle.read("app-update-build.json"))
+            validate_update_schema(manifest)
+            if manifest.get("profile") != installed.get("profile"):
                 raise RuntimeError("更新包格式或 CPU／CUDA／ROCm Profile 與安裝不相符")
             target_version = str(manifest.get("version") or "")
             if version_tuple(target_version) < version_tuple(current_version):

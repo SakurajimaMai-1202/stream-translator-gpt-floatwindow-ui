@@ -15,7 +15,7 @@ from pathlib import Path
 from manual_update import prepare_package
 
 import yaml
-from update_runtime_contract import validate_update_runtime
+from update_runtime_contract import read_update_json, validate_update_schema, validate_update_runtime
 from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication, QDialog, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton, QTextEdit, QVBoxLayout
@@ -92,6 +92,37 @@ class Worker(QThread):
         # observed at exactly the same instant.  Give loaded .pyd/DLL files a
         # short grace period before the first atomic directory rename.
         time.sleep(0.5)
+
+    def wait_for_runtime_processes(self, app_root: Path, timeout: float = 45.0) -> None:
+        runtime = app_root / "_runtime"
+        deadline = time.monotonic() + timeout
+        while True:
+            pending = installation_processes(runtime)
+            if not pending:
+                return
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f"Runtime processes did not exit within {timeout:g}s: {runtime} (PID: {', '.join(map(str, pending))})")
+            time.sleep(0.25)
+
+    @staticmethod
+    def cleanup_success(app_root: Path, staging: Path) -> None:
+        """Remove only updater-owned scratch data after the success commit."""
+        root = app_root.resolve() / ".app-update"
+        if root.resolve() != root:
+            raise RuntimeError("Update cleanup directory points outside the installation")
+        staging = staging.resolve()
+        candidates = [root / "downloads"]
+        if staging.parent == root and staging.name.startswith("staging"):
+            candidates.append(staging)
+        elif staging.name == "staging" and staging.parent.parent == root and staging.parent.name.startswith("manual-"):
+            candidates.append(staging.parent)
+        else:
+            raise RuntimeError("Invalid update cleanup staging path")
+        for path in candidates:
+            if path.resolve().parent != root or path.is_symlink():
+                raise RuntimeError(f"Unsafe update cleanup path: {path}")
+            if path.exists():
+                shutil.rmtree(path)
 
     @staticmethod
     def rename_with_retry(source: Path, destination: Path, timeout: float = 30.0) -> None:
@@ -195,12 +226,16 @@ class Worker(QThread):
 
     @staticmethod
     def validate_plan(plan_path: Path) -> tuple[dict, dict, Path, Path, list[Path], str]:
-        plan = json.loads(plan_path.read_text(encoding="utf-8-sig"))
+        plan = read_update_json(plan_path)
+        validate_update_schema(plan)
         app_root = Path(plan["app_root"]).resolve()
         staging = Path(plan["staging"]).resolve()
         if plan.get("schema") not in {1, 2} or app_root == Path(app_root.anchor) or app_root / ".app-update" not in staging.parents:
             raise RuntimeError("更新計畫的路徑或格式無效")
-        manifest = json.loads((staging / "app-update-build.json").read_text(encoding="utf-8"))
+        manifest = read_update_json(staging / "app-update-build.json")
+        schema = validate_update_schema(manifest)
+        if schema == 1 and (staging / "_runtime").exists():
+            raise RuntimeError("Legacy update package contains an unsafe partial _runtime; use the Full package")
         if manifest.get("profile") != plan.get("profile") or str(manifest.get("version")) != str(plan.get("version")):
             raise RuntimeError("更新套件的 Profile 或版本不相符")
         items = list(staging.iterdir())
@@ -217,7 +252,7 @@ class Worker(QThread):
             runtime_manifest = runtime / "runtime-version.json"
             if not runtime_python.is_file() or not runtime_manifest.is_file():
                 raise RuntimeError("runtime_replace 套件缺少完整 Runtime")
-            runtime_info = json.loads(runtime_manifest.read_text(encoding="utf-8"))
+            runtime_info = read_update_json(runtime_manifest)
             if str(runtime_info.get("profile") or "").lower() != str(plan.get("profile") or "").lower():
                 raise RuntimeError("替換 Runtime 的 Profile 不相符")
         validate_update_runtime(manifest, runtime if mode == "runtime_replace" else app_root / "_runtime")
@@ -239,7 +274,7 @@ class Worker(QThread):
         path = app_root / ".app-update" / "apply-journal.json"
         if not path.exists():
             return None
-        journal = json.loads(path.read_text(encoding="utf-8-sig"))
+        journal = read_update_json(path)
         return journal if journal.get("status") in {"applying", "rollback_failed"} else None
 
     @staticmethod
@@ -348,6 +383,7 @@ class Worker(QThread):
         errors = []
         try:
             self.wait_for_processes(installation_processes(app_root))
+            self.wait_for_runtime_processes(app_root)
             errors = self.rollback(app_root, journal)
             if not errors:
                 subprocess.Popen([str(app_root / "Stream Translator.exe")], cwd=app_root)
@@ -376,7 +412,7 @@ class Worker(QThread):
                 app_root = self.recovery_root.resolve()
                 self.recover(app_root)
                 return
-            raw_plan = json.loads(self.plan_path.read_text(encoding="utf-8-sig"))
+            raw_plan = read_update_json(self.plan_path)
             app_root = Path(raw_plan["app_root"]).resolve()
             if self.recover(app_root):
                 return
@@ -384,6 +420,7 @@ class Worker(QThread):
             self.step(8, "等待 Stream Translator 與後端完全關閉")
             process_ids = [int(plan.get("parent_pid") or 0), int(plan.get("backend_pid") or 0)]
             self.wait_for_processes(process_ids)
+            self.wait_for_runtime_processes(app_root)
             self.step(18, "備份 config、術語、ASR 修正與 Cookies")
             user_backup = self.backup_user_settings(app_root, str(plan["version"]))
             self.log.emit(f"使用者設定備份：{user_backup}")
@@ -425,6 +462,11 @@ class Worker(QThread):
             (app_root / ".app-update" / "update-result.json").write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
             journal["status"] = "completed"
             self.write_journal(app_root, journal)
+            # Cleanup errors cannot turn a committed update into a rollback.
+            try:
+                self.cleanup_success(app_root, _staging)
+            except Exception as cleanup_exc:
+                self.log.emit(f"Update succeeded; temporary files could not be removed: {cleanup_exc}")
             self.step(100, "更新完成，Stream Translator 已重新啟動")
             self.completed.emit(f"已更新至 v{plan['version']}")
         except Exception as exc:
@@ -436,6 +478,7 @@ class Worker(QThread):
                     proc.terminate()
                     proc.wait(timeout=30)
                 if journal:
+                    self.wait_for_runtime_processes(app_root)
                     rollback_errors = self.rollback(app_root, journal)
             except Exception as rollback_exc:
                 rollback_errors.append(str(rollback_exc))
@@ -598,7 +641,7 @@ class Window(QDialog):
         if self.install_edit.text().strip() and self.start_recovery(Path(self.install_edit.text().strip())):
             return
         if self.plan:
-            root = Path(json.loads(Path(self.plan).read_text(encoding="utf-8"))["app_root"])
+            root = Path(read_update_json(Path(self.plan))["app_root"])
             try:
                 running = installation_processes(root)
                 if running:
@@ -631,7 +674,7 @@ class Window(QDialog):
 
     def prepared(self, plan):
         self.plan = plan
-        info = json.loads(Path(plan).read_text(encoding="utf-8"))
+        info = read_update_json(Path(plan))
         self.status.setText(f"可更新至 v{info['version']}（{info['profile']}）")
         self.details.append("更新目錄：" + info["app_root"])
         self.start_btn.setText("套用更新")

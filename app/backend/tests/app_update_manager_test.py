@@ -664,3 +664,140 @@ class AppUpdateManagerTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UpdateLifecycleRegressionTest(unittest.TestCase):
+    def test_runtime_wait_rescans_for_new_children_and_times_out(self):
+        worker = Worker(Path("unused"))
+        root = Path("install")
+        with mock.patch("updater.installation_processes", side_effect=[[101], [202], []]) as listing, mock.patch("updater.time.sleep"):
+            worker.wait_for_runtime_processes(root)
+        self.assertEqual(listing.call_args_list, [mock.call(root / "_runtime")] * 3)
+        with mock.patch("updater.installation_processes", return_value=[303]), mock.patch("updater.time.monotonic", side_effect=[0, 46]):
+            with self.assertRaisesRegex(RuntimeError, "Runtime processes.*303"):
+                worker.wait_for_runtime_processes(root)
+
+    def test_success_cleanup_preserves_backups_and_external_packages(self):
+        for manual in (False, True):
+            with self.subTest(manual=manual), tempfile.TemporaryDirectory(dir=APP_DIR) as temp:
+                root = Path(temp)
+                work = root / ".app-update"
+                staging = work / ("manual-test/staging" if manual else "staging-1.4.10")
+                staging.mkdir(parents=True)
+                downloads = work / "downloads"
+                downloads.mkdir()
+                (downloads / "large.zip").touch()
+                (work / "user-backups").mkdir()
+                (work / "apply-journal.json").touch()
+                original = root / "original.zip"
+                original.touch()
+                Worker.cleanup_success(root, staging)
+                self.assertFalse(downloads.exists())
+                self.assertFalse(staging.exists())
+                self.assertTrue((work / "user-backups").exists())
+                self.assertTrue((work / "apply-journal.json").exists())
+                self.assertTrue(original.exists())
+
+    def test_backup_cleanup_waits_for_later_operational_start(self):
+        from backend.core import app_update_manager as updates
+        with tempfile.TemporaryDirectory(dir=APP_DIR) as temp:
+            root = Path(temp) / "install"
+            work = root / ".app-update"
+            work.mkdir(parents=True)
+            backup = root.parent / ".stream-translator-backup-test"
+            backup.mkdir()
+            with mock.patch.object(updates, "get_app_root", return_value=root), mock.patch.object(updates.threading, "Thread") as thread:
+                result = work / "update-result.json"
+                result.write_text(json.dumps(dict(status="completed", backup=str(backup))))
+                first = updates.AppUpdateManager()
+                self.assertTrue(backup.exists())
+                with mock.patch.object(updates.os, "replace", wraps=updates.os.replace) as replace:
+                    first.status()
+                replace.assert_called_once()
+                self.assertEqual(replace.call_args.args[1], result)
+                self.assertTrue(updates.read_update_json(result)["verified_start"])
+                self.assertTrue(backup.exists())
+                first.status()
+                self.assertTrue(backup.exists())
+                thread.assert_not_called()
+                later = updates.AppUpdateManager()
+                self.assertTrue(backup.exists())
+                thread.assert_not_called()
+                later.status()
+                thread.assert_called_once()
+                thread.call_args.kwargs["target"]()
+                self.assertFalse(backup.exists())
+                later.status()
+                thread.assert_called_once()
+
+    def test_cleanup_without_verified_start_preserves_backup(self):
+        from backend.core import app_update_manager as updates
+        with tempfile.TemporaryDirectory(dir=APP_DIR) as temp:
+            root = Path(temp) / "install"
+            work = root / ".app-update"
+            work.mkdir(parents=True)
+            backup = root.parent / ".stream-translator-backup-test"
+            backup.mkdir()
+            result = work / "update-result.json"
+            result.write_text(json.dumps(dict(status="completed", backup=str(backup))))
+            with mock.patch.object(updates, "get_app_root", return_value=root):
+                updates.AppUpdateManager._cleanup_previous_backup()
+            self.assertTrue(backup.exists())
+            self.assertNotIn("verified_start", updates.read_update_json(result))
+
+    def test_cleanup_only_after_committed_success_and_never_rolls_back_on_cleanup_error(self):
+        from updater import read_update_json
+        for outcome in ("success", "preflight_failure", "cleanup_failure", "runtime_timeout"):
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory(dir=APP_DIR) as temp:
+                root = Path(temp) / "install"
+                staging = root / ".app-update/staging-test"
+                staging.mkdir(parents=True)
+                (root / "Stream Translator.exe").write_bytes(b"old")
+                item = staging / "Stream Translator.exe"
+                item.write_bytes(b"new")
+                downloads = root / ".app-update/downloads"
+                downloads.mkdir()
+                (downloads / "update.zip").touch()
+                plan = dict(app_root=str(root), version="1.4.10", executable=item.name)
+                plan_path = root / ".app-update/apply-plan.json"
+                plan_path.write_text(json.dumps(plan))
+                worker = Worker(plan_path)
+                failures, completed = [], []
+                worker.failed.connect(failures.append)
+                worker.completed.connect(completed.append)
+                cleanup = Worker.cleanup_success
+                def clean(app_root, staged):
+                    self.assertEqual(read_update_json(root / ".app-update/apply-journal.json")["status"], "completed")
+                    if outcome == "cleanup_failure":
+                        raise PermissionError("locked scratch files")
+                    cleanup(app_root, staged)
+                with mock.patch.object(worker, "validate_plan", return_value=(plan, {}, root, staging, [item], "app_only")), \
+                     mock.patch.object(worker, "wait_for_processes"), \
+                     mock.patch.object(worker, "wait_for_runtime_processes", side_effect=RuntimeError("runtime timeout") if outcome == "runtime_timeout" else None), \
+                     mock.patch.object(worker, "backup_user_settings", return_value=root / "user-backup"), \
+                     mock.patch.object(worker, "cleanup_success", side_effect=clean) as cleanup_mock, \
+                     mock.patch("updater.time.sleep"), \
+                     mock.patch("updater.subprocess.run", return_value=mock.Mock(returncode=1 if outcome == "preflight_failure" else 0)), \
+                     mock.patch("updater.subprocess.Popen", return_value=mock.Mock(poll=mock.Mock(return_value=None))):
+                    worker.run()
+                success = outcome in ("success", "cleanup_failure")
+                self.assertEqual(bool(completed), success)
+                self.assertEqual(bool(failures), not success)
+                self.assertEqual(cleanup_mock.call_count, int(success))
+                self.assertEqual((root / "Stream Translator.exe").read_bytes(), b"new" if success else b"old")
+                self.assertEqual(downloads.exists(), outcome != "success")
+                self.assertEqual(staging.exists(), outcome != "success")
+
+    def test_rolled_back_journal_preserves_backup_even_with_stale_success_result(self):
+        from backend.core import app_update_manager as updates
+        with tempfile.TemporaryDirectory(dir=APP_DIR) as temp:
+            root = Path(temp) / "install"
+            work = root / ".app-update"
+            work.mkdir(parents=True)
+            backup = root.parent / ".stream-translator-backup-test"
+            backup.mkdir()
+            (work / "update-result.json").write_text(json.dumps(dict(status="completed", backup=str(backup), verified_start=True)))
+            (work / "apply-journal.json").write_text(json.dumps(dict(status="rolled_back")))
+            with mock.patch.object(updates, "get_app_root", return_value=root):
+                updates.AppUpdateManager._cleanup_previous_backup()
+            self.assertTrue(backup.exists())

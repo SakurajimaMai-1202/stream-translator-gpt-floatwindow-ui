@@ -93,3 +93,23 @@ def test_process_query_detects_this_python_installation():
         pytest.skip("Windows process query")
     # Query an unrelated directory; this must not report arbitrary Python processes.
     assert installation_processes(Path(__file__).parent) == []
+
+
+@pytest.mark.parametrize("changes", [{"schema": "2"}, {"schema": True}, {"schema": 3}, {"update_mode": None}, {"update_mode": "unknown"}])
+def test_manual_update_rejects_invalid_schema_or_mode(local_package, changes):
+    root, build = local_package
+    with pytest.raises(RuntimeError, match="schema|update_mode"):
+        prepare_package(build(changes=changes), root, ALLOWED)
+
+
+def test_manual_update_accepts_bom_json(local_package):
+    root, build = local_package
+    archive = build()
+    with zipfile.ZipFile(archive) as bundle:
+        entries = [(entry.filename, bundle.read(entry)) for entry in bundle.infolist()]
+    with zipfile.ZipFile(archive, "w") as bundle:
+        for name, payload in entries:
+            bundle.writestr(name, b"\xef\xbb\xbf" + payload if name.endswith(".json") else payload)
+    runtime_info = root / "_runtime/runtime-version.json"
+    runtime_info.write_bytes(b"\xef\xbb\xbf" + runtime_info.read_bytes())
+    assert Worker.validate_plan(prepare_package(archive, root, ALLOWED))[-1] == "app_only"

@@ -4,6 +4,30 @@ import re
 from pathlib import Path
 
 
+def read_update_json(source) -> dict:
+    """Read update JSON paths or payloads consistently, including UTF-8 BOMs."""
+    payload = source.read_bytes() if isinstance(source, Path) else source
+    try:
+        value = json.loads(payload.decode("utf-8-sig") if isinstance(payload, bytes) else payload.lstrip("\ufeff"))
+    except (ValueError, UnicodeError, AttributeError) as exc:
+        raise ValueError(f"Invalid update JSON: {exc}") from exc
+    if not isinstance(value, dict):
+        raise ValueError("Update JSON must be an object")
+    return value
+
+
+def validate_update_schema(document: dict) -> int:
+    schema = document.get("schema")
+    if type(schema) is not int or schema not in {1, 2}:
+        raise RuntimeError("Unsupported update schema: expected integer 1 or 2")
+    mode = document.get("update_mode")
+    if schema == 2 and not mode:
+        raise RuntimeError("Update schema 2 requires update_mode")
+    if mode is not None and mode not in ("app_only", "runtime_replace"):
+        raise RuntimeError(f"Unsupported update_mode: {mode}")
+    return schema
+
+
 def validate_update_runtime(manifest: dict, runtime: Path) -> None:
     minimum = manifest.get("minimum_runtime_version")
     if not minimum:  # Older packages predate this contract.
@@ -15,7 +39,7 @@ def validate_update_runtime(manifest: dict, runtime: Path) -> None:
         return tuple(map(int, value.split(".")))
 
     try:
-        info = json.loads((runtime / "runtime-version.json").read_text(encoding="utf-8-sig"))
+        info = read_update_json(runtime / "runtime-version.json")
         compatible = (
             info.get("profile") == manifest.get("profile")
             and version(info.get("app_version")) >= version(minimum)

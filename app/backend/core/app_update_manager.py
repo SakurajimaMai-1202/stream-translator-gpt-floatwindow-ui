@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.config import settings
-from update_runtime_contract import validate_update_runtime
+from update_runtime_contract import read_update_json, validate_update_schema, validate_update_runtime
 from backend.core.http_downloader import HttpDownloader
 from backend.core.portable_paths import get_app_root, get_packaged_runtime_profile
 
@@ -66,7 +66,15 @@ class AppUpdateState:
 
 class AppUpdateManager:
     def __init__(self) -> None:
-        self._cleanup_previous_backup()
+        # Snapshot eligibility only; never delete files or start threads on import.
+        try:
+            result = read_update_json(get_app_root() / ".app-update" / "update-result.json")
+            eligible = result.get("status") == "completed" and self._pending_journal() is None
+            self._backup_cleanup_pending = eligible and result.get("verified_start") is True
+            self._backup_verification_pending = eligible and not self._backup_cleanup_pending
+        except (OSError, ValueError):
+            self._backup_cleanup_pending = False
+            self._backup_verification_pending = False
         profile = get_packaged_runtime_profile() or ""
         self._state = AppUpdateState(
             current_version=self._current_version(), profile=profile,
@@ -86,7 +94,7 @@ class AppUpdateManager:
     def _pending_journal() -> dict | None:
         path = get_app_root() / ".app-update" / "apply-journal.json"
         try:
-            journal = json.loads(path.read_text(encoding="utf-8-sig"))
+            journal = read_update_json(path)
             return journal if journal.get("status") in {"applying", "rollback_failed"} else None
         except FileNotFoundError:
             return None
@@ -109,10 +117,14 @@ class AppUpdateManager:
         app_root = get_app_root().resolve()
         result_path = app_root / ".app-update" / "update-result.json"
         try:
-            result = json.loads(result_path.read_text(encoding="utf-8-sig"))
+            journal_path = result_path.with_name("apply-journal.json")
+            if journal_path.exists() and read_update_json(journal_path).get("status") != "completed":
+                return
+            result = read_update_json(result_path)
             backup = Path(str(result.get("backup") or "")).resolve()
             if (
                 result.get("status") == "completed"
+                and result.get("verified_start") is True
                 and backup.is_dir()
                 and backup.parent == app_root.parent
                 and backup.name.startswith(".stream-translator-backup-")
@@ -121,6 +133,31 @@ class AppUpdateManager:
                 result_path.unlink(missing_ok=True)
         except (OSError, ValueError, TypeError):
             pass
+
+    @staticmethod
+    def _verify_start() -> None:
+        if AppUpdateManager._pending_journal() is not None:
+            return
+        result_path = get_app_root() / ".app-update" / "update-result.json"
+        temporary_path = None
+        try:
+            journal_path = result_path.with_name("apply-journal.json")
+            if journal_path.exists() and read_update_json(journal_path).get("status") != "completed":
+                return
+            result = read_update_json(result_path)
+            if result.get("status") != "completed":
+                return
+            result["verified_start"] = True
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=result_path.parent,
+                                             prefix="update-result-", suffix=".tmp", delete=False) as stream:
+                temporary_path = Path(stream.name)
+                json.dump(result, stream)
+            os.replace(temporary_path, result_path)
+        except (OSError, ValueError, TypeError):
+            pass
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
 
     def _current_version(self) -> str:
         # The runtime manifest describes the packaged Python/GPU runtime.  It
@@ -134,7 +171,19 @@ class AppUpdateManager:
         if self._state.status == "interrupted" and self._pending_journal() is None:
             self._set(status="idle", error="", message="")
         with self._lock:
-            return asdict(self._state)
+            response = asdict(self._state)
+            cleanup = self._backup_cleanup_pending
+            verify = self._backup_verification_pending
+            self._backup_cleanup_pending = False
+            self._backup_verification_pending = False
+        # Retain the backup for this whole session; only a flag present at
+        # construction permits cleanup on a later backend start.
+        if verify:
+            self._verify_start()
+        if cleanup:
+            threading.Thread(target=self._cleanup_previous_backup, daemon=True,
+                             name="app-update-backup-cleanup").start()
+        return response
 
     def _set(self, **changes: Any) -> None:
         with self._lock:
@@ -166,7 +215,7 @@ class AppUpdateManager:
         self._set(status="checking", message="Checking GitHub Releases", error="")
         try:
             with self._open_url(api) as response:
-                release = json.loads(response.read().decode("utf-8"))
+                release = read_update_json(response.read())
             latest = str(release.get("tag_name") or "").lstrip("v")
             asset_name = ASSET_NAMES[profile]
             release_assets = list(release.get("assets", []))
@@ -264,8 +313,8 @@ class AppUpdateManager:
         exe = staging / "Stream Translator.exe"
         if not manifest_path.is_file() or not exe.is_file():
             raise RuntimeError("Update package is missing its manifest or executable")
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        schema = int(manifest.get("schema") or 0)
+        manifest = read_update_json(manifest_path)
+        schema = validate_update_schema(manifest)
         if schema not in {1, 2} or manifest.get("profile") != self._state.profile:
             raise RuntimeError("Update package profile or schema does not match this installation")
         if str(manifest.get("version")) != self._state.latest_version:
@@ -284,7 +333,7 @@ class AppUpdateManager:
             required = (runtime / "python.exe", runtime / "runtime-version.json")
             if not all(path.is_file() for path in required):
                 raise RuntimeError("runtime_replace update must contain a complete _runtime")
-            runtime_manifest = json.loads((runtime / "runtime-version.json").read_text(encoding="utf-8"))
+            runtime_manifest = read_update_json(runtime / "runtime-version.json")
             if str(runtime_manifest.get("profile") or "").lower() != self._state.profile:
                 raise RuntimeError("Replacement runtime profile does not match this installation")
         validate_update_runtime(manifest, runtime if update_mode == "runtime_replace" else get_app_root() / "_runtime")

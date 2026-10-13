@@ -146,6 +146,12 @@ class ModelDownloadManager:
             logger.warning("Skipping inaccessible model directory: %s", path, exc_info=True)
             return False
 
+    def _get_modelscope_download_marker(self, repo_id: str) -> Path:
+        namespace, name = repo_id.split("/", 1)
+        # Outside SDK-owned folders; one marker covers both cache layouts without
+        # creating an empty model folder that could be mistaken for an install.
+        return self._get_modelscope_cache_dir() / ".downloads" / namespace / f"{name}.in-progress"
+
     def _update_byte_progress(self, task_id: str, downloaded: int, total: int, label: str) -> None:
         if total <= 0:
             return
@@ -542,8 +548,18 @@ class ModelDownloadManager:
             env["MODELSCOPE_DOWNLOAD_PARALLEL_WORKERS"] = "4"
             env["MODELSCOPE_DOWNLOAD_PARALLELS"] = "4"
             env["MODELSCOPE_DOWNLOAD_PARALLEL_THRESHOLD_MB"] = "16"
+            marker = self._get_modelscope_download_marker(model_id)
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.touch()
+            # Keep the marker on failure/cancellation (including process exit).
+            # Only successful SDK completion makes manager-owned downloads visible.
             self._run_download_process([python_exe, "-c", script], cancel_event, env=env)
-            return self._get_modelscope_model_dir(model_id)
+            self._check_cancelled(cancel_event)
+            marker.unlink()
+            return next(
+                (path for path in self._get_modelscope_model_dirs(model_id) if path.is_dir()),
+                self._get_modelscope_model_dir(model_id),
+            )
 
         self._check_cancelled(cancel_event)
         self._update_task(task_id, message="Downloading from ModelScope")
@@ -587,7 +603,7 @@ class ModelDownloadManager:
             app_root / "build-runtime-cache" / "cuda-runtime" / "python.exe",
             app_root / "build-runtime-cache" / "cpu-runtime" / "python.exe",
             app_root / "build-runtime-cache" / "rocm-runtime" / "python.exe",
-            Path(sys.executable),
+            *([] if getattr(sys, "frozen", False) else [Path(sys.executable)]),
         ]
         for candidate in candidates:
             if not candidate.exists():
@@ -635,33 +651,54 @@ class ModelDownloadManager:
 
     def delete_model(self, engine: str, model_id: str, compute_backend: ModelComputeBackend = "gpu") -> Path:
         normalized_model_id = self._validate_model_id(engine, model_id, compute_backend)
-        if compute_backend == "cpu":
-            bundle, _ = SHERPA_CPU_BUNDLES[normalized_model_id]
-            cache_root = (get_model_storage_root() / "sherpa-onnx").resolve()
-            repo_dir = (cache_root / bundle).resolve()
-        elif engine == "sensevoice":
-            cache_root = self._get_modelscope_cache_dir().resolve()
-            repo_dir = next(
-                (candidate for candidate in self._get_modelscope_model_dirs(normalized_model_id) if candidate.exists()),
-                self._get_modelscope_model_dir(normalized_model_id),
-            )
-        else:
-            repo_id = self._normalize_repo_id(engine, normalized_model_id)
-            cache_root = self._get_hf_cache_dir().resolve()
-            repo_dir = (cache_root / f"models--{repo_id.replace('/', '--')}").resolve()
+        model_key = (compute_backend, self._normalize_repo_id(engine, normalized_model_id))
+        tombstones = []
+        # Serialize the active-worker check and renames with start_download's claim.
+        # Cleanup can run outside the lock: new downloads use the original paths.
+        with self._lock:
+            if model_key in self._model_workers:
+                raise ValueError("Cannot delete a model while its download is active")
+            if compute_backend == "cpu":
+                bundle, _ = SHERPA_CPU_BUNDLES[normalized_model_id]
+                cache_root = (get_model_storage_root() / "sherpa-onnx").resolve()
+                candidates = [cache_root / bundle]
+            elif engine == "sensevoice":
+                cache_root = self._get_modelscope_cache_dir().resolve()
+                candidates = self._get_modelscope_model_dirs(normalized_model_id)
+            else:
+                repo_id = self._normalize_repo_id(engine, normalized_model_id)
+                cache_root = self._get_hf_cache_dir().resolve()
+                candidates = [cache_root / f"models--{repo_id.replace('/', '--')}"]
 
-        try:
-            repo_dir.relative_to(cache_root)
-        except ValueError as exc:
-            raise ValueError("模型路徑不在快取目錄內") from exc
+            repo_dirs = []
+            for repo_dir in candidates:
+                try:
+                    repo_dir.resolve().relative_to(cache_root)
+                except ValueError as exc:
+                    raise ValueError("Model path is outside the cache directory") from exc
+                if repo_dir.is_symlink():
+                    raise ValueError("Refusing to delete a symlink model directory")
+                if repo_dir.exists():
+                    repo_dirs.append(repo_dir)
+            if not repo_dirs:
+                raise FileNotFoundError(f"Model is not downloaded: {model_id}")
 
-        if not repo_dir.exists():
-            raise FileNotFoundError(f"模型尚未下載: {model_id}")
-        if repo_dir.is_symlink():
-            raise ValueError("拒絕刪除符號連結模型目錄")
+            try:
+                for repo_dir in repo_dirs:
+                    tombstone = repo_dir.with_name(f".deleted-{uuid.uuid4().hex}")
+                    repo_dir.rename(tombstone)
+                    tombstones.append((repo_dir, tombstone))
+            except OSError:
+                for repo_dir, tombstone in reversed(tombstones):
+                    tombstone.rename(repo_dir)
+                raise
+            if compute_backend == "gpu" and engine == "sensevoice":
+                self._get_modelscope_download_marker(normalized_model_id).unlink(missing_ok=True)
 
-        shutil.rmtree(repo_dir)
-        return repo_dir
+        # Never restore a tombstone after cleanup starts: it may be incomplete.
+        for _, tombstone in tombstones:
+            shutil.rmtree(tombstone)
+        return repo_dirs[0]
 
     def list_downloaded_models(self) -> List[DownloadedModelInfo]:
         """列出 HuggingFace 快取中的指定模型"""
@@ -682,8 +719,13 @@ class ModelDownloadManager:
                 ))
 
         for model_id in sorted(SUPPORTED_SENSEVOICE_MODELS):
+            if self._get_modelscope_download_marker(model_id).exists():
+                continue
             for model_dir in self._get_modelscope_model_dirs(model_id):
-                if not model_dir.exists() or not model_dir.is_dir():
+                # ModelScope ships SenseVoiceSmall weights as model.pt.
+                if not model_dir.is_dir() or not any(
+                    (model_dir / name).is_file() for name in ("model.pt", "model.bin")
+                ):
                     continue
                 models.append(
                     DownloadedModelInfo(
@@ -706,6 +748,8 @@ class ModelDownloadManager:
                 repo_id = repo.repo_id
                 size_bytes = int(getattr(repo, "size_on_disk", 0) or 0)
                 cache_path = str(getattr(repo, "repo_path", ""))
+                if any(part.startswith(".deleted-") for part in Path(cache_path).parts):
+                    continue
 
                 if repo_id in SUPPORTED_QWEN3_MODELS or repo_id.startswith("Qwen/Qwen3-ASR-"):
                     models.append(

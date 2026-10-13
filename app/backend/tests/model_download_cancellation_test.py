@@ -424,3 +424,60 @@ def test_dedicated_logger_uses_isolated_log_dir(isolated_log_dir):
         for handler in list(logger.handlers):
             logger.removeHandler(handler)
             handler.close()
+
+
+@pytest.mark.parametrize("state", ["pending", "downloading", "cancelling"])
+@pytest.mark.parametrize("backend", ["cpu", "gpu"])
+def test_active_model_cannot_be_deleted_or_started_twice(monkeypatch, tmp_path, state, backend):
+    asyncio.run(_active_model_cannot_be_deleted_or_started_twice(monkeypatch, tmp_path, state, backend))
+
+
+async def _active_model_cannot_be_deleted_or_started_twice(monkeypatch, tmp_path, state, backend):
+    import backend.core.model_download_manager as module
+
+    manager = ModelDownloadManager()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    monkeypatch.setattr(module, "WORKER_STOP_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(module, "get_model_storage_root", lambda: tmp_path)
+    monkeypatch.setattr(module, "get_modelscope_cache", lambda: tmp_path)
+    async def download(*args):
+        entered.set()
+        await release.wait()
+    monkeypatch.setattr(manager, "_download_sherpa_archive", download)
+    monkeypatch.setattr(manager, "_download_sensevoice_from_modelscope", download)
+    task_id = await manager.start_download("sensevoice", "iic/SenseVoiceSmall", backend)
+    worker = manager._workers[task_id]
+    try:
+        if state != "pending":
+            await entered.wait()
+        if state == "cancelling":
+            manager.cancel(task_id)
+        assert manager.get_task(task_id).status == state
+        with pytest.raises(ValueError, match="download is active"):
+            manager.delete_model("sensevoice", "iic/SenseVoiceSmall", backend)
+        with pytest.raises(ValueError):
+            await manager.start_download("sensevoice", "iic/SenseVoiceSmall", backend)
+        assert len(manager.list_tasks()) == 1
+        assert manager._workers[task_id] is worker
+    finally:
+        release.set()
+        await asyncio.wait_for(worker, timeout=1)
+
+
+
+def test_frozen_backend_is_not_used_as_download_python(monkeypatch, tmp_path):
+    from threading import Event
+    import backend.core.model_download_manager as module
+
+    executable = tmp_path / "Stream Translator.exe"
+    executable.touch()
+    monkeypatch.setattr(module, "get_app_root", lambda: tmp_path)
+    monkeypatch.setattr(module.sys, "executable", str(executable))
+    monkeypatch.setattr(module.sys, "frozen", True, raising=False)
+    manager = ModelDownloadManager()
+    def unexpected_process(*args, **kwargs):
+        pytest.fail("The frozen backend must not be invoked with -c")
+    monkeypatch.setattr(manager, "_run_download_process", unexpected_process)
+    with pytest.raises(RuntimeError, match="No Python runtime"):
+        manager._resolve_sensevoice_download_python(Event())

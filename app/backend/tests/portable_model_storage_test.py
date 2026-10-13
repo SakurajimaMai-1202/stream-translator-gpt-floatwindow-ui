@@ -120,3 +120,103 @@ def test_sherpa_model_is_listed_and_deleted_independently_from_gpu_cache(monkeyp
     assert deleted == cpu_dir.resolve()
     assert not cpu_dir.exists()
     assert gpu_dir.exists()
+
+
+
+def test_sensevoice_delete_rolls_back_when_second_rename_fails(monkeypatch, tmp_path):
+    import pytest
+
+    manager = ModelDownloadManager()
+    cache_root = tmp_path / "modelscope"
+    monkeypatch.setattr(manager, "_get_modelscope_cache_dir", lambda: cache_root)
+    repo_dirs = manager._get_modelscope_model_dirs("iic/SenseVoiceSmall")
+    for repo_dir in repo_dirs:
+        repo_dir.mkdir(parents=True)
+        (repo_dir / "model.bin").write_bytes(b"model")
+    original_rename = Path.rename
+    calls = []
+
+    def rename(path, target):
+        calls.append((path, target))
+        if len(calls) == 2:
+            raise PermissionError("sharing violation")
+        return original_rename(path, target)
+
+    monkeypatch.setattr(Path, "rename", rename)
+    with pytest.raises(PermissionError, match="sharing violation"):
+        manager.delete_model("sensevoice", "iic/SenseVoiceSmall")
+
+    assert len(calls) == 3
+    assert all((repo_dir / "model.bin").read_bytes() == b"model" for repo_dir in repo_dirs)
+    assert not list(cache_root.rglob(".deleted-*"))
+
+
+def test_unmarked_sensevoice_config_only_layouts_are_not_listed(monkeypatch, tmp_path):
+    import sys
+    from types import SimpleNamespace
+
+    manager = ModelDownloadManager()
+    monkeypatch.setattr(model_manager_module, "get_model_storage_root", lambda: tmp_path)
+    monkeypatch.setattr(manager, "_get_modelscope_cache_dir", lambda: tmp_path / "modelscope")
+    monkeypatch.setattr(manager, "_get_hf_cache_dir", lambda: tmp_path / "hub")
+    monkeypatch.setitem(sys.modules, "huggingface_hub", SimpleNamespace(
+        scan_cache_dir=lambda _: SimpleNamespace(repos=[]),
+    ))
+    for repo_dir in manager._get_modelscope_model_dirs("iic/SenseVoiceSmall"):
+        repo_dir.mkdir(parents=True)
+        (repo_dir / "config.yaml").write_text("model: SenseVoiceSmall", encoding="utf-8")
+        (repo_dir / "configuration.json").write_text("{}", encoding="utf-8")
+    assert not manager._get_modelscope_download_marker("iic/SenseVoiceSmall").exists()
+
+    assert manager.list_downloaded_models() == []
+
+
+def test_unmarked_sensevoice_with_real_model_pt_is_listed(monkeypatch, tmp_path):
+    import sys
+    from types import SimpleNamespace
+
+    manager = ModelDownloadManager()
+    monkeypatch.setattr(model_manager_module, "get_model_storage_root", lambda: tmp_path)
+    monkeypatch.setattr(manager, "_get_modelscope_cache_dir", lambda: tmp_path / "modelscope")
+    monkeypatch.setattr(manager, "_get_hf_cache_dir", lambda: tmp_path / "hub")
+    monkeypatch.setitem(sys.modules, "huggingface_hub", SimpleNamespace(
+        scan_cache_dir=lambda _: SimpleNamespace(repos=[]),
+    ))
+    repo_dir = manager._get_modelscope_model_dirs("iic/SenseVoiceSmall")[0]
+    repo_dir.mkdir(parents=True)
+    # The real ModelScope layout: weights are model.pt, not model.bin.
+    (repo_dir / "model.pt").write_bytes(b"weights")
+    (repo_dir / "config.yaml").write_text("model: SenseVoiceSmall", encoding="utf-8")
+
+    models = manager.list_downloaded_models()
+
+    assert [m.model_id for m in models if m.engine == "sensevoice"] == ["iic/SenseVoiceSmall"]
+
+
+def test_deleted_tombstones_are_not_listed(monkeypatch, tmp_path):
+    import sys
+    from types import SimpleNamespace
+
+    manager = ModelDownloadManager()
+    monkeypatch.setattr(model_manager_module, "get_model_storage_root", lambda: tmp_path)
+    monkeypatch.setattr(manager, "_get_modelscope_cache_dir", lambda: tmp_path / "modelscope")
+    cache_root = tmp_path / "hub"
+    monkeypatch.setattr(manager, "_get_hf_cache_dir", lambda: cache_root)
+    hf_tombstone = cache_root / ".deleted-hf"
+    hf_tombstone.mkdir(parents=True)
+    (hf_tombstone / "model.bin").write_bytes(b"model")
+    for repo_dir in manager._get_modelscope_model_dirs("iic/SenseVoiceSmall"):
+        tombstone = repo_dir.with_name(".deleted-sensevoice")
+        tombstone.mkdir(parents=True)
+        (tombstone / "model.bin").write_bytes(b"model")
+    repo = SimpleNamespace(repo_id="Qwen/Qwen3-ASR-1.7B", repo_path=hf_tombstone, size_on_disk=5)
+    monkeypatch.setitem(sys.modules, "huggingface_hub", SimpleNamespace(
+        scan_cache_dir=lambda _: SimpleNamespace(repos=[repo]),
+    ))
+    assert manager.list_downloaded_models() == []
+
+    def failed_scan(_):
+        raise OSError("force filesystem fallback")
+
+    monkeypatch.setitem(sys.modules, "huggingface_hub", SimpleNamespace(scan_cache_dir=failed_scan))
+    assert manager.list_downloaded_models() == []

@@ -1,5 +1,9 @@
 from backend.core.hardware_detector import GpuDevice
-from backend.core.translation_model_recommender import build_translation_model_recommendations
+from backend.core.translation_model_recommender import (
+    MODEL_CATALOG,
+    build_translation_model_recommendations,
+    match_catalog_model,
+)
 
 
 def gpu(name: str, memory_mb: int, integrated: bool = False, vendor: str = "nvidia") -> GpuDevice:
@@ -193,3 +197,41 @@ def test_index_models_use_official_gguf_sources_and_separate_memory_fits():
         assert "尚未實測" in model["runtime_note"]
     # Catalog additions do not change the simple-setup download choice.
     assert four_gb["simple_setup"]["model_id"] == "hy-mt2-iq4-nl"
+
+
+def test_catalog_entries_have_filename_match_tokens():
+    assert all(isinstance(model.get("match"), tuple) and model["match"] for model in MODEL_CATALOG)
+
+
+def test_catalog_matcher_matches_expected_gguf_filenames():
+    hymt_config = {
+        "temp": 0.7, "top_p": 0.6, "top_k": 20, "repeat_penalty": 1.05,
+        "n_ctx": 4096, "n_predict": 4096,
+    }
+    for path in (
+        "Hy-MT2-7B-UD-Q4_K_XL.gguf",
+        "Hy-MT2-7B.i1-Q6_K.gguf",
+        r"C:\models\translation\Hy-MT2-7B-IQ4_NL.gguf",
+    ):
+        result = match_catalog_model(path)
+        assert result["id"] == "hy-mt2-7b"
+        assert result["deployment_config"] == hymt_config
+
+    expected = {
+        "Index-Translate-2B.Q2_K.gguf": "index-translate-2b",
+        "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf": "gemma-4-e4b-qat",
+        "GalTransl-v4-4B-2601-Q5_K_S.gguf": "sakura-galtransl-v4-4b",
+        "Sakura-14B-Qwen3-v1.5-IQ4_XS.gguf": "sakura-14b-qwen3-v15",
+    }
+    for path, model_id in expected.items():
+        assert match_catalog_model(path)["id"] == model_id
+
+
+def test_catalog_matcher_rejects_unmatched_filenames_and_copies_config():
+    for path in ("Hy-MT2-1.8B-Q4_K_M.gguf", "qwen2.5-7b-instruct-q4_k_m.gguf", ""):
+        assert match_catalog_model(path) is None
+
+    result = match_catalog_model("Hy-MT2-7B-Q4_K_M.gguf")
+    original = next(model for model in MODEL_CATALOG if model["id"] == "hy-mt2-7b")["deployment_config"]
+    result["deployment_config"]["temp"] = 9.0
+    assert original["temp"] == 0.7

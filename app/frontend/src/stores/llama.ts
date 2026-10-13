@@ -8,6 +8,17 @@ import { llamaApi, type ModelInfo, type ServerConfig, type ServerStatus } from '
 import { configApi } from '../services/api';
 
 const LOCAL_LLM_SESSION_KEY = 'stream-translator:local-llm-enabled';
+const PROFILE_KEYS = ['temp', 'top_p', 'top_k', 'repeat_penalty', 'n_ctx', 'n_predict'] as const;
+
+function pickProfileParams(value: unknown): Partial<ServerConfig> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const params: Partial<ServerConfig> = {};
+  for (const key of PROFILE_KEYS) {
+    const entry = (value as Record<string, unknown>)[key];
+    if (typeof entry === 'number' && Number.isFinite(entry)) params[key] = entry;
+  }
+  return Object.keys(params).length ? params : null;
+}
 
 function readSessionEnabled(): boolean {
   try {
@@ -40,6 +51,9 @@ export const useLlamaStore = defineStore('llama', () => {
   });
   const defaultGpuLayers = computed(() => serverStatus.value.default_gpu_layers ?? 0);
   const selectedModelPath = ref<string>('');
+  const modelProfileId = ref<string>('');
+  const manualParams = ref<Partial<ServerConfig> | null>(null);
+  let modelProfileRequestToken = 0;
   const modelDirectory = ref<string>('');
   const recentModelPaths = ref<string[]>([]);
   const favoriteModelPaths = ref<string[]>([]);
@@ -260,11 +274,40 @@ export const useLlamaStore = defineStore('llama', () => {
     }
   }
 
-  function selectModel(modelPath: string) {
+  function applyRecommendedProfile(id: string, name: string, deploymentConfig: Partial<ServerConfig>) {
+    ++modelProfileRequestToken;
+    if (!modelProfileId.value) manualParams.value = pickProfileParams(serverConfig.value);
+    serverConfig.value = { ...serverConfig.value, ...pickProfileParams(deploymentConfig) };
+    modelProfileId.value = id;
+    successMessage.value = `已自動套用 ${name} 推薦參數`;
+    setTimeout(() => successMessage.value = '', 3000);
+  }
+
+  async function selectModel(modelPath: string): Promise<void> {
     selectedModelPath.value = modelPath;
     serverConfig.value.model_path = modelPath;
     recentModelPaths.value = [modelPath, ...recentModelPaths.value.filter(path => path !== modelPath)].slice(0, 5);
-    saveConfig(); // 保存設定
+    const requestToken = ++modelProfileRequestToken;
+    let profile;
+    try {
+      profile = await llamaApi.getModelProfile(modelPath);
+    } catch {
+      if (requestToken === modelProfileRequestToken) await saveConfig();
+      return;
+    }
+    if (requestToken !== modelProfileRequestToken) return;
+    if (profile.matched) {
+      // Another quant of the active recommended model keeps the user's tweaks.
+      if (profile.id !== modelProfileId.value) applyRecommendedProfile(profile.id, profile.name, profile.deployment_config);
+    } else if (modelProfileId.value) {
+      if (manualParams.value) {
+        serverConfig.value = { ...serverConfig.value, ...manualParams.value };
+        successMessage.value = '已套用上次自訂模型的參數';
+        setTimeout(() => successMessage.value = '', 3000);
+      }
+      modelProfileId.value = '';
+    }
+    await saveConfig();
   }
 
   function toggleFavoriteModel(modelPath: string) {
@@ -299,6 +342,8 @@ export const useLlamaStore = defineStore('llama', () => {
       if (config.llama) {
         // 更新伺服器配置
         const llamaConfig = config.llama;
+        modelProfileId.value = typeof llamaConfig.model_profile_id === 'string' ? llamaConfig.model_profile_id : '';
+        manualParams.value = pickProfileParams(llamaConfig.manual_params);
         serverConfig.value = {
           model_path: llamaConfig.model_path || '',
           server_exe: llamaConfig.server_exe || '',
@@ -370,7 +415,10 @@ export const useLlamaStore = defineStore('llama', () => {
   }
 
   function buildLlamaConfig() {
+    if (!modelProfileId.value) manualParams.value = pickProfileParams(serverConfig.value);
     return {
+        model_profile_id: modelProfileId.value,
+        manual_params: manualParams.value,
         // 模型路徑與參數可持久化，但啟用開關每次啟動必須為關閉。
         local_llm_enabled: false,
         model_dir: modelDirectory.value,
@@ -532,6 +580,8 @@ export const useLlamaStore = defineStore('llama', () => {
       ...serverConfig.value,
       ...preset
     };
+    ++modelProfileRequestToken;
+    modelProfileId.value = '';
 
     // 載入模型路徑
     if (preset.model_path) {
@@ -691,6 +741,7 @@ export const useLlamaStore = defineStore('llama', () => {
     models,
     serverStatus,
     selectedModelPath,
+    modelProfileId,
     modelDirectory,
     recentModelPaths,
     favoriteModelPaths,
@@ -721,6 +772,7 @@ export const useLlamaStore = defineStore('llama', () => {
     applyAndRestart,
     translate,
     selectModel,
+    applyRecommendedProfile,
     toggleFavoriteModel,
     updateServerConfig,
     clearMessages,

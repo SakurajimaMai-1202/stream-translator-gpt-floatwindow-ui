@@ -38,6 +38,13 @@ export interface ServerConfig {
   no_mmap?: boolean;
 }
 
+export interface ModelProfile {
+  matched: boolean;
+  id: string;
+  name: string;
+  deployment_config: Partial<Pick<ServerConfig, 'temp' | 'top_p' | 'top_k' | 'repeat_penalty' | 'n_ctx' | 'n_predict'>>;
+}
+
 export interface ServerStatus {
   default_gpu_layers?: number;
   gpu_selection?: {
@@ -177,6 +184,10 @@ export interface ModelInstallStatus {
 }
 
 export const llamaApi = {
+  async getModelProfile(modelPath: string): Promise<ModelProfile> {
+    const response = await axios.get(`${API_BASE}/model-profile`, { params: { model_path: modelPath } });
+    return response.data;
+  },
   async getRuntimeDevices(serverExe = '', allowIntegratedGpu = false): Promise<{ devices: RuntimeDevice[]; error: string | null; server_exe: string }> {
     const response = await axios.get(`${API_BASE}/runtime/devices`, {
       params: { server_exe: serverExe, allow_integrated_gpu: allowIntegratedGpu },

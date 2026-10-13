@@ -78,6 +78,7 @@
             :title="isSelectedModelFavorite ? '取消收藏' : '收藏此模型'">{{ isSelectedModelFavorite ? '★' : '☆' }}</button>
           <button type="button" class="ghost-button" @click="router.push('/llm-models')">管理模型</button>
         </div>
+        <p v-if="llamaStore.modelProfileId" class="hint">已套用推薦參數；切換到非推薦模型時會恢復上次自訂的參數。</p>
         <p v-if="hasPendingRuntimeChanges" class="quick-model-pending">已選擇新的模型或參數；目前服務不受影響，按「套用並重啟」後生效。</p>
       </div>
 

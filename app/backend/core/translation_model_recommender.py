@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from pathlib import PureWindowsPath
+import re
 from typing import Any, Iterable
 
 from .hardware_detector import GpuDevice, vram_tier
@@ -22,6 +24,7 @@ def _next_vram_tier(required_gb: float) -> int:
 MODEL_CATALOG: tuple[dict[str, Any], ...] = (
     {
         "id": "index-translate-2b",
+        "match": ("indextranslate2b",),
         "name": "Index-Translate 2B",
         "repo": "IndexTeam/Index-Translate-2B-GGUF",
         "url": "https://huggingface.co/IndexTeam/Index-Translate-2B-GGUF/tree/main",
@@ -38,6 +41,7 @@ MODEL_CATALOG: tuple[dict[str, Any], ...] = (
     },
     {
         "id": "index-translate-9b",
+        "match": ("indextranslate9b",),
         "name": "Index-Translate 9B",
         "repo": "IndexTeam/Index-Translate-9B-GGUF",
         "url": "https://huggingface.co/IndexTeam/Index-Translate-9B-GGUF/tree/main",
@@ -54,6 +58,7 @@ MODEL_CATALOG: tuple[dict[str, Any], ...] = (
     },
     {
         "id": "gemma-4-e2b-qat",
+        "match": ("gemma4e2b",),
         "name": "Gemma 4 E2B IT QAT",
         "repo": "unsloth/gemma-4-E2B-it-qat-GGUF",
         "url": "https://huggingface.co/unsloth/gemma-4-E2B-it-qat-GGUF/tree/main",
@@ -69,6 +74,7 @@ MODEL_CATALOG: tuple[dict[str, Any], ...] = (
     },
     {
         "id": "gemma-4-e4b-qat",
+        "match": ("gemma4e4b",),
         "name": "Gemma 4 E4B IT QAT",
         "repo": "unsloth/gemma-4-E4B-it-qat-GGUF",
         "url": "https://huggingface.co/unsloth/gemma-4-E4B-it-qat-GGUF/tree/main",
@@ -84,6 +90,7 @@ MODEL_CATALOG: tuple[dict[str, Any], ...] = (
     },
     {
         "id": "hy-mt2-7b",
+        "match": ("hymt27b",),
         "name": "Hy-MT2 7B",
         "repo": "unsloth/Hy-MT2-7B-GGUF",
         "url": "https://huggingface.co/unsloth/Hy-MT2-7B-GGUF/tree/main",
@@ -102,6 +109,7 @@ MODEL_CATALOG: tuple[dict[str, Any], ...] = (
     },
     {
         "id": "sakura-galtransl-v4-4b",
+        "match": ("galtranslv44b",),
         "name": "Sakura GalTransl v4 4B",
         "repo": "SakuraLLM/GalTransl-v4-4B-2601",
         "url": "https://huggingface.co/SakuraLLM/GalTransl-v4-4B-2601/tree/main",
@@ -118,6 +126,7 @@ MODEL_CATALOG: tuple[dict[str, Any], ...] = (
     },
     {
         "id": "sakura-14b-qwen3-v15",
+        "match": ("sakura14bqwen3v15",),
         "name": "Sakura 14B Qwen3 v1.5",
         "repo": "SakuraLLM/Sakura-14B-Qwen3-v1.5-GGUF",
         "url": "https://huggingface.co/SakuraLLM/Sakura-14B-Qwen3-v1.5-GGUF/tree/main",
@@ -133,6 +142,21 @@ MODEL_CATALOG: tuple[dict[str, Any], ...] = (
         "parameter_source": "模型卡未公布採樣值；使用本程式小說／遊戲文本低發散建議",
     },
 )
+
+
+def match_catalog_model(model_path: str) -> dict[str, Any] | None:
+    filename = PureWindowsPath(model_path).name
+    if not filename:
+        return None
+    normalized = re.sub(r"[^a-z0-9]", "", filename.lower())
+    for model in MODEL_CATALOG:
+        if any(token in normalized for token in model["match"]):
+            return {
+                "id": model["id"],
+                "name": model["name"],
+                "deployment_config": dict(model["deployment_config"]),
+            }
+    return None
 
 
 def build_translation_model_recommendations(devices: Iterable[GpuDevice]) -> dict[str, Any]:

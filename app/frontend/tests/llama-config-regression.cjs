@@ -12,7 +12,15 @@ const code = ts.transpileModule(fs.readFileSync(path.join(__dirname, '../src/sto
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
 
-function createStore(initial) {
+function getModelProfile(modelPath) {
+  return modelPath.includes('Hy-MT2-7B')
+    ? { matched: true, id: 'hy-mt2-7b', name: 'Hy-MT2-7B', deployment_config: {
+      temp: 0.7, top_p: 0.6, top_k: 20, repeat_penalty: 1.05, n_ctx: 4096, n_predict: 4096,
+    } }
+    : { matched: false, id: '', name: '', deployment_config: {} };
+}
+
+function createStore(initial, profileLookup = async modelPath => getModelProfile(modelPath)) {
   let persisted = structuredClone(initial);
   const writes = [];
   const presets = [];
@@ -32,6 +40,8 @@ function createStore(initial) {
       } };
       if (name === '../services/llamaApi') return { llamaApi: {
         getPresets: async () => ({}),
+        getCustomPresets: async () => structuredClone(initial.custom_presets || {}),
+        getModelProfile: profileLookup,
         getServerStatus: async () => ({ is_running: false, is_ready: false }),
         saveCustomPreset: async (name, value) => presets.push({ name, value: JSON.parse(JSON.stringify(value)) }),
       } };
@@ -79,5 +89,66 @@ function createStore(initial) {
   await restored.store.loadConfig();
   assert.equal(restored.store.serverConfig.temp, 0, 'preset zero survives persisted reload');
   assert.equal(restored.store.serverConfig.top_k, 0);
-  console.log('Llama config regression passed: zero values, defaults, save/reload, custom preset startup.');
+  const manual = { model_path: 'custom.gguf', temp: 0.3, n_ctx: 2048 };
+  const switching = createStore(manual);
+  await switching.store.loadConfig();
+  await switching.store.selectModel('Hy-MT2-7B-Q4_K_M.gguf');
+  assert.equal(switching.store.serverConfig.temp, 0.7);
+  assert.equal(switching.store.serverConfig.n_ctx, 4096);
+  assert.equal(switching.writes.at(-1).model_profile_id, 'hy-mt2-7b');
+  assert.equal(switching.writes.at(-1).manual_params.temp, 0.3);
+  assert.equal(switching.writes.at(-1).manual_params.n_ctx, 2048);
+  // Saved tweaks to a recommended model survive reload without another lookup.
+  switching.store.serverConfig.temp = 0.8;
+  await switching.store.saveConfig();
+  await switching.store.loadConfig();
+  assert.equal(switching.store.serverConfig.temp, 0.8);
+  assert.equal(switching.store.modelProfileId, 'hy-mt2-7b');
+  // Another quant of the same recommended model keeps those tweaks.
+  await switching.store.selectModel('Hy-MT2-7B-Q6_K.gguf');
+  assert.equal(switching.store.serverConfig.temp, 0.8);
+  assert.equal(switching.writes.at(-1).manual_params.temp, 0.3);
+  await switching.store.selectModel('custom.gguf');
+  assert.equal(switching.store.serverConfig.temp, 0.3);
+  assert.equal(switching.store.serverConfig.n_ctx, 2048);
+  assert.equal(switching.writes.at(-1).model_profile_id, '');
+  switching.store.serverConfig.temp = 0.4;
+  await switching.store.saveConfig();
+  assert.equal(switching.writes.at(-1).manual_params.temp, 0.4);
+
+  let resolveRecommended;
+  const racing = createStore(manual, modelPath => modelPath.includes('Hy-MT2-7B')
+    ? new Promise(resolve => { resolveRecommended = () => resolve(getModelProfile(modelPath)); })
+    : Promise.resolve(getModelProfile(modelPath)));
+  await racing.store.loadConfig();
+  const earlierSelection = racing.store.selectModel('Hy-MT2-7B.gguf');
+  await racing.store.selectModel('custom.gguf');
+  const writesBeforeStaleResponse = racing.writes.length;
+  resolveRecommended();
+  await earlierSelection;
+  assert.equal(racing.store.selectedModelPath, 'custom.gguf');
+  assert.equal(racing.store.serverConfig.model_path, 'custom.gguf');
+  assert.equal(racing.store.serverConfig.temp, 0.3);
+  assert.equal(racing.store.serverConfig.n_ctx, 2048);
+  assert.equal(racing.store.modelProfileId, '');
+  assert.equal(racing.writes.at(-1).model_profile_id, '');
+  assert.equal(racing.writes.at(-1).temp, 0.3);
+  assert.equal(racing.writes.at(-1).n_ctx, 2048);
+  assert.equal(racing.writes.length, writesBeforeStaleResponse, 'stale profile response does not save');
+
+  const validated = createStore({ ...manual, model_profile_id: 'hy-mt2-7b', manual_params: {
+    temp: 0, n_ctx: 2048, top_p: '0.6', top_k: Infinity, n_predict: NaN, host: 'ignored',
+  } });
+  await validated.store.loadConfig();
+  await validated.store.saveConfig();
+  assert.deepEqual(validated.writes.at(-1).manual_params, { temp: 0, n_ctx: 2048 });
+
+  const failed = createStore(manual, async () => { throw new Error('profile unavailable'); });
+  await failed.store.loadConfig();
+  await failed.store.selectModel('Hy-MT2-7B.gguf');
+  assert.equal(failed.store.serverConfig.temp, 0.3);
+  assert.equal(failed.store.serverConfig.n_ctx, 2048);
+  assert.equal(failed.writes.at(-1).model_path, 'Hy-MT2-7B.gguf');
+  assert.equal(failed.writes.at(-1).model_profile_id, '');
+  console.log('Llama config regression passed: zero values, defaults, save/reload, custom preset startup, model profiles and selection races.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

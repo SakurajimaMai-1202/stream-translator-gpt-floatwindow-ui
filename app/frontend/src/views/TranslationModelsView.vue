@@ -29,7 +29,7 @@ async function load(refresh = false) {
 
 async function applyDeployment(model: TranslationModelRecommendationInfo['models'][number]) {
   if (!model.deployment_config) return;
-  llamaStore.updateServerConfig(model.deployment_config);
+  llamaStore.applyRecommendedProfile(model.id, model.name, model.deployment_config);
   await llamaStore.saveConfig();
   await router.push({ path: '/settings', query: { tab: 'llama', recommended_model: model.id } });
 }

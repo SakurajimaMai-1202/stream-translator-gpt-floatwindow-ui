@@ -639,6 +639,16 @@ async def get_model_recommendations(refresh: bool = False):
     return build_translation_model_recommendations(devices)
 
 
+@router.get("/model-profile")
+async def get_model_profile(model_path: str = ""):
+    from backend.core.translation_model_recommender import match_catalog_model
+
+    match = match_catalog_model(model_path)
+    if match is None:
+        return {"matched": False, "id": "", "name": "", "deployment_config": {}}
+    return {"matched": True, **match}
+
+
 @router.get("/runtime/install/status")
 async def get_runtime_install_status():
     return installer.status()

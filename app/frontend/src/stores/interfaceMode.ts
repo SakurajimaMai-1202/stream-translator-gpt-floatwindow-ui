@@ -315,6 +315,7 @@ export const useInterfaceModeStore = defineStore('interfaceMode', () => {
         local_llm_enabled: false, model_dir: modelPath.replace(/[\\/][^\\/]+$/, ''), model_path: modelPath,
         host: '127.0.0.1', port, n_ctx: 4096, n_gpu_layers: 999, n_threads: 4, n_parallel: 1,
         temp: 0.7, top_p: 0.6, top_k: 20, repeat_penalty: 1.05, n_predict: 4096,
+        model_profile_id: 'hy-mt2-7b',
         flash_attn: 'auto', no_mmap: false,
       });
       await configApi.updateSection('translation', { backend: 'llama' });

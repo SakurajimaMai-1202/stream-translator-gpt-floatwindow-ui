@@ -5,6 +5,24 @@ from backend.api import llama
 from backend.api import config as config_api
 
 
+def test_model_profile_returns_matched_and_unmatched_responses():
+    import asyncio
+
+    matched = asyncio.run(llama.get_model_profile(r"C:\models\Hy-MT2-7B-IQ4_NL.gguf"))
+    unmatched = asyncio.run(llama.get_model_profile("qwen2.5-7b-instruct-q4_k_m.gguf"))
+
+    assert matched == {
+        "matched": True,
+        "id": "hy-mt2-7b",
+        "name": "Hy-MT2 7B",
+        "deployment_config": {
+            "temp": 0.7, "top_p": 0.6, "top_k": 20, "repeat_penalty": 1.05,
+            "n_ctx": 4096, "n_predict": 4096,
+        },
+    }
+    assert unmatched == {"matched": False, "id": "", "name": "", "deployment_config": {}}
+
+
 def test_failed_server_reports_missing_tensor_instead_of_exit_summary(monkeypatch, tmp_path):
     import asyncio
     import io

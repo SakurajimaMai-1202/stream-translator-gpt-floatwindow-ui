@@ -77,6 +77,8 @@ class CpuAsrSidecarManager(HttpDownloader):
     def start(self, *, asset_url: str | None = None, sha256_url: str | None = None) -> dict[str, Any]:
         with self._lock:
             if self._worker is not None and self._worker.is_alive():
+                if self._worker.name == "cpu-asr-sidecar-recovery":
+                    raise RuntimeError("CPU ASR Runtime is restoring its previous backup; try again in a moment")
                 raise RuntimeError("CPU ASR Runtime download or installation is already active")
             resolved_asset = asset_url or self._default_asset_url()
             resolved_sha = sha256_url or f"{resolved_asset}.sha256"
@@ -267,6 +269,9 @@ class CpuAsrSidecarManager(HttpDownloader):
             logger.warning("CPU ASR runtime backup recovery failed", exc_info=True)
         finally:
             with self._lock:
+                # Status polls trigger recovery once; after a failure only an explicit
+                # start or import retries, so polling cannot spawn a check every second.
+                self._recovery_checked = True
                 self._worker = None
 
     def _restore_backup(self) -> None:

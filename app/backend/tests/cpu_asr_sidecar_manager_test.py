@@ -95,6 +95,21 @@ class CpuAsrSidecarManagerTest(unittest.TestCase):
                 validate.assert_not_called()
                 run.assert_not_called()
 
+    def test_failed_status_recovery_is_not_retried_by_later_polls(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "target"
+            target.with_name("target.backup").mkdir()
+            manager = sidecar_module.CpuAsrSidecarManager()
+            with mock.patch.object(sidecar_module, "get_cpu_asr_runtime_path", return_value=target),                     mock.patch.object(manager, "_recover_runtime", side_effect=PermissionError("in use")) as recover:
+                manager.status()
+                worker = manager._worker
+                if worker is not None:
+                    worker.join(5)
+                for _ in range(3):
+                    manager.status()
+                self.assertEqual(recover.call_count, 1)
+                self.assertIsNone(manager._worker)
+
     def test_recovery_validation_does_not_block_status_or_allow_install(self):
         for first_use in ("status", "start", "import"):
             with self.subTest(first_use=first_use), tempfile.TemporaryDirectory() as temporary:

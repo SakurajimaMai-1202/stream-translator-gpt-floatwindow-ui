@@ -4,6 +4,7 @@ PyQt6 視窗管理器
 """
 
 import sys
+import base64
 from pathlib import Path
 from urllib.parse import quote
 from time import monotonic
@@ -162,6 +163,28 @@ class HomeBridge(QObject):
             return str(destination)
         except Exception as exc:
             logger.exception("儲存診斷報告失敗")
+            return f"ERROR:{exc}"
+
+
+    @pyqtSlot(str, str, result=str)
+    def saveBinaryFile(self, suggested_name: str, base64_content: str) -> str:
+        """Open a native Save As dialog and persist a base64-encoded ZIP."""
+        try:
+            safe_name = Path(str(suggested_name or "logs.zip")).name
+            file_path, _ = QFileDialog.getSaveFileName(
+                None, "儲存 Log", str(Path.home() / "Downloads" / safe_name),
+                "ZIP 壓縮檔 (*.zip)",
+            )
+            if not file_path:
+                return ""
+            destination = Path(file_path)
+            if not destination.suffix:
+                destination = destination.with_suffix(".zip")
+            destination.write_bytes(base64.b64decode(base64_content, validate=True))
+            logger.info("Log 已儲存: %s", destination)
+            return str(destination)
+        except Exception as exc:
+            logger.exception("儲存 Log 失敗")
             return f"ERROR:{exc}"
 
 

@@ -6,6 +6,7 @@ import { runtimeApi } from '../../services/api';
 
 const { diagnosticsBusy } = useSettingsContext();
 const store = useTranslationStore();
+const logsBusy = ref(false);
 // 只有桌面程式的 WebView 有 Qt 橋接；一般瀏覽器開啟時不顯示此按鈕。
 // window.pyqt 在 DocumentReady 後非同步建立，重新整理後可能稍晚才出現。
 const canOpenInBrowser = ref(false);
@@ -67,6 +68,53 @@ async function exportRuntimeDiagnostics() {
     diagnosticsBusy.value = false;
   }
 }
+
+async function exportLogs() {
+  if (logsBusy.value) return;
+  logsBusy.value = true;
+  store.errorMessage = '';
+  try {
+    const { blob, filename } = await runtimeApi.exportLogs();
+    const bridge = (window as any).pyqt;
+    if (bridge?.saveBinaryFile) {
+      const content = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+        reader.onerror = () => reject(new Error('無法讀取 Log 壓縮檔'));
+        reader.readAsDataURL(blob);
+      });
+      const savedPath = await new Promise<string>((resolve) => {
+        bridge.saveBinaryFile(filename, content, (result: string) => resolve(result || ''));
+      });
+      if (!savedPath) {
+        store.statusMessage = '已取消儲存 Log';
+        return;
+      }
+      if (savedPath.startsWith('ERROR:')) throw new Error(savedPath.slice(6));
+      store.statusMessage = `Log 已儲存：${savedPath}`;
+      return;
+    }
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    window.setTimeout(() => {
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    }, 10_000);
+    store.statusMessage = `Log 已下載：${filename}`;
+  } catch (error: any) {
+    let detail = error?.response?.data?.detail;
+    if (error?.response?.data instanceof Blob) {
+      try { detail = JSON.parse(await error.response.data.text()).detail; } catch { /* Use the request error below. */ }
+    }
+    store.errorMessage = `匯出 Log 失敗：${detail || error?.message || '未知錯誤'}`;
+  } finally {
+    logsBusy.value = false;
+  }
+}
 </script>
 
 <template>
@@ -80,6 +128,15 @@ async function exportRuntimeDiagnostics() {
               <p class="mt-2 text-xs leading-5 text-white/40">報告不包含 API Key、Cookie 或字幕內容，也不會下載模型或修改設定。</p>
               <button type="button" @click="exportRuntimeDiagnostics" :disabled="diagnosticsBusy" class="mt-4 px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-white font-semibold">
                 {{ diagnosticsBusy ? '正在建立報告…' : '匯出 Runtime 診斷報告' }}
+              </button>
+            </div>
+            <div class="rounded-xl border border-white/10 bg-white/5 p-5">
+              <h3 class="text-lg font-semibold text-cyan-300">匯出 Log</h3>
+              <p class="mt-2 text-sm leading-6 text-white/60">
+                程式、後端、翻譯引擎的執行紀錄，已自動遮蔽 API Key、Token 與帳密網址
+              </p>
+              <button type="button" @click="exportLogs" :disabled="logsBusy" class="mt-4 px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-white font-semibold">
+                {{ logsBusy ? '正在打包 Log…' : '匯出 Log' }}
               </button>
             </div>
             <div v-if="canOpenInBrowser" class="rounded-xl border border-white/10 bg-white/5 p-5">

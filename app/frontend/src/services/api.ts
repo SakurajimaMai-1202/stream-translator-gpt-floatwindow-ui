@@ -299,6 +299,12 @@ export const runtimeApi = {
     const response = await axios.get(`${API_BASE}/runtime/diagnostics`);
     return response.data.data || response.data;
   },
+  async exportLogs(): Promise<{ blob: Blob; filename: string }> {
+    const response = await axios.get(`${API_BASE}/runtime/logs/export`, { responseType: 'blob' });
+    const filename = /filename="([^"]+)"/.exec(response.headers['content-disposition'] || '')?.[1]
+      || `stream-translator-logs-${new Date().toISOString().replace(/[:.]/g, '-')}.zip`;
+    return { blob: response.data, filename };
+  },
   async getAppUpdateStatus(): Promise<AppUpdateStatus> {
     const response = await axios.get(`${API_BASE}/runtime/app-update`);
     return response.data.data || response.data;

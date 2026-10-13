@@ -342,6 +342,7 @@ class StreamAudioGetter(LoopWorkerBase):
     STREAM_READ_TIMEOUT_SECONDS = 8.0
     YOUTUBE_RECONNECT_DELAY_SECONDS = 1.0
     MAX_UNKNOWN_EOF_CHECKS = 3
+    MAX_UNKNOWN_EOF_SECONDS = 10 * 60.0
 
     def _source_status(self):
         """Return live, finite, ended, or unknown; transport EOF is not proof."""
@@ -595,10 +596,21 @@ class StreamAudioGetter(LoopWorkerBase):
             # only successful metadata answers without a live flag count as EOF
             # evidence; failed requests must remain retryable.
             unknown_checks = 0
+            unknown_started_at = None
             while self.running:
                 source_status = self._source_status()
                 confirmed_live = confirmed_live or source_status == 'live'
                 if source_status != 'unknown' or confirmed_live:
+                    break
+                # Bound failed metadata requests too, but only for never-live sources.
+                now = time.monotonic()
+                if unknown_started_at is None:
+                    unknown_started_at = now
+                if now - unknown_started_at >= self.MAX_UNKNOWN_EOF_SECONDS:
+                    print(f'{ERROR}Source status could not be confirmed after EOF/stall; '
+                          'stopping after the metadata wait limit (source was never confirmed live).',
+                          flush=True)
+                    source_status = 'ended'
                     break
                 if self._metadata_answered:
                     unknown_checks += 1

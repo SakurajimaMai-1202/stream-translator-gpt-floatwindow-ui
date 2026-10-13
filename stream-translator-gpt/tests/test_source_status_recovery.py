@@ -137,3 +137,42 @@ def test_startup_unknown_then_live_advances_reconnect(source, monkeypatch):
     advances = [advance for frame, advance in items if isinstance(frame, np.ndarray)]
     assert clock.opens == 2
     assert advances == pytest.approx([0, 8 + getter.YOUTUBE_RECONNECT_DELAY_SECONDS])
+
+
+@pytest.mark.parametrize('failure', ['nonzero', audio_getter.subprocess.TimeoutExpired('fake', 15),
+                                     OSError('network unavailable')])
+def test_never_live_transport_failures_end_at_wall_clock_limit(source, monkeypatch, capsys, failure):
+    getter, clock = source
+    # Startup/reading time must not consume the post-EOF unknown budget.
+    def frames():
+        clock.now += getter.MAX_UNKNOWN_EOF_SECONDS * 2
+        return iter(())
+
+    monkeypatch.setattr(getter, '_read_stream_frames', frames)
+    monkeypatch.setattr(getter, 'YOUTUBE_RECONNECT_DELAY_SECONDS', getter.MAX_UNKNOWN_EOF_SECONDS / 4)
+    metadata(monkeypatch, getter, clock, [failure] * 6)
+    output = AudioSourceQueue()
+    getter.loop(output)
+    assert clock.calls == 6  # Startup, first unknown, then four waits.
+    assert clock.now == 100 + getter.MAX_UNKNOWN_EOF_SECONDS * 3
+    assert clock.opens == 1
+    message = capsys.readouterr().out
+    assert f'{audio_getter.ERROR}Source status could not be confirmed' in message
+    assert output.get() is audio_getter.AUDIO_STREAM_GAP
+    assert output.get() is None
+    assert output.empty()
+
+
+def test_confirmed_live_transport_failures_beyond_limit_wait_for_stop(source, monkeypatch, capsys):
+    getter, clock = source
+    monkeypatch.setattr(getter, 'YOUTUBE_RECONNECT_DELAY_SECONDS', getter.MAX_UNKNOWN_EOF_SECONDS / 2)
+    metadata(monkeypatch, getter, clock, [{'is_live': True}] + ['nonzero'] * 6, stop_after=7)
+    output = AudioSourceQueue()
+    getter.loop(output)
+    assert clock.now > 100 + getter.MAX_UNKNOWN_EOF_SECONDS
+    assert clock.calls == 7
+    assert clock.opens == 6
+    assert not getter.running
+    assert audio_getter.ERROR not in capsys.readouterr().out
+    items = [output.get() for _ in range(output.qsize())]
+    assert items[-1] is None

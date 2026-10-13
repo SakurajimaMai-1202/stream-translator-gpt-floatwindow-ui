@@ -13,6 +13,7 @@ import json
 import uuid
 import logging
 import time
+from urllib.parse import parse_qsl, urlsplit
 from functools import lru_cache
 from typing import Dict, Any, AsyncGenerator, Optional, List, FrozenSet
 from pathlib import Path
@@ -35,23 +36,100 @@ _SENSITIVE_ARG_NAMES = {
     "--telegram_token",
     "--telegram_chat_id",
     "--cqhttp_token",
+    "--proxy",
+    "--output_proxy",
+    "--cqhttp_url",
+    "--telegram_bot_token",
 }
+
+
+def _is_sensitive_arg(arg: str) -> bool:
+    if not arg.startswith("-"):
+        return False
+    name = arg.split("=", 1)[0].lower()
+    return name in _SENSITIVE_ARG_NAMES or bool(re.search(r"(?i)(?:webhook|telegram.*(?:token|chat)|proxy|cqhttp.*(?:url|token))", name))
 
 
 def _redact_command_args(cmd: List[str]) -> List[str]:
     redacted: List[str] = []
     hide_next = False
     for arg in cmd:
+        if re.match(r"(?i)^[a-z][a-z0-9+.-]*://", arg):
+            try:
+                parsed = urlsplit(arg)
+                has_userinfo = "@" in parsed.netloc
+            except (ValueError, AttributeError):
+                has_userinfo = "@" in arg.split("/", 3)[2] if "/" in arg else False
+            has_token_query = bool(re.search(r"(?i)(?:[?&](?:[^=&#]*(?:token|key|secret|auth|signature|sig)[^=&#]*)=)", arg))
+            if has_userinfo or has_token_query:
+                redacted.append("<redacted-url>")
+                hide_next = False
+                continue
+
         if hide_next:
             redacted.append("<redacted>")
             hide_next = False
             continue
 
+        if _is_sensitive_arg(arg):
+            if "=" in arg:
+                redacted.append(arg.split("=", 1)[0] + "=<redacted>")
+            else:
+                redacted.append(arg)
+                hide_next = True
+            continue
         redacted.append(arg)
-        if arg in _SENSITIVE_ARG_NAMES:
-            hide_next = True
 
     return redacted
+
+
+def _collect_command_secrets(cmd: List[str]) -> List[str]:
+    secrets = set()
+    hide_next = False
+    for arg in cmd:
+        if hide_next:
+            secrets.add(arg)
+            hide_next = False
+        elif _is_sensitive_arg(arg):
+            if "=" in arg:
+                value = arg.split("=", 1)[1]
+                if value:
+                    secrets.add(value)
+            else:
+                hide_next = True
+
+        if re.match(r"(?i)^[a-z][a-z0-9+.-]*://", arg):
+            try:
+                parsed = urlsplit(arg)
+                if "@" in parsed.netloc:
+                    userinfo = parsed.netloc.rsplit("@", 1)[0]
+                    secrets.add(userinfo)
+                    secrets.update(part for part in userinfo.split(":") if part)
+                secrets.update(
+                    value for key, value in parse_qsl(parsed.query, keep_blank_values=False)
+                    if re.search(r"(?i)(?:token|key|secret|auth|signature|sig)", key) and value
+                )
+            except ValueError:
+                pass
+    return sorted((secret for secret in secrets if secret), key=len, reverse=True)
+
+
+def _redact_engine_output(line: str, secrets: List[str]) -> str:
+    for secret in secrets:
+        line = line.replace(secret, "<redacted>")
+    return line
+
+
+def _log_engine_output(level: str, line: str, secrets: List[str], prefix: str = "") -> None:
+    safe_line = _redact_engine_output(line, secrets)
+    getattr(logger, level)("%s%s", prefix, safe_line)
+
+
+def _log_command_args(cmd: List[str]) -> None:
+    try:
+        logger.info(f"Full command args: {json.dumps(_redact_command_args(cmd), ensure_ascii=False)}")
+    except (TypeError, ValueError):
+        logger.info(f"Full command (fallback): {_redact_command_args(cmd)}")
 
 
 def _diagnostic_status(line, recent, now, cmd):
@@ -508,13 +586,14 @@ class TranslationContext:
             return
         try:
             cmd = self._build_command()
+            command_secrets = _collect_command_secrets(cmd)
             
             # 安全的命令日誌輸出 - 避免編碼錯誤
             try:
                 logger.info(f"Starting translation process")
                 logger.debug(f"Command has {len(cmd)} arguments")
                 safe_args = []
-                for i, arg in enumerate(cmd):
+                for arg in _redact_command_args(cmd):
                     try:
                         if arg.startswith('--'):
                             safe_args.append(arg)
@@ -553,11 +632,7 @@ class TranslationContext:
             logger.info(f"Working directory: {cwd}")
             
             # 記錄完整命令以便調試
-            try:
-                import json
-                logger.info(f"Full command args: {json.dumps(_redact_command_args(cmd), ensure_ascii=False)}")
-            except (TypeError, ValueError):
-                logger.info(f"Full command (fallback): {cmd}")
+            _log_command_args(cmd)
             
             url = cmd[-1] if cmd else ""
             config_args = cmd[:-1] if cmd else []
@@ -643,16 +718,17 @@ class TranslationContext:
                     for line in self.process.stderr:
                         line = line.strip()
                         if line:
+                            safe_line = _redact_engine_output(line, command_secrets)
                             if self.stop_requested and (
-                                "exited with code" in line.lower()
-                                or "broken pipe" in line.lower()
+                                "exited with code" in safe_line.lower()
+                                or "broken pipe" in safe_line.lower()
                             ):
-                                logger.info(f"[STDERR] {line}")
+                                _log_engine_output("info", line, command_secrets, "[STDERR] ")
                             else:
-                                logger.error(f"[STDERR] {line}")
+                                _log_engine_output("error", line, command_secrets, "[STDERR] ")
                             try:
                                 with open(log_path, "a", encoding="utf-8") as f:
-                                    f.write(line + "\n")
+                                    f.write(safe_line + "\n")
                             except Exception as file_err:
                                 logger.error(f"Stderr log write error: {file_err}")
                 except Exception as e:
@@ -682,12 +758,13 @@ class TranslationContext:
                         
                         # 移除 ANSI 顏色碼
                         clean_line = re.sub(r'\x1b\[[0-9;]*m', '', line)
+                        safe_clean_line = _redact_engine_output(clean_line, command_secrets)
 
                         # Older workers sent these diagnostics to stdout. They are
                         # never subtitle content, even without a log-level prefix.
                         if clean_line.startswith(('[FAMILY OPTIMIZER]', '[HY-MT2 OPTIMIZER]',
                                                   'Translation failed:', 'Translation timeout:')):
-                            logger.debug("%s", clean_line)
+                            logger.debug("%s", safe_clean_line)
                             continue
 
                         if _ASR_READY_EVENT in clean_line or "Initialization complete, starting up" in clean_line:
@@ -710,7 +787,7 @@ class TranslationContext:
 
                         clean_line, latency_metrics = _extract_latency_metrics(clean_line)
                         
-                        diagnostic = _diagnostic_status(clean_line, diagnostic_messages, time.monotonic(), cmd)
+                        diagnostic = _diagnostic_status(safe_clean_line, diagnostic_messages, time.monotonic(), cmd)
                         if diagnostic is not None:
                             getattr(logger, diagnostic["data"]["level"])("%s", diagnostic["data"]["message"])
                             self._broadcast(diagnostic)
@@ -718,7 +795,7 @@ class TranslationContext:
                         # 處理並過濾日誌行
                         if any(marker in clean_line for marker in ['[INFO]', '[ERROR]', '[WARNING]', '[DEBUG]']):
                             if '[INFO]' in clean_line:
-                                msg = clean_line.replace('[INFO]', '').strip()
+                                msg = safe_clean_line.replace('[INFO]', '').strip()
                                 # 篩選出載入與就緒相關的重要狀態日誌，並廣播給前端
                                 if any(kw in msg for kw in ['Loading', 'loaded', 'Initialization', 'quantization', 'Attention', 'device', 'VAD', 'detected', 'complete', 'context enabled', 'Parakeet', 'memory']):
                                     # 簡單的英文日誌中文化映射，提升使用者體驗
@@ -749,7 +826,7 @@ class TranslationContext:
                             continue
 
                         # 將實際輸出寫入後端終端,方便確認有無輸出
-                        logger.info(f"[STDOUT] {clean_line}")
+                        _log_engine_output("info", clean_line, command_secrets, "[STDOUT] ")
                         
                         # 檢查是否包含時間戳
                         timestamp_match = re.search(
@@ -790,12 +867,12 @@ class TranslationContext:
                                 ),
                                 "total_latency_ms": pending_subtitles[timestamp].get("total_latency_ms"),
                             }
-                            logger.info(f"[Subtitle] Emit: {data}")
+                            logger.info(f"[Subtitle] Emit: {_redact_engine_output(str(data), command_secrets)}")
                             self._broadcast({"type": "subtitle", "data": data})
                         else:
                             # 沒有時間戳的行（罕見，fallback 處理）
                             if clean_line:
-                                logger.info(f"[Buffer] 純文本(無時間戳): '{clean_line}'")
+                                logger.info(f"[Buffer] 純文本(無時間戳): '{safe_clean_line}'")
                                 data = {
                                     "timestamp": "",
                                     "original": "" if hide_transcribe_result else clean_line,
@@ -978,8 +1055,14 @@ class TranslationContext:
         self.running = False
         self.asr_ready = False
         
+        # Only blocking termination work needs a worker thread.
+        if self.process is not None or persistent_process is not None:
+            await asyncio.to_thread(self._stop_processes)
+        logger.info(f"Task {self.task_id} stopped")
+
+    def _stop_processes(self):
         global persistent_process, persistent_config_args
-        
+
         # 清理可能殘留的持久化進程
         if persistent_process is not None:
             try:
@@ -1015,7 +1098,6 @@ class TranslationContext:
             except Exception as e:
                 logger.error(f"Failed to terminate process {pid}: {e}")
         
-        logger.info(f"Task {self.task_id} stopped")
 
 # 全域管理器 (簡單字典實作)
 active_translations: Dict[str, TranslationContext] = {}

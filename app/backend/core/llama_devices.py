@@ -14,6 +14,20 @@ from backend.core.hardware_detector import (
 
 logger = logging.getLogger(__name__)
 
+# Third-party implicit Vulkan layers (game overlays, FPS/OC monitors) get
+# loaded into every Vulkan process. On an RX 9070 XT they made llama.cpp's
+# Vulkan backend crash with 0xC0000005 while loading the model; the same
+# runtime and card pass with implicit layers disabled for the child process.
+VULKAN_LAYER_ISOLATION = {"VK_LOADER_LAYERS_DISABLE": "~implicit~"}
+
+
+def llama_child_env(base: dict | None = None) -> dict:
+    """Environment for llama.cpp child processes; a user-set value wins."""
+    env = dict(os.environ if base is None else base)
+    for key, value in VULKAN_LAYER_ISOLATION.items():
+        env.setdefault(key, value)
+    return env
+
 
 def parse_devices(output: str, adapters=None) -> list[dict]:
     adapters = adapters or []
@@ -37,7 +51,7 @@ def parse_devices(output: str, adapters=None) -> list[dict]:
 def enumerate_devices(server_exe: str, allow_integrated_gpu: bool = False) -> dict:
     try:
         result = run_external([server_exe, "--list-devices"], capture_output=True,
-                              text=True, encoding="utf-8", errors="replace", timeout=15,
+                              text=True, encoding="utf-8", errors="replace", timeout=15, env=llama_child_env(),
                               creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         if result.returncode:
             raise ValueError((result.stderr or result.stdout or "Runtime 無法列出顯卡").strip()[-500:])
@@ -72,7 +86,7 @@ def gpu_logging_args(server_exe: str) -> list[str]:
 def _runtime_help(server_exe: str, mtime_ns: int, size: int) -> str:
     try:
         result = run_external([server_exe, "--help"], capture_output=True,
-                              text=True, encoding="utf-8", errors="replace", timeout=5,
+                              text=True, encoding="utf-8", errors="replace", timeout=5, env=llama_child_env(),
                               creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         return (result.stdout or "") + (result.stderr or "")
     except (OSError, subprocess.TimeoutExpired):

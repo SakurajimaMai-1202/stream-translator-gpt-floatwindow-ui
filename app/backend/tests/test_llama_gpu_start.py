@@ -60,6 +60,38 @@ def test_auto_discrete_single_device_and_sanitized_env(launch, monkeypatch):
     assert captured["assigned"].pid == 12
 
 
+def test_server_launch_disables_implicit_vulkan_layers(launch, monkeypatch):
+    monkeypatch.delenv("VK_LOADER_LAYERS_DISABLE", raising=False)
+    start, captured = launch
+    start(n_gpu_layers=99)
+    assert captured["kwargs"]["env"]["VK_LOADER_LAYERS_DISABLE"] == "~implicit~"
+
+
+def test_user_vulkan_layer_setting_is_kept(launch, monkeypatch):
+    monkeypatch.setenv("VK_LOADER_LAYERS_DISABLE", "VK_LAYER_VALVE_steam_overlay")
+    start, captured = launch
+    start(n_gpu_layers=99)
+    assert captured["kwargs"]["env"]["VK_LOADER_LAYERS_DISABLE"] == "VK_LAYER_VALVE_steam_overlay"
+
+
+def test_device_and_version_probes_disable_implicit_vulkan_layers(monkeypatch, tmp_path):
+    from backend.core import llama_devices, llama_runtime_installer
+    monkeypatch.delenv("VK_LOADER_LAYERS_DISABLE", raising=False)
+    envs = []
+    def run(args, **kwargs):
+        envs.append(kwargs.get("env") or {})
+        return SimpleNamespace(returncode=0, stdout="version: 1 (abc)", stderr="")
+    monkeypatch.setattr(llama_devices, "run_external", run)
+    monkeypatch.setattr(llama_runtime_installer, "run_external", run)
+    monkeypatch.setattr(llama_devices, "detect_windows_dxgi_adapters", lambda: [])
+    llama_devices.enumerate_devices(str(tmp_path / "llama-server.exe"))
+    server = tmp_path / "llama-server.exe"
+    server.touch()
+    llama_runtime_installer.LlamaRuntimeInstaller._validate_runtime(tmp_path)
+    assert len(envs) == 2
+    assert all(env.get("VK_LOADER_LAYERS_DISABLE") == "~implicit~" for env in envs)
+
+
 def test_manual_name_change_rejected_before_launch(launch):
     start, captured = launch
     with pytest.raises(llama.HTTPException) as error:

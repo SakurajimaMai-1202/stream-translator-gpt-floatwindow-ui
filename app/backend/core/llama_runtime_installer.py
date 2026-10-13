@@ -21,6 +21,7 @@ from typing import Any
 from backend.config import settings
 from backend.core.external_process import run_external
 from backend.core.hardware_detector import GpuDevice, detect_gpus, vram_tier
+from backend.core.llama_devices import llama_child_env
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +97,7 @@ def installed_runtime_build_tag() -> str:
                 errors="replace",
                 timeout=5,
                 check=False,
+                env=llama_child_env(),
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
             output = f"{result.stdout}\n{result.stderr}"
@@ -518,6 +520,7 @@ class LlamaRuntimeInstaller:
             errors="replace",
             timeout=15,
             check=False,
+            env=llama_child_env(),
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         if result.returncode != 0:

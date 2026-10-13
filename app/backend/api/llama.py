@@ -22,7 +22,7 @@ from backend.core.external_process import run_external, popen_external
 from backend.core.process_lifecycle import assign_process
 from backend.core.llama_runtime_installer import active_runtime_executable, installer, list_latest_variants, llama_root
 from backend.core.llama_model_installer import model_installer
-from backend.core.llama_devices import enumerate_devices, select_device, supports_device_selection, update_gpu_evidence, gpu_logging_args
+from backend.core.llama_devices import enumerate_devices, select_device, supports_device_selection, update_gpu_evidence, gpu_logging_args, llama_child_env
 from backend.core.logging_setup import configure_dedicated_file_logger
 from backend.core.portable_paths import get_app_root
 
@@ -101,7 +101,7 @@ def _flash_attn_args(server_exe: str, mode: FlashAttentionMode = "auto") -> List
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=5,
+            timeout=5, env=llama_child_env(),
             check=False,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
@@ -126,7 +126,7 @@ def _no_mmap_args(server_exe: str) -> List[str]:
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=5,
+            timeout=5, env=llama_child_env(),
             check=False,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
@@ -442,7 +442,7 @@ async def _start_server(config: ServerConfig, background_tasks: BackgroundTasks,
         process_logger.info("Starting llama-server with command: %s", " ".join(cmd))
         
         # 啟動子程序
-        launch_env = dict(os.environ)
+        launch_env = llama_child_env()
         for key in ("LLAMA_ARG_DEVICE", "LLAMA_ARG_SPLIT_MODE", "LLAMA_ARG_TENSOR_SPLIT", "LLAMA_ARG_MAIN_GPU",
                     "LLAMA_ARG_LOG_DISABLE", "LLAMA_LOG_DISABLE", "LLAMA_ARG_LOG_VERBOSITY"):
             launch_env.pop(key, None)
@@ -736,7 +736,7 @@ async def validate_runtime_path(payload: RuntimePathRequest, request: Request):
     try:
         result = await asyncio.to_thread(
             run_external, [str(executable), "--version"], capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=5,
+            encoding="utf-8", errors="replace", timeout=5, env=llama_child_env(),
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
     except Exception as exc:
@@ -785,7 +785,7 @@ def _get_llama_runtime_info() -> Dict[str, Any]:
         try:
             result = run_external(
                 [str(executable), "--version"], capture_output=True, text=True,
-                encoding="utf-8", errors="replace", timeout=5,
+                encoding="utf-8", errors="replace", timeout=5, env=llama_child_env(),
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
             lines = (result.stdout + "\n" + result.stderr).strip().splitlines()

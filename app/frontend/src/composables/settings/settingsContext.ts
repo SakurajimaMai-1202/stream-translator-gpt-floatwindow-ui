@@ -34,3 +34,20 @@ export function useSettingsContext(): SettingsContext {
   if (!ctx) throw new Error('useSettingsContext requires provideSettingsContext in an ancestor component');
   return ctx;
 }
+
+// Remaining settings tabs (transcription, model management, translation,
+// terminology) are still driven by SettingsView state. They receive it as one
+// flat bindings object; each tab destructures only what its template uses.
+export type SettingsTabBindings = Record<string, any>;
+
+export const settingsTabBindingsKey: InjectionKey<SettingsTabBindings> = Symbol('SettingsTabBindings');
+
+export function provideSettingsTabBindings(bindings: SettingsTabBindings): void {
+  provide(settingsTabBindingsKey, bindings);
+}
+
+export function useSettingsTabBindings(): SettingsTabBindings {
+  const bindings = inject(settingsTabBindingsKey);
+  if (!bindings) throw new Error('useSettingsTabBindings requires provideSettingsTabBindings in an ancestor component');
+  return bindings;
+}

@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import queue
 import threading
@@ -17,6 +18,7 @@ from .translation_policy import (
     resolve_model_family,
     resolve_output_format,
     validate_translation,
+    residual_kana_runs,
     _matching_glossary,
 )
 from .translation_glossary_auditor import TranslationGlossaryAuditor
@@ -250,7 +252,7 @@ class LLMClient():
                 self.hy_mt2_context.clear()
 
     def prepare_translation_request(self, source_text, segment_id=0, previous_sources=(),
-                                    candidates=None, preserve_elements=(), repair=False):
+                                    candidates=None, preserve_elements=(), repair=False, residual_kana=()):
         source_text = strip_unknown_token(source_text)
         previous_sources = tuple(strip_unknown_token(source) for source in previous_sources)
         from dataclasses import replace
@@ -266,7 +268,8 @@ class LLMClient():
             previous_sources=tuple(previous_sources), glossary=glossary,
             target_language=self.translation_target_language or "Traditional Chinese",
             candidates=candidates, preserve_elements=tuple(preserve_elements),
-            repair=repair, session_id=self._context_generation)
+            repair=repair, session_id=self._context_generation,
+            residual_kana=tuple(residual_kana) if repair else ())
         strategy = self.prompt_strategy
         if repair and settings is not None and self.model_family == "hy_mt2":
             strategy = create_prompt_strategy(self.model_family, self.prompt, self.output_format)
@@ -285,7 +288,8 @@ class LLMClient():
             task.transcript or "", task.segment_id, previous_sources,
             getattr(task, "translation_candidates", None),
             getattr(task, "translation_preserve_elements", ()),
-            getattr(task, "_family_repair", False))
+            getattr(task, "_family_repair", False),
+            getattr(task, "_family_residual_kana", ()))
         if not self.family_optimizer_enabled and self.model_family != "index_translate":
             from dataclasses import replace
             request = replace(request, previous_original=previous_original,
@@ -348,6 +352,7 @@ class LLMClient():
         if time.perf_counter() >= task._preview_deadline:
             task.translation = ""
             task.translation_failed = True
+            task.translation_kana_fallback = False
             task.translation_error = "preview_deadline_expired"
             task.translation_validation_reasons = ("preview_deadline_expired",)
         request = getattr(task, "_family_request", None)
@@ -378,6 +383,7 @@ class LLMClient():
         return {"translation": task.translation or "", "glossary_hits": terms,
                 "validation": [{"code": code, "severity": "error"} for code in reasons],
                 "validation_enforced": self.family_optimizer_enabled, "attempts": attempts,
+                "translation_kana_fallback": task.translation_kana_fallback,
                 "retry_count": task._translation_attempts - 1,
                 "latency_ms": (time.perf_counter() - preview_started) * 1000,
                 "error": task.translation_error}
@@ -397,6 +403,8 @@ class LLMClient():
         code = (exc.code if isinstance(exc, TranslationOutputConversionError)
                 else "translation_request_failed")
         task.translation_validation_reasons = (code, "empty_output")
+        task._family_failure_reasons = getattr(task, "_family_failure_reasons", ()) + (code, "empty_output")
+        task.translation_kana_fallback = False
         if isinstance(exc, TranslationOutputConversionError):
             # Retrying inference cannot repair a missing local dependency.
             task.translation_validation_rejected = True
@@ -429,6 +437,34 @@ class LLMClient():
             task.translation_failed = False
             task._family_repair = False
             return None
+        task._family_failure_reasons = getattr(task, "_family_failure_reasons", ()) + reasons
+        kana_reasons = {"target_language_mismatch", "residual_kana"}
+        if kana_reasons.intersection(reasons):
+            from dataclasses import replace
+            normalized_request = replace(request, glossary={source: normalize_translation_output(target, self.translation_target_language) if target else target
+                for source, target in (request.glossary or {}).items()})
+            task._family_residual_kana = residual_kana_runs(normalized_request,
+                normalize_translation_output(task.translation, self.translation_target_language))
+        else:
+            task._family_residual_kana = ()
+        candidates = getattr(task, "_family_kana_candidates", ())
+        task._family_kana_candidates = candidates + (task.translation,)
+        final_attempt = (getattr(task, "_translation_attempts", 0) >= 2
+                         or getattr(task, "_family_final_attempt", False))
+        if final_attempt and set(task._family_failure_reasons) <= kana_reasons:
+            # Reverse iteration makes equal counts prefer the later attempt.
+            candidate = min(reversed(task._family_kana_candidates),
+                            key=lambda text: len(re.findall(r"[\u3041-\u3096]", text)))
+            task.translation = normalize_translation_output(candidate, self.translation_target_language)
+            task.translation_failed = False
+            task.translation_validation_rejected = False
+            task.translation_error = None
+            task.translation_validation_reasons = tuple(dict.fromkeys(task._family_failure_reasons))
+            task.translation_kana_fallback = True
+            task._family_repair = False
+            if self.hy_mt2_debug:
+                print(f'[DEBUG] [FAMILY OPTIMIZER] KANA_FALLBACK={task.translation}', file=sys.stderr, flush=True)
+            return reasons[0]
         task.translation = ""
         task.translation_failed = True
         task._family_repair = reasons != ("stale_result",)
@@ -693,6 +729,7 @@ class LLMClient():
                 error=translation_task.translation_error,
                 validation_reasons=getattr(translation_task, "translation_validation_reasons", ()),
                 matched_terms=getattr(getattr(translation_task, "_family_request", None), "glossary", {}),
+                translation_kana_fallback=translation_task.translation_kana_fallback,
                 retry_count=max(0, translation_task._translation_attempts - 1),
             )
             if self.hy_mt2_debug:
@@ -734,6 +771,7 @@ class ParallelTranslator(LoopWorkerBase):
         translation_task.translation_failed = False
         translation_task.translation_error = None
         translation_task.llm_latency_ms = None
+        translation_task._family_final_attempt = not self.retry_if_translation_fails
         translation_task._translation_attempts += 1
         translation_task._translation_inflight = True
         thread = threading.Thread(target=self._translate_and_notify, args=(translation_task,))
@@ -877,6 +915,7 @@ class SerialTranslator(LoopWorkerBase):
         translation_task.translation_failed = False
         translation_task.translation_error = None
         translation_task.llm_latency_ms = None
+        translation_task._family_final_attempt = not self.retry_if_translation_fails
         translation_task._translation_attempts += 1
         thread = threading.Thread(target=self.llm_client.translate, args=(translation_task,))
         thread.daemon = True

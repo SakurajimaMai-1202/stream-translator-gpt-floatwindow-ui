@@ -98,6 +98,164 @@ def _preview_client(**kwargs):
                      provider="llama_cpp", **kwargs)
 
 
+@pytest.mark.parametrize('source, output', [
+    ('みたいなやっている方が。', '像這樣做會比較好。'),
+    ('痩せたねっていうのはどうですか？異性の。', '被說變瘦了這件事呢？是異性說的。'),
+    ('デリカシーがないと思う。', '我覺得你這樣好沒分寸啊。'),
+    ('ありがとうございます。', '謝謝你喔！'),
+    ('FUWAMOCOもすっごく良くて', 'FUWAMOCO也非常出色'),
+    ('ホロクルの写真集届いた！！！', 'ホロクル的照片集終於到了！！！'),
+])
+def test_residual_kana_good_live_outputs(source, output):
+    assert validate_translation(TranslationRequest(1, source), output) == ()
+
+
+def test_residual_kana_sparse_and_exempt_spans():
+    source = 'なんか普通に喜ぶだから。'
+    output = '普通に開心的話完全沒問題啊。'
+    assert [i.code for i in validate_translation(TranslationRequest(1, source), output)] == ['residual_kana']
+    assert validate_translation(TranslationRequest(1, source, target_language='Japanese'), output) == ()
+    for kwargs in ({'glossary': {'すいちゃん': 'すいちゃん'}},
+                   {'preserve_elements': ('すいちゃん',)}):
+        assert validate_translation(TranslationRequest(1, 'すいちゃんありがとう', **kwargs), '謝謝すいちゃん') == ()
+
+
+@pytest.mark.parametrize('family', ['index_translate', 'hy_mt2'])
+def test_kana_repair_hint_only_when_requested(family):
+    from dataclasses import replace
+    strategy = create_prompt_strategy(family, 'translate', 'text')
+    strategy.optimizer_settings = OptimizerSettings()
+    request = TranslationRequest(1, 'source', repair=True, residual_kana=('に', 'のんでり'))
+    hint = '上次译文残留日文「に」「のんでり」，请全部翻成目标语言，不要保留日文假名。'
+    content = strategy.prepare(request).user_content
+    assert content.count(hint) == 1
+    # A hint after the source would be translated along with it.
+    assert content.index(hint) < content.rindex('source')
+    assert '上次译文' not in strategy.prepare(replace(request, repair=False)).user_content
+    assert '上次译文' not in strategy.prepare(replace(request, residual_kana=())).user_content
+
+
+@pytest.mark.parametrize('family', ['index_translate', 'hy_mt2'])
+@pytest.mark.parametrize('preview', [False, True])
+@pytest.mark.parametrize('source, outputs, expected, fallback', [
+    ('のんでりだと思う。', ('我覺得是「のんでり」。', '我猜是「のんでり」。'), '我猜是「のんでり」。', True),
+    ('のんでりだと思う。', ('我觉得是「に」。', '我猜是「のんでり」。'), '我覺得是「に」。', True),
+    ('のんでりだと思う。', ('我覺得是「のんでり」。', '【源文】我猜是這樣。'), '', False),
+    ('のんでりだと思う。', ('【源文】我覺得是這樣。', '我猜是「のんでり」。'), '', False),
+    ('なんか普通に喜ぶだから。', ('普通に開心的話完全沒問題啊。', '普通開心的話完全沒問題啊。'), '普通開心的話完全沒問題啊。', False),
+])
+def test_kana_repair_http_live_and_preview(monkeypatch, tmp_path, capsys, family, preview, source, outputs, expected, fallback):
+    import json
+    import queue
+    import httpx
+    import numpy as np
+    from stream_translator_gpt.common import TranslationTask
+    from stream_translator_gpt.llm_translator import ParallelTranslator
+    real_client = httpx.Client
+    prompts = []
+    def response(request):
+        prompts.append(json.loads(request.content)['messages'][-1]['content'])
+        return httpx.Response(200, json={'id': 'fixture', 'object': 'chat.completion', 'created': 0,
+            'model': 'fixture', 'choices': [{'index': 0, 'finish_reason': 'stop',
+            'message': {'role': 'assistant', 'content': outputs[len(prompts) - 1]}}]})
+    class FixtureClient(real_client):
+        def __init__(self, **kwargs):
+            super().__init__(transport=httpx.MockTransport(response), **kwargs)
+    monkeypatch.setattr(httpx, 'Client', FixtureClient)
+    client = _preview_client(model_family=family, api_key='fixture', base_url='http://127.0.0.1:8080/v1',
+        translation_target_language='Traditional Chinese', index_translate_optimizer_enabled=True,
+        hy_mt2_optimizer_enabled=True)
+    try:
+        if preview:
+            result = client.translate_preview(source)
+            assert result['translation'] == expected
+            assert result['translation_kana_fallback'] is fallback
+            assert result['retry_count'] == 1
+        else:
+            task = TranslationTask(np.zeros(0), (0, 1))
+            task.transcript = source
+            incoming, outgoing = queue.SimpleQueue(), queue.SimpleQueue()
+            incoming.put(task)
+            incoming.put(None)
+            ParallelTranslator(client, 10, True, 1).loop(incoming, outgoing)
+            assert outgoing.get() is task and outgoing.get() is None
+            assert task.translation == expected
+            assert task.translation_failed is (not bool(expected))
+            assert task.translation_kana_fallback is fallback
+            assert task.translation_result.translation_kana_fallback is fallback
+            assert task.translation_result.translation == expected
+            if fallback:
+                assert set(task.translation_validation_reasons) <= {'residual_kana', 'target_language_mismatch'}
+                from stream_translator_gpt.result_exporter import ResultExporter
+                exporter = ResultExporter(cqhttp_url=None, cqhttp_token=None, discord_webhook_url=None,
+                    telegram_token=None, telegram_chat_id=None, output_file_path=str(tmp_path / 'captions.srt'),
+                    proxy=None, output_whisper_result=False, output_timestamps=False, require_translation=True)
+                export_queue = queue.SimpleQueue()
+                export_queue.put(task)
+                export_queue.put(None)
+                capsys.readouterr()
+                exporter.loop(export_queue)
+                assert expected in capsys.readouterr().out
+                assert expected in (tmp_path / 'captions.srt').read_text(encoding='utf-8')
+        assert len(prompts) == 2
+        assert '上次译文' not in prompts[0]
+        if '【源文】' not in outputs[0]:
+            assert '上次译文残留日文' in prompts[1]
+            assert ('「に」' if 'に' in outputs[0] else '「のんでり」') in prompts[1]
+        else:
+            assert '上次译文' not in prompts[1]
+        assert list(client.history_pairs) == ([(source, expected)] if expected else [])
+        assert client.hy_mt2_context.snapshot() == ((source,) if expected else ())
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize('failure', ['transport', 'empty', 'copy', 'stale'])
+def test_kana_fallback_blocked_by_other_attempt_failure(failure):
+    import numpy as np
+    from stream_translator_gpt.common import TranslationTask
+    client = _preview_client(index_translate_optimizer_enabled=True)
+    task = TranslationTask(np.zeros(0), (0, 1))
+    task.transcript = 'のんでりだと思う。'
+    task._translation_attempts = 1
+    client._prepare_prompt(task)
+    if failure == 'transport':
+        client._record_translation_failure(task, TimeoutError('transport timeout'))
+    else:
+        task.translation = '' if failure == 'empty' else task.transcript
+        if failure == 'stale':
+            client.reset_context()
+        client._validate_hy_mt2_output(task)
+    task._translation_attempts = 2
+    client._prepare_prompt(task)
+    task.translation = '我猜是「のんでり」。'
+    client._validate_hy_mt2_output(task)
+    assert task.translation == '' and task.translation_failed
+    assert not task.translation_kana_fallback
+
+
+def test_kana_only_final_attempt_without_retry_is_shown():
+    import queue
+    import numpy as np
+    from stream_translator_gpt.common import TranslationTask
+    from stream_translator_gpt.llm_translator import ParallelTranslator
+    client = _preview_client(index_translate_optimizer_enabled=True)
+    class Provider:
+        def translate(self, client, task):
+            client._prepare_prompt(task)
+            task.translation = '普通に開心的話完全沒問題啊。'
+            client._validate_hy_mt2_output(task)
+    client.provider_adapter = Provider()
+    task = TranslationTask(np.zeros(0), (0, 1))
+    task.transcript = 'なんか普通に喜ぶだから。'
+    incoming, outgoing = queue.SimpleQueue(), queue.SimpleQueue()
+    incoming.put(task)
+    incoming.put(None)
+    ParallelTranslator(client, 10, False, 1).loop(incoming, outgoing)
+    assert outgoing.get() is task and outgoing.get() is None
+    assert task.translation and task.translation_kana_fallback and not task.translation_failed
+
+
 @pytest.mark.parametrize('family, raw_content, expected', [
     ('index_translate', '草稿……\n</think>\n\n正式譯文。', '正式譯文。'),
     ('index_translate', '<think>\n\n</think>\n\n正式譯文。', '正式譯文。'),

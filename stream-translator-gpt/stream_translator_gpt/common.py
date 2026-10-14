@@ -184,6 +184,7 @@ class TranslationTask:
         self.time_range = time_range
         self.start_time = None
         self.translation_failed = False
+        self.translation_kana_fallback = False
         self.translation_validation_rejected = False
         self.asr_latency_ms = None
         self.llm_latency_ms = None

@@ -33,6 +33,7 @@ class TranslationRequest:
     preserve_elements: tuple[str, ...] = ()
     repair: bool = False
     session_id: int = 0
+    residual_kana: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,7 @@ class TranslationResult:
     validation_reasons: tuple[str, ...] = ()
     matched_terms: dict[str, str] | None = None
     retry_count: int = 0
+    translation_kana_fallback: bool = False
 
 
 _CAPABILITY_PRESETS = {
@@ -148,6 +150,21 @@ def _matching_glossary(source_text: str, glossary: dict[str, str], limit: int = 
     return dict(sorted(matches, key=lambda item: len(str(item[0])), reverse=True)[:limit])
 
 
+def residual_kana_runs(request: TranslationRequest, translation: str) -> tuple[str, ...]:
+    remainder = translation
+    for element in (*request.preserve_elements, *(request.glossary or {}).values()):
+        if element:
+            remainder = remainder.replace(element, "")
+    return tuple(dict.fromkeys(re.findall(r"[\u3041-\u3096]+", remainder)))
+
+
+def _kana_repair_line(request: TranslationRequest) -> str:
+    if not request.repair or not request.residual_kana:
+        return ""
+    return ("上次译文残留日文" + "".join(f"「{run}」" for run in request.residual_kana)
+            + "，请全部翻成目标语言，不要保留日文假名。")
+
+
 class TranslationPromptStrategy:
     def __init__(self, prompt: str, capabilities: TranslationCapabilities, output_format: str):
         self.prompt = str(prompt or "").strip()
@@ -194,6 +211,8 @@ class HyMT2PromptStrategy(TranslationPromptStrategy):
                                   request.glossary or {}, request.previous_sources,
                                   self.optimizer_settings)
             additions = []
+            if _kana_repair_line(request):
+                additions.append(_kana_repair_line(request))
             if request.preserve_elements:
                 additions.append("〖必須原樣保留，數量及順序不變〗\n" + "、".join(request.preserve_elements))
             if request.candidates and not request.repair:
@@ -213,6 +232,8 @@ class HyMT2PromptStrategy(TranslationPromptStrategy):
                 repetition_penalty=self.capabilities.repetition_penalty,
             )
         blocks = []
+        if _kana_repair_line(request):
+            blocks.append(_kana_repair_line(request))
         glossary = _matching_glossary(request.source_text, request.glossary or {})
         if glossary:
             terms = "\n".join(f"{source} 翻译成 {target}" for source, target in glossary.items())
@@ -273,13 +294,18 @@ class IndexTranslatePromptStrategy(TranslationPromptStrategy):
                     background = ("【背景参考】\n以下是之前的原文，仅用于理解。不要翻译、复述或输出本区块。\n"
                                   + "\n".join(context) + "\n【背景参考结束】\n\n")
                     constraints.append("【注意】 只翻译【源文】到【源文结束】之间的本次原文，包括语气词；即使句子尚未说完，也翻译现有内容，不要等待后文或输出空白。")
+        # The hint must never follow the source text, or it gets translated too.
+        kana_line = _kana_repair_line(request)
+        if kana_line and constraints:
+            constraints.append("【硬性要求】 " + kana_line)
         if constraints:
             content = (f"请将以下文本翻译成{target}，并且严格遵循所有约束要求。\n\n【源文】\n"
                        + request.source_text.strip() + "\n【源文结束】\n\n【约束要求】\n"
                        + "\n".join(f"{i}. {value}" for i, value in enumerate(constraints, 1))
                        + "\n\n只输出译文，不要有任何额外说明。")
         else:
-            content = f"请将以下文本翻译为{target}，直接输出翻译结果，不要进行任何解释。\n\n{request.source_text.strip()}"
+            content = (f"请将以下文本翻译为{target}，直接输出翻译结果，不要进行任何解释。"
+                       + (kana_line if kana_line else "") + f"\n\n{request.source_text.strip()}")
         if background:
             content = background + content
         return PreparedPrompt(None, content, "text", 0.0, 1.0, None, None)
@@ -350,6 +376,9 @@ def validate_translation(request: TranslationRequest, translation: str,
         if any(token not in request.source_text for token in hybrids):
             if not any(issue.code == 'target_language_mismatch' for issue in issues):
                 issues.append(ValidationIssue('target_language_mismatch'))
+        if (re.search(r"[\u3041-\u3096]+", output_remainder)
+                and not any(issue.code == "target_language_mismatch" for issue in issues)):
+            issues.append(ValidationIssue("residual_kana"))
     if '\n' in translation and '\n' not in request.source_text:
         if request.previous_sources and len([line for line in translation.splitlines() if line.strip()]) > 1:
             # A single live segment has no requested line layout. Multiple lines

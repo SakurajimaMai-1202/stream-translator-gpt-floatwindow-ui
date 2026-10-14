@@ -1,3 +1,9 @@
+import type { useTranslationStore } from '../../stores/translation';
+import type { useModelDownloadStore } from '../../stores/modelDownload';
+import type { useTranscriptionSettings } from './useTranscriptionSettings';
+import type { useTerminologySettings } from './useTerminologySettings';
+import type { useTranslationSettings } from './useTranslationSettings';
+import type { useAsrModelManagement } from './useAsrModelManagement';
 import { inject, provide, type ComputedRef, type InjectionKey, type Ref } from 'vue';
 import type { AppUpdateStatus } from '../../services/api';
 
@@ -35,10 +41,19 @@ export function useSettingsContext(): SettingsContext {
   return ctx;
 }
 
-// Remaining settings tabs (transcription, model management, translation,
-// terminology) are still driven by SettingsView state. They receive it as one
-// flat bindings object; each tab destructures only what its template uses.
-export type SettingsTabBindings = Record<string, any>;
+// Tab state is instantiated once by SettingsView and shared through typed bindings.
+export interface SettingsTabBindings extends ReturnType<typeof useTranscriptionSettings>, ReturnType<typeof useTerminologySettings>, ReturnType<typeof useTranslationSettings>, ReturnType<typeof useAsrModelManagement> {
+  activeTab: Ref<string>;
+  deleteCustomModel: (index: number) => void;
+  localConfig: Ref<any>;
+  modelDownloadStore: ReturnType<typeof useModelDownloadStore>;
+  openCustomModelDialog: (index?: number) => void;
+  store: ReturnType<typeof useTranslationStore>;
+  testConnection: (backend: 'gpt' | 'gemini') => Promise<void>;
+  testOpenAiAsrConnection: () => Promise<void>;
+  testingGemini: Ref<boolean>;
+  testingGpt: Ref<boolean>;
+}
 
 export const settingsTabBindingsKey: InjectionKey<SettingsTabBindings> = Symbol('SettingsTabBindings');
 

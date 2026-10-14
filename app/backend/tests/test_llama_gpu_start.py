@@ -67,6 +67,20 @@ def test_server_launch_disables_implicit_vulkan_layers(launch, monkeypatch):
     assert captured["kwargs"]["env"]["VK_LOADER_LAYERS_DISABLE"] == "~implicit~"
 
 
+def test_index_translate_launch_disables_thinking(launch, monkeypatch):
+    flags = ["--chat-template-kwargs", '{"enable_thinking": false}']
+    monkeypatch.setattr(llama, "_disable_thinking_args", lambda *args: flags)
+    start, captured = launch
+    start(n_gpu_layers=99)
+    assert "--chat-template-kwargs" not in captured["cmd"]  # test.gguf is not Index-Translate
+
+    monkeypatch.setattr(llama, "_is_index_translate_model", lambda *args: True)
+    monkeypatch.setattr(llama, "llama_state", llama.LlamaState())
+    start(n_gpu_layers=99)
+    cmd = captured["cmd"]
+    assert cmd[cmd.index("--chat-template-kwargs") + 1] == '{"enable_thinking": false}'
+
+
 def test_user_vulkan_layer_setting_is_kept(launch, monkeypatch):
     monkeypatch.setenv("VK_LOADER_LAYERS_DISABLE", "VK_LAYER_VALVE_steam_overlay")
     start, captured = launch

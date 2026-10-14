@@ -83,7 +83,7 @@ def test_index_family_independent_optimizer_settings_do_not_leak_from_hy_mt2():
     assert client.prompt_strategy.optimizer_settings.style_text == "INDEX ONLY"
 
 
-def test_index_family_independent_openai_compatible_payload_has_no_vllm_extras(monkeypatch):
+def test_index_family_independent_openai_compatible_payload_disables_thinking(monkeypatch):
     class Completion:
         class Choice:
             class Message:
@@ -121,6 +121,8 @@ def test_index_family_independent_openai_compatible_payload_has_no_vllm_extras(m
     assert captured["temperature"] == 0
     assert captured["top_p"] == 1
     assert "messages" in captured
-    assert "extra_body" not in captured
+    # Thinking is disabled through the model card's chat template switch only;
+    # no other vLLM-style extras are sent.
+    assert captured["extra_body"] == {"chat_template_kwargs": {"enable_thinking": False}}
     assert "enable_thinking" not in captured
     assert "chat_template_kwargs" not in captured

@@ -70,6 +70,40 @@ def _is_hymt_model(model_path: str | Path) -> bool:
     return "hymt" in compact_name
 
 
+def _is_index_translate_model(model_path: str | Path) -> bool:
+    """Index-Translate thinks by default; live subtitles need it off for latency."""
+    compact_name = "".join(ch for ch in Path(model_path).name.lower() if ch.isalnum())
+    return "indextranslate" in compact_name
+
+
+@lru_cache(maxsize=8)
+def _disable_thinking_args(server_exe: str) -> List[str]:
+    """Return the server-wide thinking switch supported by this llama.cpp build."""
+    try:
+        result = run_external(
+            [server_exe, "--help"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5, env=llama_child_env(),
+            check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        help_text = f"{result.stdout}\n{result.stderr}".lower()
+        # Newer builds deprecate enable_thinking via chat-template-kwargs.
+        if "--reasoning [on|off" in help_text:
+            return ["--reasoning", "off"]
+        if "--chat-template-kwargs" in help_text:
+            return ["--chat-template-kwargs", '{"enable_thinking": false}']
+        if "--reasoning-budget" in help_text:
+            return ["--reasoning-budget", "0"]
+    except Exception as exc:
+        logger.debug("Could not inspect llama.cpp thinking switches: %s", exc)
+    # Requests from the translator also disable thinking per call.
+    return []
+
+
 FlashAttentionMode = Literal["on", "off", "auto"]
 
 
@@ -426,6 +460,8 @@ async def _start_server(config: ServerConfig, background_tasks: BackgroundTasks,
     cmd.extend(_flash_attn_args(str(server_exe), effective_flash_attn))
     if effective_no_mmap:
         cmd.extend(_no_mmap_args(str(server_exe)))
+    if _is_index_translate_model(model_path):
+        cmd.extend(_disable_thinking_args(str(server_exe)))
     
     try:
         process_logger = configure_dedicated_file_logger("llama.server", "llama")

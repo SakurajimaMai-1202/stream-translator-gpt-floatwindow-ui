@@ -499,6 +499,12 @@ class LLMClient():
                             "top_k": prepared.top_k,
                             "repeat_penalty": prepared.repetition_penalty,
                         }
+                    elif self.model_family == "index_translate":
+                        # Index-Translate thinks by default, which is far too slow
+                        # for live subtitles; this is the model card's switch.
+                        create_params["extra_body"] = {
+                            "chat_template_kwargs": {"enable_thinking": False},
+                        }
                 
                 completion = client.chat.completions.create(**create_params)
 

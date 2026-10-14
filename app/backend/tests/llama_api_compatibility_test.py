@@ -264,6 +264,63 @@ def test_no_mmap_uses_legacy_switch_for_old_runtime(monkeypatch):
     assert llama._no_mmap_args("old-llama-server.exe") == ["--no-mmap"]
 
 
+def test_index_translate_disables_thinking_with_reasoning_off(monkeypatch):
+    llama._disable_thinking_args.cache_clear()
+    monkeypatch.setattr(
+        llama,
+        "run_external",
+        lambda *args, **kwargs: SimpleNamespace(
+            stdout="-rea,  --reasoning [on|off|auto]        Use reasoning/thinking in the chat\n"
+                   "--chat-template-kwargs STRING sets additional params",
+            stderr="",
+        ),
+    )
+
+    assert llama._disable_thinking_args("newest-llama-server.exe") == ["--reasoning", "off"]
+
+
+def test_index_translate_disables_thinking_with_chat_template_kwargs(monkeypatch):
+    llama._disable_thinking_args.cache_clear()
+    monkeypatch.setattr(
+        llama,
+        "run_external",
+        lambda *args, **kwargs: SimpleNamespace(
+            stdout="--chat-template-kwargs STRING sets additional params\n--reasoning-budget N token budget",
+            stderr="",
+        ),
+    )
+
+    assert llama._disable_thinking_args("new-llama-server.exe") == [
+        "--chat-template-kwargs", '{"enable_thinking": false}',
+    ]
+
+
+def test_index_translate_falls_back_to_reasoning_budget_or_nothing(monkeypatch):
+    llama._disable_thinking_args.cache_clear()
+    monkeypatch.setattr(
+        llama,
+        "run_external",
+        lambda *args, **kwargs: SimpleNamespace(stdout="--reasoning-budget N token budget", stderr=""),
+    )
+    assert llama._disable_thinking_args("mid-llama-server.exe") == ["--reasoning-budget", "0"]
+
+    llama._disable_thinking_args.cache_clear()
+    monkeypatch.setattr(
+        llama,
+        "run_external",
+        lambda *args, **kwargs: SimpleNamespace(stdout="-m FNAME model path", stderr=""),
+    )
+    assert llama._disable_thinking_args("old-llama-server.exe") == []
+
+
+def test_index_translate_model_detection():
+    assert llama._is_index_translate_model("Index-Translate-9B.i1-IQ4_XS.gguf") is True
+    assert llama._is_index_translate_model(r"D:\models\Index-Translate-2B.Q4_K_M.gguf") is True
+    assert llama._is_index_translate_model("index_translate-2b.gguf") is True
+    assert llama._is_index_translate_model("Hy-MT2-7B-UD-Q4_K_XL.gguf") is False
+    assert llama._is_index_translate_model("gemma-4-e2b.gguf") is False
+
+
 def test_hymt_models_force_flash_attention_and_mmap_off():
     assert llama._is_hymt_model("Hy-MT2-7B.i1-Q6_K.gguf") is True
     assert llama._is_hymt_model("Hy-MT2-7B-UD-Q4_K_XL.gguf") is True

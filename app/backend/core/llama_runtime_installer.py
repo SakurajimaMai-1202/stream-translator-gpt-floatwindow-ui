@@ -592,7 +592,8 @@ class LlamaRuntimeInstaller:
                             raise RuntimeError("SHA-256 驗證失敗")
                         verified = True
                     else:
-                        logger.warning("Release asset %s has no SHA-256 digest or sidecar; skipping hash verification", asset_name)
+                        logger.error("Release asset %s has no SHA-256 digest or sidecar; refusing to install it", asset_name)
+                        raise RuntimeError("官方資產缺少 SHA-256 校驗資訊，無法驗證完整性，已拒絕安裝")
                     self._set_file(index, verified=verified)
                     self._set_file(index, state="verifying", progress=1.0, sha256=sha256)
                     with zipfile.ZipFile(archive) as bundle:

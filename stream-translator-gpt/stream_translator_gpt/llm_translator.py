@@ -528,18 +528,26 @@ class LLMClient():
                     if not re.search(r'<think>|</think>|【源文】|(?:^|\n)\s*(?:思考过程|推理过程|Let me think)', alternate, re.IGNORECASE):
                         raw_content = alternate
                         content_field = 'reasoning_content_compat'
+            translation_content = raw_content
+            think_block_stripped = (self.model_family == "index_translate"
+                                    and content_field == 'content'
+                                    and isinstance(raw_content, str) and '</think>' in raw_content)
+            if think_block_stripped:
+                translation_content = raw_content.rsplit('</think>', 1)[1].strip().removeprefix('<think>').strip()
             parsed_translation = parse_translation_output(
-                raw_content,
+                translation_content,
                 prepared.output_format,
             )
             translation_task.translation = parsed_translation
-            validation_reason = self._validate_hy_mt2_output(translation_task, raw_content)
+            validation_reason = self._validate_hy_mt2_output(translation_task, translation_content)
             translation_task.translation = normalize_translation_output(
                 translation_task.translation, self.translation_target_language,
             )
             if self.hy_mt2_debug:
                 print(f'[DEBUG] [FAMILY OPTIMIZER] RAW_OUTPUT={raw_content!r} VALIDATION={validation_reason!r}',
                       file=sys.stderr, flush=True)
+                if think_block_stripped:
+                    print('[DEBUG] [FAMILY OPTIMIZER] THINK_BLOCK_STRIPPED=True', file=sys.stderr, flush=True)
                 print(f'[DEBUG] [FAMILY OPTIMIZER] FINISH_REASON={finish_reason!r} '
                       f'PROMPT_TOKENS={getattr(usage, "prompt_tokens", None)} '
                       f'COMPLETION_TOKENS={getattr(usage, "completion_tokens", None)} MESSAGE_FIELDS={message_fields!r}',

@@ -2,6 +2,7 @@ from stream_translator_gpt.translation_policy import (
     TranslationRequest, create_prompt_strategy, validate_translation, resolve_model_family,
 )
 from stream_translator_gpt.hy_mt2_optimizer import OptimizerSettings
+import pytest
 
 
 def test_index_official_and_quantized_detection():
@@ -95,6 +96,68 @@ def _preview_client(**kwargs):
     return LLMClient(llm_type="GPT", model="Index-Translate-2B", prompt="translate",
                      history_size=3, proxy=None, use_json_result=False,
                      provider="llama_cpp", **kwargs)
+
+
+@pytest.mark.parametrize('family, raw_content, expected', [
+    ('index_translate', '草稿……\n</think>\n\n正式譯文。', '正式譯文。'),
+    ('index_translate', '<think>\n\n</think>\n\n正式譯文。', '正式譯文。'),
+    ('index_translate', '草稿\n</think>中間草稿\n</think>\n正式譯文。', '正式譯文。'),
+    ('index_translate', '草稿\n</think>\n<think>正式譯文。', '正式譯文。'),
+    ('index_translate', '草稿\n</think>\n', ''),
+    ('generic_chat', '草稿……</think>正式譯文。', '草稿……</think>正式譯文。'),
+])
+def test_index_content_think_block_cleanup_is_scoped(monkeypatch, capsys, family, raw_content, expected):
+    import httpx
+    import numpy as np
+    from stream_translator_gpt.common import TranslationTask
+    from stream_translator_gpt.llm_translator import LLMClient
+    real_client = httpx.Client
+    requests = []
+    events = []
+    def response(request):
+        requests.append(request)
+        return httpx.Response(200, json={'id': 'fixture', 'object': 'chat.completion', 'created': 0,
+            'model': 'fixture', 'choices': [{'index': 0, 'finish_reason': 'stop',
+            'message': {'role': 'assistant', 'content': raw_content}}]})
+    class FixtureClient(real_client):
+        def __init__(self, **kwargs):
+            super().__init__(transport=httpx.MockTransport(response), **kwargs)
+    monkeypatch.setattr(httpx, 'Client', FixtureClient)
+    client = LLMClient('GPT', 'fixture', 'translate', 0, None, False,
+        model_family=family, provider='openai_compatible', api_key='fixture',
+        base_url='http://127.0.0.1:8080/v1', translation_target_language='Traditional Chinese',
+        index_translate_optimizer_enabled=True, index_translate_debug=True,
+        replay_response_hook=lambda task, event: events.append(event))
+    task = TranslationTask(np.zeros(0), (0, 0))
+    task.transcript = 'This is the final translation.'
+    task._translation_attempts = 1
+    try:
+        client.translate(task)
+        assert task.translation == expected
+        assert len(requests) == 1 and len(events) == 1
+        assert events[0]['raw_model_response'] == raw_content
+        assert events[0]['parsed_translation'] == expected
+        debug = capsys.readouterr().err
+        if family == 'index_translate':
+            assert f'RAW_OUTPUT={raw_content!r}' in debug
+            assert 'THINK_BLOCK_STRIPPED=True' in debug
+        else:
+            assert 'THINK_BLOCK_STRIPPED=True' not in debug
+        if family != 'index_translate':
+            pass  # Only "not stripped" matters here; validation is the family's own.
+        elif expected:
+            assert not task.translation_failed
+            assert not task.translation_validation_rejected
+            assert task.translation_validation_reasons == ()
+            assert not getattr(task, '_family_repair', False)
+            assert events[0]['output_validation_reason'] is None
+            assert task.translation_result.retry_count == 0
+        else:
+            assert task.translation_failed
+            assert 'empty_output' in task.translation_validation_reasons
+            assert events[0]['output_validation_reason'] == 'empty_output'
+    finally:
+        client.close()
 
 
 def test_preview_repair_success_clears_failure():

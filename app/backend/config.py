@@ -1,4 +1,4 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from pathlib import Path
 from typing import ClassVar
 import sys
@@ -26,8 +26,7 @@ class Settings(BaseSettings):
     # 開發環境
     DEBUG: bool = True
     
-    class Config:
-        env_file = ".env"
+    model_config = SettingsConfigDict(env_file=".env")
 
 settings = Settings()
 _config_override = os.environ.get("STREAM_TRANSLATOR_CONFIG_FILE", "").strip()

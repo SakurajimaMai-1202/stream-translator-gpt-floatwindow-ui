@@ -582,6 +582,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { useStatusSync } from '../composables/useStatusSync';
 import { useRouter } from 'vue-router';
 import UiSelect, { type UiSelectOption } from './UiSelect.vue';
 import { useLlamaStore } from '../stores/llama';
@@ -650,7 +651,6 @@ async function refreshGpuDevices() {
   }
 }
 let runtimeCompletionNotifiedJobId = '';
-let runtimeInstallPollTimer: number | null = null;
 
 const runtimeInstallBusy = computed(() => ['resolving', 'downloading', 'verifying', 'staging', 'activating'].includes(runtimeInstallStatus.value?.state || ''));
 const selectedRuntimeOption = computed(() => runtimeRelease.value?.variants.find(item => item.id === selectedRuntimeVariant.value));
@@ -722,20 +722,19 @@ async function refreshRuntimeRelease(silent = true) {
   }
 }
 
-function stopRuntimeInstallPolling() {
-  if (runtimeInstallPollTimer) window.clearInterval(runtimeInstallPollTimer);
-  runtimeInstallPollTimer = null;
-}
+const runtimeInstallSync = useStatusSync('llama_runtime.install_status', llamaApi.getRuntimeInstallStatus, applyRuntimeInstallStatus);
 
 function startRuntimeInstallPolling() {
-  stopRuntimeInstallPolling();
-  runtimeInstallPollTimer = window.setInterval(() => void pollRuntimeInstallStatus(), 1000);
+  void runtimeInstallSync.refetch();
 }
 
 async function pollRuntimeInstallStatus() {
-  runtimeInstallStatus.value = await llamaApi.getRuntimeInstallStatus();
+  await applyRuntimeInstallStatus(await llamaApi.getRuntimeInstallStatus());
+}
+
+async function applyRuntimeInstallStatus(payload: RuntimeInstallStatus) {
+  runtimeInstallStatus.value = payload;
   if (['completed', 'error'].includes(runtimeInstallStatus.value.state)) {
-    stopRuntimeInstallPolling();
     if (runtimeInstallStatus.value.state === 'completed') {
       await llamaStore.refreshServerStatus();
       runtimeRelease.value = await llamaApi.getRuntimeReleases();
@@ -1180,7 +1179,6 @@ watch(
 );
 
 onUnmounted(() => {
-  stopRuntimeInstallPolling();
   if (pollTimer) {
     clearInterval(pollTimer);
     pollTimer = null;

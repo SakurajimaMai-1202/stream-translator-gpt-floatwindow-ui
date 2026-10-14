@@ -12,6 +12,7 @@ import tempfile
 import threading
 import urllib.request
 import zipfile
+from backend.core.app_sync import StatusPublisher
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -80,6 +81,7 @@ class AppUpdateManager:
             current_version=self._current_version(), profile=profile,
             asset_name=ASSET_NAMES.get(profile, ""),
         )
+        self._events = StatusPublisher("app_update.status")
         self._lock = threading.Lock()
         self._worker: threading.Thread | None = None
         self._cancel = threading.Event()
@@ -189,6 +191,11 @@ class AppUpdateManager:
         with self._lock:
             for key, value in changes.items():
                 setattr(self._state, key, value)
+            self._events.publish(lambda: {"success": True, "data": asdict(self._state)}, state=self._state.status)
+
+    def _publish_status(self, force: bool = False) -> None:
+        with self._lock:
+            self._events.publish(lambda: {"success": True, "data": asdict(self._state)}, state=self._state.status, force=force)
 
     @staticmethod
     def _version_tuple(value: str) -> tuple[int, ...]:
@@ -278,6 +285,7 @@ class AppUpdateManager:
             self._state.status = "starting"
             self._state.error = ""
             self._worker = threading.Thread(target=self._download_and_stage, daemon=True, name="app-update-downloader")
+            self._events.publish(lambda: {"success": True, "data": asdict(self._state)}, state="starting", force=True)
             self._worker.start()
         return self.status()
 

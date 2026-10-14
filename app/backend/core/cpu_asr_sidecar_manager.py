@@ -12,6 +12,7 @@ import tempfile
 import threading
 import time
 import zipfile
+from backend.core.app_sync import StatusPublisher
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,7 @@ class SidecarInstallState:
 
 class CpuAsrSidecarManager(HttpDownloader):
     def __init__(self) -> None:
+        self._events = StatusPublisher("cpu_asr_sidecar.status")
         self._lock = threading.Lock()
         self._state = SidecarInstallState()
         self._worker: threading.Thread | None = None
@@ -100,6 +102,7 @@ class CpuAsrSidecarManager(HttpDownloader):
             if self._worker is not None and self._worker.is_alive() and self._state.status != "installing":
                 self._cancel.set()
                 self._state.message = "Cancelling CPU ASR runtime download"
+        self._publish_status(True)
         return self.status()
 
     def import_archive(self, archive_path: str) -> dict[str, Any]:
@@ -120,6 +123,7 @@ class CpuAsrSidecarManager(HttpDownloader):
             self._state = SidecarInstallState(
                 status="verifying", progress=0.2, message="正在檢查離線 CPU ASR Runtime 套件"
             )
+        self._publish_status(True)
         try:
             self._recover_runtime()
             with tempfile.TemporaryDirectory(prefix="stream-translator-cpu-asr-import-") as temporary:
@@ -147,6 +151,10 @@ class CpuAsrSidecarManager(HttpDownloader):
         with self._lock:
             for key, value in changes.items():
                 setattr(self._state, key, value)
+        self._publish_status()
+
+    def _publish_status(self, force: bool = False) -> None:
+        self._events.publish(lambda: {"success": True, "data": self.status()}, state=self._state.status, force=force)
 
     def _version(self) -> str:
         manifest = get_app_root() / "_runtime" / "runtime-version.json"
@@ -345,6 +353,7 @@ class CpuAsrSidecarManager(HttpDownloader):
                 shutil.rmtree(backup)
 
     def _run(self, *, asset_url: str, sha256_url: str) -> None:
+        self._publish_status(True)
         try:
             self._recover_runtime()
             download_dir = get_cpu_asr_runtime_path().parent / ".downloads"

@@ -1,5 +1,6 @@
 import { onMounted, onUnmounted } from 'vue';
-import { getClientId, syncApi } from '../services/api';
+import { getClientId } from '../services/api';
+import { acquireSyncEventSource, releaseSyncEventSource } from './sharedSyncSource';
 
 export interface SyncEventPayload {
   source_client_id?: string;
@@ -27,38 +28,36 @@ export function useAppSyncEvents(options: UseAppSyncEventsOptions) {
     await handler(payload);
   };
 
+  const listeners: Array<[string, EventListener]> = [];
+  const listen = (name: string, handler: EventListener) => {
+    listeners.push([name, handler]);
+    eventSource?.addEventListener(name, handler);
+  };
+  const forward = (handler: UseAppSyncEventsOptions[keyof UseAppSyncEventsOptions]) =>
+    ((event: MessageEvent) => {
+      void invokeIfExternal(handler, JSON.parse(event.data));
+    }) as EventListener;
+
   onMounted(() => {
-    eventSource = syncApi.createEventSource();
+    eventSource = acquireSyncEventSource();
 
-    eventSource.addEventListener('config.updated', (event: MessageEvent) => {
-      void invokeIfExternal(options.onConfigUpdated, JSON.parse(event.data));
-    });
-
-    eventSource.addEventListener('config.reset', (event: MessageEvent) => {
-      void invokeIfExternal(options.onConfigReset, JSON.parse(event.data));
-    });
-
-    eventSource.addEventListener('config.imported', (event: MessageEvent) => {
-      void invokeIfExternal(options.onConfigImported, JSON.parse(event.data));
-    });
-
-    eventSource.addEventListener('translation.started', (event: MessageEvent) => {
-      void invokeIfExternal(options.onTranslationStarted, JSON.parse(event.data));
-    });
-
-    eventSource.addEventListener('translation.stopped', (event: MessageEvent) => {
-      void invokeIfExternal(options.onTranslationStopped, JSON.parse(event.data));
-    });
-
-    eventSource.onerror = (error) => {
+    listen('config.updated', forward(options.onConfigUpdated));
+    listen('config.reset', forward(options.onConfigReset));
+    listen('config.imported', forward(options.onConfigImported));
+    listen('translation.started', forward(options.onTranslationStarted));
+    listen('translation.stopped', forward(options.onTranslationStopped));
+    listen('error', ((error: Event) => {
       console.warn('[AppSync] 事件同步連線中斷:', error);
-    };
+    }) as EventListener);
   });
 
   onUnmounted(() => {
     if (eventSource) {
-      eventSource.close();
+      // The connection is shared; detach only this component's handlers.
+      for (const [name, handler] of listeners) eventSource.removeEventListener(name, handler);
+      listeners.length = 0;
       eventSource = null;
+      releaseSyncEventSource();
     }
   });
 }

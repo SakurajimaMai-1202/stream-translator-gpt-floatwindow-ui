@@ -22,6 +22,7 @@ import { useModelDownloadStore } from '../stores/modelDownload';
 import { useLlamaStore } from '../stores/llama';
 
 import { useTranscriptionMutex } from '../composables/useTranscriptionMutex';
+import { useStatusSync } from '../composables/useStatusSync';
 import { useAppSyncEvents } from '../composables/useAppSyncEvents';
 import { runtimeApi, serverApi, type AppUpdateStatus } from '../services/api';
 import { coerceLanguageForModel,  } from '../utils/asrCapabilities';
@@ -36,7 +37,6 @@ const sharingLanAddresses = ref<string[]>([]);
 const copiedSharingUrl = ref('');
 const appUpdateStatus = ref<AppUpdateStatus | null>(null);
 const appUpdateBusy = computed(() => ['starting', 'downloading', 'verifying', 'staging'].includes(appUpdateStatus.value?.status || ''));
-let appUpdatePollTimer: ReturnType<typeof setInterval> | null = null;
 let autoSaveStatusTimeout: ReturnType<typeof setTimeout> | null = null;
 const suspendedAutoSaveSections = new Set<string>();
 
@@ -45,14 +45,12 @@ const route = useRoute();
 const store = useTranslationStore();
 const modelDownloadStore = useModelDownloadStore();
 
-function stopAppUpdatePolling() {
-  if (appUpdatePollTimer) clearInterval(appUpdatePollTimer);
-  appUpdatePollTimer = null;
-}
+const appUpdateSync = useStatusSync('app_update.status', async () => ({ data: await runtimeApi.getAppUpdateStatus() }), (payload) => {
+  appUpdateStatus.value = payload.data;
+});
 
 async function refreshAppUpdateStatus() {
   appUpdateStatus.value = await runtimeApi.getAppUpdateStatus();
-  if (!appUpdateBusy.value) stopAppUpdatePolling();
 }
 
 async function checkAppUpdate() {
@@ -66,8 +64,7 @@ async function checkAppUpdate() {
 async function downloadAppUpdate() {
   try {
     appUpdateStatus.value = await runtimeApi.downloadAppUpdate();
-    stopAppUpdatePolling();
-    appUpdatePollTimer = setInterval(() => void refreshAppUpdateStatus(), 1000);
+    void appUpdateSync.refetch();
   } catch (error: any) {
     appUpdateStatus.value = { ...(appUpdateStatus.value || {} as AppUpdateStatus), status: 'error', error: error?.response?.data?.detail || error?.message || '下載更新失敗' };
   }
@@ -655,7 +652,6 @@ onUnmounted(() => {
   sectionSaveTimers.clear();
   modelDownloadStore.stopPolling();
   stopCpuAsrSidecarPolling();
-  stopAppUpdatePolling();
 });
 
 async function resetToDefault() {

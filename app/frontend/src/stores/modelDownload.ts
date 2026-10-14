@@ -1,10 +1,9 @@
+import { createStatusSync } from '../composables/useStatusSync';
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { modelApi, type DownloadedModelInfo, type ModelDownloadTask, type ModelEngine, type ModelComputeBackend, type ModelStorageInfo } from '../services/api';
 
-// Backend download callbacks update byte progress twice per second. Poll at
-// the same cadence so large ASR downloads visibly move instead of appearing
-// stuck between coarse status transitions.
+// Preserve the previous cadence while the status stream is disconnected.
 const POLL_INTERVAL_MS = 500;
 
 export const useModelDownloadStore = defineStore('modelDownload', () => {
@@ -28,7 +27,10 @@ export const useModelDownloadStore = defineStore('modelDownload', () => {
     }, {});
   });
 
-  let pollTimer: number | null = null;
+  const taskSync = createStatusSync('model_download.status', modelApi.getTasks, async (payload) => {
+    tasks.value = payload.tasks || [];
+    if (activeTasks.value.length === 0) await loadDownloadedModels();
+  }, POLL_INTERVAL_MS);
 
   function clearMessages() {
     errorMessage.value = '';
@@ -60,6 +62,7 @@ export const useModelDownloadStore = defineStore('modelDownload', () => {
   }
 
   async function refreshAll() {
+    startPolling();
     isLoading.value = true;
     errorMessage.value = '';
     try {
@@ -104,7 +107,7 @@ export const useModelDownloadStore = defineStore('modelDownload', () => {
     if (!taskId) throw new Error('無法建立模型下載任務');
 
     while (true) {
-      await loadTasks();
+      if (tasks.value.length === 0) await loadTasks();
       const task = tasks.value.find((item) => item.task_id === taskId);
       if (!task) throw new Error('找不到模型下載任務');
       if (task.status === 'completed') {
@@ -163,18 +166,11 @@ export const useModelDownloadStore = defineStore('modelDownload', () => {
   }
 
   function startPolling() {
-    if (pollTimer !== null) return;
-
-    pollTimer = window.setInterval(() => {
-      pollOnce();
-    }, POLL_INTERVAL_MS);
+    taskSync.start();
   }
 
   function stopPolling() {
-    if (pollTimer !== null) {
-      window.clearInterval(pollTimer);
-      pollTimer = null;
-    }
+    taskSync.stop();
   }
 
   function getTask(engine: ModelEngine, modelId: string, computeBackend: ModelComputeBackend = 'gpu'): ModelDownloadTask | undefined {

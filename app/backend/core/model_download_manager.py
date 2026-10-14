@@ -1,4 +1,5 @@
-﻿import asyncio
+﻿from backend.core.app_sync import StatusPublisher
+import asyncio
 import copy
 import fnmatch
 import logging
@@ -110,6 +111,7 @@ class ModelDownloadManager:
         self._workers: Dict[str, asyncio.Task] = {}
         self._cancel_events: Dict[str, Event] = {}
         self._model_workers: Dict[tuple, str] = {}
+        self._events = StatusPublisher("model_download.status")
         self._lock = Lock()
 
     def _now(self) -> datetime:
@@ -198,6 +200,15 @@ class ModelDownloadManager:
             if error is not None:
                 task.error = error
             task.updated_at = self._now()
+        self._publish_status(task_id)
+
+    def _publish_status(self, task_id: str, force: bool = False) -> None:
+        task = self.get_task(task_id)
+        if task:
+            self._events.publish(
+                lambda: {"success": True, "tasks": [item.model_dump(mode="json") for item in self.list_tasks()]},
+                key=task_id, state=task.status, force=force,
+            )
 
     def _normalize_repo_id(self, engine: str, model_id: str) -> str:
         if engine == "qwen3-asr":
@@ -293,6 +304,7 @@ class ModelDownloadManager:
         with self._lock:
             self._cancel_events[task_id] = cancel_event
             self._workers[task_id] = worker
+        self._publish_status(task_id, True)
         return task_id
 
     async def _run_download_task(self, task_id: str, engine: str, model_id: str, compute_backend: ModelComputeBackend, cancel_event: Event) -> None:
@@ -529,7 +541,9 @@ class ModelDownloadManager:
             if event:
                 # Keep the coroutine alive until its thread/process has exited.
                 event.set()
-            return copy.deepcopy(task)
+            result = copy.deepcopy(task)
+        self._publish_status(task_id, True)
+        return result
 
     async def _download_sensevoice_from_modelscope(self, task_id: str, model_id: str, cancel_event: Event) -> None:
         self._update_task(task_id, progress=0.15, message="Preparing ModelScope download")

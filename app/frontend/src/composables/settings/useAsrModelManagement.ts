@@ -1,3 +1,4 @@
+import { useStatusSync } from '../useStatusSync';
 import { ref, computed, type Ref } from 'vue';
 import { runtimeApi, type CpuAsrSidecarInstallStatus, type ModelComputeBackend, type ModelEngine } from '../../services/api';
 import type { useTranslationStore } from '../../stores/translation';
@@ -45,12 +46,12 @@ export function useAsrModelManagement(localConfig: Ref<any>, store: ReturnType<t
   const canCancelCpuAsrSidecar = computed(() =>
     cpuAsrSidecarBusy.value && cpuAsrSidecarStatus.value?.status !== 'installing'
   );
-  let cpuAsrSidecarPollTimer: ReturnType<typeof setInterval> | null = null;
+  const sidecarSync = useStatusSync('cpu_asr_sidecar.status', async () => ({ data: await runtimeApi.getCpuAsrSidecarStatus() }), async (payload) => {
+    cpuAsrSidecarStatus.value = payload.data;
+    if (!cpuAsrSidecarBusy.value && payload.data.installed) await store.loadRuntimeStatus();
+  });
 
-  function stopCpuAsrSidecarPolling() {
-    if (cpuAsrSidecarPollTimer) clearInterval(cpuAsrSidecarPollTimer);
-    cpuAsrSidecarPollTimer = null;
-  }
+  function stopCpuAsrSidecarPolling() { sidecarSync.stop(); }
 
   async function refreshCpuAsrSidecarStatus() {
     try {
@@ -64,7 +65,6 @@ export function useAsrModelManagement(localConfig: Ref<any>, store: ReturnType<t
       };
     }
     if (!cpuAsrSidecarBusy.value) {
-      stopCpuAsrSidecarPolling();
       if (cpuAsrSidecarStatus.value.installed) await store.loadRuntimeStatus();
     }
   }
@@ -81,8 +81,7 @@ export function useAsrModelManagement(localConfig: Ref<any>, store: ReturnType<t
       };
       return;
     }
-    stopCpuAsrSidecarPolling();
-    cpuAsrSidecarPollTimer = setInterval(() => void refreshCpuAsrSidecarStatus(), 1000);
+    void sidecarSync.refetch();
   }
 
   async function cancelCpuAsrSidecarInstall() {

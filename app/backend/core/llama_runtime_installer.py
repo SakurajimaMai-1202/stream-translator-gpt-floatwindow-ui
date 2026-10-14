@@ -14,6 +14,7 @@ import threading
 import urllib.request
 import uuid
 import zipfile
+from backend.core.app_sync import StatusPublisher
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -412,6 +413,7 @@ class InstallStatus:
 class LlamaRuntimeInstaller:
     def __init__(self) -> None:
         self._status = InstallStatus()
+        self._events = StatusPublisher("llama_runtime.install_status")
         self._lock = threading.Lock()
 
     def status(self) -> dict[str, Any]:
@@ -422,6 +424,11 @@ class LlamaRuntimeInstaller:
         with self._lock:
             for key, value in values.items():
                 setattr(self._status, key, value)
+            self._events.publish(lambda: asdict(self._status), key=self._status.job_id, state=self._status.state)
+
+    def _publish_status(self, force: bool = False) -> None:
+        with self._lock:
+            self._events.publish(lambda: asdict(self._status), key=self._status.job_id, state=self._status.state, force=force)
 
     def begin(self, variant_id: str) -> str:
         with self._lock:
@@ -435,6 +442,7 @@ class LlamaRuntimeInstaller:
                 variant=variant_id,
                 files=[],
             )
+        self._publish_status(True)
         return job_id
 
     async def install(self, job_id: str, variant_id: str, profile: str) -> None:
@@ -489,6 +497,7 @@ class LlamaRuntimeInstaller:
             updated.update(values)
             files[index] = updated
             self._status.files = files
+            self._events.publish(lambda: asdict(self._status), key=self._status.job_id, state=self._status.state)
 
     @staticmethod
     def _safe_extract(bundle: zipfile.ZipFile, destination: Path) -> None:

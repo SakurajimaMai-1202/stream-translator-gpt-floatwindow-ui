@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue';
 import { useTranslationStore } from '../stores/translation';
-import type { LatencyWindowSnapshot, SubtitleLatencyTrace } from '../services/api';
+import { useSubtitleStream } from '../composables/useSubtitleStream';
 
 const store = useTranslationStore();
 
@@ -45,113 +45,12 @@ const isApplyingExternalSettings = ref(false);
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
 // 字幕歷史
-const subtitleHistory = ref<Array<{
-  id: number;
-  timestamp_id: string; // 來自後端的原始時間碼範圍字串
-  original: string;
-  translated: string;
-  displayOriginal: string;
-  displayTranslated: string;
-  timestamp: Date;
-  asr_latency_ms?: number | null;
-  llm_latency_ms?: number | null;
-  translation_queue_latency_ms?: number | null;
-  total_latency_ms?: number | null;
-  latency_trace?: SubtitleLatencyTrace;
-  latency_window?: LatencyWindowSnapshot;
-}>>([]); 
+const { subtitles: subtitleHistory, typingItemIds, connect: initSubtitleChannel, dispose, clearAllTypingTimers } = useSubtitleStream({
+  transport: 'broadcast', maxItems: () => 50, queueLatency: true,
+  trimAll: true, scrollOnReplacement: true, scrollDuringTyping: true,
+  shouldScroll: () => autoScroll.value && !isUserScrolling.value, scrollToBottom,
+});
 
-// 流式逐字顯示：完整文字與目前已渲染文字分開保存。
-const typingTimers = new Map<number, ReturnType<typeof setInterval>>();
-const typingItemIds = ref<number[]>([]);
-const TYPING_SPEED_MS = 18;
-const MAX_TYPING_DURATION_MS = 1800;
-
-function removeTypingItem(itemId: number) {
-  const index = typingItemIds.value.indexOf(itemId);
-  if (index !== -1) typingItemIds.value.splice(index, 1);
-}
-
-function stopTyping(itemId: number) {
-  const timer = typingTimers.get(itemId);
-  if (timer) clearInterval(timer);
-  typingTimers.delete(itemId);
-  removeTypingItem(itemId);
-}
-
-function clearAllTypingTimers() {
-  typingTimers.forEach(timer => clearInterval(timer));
-  typingTimers.clear();
-  typingItemIds.value = [];
-}
-
-function reconcileRenderedText(rendered: string, target: string): string {
-  const renderedChars = Array.from(rendered);
-  const targetChars = Array.from(target);
-  let commonLength = 0;
-  while (
-    commonLength < renderedChars.length
-    && commonLength < targetChars.length
-    && renderedChars[commonLength] === targetChars[commonLength]
-  ) {
-    commonLength += 1;
-  }
-  return targetChars.slice(0, commonLength).join('');
-}
-
-function startTyping(itemId: number) {
-  const item = subtitleHistory.value.find(sub => sub.id === itemId);
-  if (!item) return;
-
-  stopTyping(itemId);
-  item.displayOriginal = reconcileRenderedText(item.displayOriginal, item.original);
-  item.displayTranslated = reconcileRenderedText(item.displayTranslated, item.translated);
-
-  const originalChars = Array.from(item.original);
-  const translatedChars = Array.from(item.translated);
-  const remaining = (originalChars.length - Array.from(item.displayOriginal).length)
-    + (translatedChars.length - Array.from(item.displayTranslated).length);
-  if (remaining <= 0) return;
-
-  typingItemIds.value.push(itemId);
-  const speed = Math.max(1, Math.min(TYPING_SPEED_MS, Math.floor(MAX_TYPING_DURATION_MS / remaining)));
-  let ticks = 0;
-  const timer = setInterval(() => {
-    const target = subtitleHistory.value.find(sub => sub.id === itemId);
-    if (!target) {
-      stopTyping(itemId);
-      return;
-    }
-
-    const targetOriginalChars = Array.from(target.original);
-    const targetTranslatedChars = Array.from(target.translated);
-    const renderedOriginalLength = Array.from(target.displayOriginal).length;
-    const renderedTranslatedLength = Array.from(target.displayTranslated).length;
-    let changed = false;
-
-    if (renderedOriginalLength < targetOriginalChars.length) {
-      target.displayOriginal = targetOriginalChars.slice(0, renderedOriginalLength + 1).join('');
-      changed = true;
-    }
-    if (renderedTranslatedLength < targetTranslatedChars.length) {
-      target.displayTranslated = targetTranslatedChars.slice(0, renderedTranslatedLength + 1).join('');
-      changed = true;
-    }
-
-    if (!changed) {
-      stopTyping(itemId);
-      return;
-    }
-
-    ticks += 1;
-    if (ticks % 4 === 0 && autoScroll.value && !isUserScrolling.value) {
-      scrollToBottom();
-    }
-  }, speed);
-  typingTimers.set(itemId, timer);
-}
-
-// 滾動容器引用
 const scrollContainer = ref<HTMLElement | null>(null);
 const isUserScrolling = ref(false);
 let scrollTimeout: number | null = null;
@@ -179,85 +78,9 @@ function hexToRgb(hex: string): string {
   return '0, 0, 0';
 }
 
-// 共用的字幕新增或更新邏輯
-function addOrUpdateSubtitle(newSub: any, source: string = 'Store') {
-  if (!newSub || (!newSub.original && !newSub.translated)) return;
-  
-  console.log(`[${source}] 收到新字幕:`, newSub);
-  const ts = newSub.backend_timestamp;
-  let existingIndex = -1;
-  
-  // 若後端有提供時間戳，則以此尋找是否已存在該筆字幕
-  if (ts) {
-    existingIndex = subtitleHistory.value.findIndex(sub => sub.timestamp_id === ts);
-  }
-  
-  if (existingIndex !== -1) {
-    // 找到了，直接更新該筆字幕的內容
-    subtitleHistory.value[existingIndex].original = newSub.original || '';
-    subtitleHistory.value[existingIndex].translated = newSub.translated || '';
-    subtitleHistory.value[existingIndex].timestamp = new Date(); // 更新最後收到時間
-    subtitleHistory.value[existingIndex].asr_latency_ms = newSub.asr_latency_ms ?? null;
-    subtitleHistory.value[existingIndex].llm_latency_ms = newSub.llm_latency_ms ?? null;
-    subtitleHistory.value[existingIndex].translation_queue_latency_ms = newSub.translation_queue_latency_ms ?? null;
-    subtitleHistory.value[existingIndex].total_latency_ms = newSub.total_latency_ms ?? null;
-    subtitleHistory.value[existingIndex].latency_trace = newSub.latency_trace;
-    subtitleHistory.value[existingIndex].latency_window = newSub.latency_window;
-    startTyping(subtitleHistory.value[existingIndex].id);
-  } else {
-    // 沒找到，新增一筆
-    const newItem = {
-      id: Date.now() + Math.random(), // 確保 key 唯一
-      timestamp_id: ts || '',
-      original: newSub.original || '',
-      translated: newSub.translated || '',
-      displayOriginal: '',
-      displayTranslated: '',
-      timestamp: new Date(),
-      asr_latency_ms: newSub.asr_latency_ms ?? null,
-      llm_latency_ms: newSub.llm_latency_ms ?? null,
-      translation_queue_latency_ms: newSub.translation_queue_latency_ms ?? null,
-      total_latency_ms: newSub.total_latency_ms ?? null,
-      latency_trace: newSub.latency_trace,
-      latency_window: newSub.latency_window,
-    };
-    subtitleHistory.value.push(newItem);
-    startTyping(newItem.id);
-  }
-  
-  // 限制歷史數量
-  while (subtitleHistory.value.length > 50) {
-    const removed = subtitleHistory.value.shift();
-    if (removed) stopTyping(removed.id);
-  }
-  
-  // 自動捲動到底部
-  if (autoScroll.value && !isUserScrolling.value) {
-    scrollToBottom();
-  }
-}
-
-// 注意：FloatingSubtitleView 改為只使用 BroadcastChannel 接收字幕
-// 不再監聽 store.latestSubtitle 避免與 BroadcastChannel 重複觸發兩次
-// (Store 更新字幕後會廣播，FloatingView 只需從 BroadcastChannel 接收)
-
-// 使用 BroadcastChannel 接收字幕
-let subtitleChannel: BroadcastChannel | null = null;
 // 使用 BroadcastChannel 接收設定變更
 let settingsChannel: BroadcastChannel | null = null;
 let webChannelInitPromise: Promise<boolean> | null = null;
-
-function initSubtitleChannel() {
-  try {
-    subtitleChannel = new BroadcastChannel('subtitle-updates');
-    subtitleChannel.onmessage = (event) => {
-      addOrUpdateSubtitle(event.data, 'BroadcastChannel');
-    };
-    console.log('字幕 BroadcastChannel 已初始化');
-  } catch (error) {
-    console.error('字幕 BroadcastChannel 初始化失敗:', error);
-  }
-}
 
 function initSettingsChannel() {
   try {
@@ -572,9 +395,7 @@ onUnmounted(() => {
     void saveSettings();
   }
   // 關閉 BroadcastChannel
-  if (subtitleChannel) {
-    subtitleChannel.close();
-  }
+  dispose();
   if (settingsChannel) {
     settingsChannel.close();
   }

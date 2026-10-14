@@ -1,27 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick } from 'vue';
-import type { LatencyWindowSnapshot, SubtitleLatencyTrace } from '../services/api';
+import { useSubtitleStream } from '../composables/useSubtitleStream';
+import type { SubtitleLine } from '../composables/subtitleStreamLogic';
 import BrandIcon from '../components/BrandIcon.vue';
 
 // ─── 狀態 ───────────────────────────────────────────────
-type DesktopSubtitle = {
-  id: number;
-  original: string;
-  translated: string;
-  displayOriginal: string;
-  displayTranslated: string;
-  timestamp_id?: string;
-  asr_latency_ms?: number | null;
-  llm_latency_ms?: number | null;
-  translation_queue_latency_ms?: number | null;
-  total_latency_ms?: number | null;
-  latency_trace?: SubtitleLatencyTrace;
-  latency_window?: LatencyWindowSnapshot;
-};
+type DesktopSubtitle = SubtitleLine;
 
-const subtitles = ref<DesktopSubtitle[]>([]);
-const status = ref<'connecting' | 'connected' | 'waiting' | 'error'>('connecting');
-const statusText = ref('連線中...');
 const showPanel = ref(false);
 
 // ─── 設定 ───────────────────────────────────────────────
@@ -40,73 +25,6 @@ const theme = ref<'auto' | 'dark' | 'light'>((localStorage.getItem('dfw_theme') 
 // ─── 捲動控制 ───────────────────────────────────────────
 const scrollContainer = ref<HTMLElement | null>(null);
 const isAutoScroll = ref(true);
-const typingTimers = new Map<number, ReturnType<typeof setInterval>>();
-const typingItemIds = ref<number[]>([]);
-const TYPING_SPEED_MS = 18;
-const MAX_TYPING_DURATION_MS = 1800;
-
-function stopTyping(itemId: number) {
-  const timer = typingTimers.get(itemId);
-  if (timer) clearInterval(timer);
-  typingTimers.delete(itemId);
-  const index = typingItemIds.value.indexOf(itemId);
-  if (index !== -1) typingItemIds.value.splice(index, 1);
-}
-
-function clearAllTypingTimers() {
-  typingTimers.forEach(timer => clearInterval(timer));
-  typingTimers.clear();
-  typingItemIds.value = [];
-}
-
-function reconcileRenderedText(rendered: string, target: string): string {
-  const renderedChars = Array.from(rendered);
-  const targetChars = Array.from(target);
-  let commonLength = 0;
-  while (commonLength < renderedChars.length
-    && commonLength < targetChars.length
-    && renderedChars[commonLength] === targetChars[commonLength]) commonLength += 1;
-  return targetChars.slice(0, commonLength).join('');
-}
-
-function hasPendingText(rendered: string, target: string): boolean {
-  return Array.from(rendered).length < Array.from(target).length;
-}
-
-function startTyping(itemId: number) {
-  const item = subtitles.value.find(sub => sub.id === itemId);
-  if (!item) return;
-  stopTyping(itemId);
-  item.displayOriginal = reconcileRenderedText(item.displayOriginal, item.original);
-  item.displayTranslated = reconcileRenderedText(item.displayTranslated, item.translated);
-  const remaining = (Array.from(item.original).length - Array.from(item.displayOriginal).length)
-    + (Array.from(item.translated).length - Array.from(item.displayTranslated).length);
-  if (remaining <= 0) return;
-  typingItemIds.value.push(itemId);
-  const speed = Math.max(1, Math.min(TYPING_SPEED_MS, Math.floor(MAX_TYPING_DURATION_MS / remaining)));
-  let ticks = 0;
-  const timer = setInterval(() => {
-    const target = subtitles.value.find(sub => sub.id === itemId);
-    if (!target) { stopTyping(itemId); return; }
-    let changed = false;
-    const originalChars = Array.from(target.original);
-    const translatedChars = Array.from(target.translated);
-    const originalLength = Array.from(target.displayOriginal).length;
-    const translatedLength = Array.from(target.displayTranslated).length;
-    if (originalLength < originalChars.length) {
-      target.displayOriginal = originalChars.slice(0, originalLength + 1).join('');
-      changed = true;
-    }
-    if (translatedLength < translatedChars.length) {
-      target.displayTranslated = translatedChars.slice(0, translatedLength + 1).join('');
-      changed = true;
-    }
-    if (!changed) { stopTyping(itemId); return; }
-    ticks += 1;
-    if (ticks % 4 === 0 && isAutoScroll.value) scrollToBottom();
-  }, speed);
-  typingTimers.set(itemId, timer);
-}
 const SCROLL_THRESHOLD = 80; // px，距離底部多少以內視為「在底部」
 
 function handleScroll() {
@@ -133,119 +51,12 @@ function scrollToBottom(smooth = false) {
 }
 
 // ─── SSE 連線 ────────────────────────────────────────────
-let sse: EventSource | null = null;
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+const { subtitles, status, statusText, typingItemIds, hasPendingText, connect, dispose, clearAllTypingTimers } = useSubtitleStream({
+  transport: 'sse', maxItems: () => maxItems.value,
+  queueLatency: true, trimBeforeTyping: false, scrollDuringTyping: true,
+  shouldScroll: () => isAutoScroll.value, scrollToBottom,
+});
 
-function getApiBase(): string {
-  return `${location.protocol}//${location.host}`;
-}
-
-async function getActiveTaskId(): Promise<string | null> {
-  try {
-    const res = await fetch(`${getApiBase()}/api/translation/active-task`);
-    const data = await res.json();
-    return data.success ? data.task_id : null;
-  } catch {
-    return null;
-  }
-}
-
-async function connect() {
-  status.value = 'connecting';
-  statusText.value = '取得任務中...';
-
-  const taskId = await getActiveTaskId();
-  if (!taskId) {
-    status.value = 'waiting';
-    statusText.value = '等待翻譯任務啟動...';
-    reconnectTimer = setTimeout(connect, 5000);
-    return;
-  }
-
-  status.value = 'connected';
-  statusText.value = '已連線';
-
-  const url = `${getApiBase()}/api/translation/stream/${taskId}`;
-  sse = new EventSource(url);
-
-  sse.addEventListener('subtitle', (e: MessageEvent) => {
-    try {
-      const data = JSON.parse(e.data);
-      addOrUpdateSubtitle(data);
-    } catch {}
-  });
-
-  sse.addEventListener('status', (e: MessageEvent) => {
-    try {
-      const data = JSON.parse(e.data);
-      if (data.status === 'completed' || data.status === 'error') {
-        statusText.value = '任務已結束，重新連線中...';
-        status.value = 'waiting';
-        sse?.close();
-        reconnectTimer = setTimeout(connect, 3000);
-      }
-    } catch {}
-  });
-
-  sse.onerror = () => {
-    status.value = 'error';
-    statusText.value = '連線中斷，重連中...';
-    sse?.close();
-    reconnectTimer = setTimeout(connect, 3000);
-  };
-}
-
-function addOrUpdateSubtitle(data: Omit<DesktopSubtitle, 'id' | 'timestamp_id'> & { timestamp?: string }) {
-  if (!data.original && !data.translated) return;
-
-  const ts = data.timestamp || '';
-  if (ts) {
-    const idx = subtitles.value.findIndex(s => s.timestamp_id === ts);
-    if (idx !== -1) {
-      subtitles.value[idx].original = data.original || '';
-      subtitles.value[idx].translated = data.translated || '';
-      subtitles.value[idx].asr_latency_ms = data.asr_latency_ms ?? null;
-      subtitles.value[idx].llm_latency_ms = data.llm_latency_ms ?? null;
-      subtitles.value[idx].translation_queue_latency_ms = data.translation_queue_latency_ms ?? null;
-      subtitles.value[idx].total_latency_ms = data.total_latency_ms ?? null;
-      subtitles.value[idx].latency_trace = data.latency_trace;
-      subtitles.value[idx].latency_window = data.latency_window;
-      startTyping(subtitles.value[idx].id);
-      // 更新不新增，不需要捲動
-      return;
-    }
-  }
-
-  const newItem: DesktopSubtitle = {
-    id: Date.now() + Math.random(),
-    original: data.original || '',
-    translated: data.translated || '',
-    displayOriginal: '',
-    displayTranslated: '',
-    asr_latency_ms: data.asr_latency_ms ?? null,
-    llm_latency_ms: data.llm_latency_ms ?? null,
-    translation_queue_latency_ms: data.translation_queue_latency_ms ?? null,
-    total_latency_ms: data.total_latency_ms ?? null,
-    latency_trace: data.latency_trace,
-    latency_window: data.latency_window,
-    ...(ts ? { timestamp_id: ts } : {})
-  };
-  subtitles.value.push(newItem);
-  startTyping(newItem.id);
-
-  // 超出歷史記錄上限時移除最舊的
-  if (subtitles.value.length > maxItems.value) {
-    const removed = subtitles.value.shift();
-    if (removed) stopTyping(removed.id);
-  }
-
-  // 只有使用者在底部才自動捲動
-  if (isAutoScroll.value) {
-    scrollToBottom();
-  }
-}
-
-// ─── 設定儲存 ────────────────────────────────────────────
 function saveSettings() {
   localStorage.setItem('dfw_fontSize', String(fontSize.value));
   localStorage.setItem('dfw_showOriginal', String(showOriginal.value));
@@ -261,8 +72,7 @@ function saveSettings() {
 // ─── 生命週期 ────────────────────────────────────────────
 onMounted(() => { connect(); });
 onUnmounted(() => {
-  sse?.close();
-  if (reconnectTimer) clearTimeout(reconnectTimer);
+  dispose();
   clearAllTypingTimers();
 });
 

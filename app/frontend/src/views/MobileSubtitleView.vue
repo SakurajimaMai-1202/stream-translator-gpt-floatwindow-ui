@@ -1,29 +1,12 @@
 <script setup lang="ts">
-import type { LatencyWindowSnapshot, SubtitleLatencyTrace } from '../services/api';
+import { useSubtitleStream } from '../composables/useSubtitleStream';
+import type { SubtitleLine } from '../composables/subtitleStreamLogic';
 import { ref, onMounted, onUnmounted, nextTick } from 'vue';
 import AppIcon from '../components/AppIcon.vue';
 
 // ─── 類型 ───────────────────────────────────────────────
-interface SubtitleItem {
-  id: number;
-  original: string;         // 目標文字（最終完整版）
-  translated: string;
-  displayOriginal: string;  // 目前已打出的文字（顯示用）
-  displayTranslated: string;
-  timestamp_id?: string;
-  asr_latency_ms?: number | null;
-  llm_latency_ms?: number | null;
-  total_latency_ms?: number | null;
-  latency_trace?: SubtitleLatencyTrace;
-  latency_window?: LatencyWindowSnapshot;
-}
+type SubtitleItem = SubtitleLine;
 
-// ─── 狀態 ───────────────────────────────────────────────
-const subtitles = ref<SubtitleItem[]>([]);
-const status = ref<'connecting' | 'connected' | 'waiting' | 'error'>('connecting');
-const statusText = ref('連線中...');
-
-// ─── 設定 ───────────────────────────────────────────────
 const fontSize = ref(Number(localStorage.getItem('mfw_fontSize') || 28));
 const showOriginal = ref(localStorage.getItem('mfw_showOriginal') !== 'false');
 const showTranslated = ref(localStorage.getItem('mfw_showTranslated') !== 'false');
@@ -62,209 +45,14 @@ function scrollToBottom(smooth = false) {
 
 // ─── 打字動畫 ───────────────────────────────────────────
 // 使用 Map 存 timer（非響應式，只用於清理）
-const typingTimers = new Map<number, ReturnType<typeof setInterval>>();
-// 使用響應式 array 追蹤正在打字的 id（供模板顯示游標）
-const typingItemIds = ref<number[]>([]);
+const { subtitles, status, statusText, typingItemIds, hasPendingText, connect, dispose, clearAllTypingTimers } = useSubtitleStream({
+  transport: 'sse', maxItems: () => maxItems.value,
+  queueLatency: false, trimBeforeTyping: true, scrollDuringTyping: false,
+  shouldScroll: () => isAutoScroll.value, scrollToBottom,
+});
 
-const TYPING_SPEED_MS = 18;    // 每字 ms（預設速度）
-const MAX_DURATION_MS = 1800;  // 動畫最長時間上限
-
-function removeFromTyping(itemId: number) {
-  const idx = typingItemIds.value.indexOf(itemId);
-  if (idx !== -1) typingItemIds.value.splice(idx, 1);
-}
-
-function stopTyping(itemId: number) {
-  const timer = typingTimers.get(itemId);
-  if (timer) clearInterval(timer);
-  typingTimers.delete(itemId);
-  removeFromTyping(itemId);
-}
-
-function reconcileRenderedText(rendered: string, target: string): string {
-  const renderedChars = Array.from(rendered);
-  const targetChars = Array.from(target);
-  let commonLength = 0;
-  while (commonLength < renderedChars.length
-    && commonLength < targetChars.length
-    && renderedChars[commonLength] === targetChars[commonLength]) commonLength += 1;
-  return targetChars.slice(0, commonLength).join('');
-}
-
-function hasPendingText(rendered: string, target: string): boolean {
-  return Array.from(rendered).length < Array.from(target).length;
-}
-
-function startTyping(itemId: number) {
-  const item = subtitles.value.find(s => s.id === itemId);
-  if (!item) return;
-  stopTyping(itemId);
-  item.displayOriginal = reconcileRenderedText(item.displayOriginal, item.original);
-  item.displayTranslated = reconcileRenderedText(item.displayTranslated, item.translated);
-  const total = (Array.from(item.original).length - Array.from(item.displayOriginal).length)
-    + (Array.from(item.translated).length - Array.from(item.displayTranslated).length);
-  if (total <= 0) return;
-  typingItemIds.value.push(itemId);
-  const speed = Math.max(1, Math.min(TYPING_SPEED_MS, Math.floor(MAX_DURATION_MS / total)));
-  const timer = setInterval(() => {
-    const target = subtitles.value.find(s => s.id === itemId);
-    if (!target) { stopTyping(itemId); return; }
-    let changed = false;
-    const originalChars = Array.from(target.original);
-    const translatedChars = Array.from(target.translated);
-    const originalLength = Array.from(target.displayOriginal).length;
-    const translatedLength = Array.from(target.displayTranslated).length;
-    if (originalLength < originalChars.length) {
-      target.displayOriginal = originalChars.slice(0, originalLength + 1).join('');
-      changed = true;
-    }
-    if (translatedLength < translatedChars.length) {
-      target.displayTranslated = translatedChars.slice(0, translatedLength + 1).join('');
-      changed = true;
-    }
-    if (!changed) stopTyping(itemId);
-  }, speed);
-  typingTimers.set(itemId, timer);
-}
-
-function clearAllTypingTimers() {
-  typingTimers.forEach((t) => { clearInterval(t); });
-  typingTimers.clear();
-  typingItemIds.value = [];
-}
-
-// ─── SSE 連線 ────────────────────────────────────────────
-let sse: EventSource | null = null;
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let wakeLock: WakeLockSentinel | null = null;
 
-// 動態決定 API base（手機連外網時要靠 meta 或當前 host）
-function getApiBase(): string {
-  return `${location.protocol}//${location.host}`;
-}
-
-async function getActiveTaskId(): Promise<string | null> {
-  try {
-    const res = await fetch(`${getApiBase()}/api/translation/active-task`);
-    const data = await res.json();
-    return data.success ? data.task_id : null;
-  } catch {
-    return null;
-  }
-}
-
-async function connect() {
-  status.value = 'connecting';
-  statusText.value = '取得任務中...';
-
-  const taskId = await getActiveTaskId();
-  if (!taskId) {
-    status.value = 'waiting';
-    statusText.value = '等待翻譯任務啟動...';
-    // 5 秒後重試
-    reconnectTimer = setTimeout(connect, 5000);
-    return;
-  }
-
-  status.value = 'connected';
-  statusText.value = '已連線';
-
-  const url = `${getApiBase()}/api/translation/stream/${taskId}`;
-  sse = new EventSource(url);
-
-  sse.addEventListener('subtitle', (e: MessageEvent) => {
-    try {
-      const data = JSON.parse(e.data);
-      addOrUpdateSubtitle(data);
-    } catch {}
-  });
-
-  sse.addEventListener('status', (e: MessageEvent) => {
-    try {
-      const data = JSON.parse(e.data);
-      if (data.status === 'completed' || data.status === 'error') {
-        // 任務結束，3 秒後重新搜尋
-        statusText.value = '任務已結束，重新連線中...';
-        status.value = 'waiting';
-        sse?.close();
-        reconnectTimer = setTimeout(connect, 3000);
-      }
-    } catch {}
-  });
-
-  sse.onerror = () => {
-    status.value = 'error';
-    statusText.value = '連線中斷，重連中...';
-    sse?.close();
-    reconnectTimer = setTimeout(connect, 3000);
-  };
-}
-
-function addOrUpdateSubtitle(data: {
-  timestamp?: string;
-  original: string;
-  translated: string;
-  asr_latency_ms?: number | null;
-  llm_latency_ms?: number | null;
-  total_latency_ms?: number | null;
-  latency_trace?: SubtitleLatencyTrace;
-  latency_window?: LatencyWindowSnapshot;
-}) {
-  if (!data.original && !data.translated) return;
-
-  const ts = data.timestamp || '';
-  if (ts) {
-    const idx = subtitles.value.findIndex(s => s.timestamp_id === ts);
-    if (idx !== -1) {
-      const item = subtitles.value[idx];
-      item.original = data.original || '';
-      item.translated = data.translated || '';
-      item.asr_latency_ms = data.asr_latency_ms ?? null;
-      item.llm_latency_ms = data.llm_latency_ms ?? null;
-      item.total_latency_ms = data.total_latency_ms ?? null;
-      item.latency_trace = data.latency_trace;
-      item.latency_window = data.latency_window;
-      // 有新字元時繼續打字動畫
-      startTyping(item.id);
-      return;
-    }
-  }
-
-  const newItem: SubtitleItem = {
-    id: Date.now() + Math.random(),
-    original: data.original || '',
-    translated: data.translated || '',
-    displayOriginal: '',
-    displayTranslated: '',
-    asr_latency_ms: data.asr_latency_ms ?? null,
-    llm_latency_ms: data.llm_latency_ms ?? null,
-    total_latency_ms: data.total_latency_ms ?? null,
-    latency_trace: data.latency_trace,
-    latency_window: data.latency_window,
-    ...(ts ? { timestamp_id: ts } : {})
-  };
-  subtitles.value.push(newItem);
-
-  // 超出歷史記錄上限時移除最舊的（連帶清理 timer）
-  if (subtitles.value.length > maxItems.value) {
-    const removed = subtitles.value.shift();
-    if (removed) {
-      const t = typingTimers.get(removed.id);
-      if (t) { clearInterval(t); typingTimers.delete(removed.id); }
-      removeFromTyping(removed.id);
-    }
-  }
-
-  // 開始打字動畫
-  startTyping(newItem.id);
-
-  // 只有使用者在底部才自動捲動
-  if (isAutoScroll.value) {
-    scrollToBottom();
-  }
-}
-
-// ─── Screen Wake Lock ────────────────────────────────────
 async function requestWakeLock() {
   try {
     if ('wakeLock' in navigator) {
@@ -316,8 +104,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   document.removeEventListener('visibilitychange', handleVisibilityChange);
-  sse?.close();
-  if (reconnectTimer) clearTimeout(reconnectTimer);
+  dispose();
   wakeLock?.release();
   clearAllTypingTimers();
 });

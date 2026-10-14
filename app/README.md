@@ -7,7 +7,7 @@
 - [完整操作指南](../USER_GUIDE.md)：安裝、首次設定、音訊來源、模型、翻譯、字幕分享與匯出。
 - [專案首頁](../README.md)：產品介紹、下載與版本選擇。
 - [更新說明](docs/RELEASE_NOTES_v1.5.0_zh-TW.md)：目前版本的功能與更新方式。
-- [文件索引](docs/README.md)：其他使用及開發參考文件。
+- [文件索引](docs/README.md)：其他使用及開發參考文件，含[環境變數清單](docs/README.md#環境變數)。
 
 ## 目錄說明
 
@@ -20,4 +20,4 @@
 | `main.py` | 應用程式啟動入口 |
 | `config.example.yaml` | 設定範例 |
 
-開發與封裝方式請見 [打包文件](packaging/README.md)。
+開發與封裝方式請見 [打包文件](packaging/README.md)；環境變數清單請見[文件索引](docs/README.md#環境變數)。

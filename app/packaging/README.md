@@ -178,4 +178,4 @@ For standard full packages, run artifact validation from `app` with
 (or `-Profile rocm`). `-RequireCpuAsrSidecar` belongs to this packaging validator,
 not the root-level wrapper or the build scripts.
 
-See `app/docs/PACKAGING_zh-TW.md` for the profile matrix, package names, and build Python requirements.
+環境變數清單請見[文件索引](../docs/README.md#環境變數)。打包 profile 矩陣、套件名稱與建置 Python 需求請見 `app/docs/PACKAGING_zh-TW.md`。

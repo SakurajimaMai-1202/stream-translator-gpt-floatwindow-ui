@@ -124,7 +124,7 @@ CUDA／ROCm 使用者若要改用 CPU 語音辨識，可匯入 `StreamTranslator
 
 | 模型系列 | 選擇方向 |
 | --- | --- |
-| **HY-MT2** | 提供 1.8B 與 7B；較小模型節省資源，較大模型需要更多記憶體與顯存。 |
+| **HY-MT2** | 提供 1.8B 與 7B；7B GGUF 建議使用 [`unsloth/Hy-MT2-7B-GGUF`](https://huggingface.co/unsloth/Hy-MT2-7B-GGUF)。較大模型需要更多記憶體與顯存。 |
 | **Index-Translate** | 官方 2B／9B GGUF；Q4_K_M 約 **1.31／5.78 GB**，推薦頁顯存估算為 **4／8 GB**。 |
 | **Sakura** | 日文到中文模型，涵蓋 Galgame 與文學語氣；使用前請確認所選模型授權。 |
 | **其他 GGUF 模型** | 可依語言與內容需求匯入，翻譯效果取決於模型、提示詞及參數。 |
@@ -171,7 +171,7 @@ CPU 模式使用對應的 sherpa-onnx 模型，無法直接沿用 GPU 權重。�
 - [版本更新說明](app/docs/RELEASE_NOTES_v1.5.0_zh-TW.md)
 - [手動更新指南](app/docs/MANUAL_UPDATE_zh-TW.md)
 - [開發與打包文件](app/packaging/README.md)
-- [文件索引](app/docs/README.md)
+- [文件索引](app/docs/README.md)（含[環境變數清單](app/docs/README.md#環境變數)）
 
 ### CI / 測試
 

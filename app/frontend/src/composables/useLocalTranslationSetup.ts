@@ -7,10 +7,18 @@ export const isRuntimeInstallBusy = (status: RuntimeInstallStatus | null) =>
 export const isModelInstallBusy = (status: ModelInstallStatus | null) =>
   !!status && ['resolving', 'downloading', 'verifying'].includes(status.state);
 
-export async function cancelModelInstallWithRetry() {
-  await llamaApi.cancelModelInstall();
+export async function cancelModelInstallWithRetry(jobId?: string) {
+  let cancelled: ModelInstallStatus;
+  try {
+    cancelled = await llamaApi.cancelModelInstall(jobId);
+  } catch (cause: any) {
+    if (cause?.response?.status === 409) return await llamaApi.getSimpleModelInstallStatus();
+    throw cause;
+  }
   const status = await llamaApi.getSimpleModelInstallStatus();
-  return isModelInstallBusy(status) ? await llamaApi.cancelModelInstall() : status;
+  const trackedId = jobId || cancelled.job_id;
+  return isModelInstallBusy(status) && status.job_id === trackedId
+    ? await llamaApi.cancelModelInstall(trackedId) : status;
 }
 
 export function useLocalTranslationSetup(setupMessage: Ref<string> = ref('')) {
@@ -46,7 +54,14 @@ export function useLocalTranslationSetup(setupMessage: Ref<string> = ref('')) {
       ? '翻譯引擎仍在背景安裝，完成後可再按「開始設定」。'
       : '已取消設定。';
     if (phase.value === 'runtime') runtimeBackgroundBusy.value = true;
-    if (cancellingModel) await cancelModelInstallWithRetry();
+    // If the install request is still pending, run() cancels its returned job ID.
+    if (cancellingModel && localModelInstallStatus.value?.job_id) {
+      localModelInstallStatus.value = await cancelModelInstallWithRetry(localModelInstallStatus.value.job_id);
+      if (isModelInstallBusy(localModelInstallStatus.value)) {
+        cancelled.value = false;
+        throw new Error("??????????????????");
+      }
+    }
   }
   async function waitForRuntime() {
     for (let index = 0; index < 3600; index++) {
@@ -96,6 +111,7 @@ export function useLocalTranslationSetup(setupMessage: Ref<string> = ref('')) {
       checkCancelled();
       runtimeInstallStatus.value = runtime;
       const attachingModel = isModelInstallBusy(existing?.model ?? null);
+      if (attachingModel) localModelInstallStatus.value = existing!.model;
       if (isRuntimeInstallBusy(runtime)) {
         phase.value = 'runtime';
         await waitForRuntime();
@@ -119,8 +135,15 @@ export function useLocalTranslationSetup(setupMessage: Ref<string> = ref('')) {
       if (!attachingModel) {
         if (!setup?.supported) throw new Error(setup?.reason || '無法取得本機翻譯模型設定，請重新偵測。');
         setupMessage.value = `正在下載 ${setup.quant} 翻譯模型…`;
-        await llamaApi.installSimpleModel(setup.model_id);
-        if (cancelled.value) await cancelModelInstallWithRetry();
+        const job = await llamaApi.installSimpleModel(setup.model_id);
+        localModelInstallStatus.value = { job_id: job.job_id, state: 'resolving' } as ModelInstallStatus;
+        if (cancelled.value) {
+          localModelInstallStatus.value = await cancelModelInstallWithRetry(job.job_id);
+          if (isModelInstallBusy(localModelInstallStatus.value)) {
+            cancelled.value = false;
+            throw new Error("??????????????????");
+          }
+        }
       }
       checkCancelled();
       const modelPath = await waitForLocalModel();

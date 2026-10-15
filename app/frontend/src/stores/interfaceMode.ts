@@ -1,5 +1,5 @@
-import { useLocalTranslationSetup } from '../composables/useLocalTranslationSetup';
-import { computed, ref } from 'vue';
+import { isModelInstallBusy, isRuntimeInstallBusy, useLocalTranslationSetup } from '../composables/useLocalTranslationSetup';
+import { computed, onScopeDispose, ref, watch } from 'vue';
 import { defineStore } from 'pinia';
 import { configApi, modelApi, runtimeApi, translationApi, type CpuAsrSidecarInstallStatus } from '../services/api';
 import { useModelDownloadStore } from './modelDownload';
@@ -19,6 +19,7 @@ export const useInterfaceModeStore = defineStore('interfaceMode', () => {
   const mode = ref<'simple' | 'advanced' | null>(null);
   const loaded = ref(false);
   const busy = ref(false);
+  const localViewJobBusy = ref(false);
   const error = ref('');
   const pendingMode = ref<'simple' | 'advanced' | null>(null);
   const setupMessage = ref('');
@@ -34,6 +35,30 @@ export const useInterfaceModeStore = defineStore('interfaceMode', () => {
   const hardware = ref<TranslationModelRecommendationInfo | null>(null);
   const localSetup = useLocalTranslationSetup(setupMessage);
   const { runtimeInstallStatus, localModelInstallStatus } = localSetup;
+  const localJobBusy = computed(() => localViewJobBusy.value || localSetup.running.value
+    || isRuntimeInstallBusy(runtimeInstallStatus.value)
+    || localSetup.runtimeBackgroundBusy.value
+    || isModelInstallBusy(localModelInstallStatus.value)
+    || downloads.activeTasks.length > 0);
+  let statusTimer: ReturnType<typeof setTimeout> | undefined;
+  let disposed = false;
+  async function pollLocalJobs() {
+    const results = await Promise.allSettled([
+      llamaApi.getRuntimeInstallStatus(), llamaApi.getSimpleModelInstallStatus(),
+    ]);
+    if (disposed) return;
+    if (results[0].status === 'fulfilled') {
+      runtimeInstallStatus.value = results[0].value;
+      localSetup.runtimeBackgroundBusy.value = isRuntimeInstallBusy(results[0].value);
+    }
+    if (results[1].status === 'fulfilled') localModelInstallStatus.value = results[1].value;
+    if (localJobBusy.value) statusTimer = setTimeout(pollLocalJobs, 2000);
+  }
+  watch(localJobBusy, active => {
+    if (statusTimer) clearTimeout(statusTimer);
+    if (active) statusTimer = setTimeout(pollLocalJobs, 2000);
+  }, { flush: 'sync' });
+  onScopeDispose(() => { disposed = true; if (statusTimer) clearTimeout(statusTimer); });
   const existingAsrStoragePath = ref('');
   const existingLlamaServerExe = ref('');
   const existingLlamaModelPath = ref('');
@@ -115,7 +140,7 @@ export const useInterfaceModeStore = defineStore('interfaceMode', () => {
   }
 
   async function select(value: 'simple' | 'advanced') {
-    if (busy.value) return;
+    if (busy.value || localJobBusy.value) return;
     if (mode.value === value && !pendingMode.value) return;
     busy.value = true;
     error.value = '';
@@ -286,7 +311,7 @@ export const useInterfaceModeStore = defineStore('interfaceMode', () => {
     error.value = '';
   }
 
-  return { mode, loaded, busy, error, isSimple, pendingMode, setupMessage, sidecarStatus, preparingModels,
+  return { mode, loaded, busy, localJobBusy, localViewJobBusy, error, isSimple, pendingMode, setupMessage, sidecarStatus, preparingModels,
     modelProgress, onboardingStep, selectedSource, selectedLanguage, selectedStarterModel,
     translationChoice, googleApiKey, hardware, runtimeInstallStatus,
     localModelInstallStatus, existingAsrStoragePath, existingLlamaServerExe, existingLlamaModelPath,

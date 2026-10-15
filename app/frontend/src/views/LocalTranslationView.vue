@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useInterfaceModeStore } from '../stores/interfaceMode';
-import { cancelModelInstallWithRetry, useLocalTranslationSetup } from '../composables/useLocalTranslationSetup';
+import { cancelModelInstallWithRetry, isModelInstallBusy, useLocalTranslationSetup } from '../composables/useLocalTranslationSetup';
 import LlamaSettings from '../components/LlamaSettings.vue';
 import { useLlamaStore } from '../stores/llama';
 import { useTranslationStore } from '../stores/translation';
@@ -80,8 +80,17 @@ const actionBusy = ref(false);
 const switching = ref(false);
 const backend = ref<string | null>(null);
 const install = ref<ModelInstallStatus | null>(null);
-const busy = computed(() => ['resolving', 'downloading', 'verifying'].includes(install.value?.state || ''));
-const locked = computed(() => !ready.value || !statusReady.value || busy.value || actionBusy.value || llamaStore.isLoading);
+const busy = computed(() => isModelInstallBusy(interfaceMode.localModelInstallStatus || install.value));
+watch(() => settingUp.value || setup.runtimeBackgroundBusy.value || busy.value || actionBusy.value,
+  value => { interfaceMode.localViewJobBusy = value; }, { immediate: true, flush: 'sync' });
+watch([install, setup.localModelInstallStatus], ([download, model]) => {
+  const status = settingUp.value ? model : download;
+  if (status) interfaceMode.localModelInstallStatus = status;
+}, { flush: 'sync' });
+watch(setup.runtimeInstallStatus, status => {
+  if (status) interfaceMode.runtimeInstallStatus = status;
+}, { flush: 'sync' });
+const locked = computed(() => interfaceMode.localJobBusy || !ready.value || !statusReady.value || busy.value || actionBusy.value || llamaStore.isLoading);
 const visibleModels = computed(() => (data.value?.models || []).filter(model =>
   filter.value === 'recommended' ? model.fit === 'recommended' : filter.value === 'novel_game' ? model.category === 'novel_game' : true));
 const localModels = computed(() => llamaStore.models.filter(model => model.name.toLowerCase().includes(search.value.trim().toLowerCase())));
@@ -142,9 +151,11 @@ async function applyStatus(status: ModelInstallStatus) {
   if (status.state === 'completed' && status.path && handledJob !== (status.job_id || status.path)) {
     actionBusy.value = true;
     try {
-      const folder = status.path.replace(/[\\/][^\\/]+$/, '');
+      const folder = status.directory || status.path.replace(/[\\/][^\\/]+$/, '');
       if (!llamaStore.modelDirectory) llamaStore.modelDirectory = folder;
-      await llamaStore.loadModels(llamaStore.modelDirectory);
+      const configuredDirectory = llamaStore.modelDirectory;
+      try { await llamaStore.loadModels(folder); }
+      finally { llamaStore.modelDirectory = configuredDirectory; }
       if (llamaStore.errorMessage) throw new Error(llamaStore.errorMessage);
       directory.value = llamaStore.modelDirectory;
       await llamaStore.selectModel(status.path);
@@ -160,7 +171,7 @@ async function applyStatus(status: ModelInstallStatus) {
 }
 function schedulePoll() {
   if (timer) clearTimeout(timer);
-  if (!disposed && busy.value) timer = setTimeout(poll, 1000);
+  if (!disposed && !interfaceMode.isSimple && busy.value) timer = setTimeout(poll, 1000);
 }
 async function poll() {
   const generation = ++statusGeneration;
@@ -192,7 +203,11 @@ async function cancel() {
   actionBusy.value = true;
   ++statusGeneration;
   if (timer) clearTimeout(timer);
-  try { await applyStatus(await cancelModelInstallWithRetry()); }
+  try {
+    const status = await cancelModelInstallWithRetry(install.value?.job_id);
+    await applyStatus(status);
+    if (isModelInstallBusy(status)) error.value = '??????????????????';
+  }
   catch { error.value = '取消下載失敗，請再試一次。'; }
   finally { actionBusy.value = false; schedulePoll(); }
 }
@@ -206,9 +221,10 @@ async function switchBackend() {
   finally { switching.value = false; }
 }
 async function restoreDownload() {
+  const generation = ++statusGeneration;
   try {
     const status = await llamaApi.getSimpleModelInstallStatus();
-    if (disposed) return;
+    if (disposed || generation !== statusGeneration) return;
     install.value = status;
     // Do not override a later manual selection with a historic completed job.
     if (status.state === 'completed') {
@@ -221,6 +237,18 @@ async function restoreDownload() {
     schedulePoll();
   } catch { error.value = '無法讀取下載狀態，請按「重試」。'; }
 }
+watch(() => interfaceMode.isSimple, async simple => {
+  if (!ready.value || disposed) return;
+  ++statusGeneration;
+  if (timer) clearTimeout(timer);
+  statusReady.value = false;
+  if (!simple) { await restoreDownload(); return; }
+  try {
+    if (!data.value) await load();
+    if (await setup.restore(data.value)) { await llamaStore.loadConfig(); backend.value = 'llama'; }
+  } catch { if (!setupCancelled.value && !disposed) error.value = '無法接續設定，請重試。'; }
+  finally { statusReady.value = true; }
+});
 onMounted(async () => {
   const recommendations = load();
   try {
@@ -241,7 +269,7 @@ onMounted(async () => {
     finally { statusReady.value = true; }
   }
 });
-onUnmounted(() => { disposed = true; ++statusGeneration; if (timer) clearTimeout(timer); });
+onUnmounted(() => { interfaceMode.localViewJobBusy = false; disposed = true; ++statusGeneration; if (timer) clearTimeout(timer); });
 </script>
 
 <template>

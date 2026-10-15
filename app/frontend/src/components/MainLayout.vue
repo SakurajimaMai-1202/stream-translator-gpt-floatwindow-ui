@@ -136,12 +136,13 @@ watch(() => route.fullPath, () => {
       <template v-if="interfaceMode.onboardingStep === 'mode'">
       <h1 id="interface-mode-title" class="text-2xl font-bold">第一次使用，選擇操作方式</h1>
       <p class="text-sm text-slate-300">簡單模式會自動準備語音辨識與翻譯；選擇會記住，之後可在側欄切換。</p>
+      <p v-if="interfaceMode.localJobBusy" class="text-sm text-amber-200">??????????????????</p>
       <div v-if="interfaceMode.loaded" class="grid gap-4 sm:grid-cols-2">
-        <button :disabled="interfaceMode.busy" class="rounded-2xl border border-indigo-400 bg-indigo-500/15 p-6 text-left disabled:opacity-50" @click="interfaceMode.select('simple')">
+        <button :disabled="interfaceMode.busy || interfaceMode.localJobBusy" class="rounded-2xl border border-indigo-400 bg-indigo-500/15 p-6 text-left disabled:opacity-50" @click="interfaceMode.select('simple')">
           <span class="block text-lg font-bold">簡單模式 · 推薦</span>
           <span class="mt-3 block text-sm text-slate-300">選擇音訊來源與語言，開始翻譯。保留日常操作與字幕控制。</span>
         </button>
-        <button :disabled="interfaceMode.busy" class="rounded-2xl border border-slate-600 bg-slate-900 p-6 text-left disabled:opacity-50" @click="interfaceMode.select('advanced')">
+        <button :disabled="interfaceMode.busy || interfaceMode.localJobBusy" class="rounded-2xl border border-slate-600 bg-slate-900 p-6 text-left disabled:opacity-50" @click="interfaceMode.select('advanced')">
           <span class="block text-lg font-bold">進階模式</span>
           <span class="mt-3 block text-sm text-slate-300">完整設定、辨識引擎、模型管理、音訊切片、執行日誌與分享。</span>
         </button>
@@ -399,7 +400,8 @@ watch(() => route.fullPath, () => {
       <!-- Sidebar Footer -->
       <div class="shrink-0 p-4 border-t border-white/5 bg-black/10 space-y-2 text-xs text-white/60">
         <label for="interface-mode" class="block">介面模式</label>
-        <UiSelect id="interface-mode" :model-value="interfaceMode.mode" :disabled="interfaceMode.busy"
+        <UiSelect id="interface-mode" :model-value="interfaceMode.mode" :disabled="interfaceMode.busy || interfaceMode.localJobBusy"
+          :title="interfaceMode.localJobBusy ? '下載或設定進行中，完成後才能切換模式' : undefined"
           :options="[{ value: 'simple', label: '簡單模式' }, { value: 'advanced', label: '進階模式' }]"
           button-class="w-full rounded-lg border border-white/20 bg-slate-900 p-2 text-white"
           @update:model-value="interfaceMode.select($event as 'simple' | 'advanced')" />

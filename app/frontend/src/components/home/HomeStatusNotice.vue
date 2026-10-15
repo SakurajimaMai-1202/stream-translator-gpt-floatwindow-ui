@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import AppIcon from '../AppIcon.vue';
 import { useHomeContext } from '../../composables/home/homeContext';
+defineProps<{ message?: string }>();
+const emit = defineEmits<{ dismiss: [] }>();
 const {
   store
 } = useHomeContext();
@@ -8,8 +10,8 @@ const {
 
 <template>
       <div class="mb-4 p-3.5 bg-green-950/80 border border-green-500/30 text-green-200 rounded-xl flex justify-between items-center text-sm">
-        <span class="flex items-center gap-2"><AppIcon name="info" class="h-4 w-4 shrink-0" /> {{ store.statusMessage }}</span>
-        <button type="button" aria-label="關閉" @click="store.clearStatus()" class="text-green-300 hover:text-white transition p-1"><AppIcon name="close" class="h-4 w-4" /></button>
+        <span class="flex items-center gap-2"><AppIcon name="info" class="h-4 w-4 shrink-0" /> {{ message || store.statusMessage }}</span>
+        <button type="button" aria-label="關閉" @click="message ? emit('dismiss') : store.clearStatus()" class="text-green-300 hover:text-white transition p-1"><AppIcon name="close" class="h-4 w-4" /></button>
       </div>
 </template>
 

@@ -183,6 +183,7 @@ export interface ModelInstallStatus {
   deployment_config: ModelProfile['deployment_config'];
   state: 'idle' | 'resolving' | 'downloading' | 'verifying' | 'completed' | 'cancelled' | 'error';
   message: string; progress: number; job_id: string; model_id: string; filename: string;
+  directory?: string;
   path: string; bytes_downloaded: number; bytes_total: number; sha256: string; error: string;
 }
 
@@ -227,8 +228,8 @@ export const llamaApi = {
     const response = await axios.post(`${API_BASE}/model/install`, { model_id: modelId, quant });
     return response.data;
   },
-  async cancelModelInstall(): Promise<ModelInstallStatus> {
-    const response = await axios.post(`${API_BASE}/model/install/cancel`);
+  async cancelModelInstall(jobId?: string): Promise<ModelInstallStatus> {
+    const response = await axios.post(`${API_BASE}/model/install/cancel`, jobId ? { job_id: jobId } : undefined);
     return response.data;
   },
   async getSimpleModelInstallStatus(): Promise<ModelInstallStatus> {

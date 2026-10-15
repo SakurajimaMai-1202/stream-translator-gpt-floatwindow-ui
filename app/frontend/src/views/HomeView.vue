@@ -914,7 +914,9 @@ onBeforeUnmount(() => {
   });
 });
 
+const adoptedWarning = ref('');
 async function handleStart() {
+  adoptedWarning.value = '';
   if (audioSource.value === 'process_audio') {
     await loadProcessAudioTargets();
     if (!processAudioSupported.value || !selectedProcessTarget.value) {
@@ -1023,6 +1025,21 @@ async function handleStart() {
         addLog('本機翻譯模型已就緒');
       }
     }
+    const adopted = llamaStore.serverStatus;
+    if (effectiveTranslationEnabled.value && ['llama', 'localllm'].includes(selectedBackend.value)
+      && !externalFamilyEndpoint.value && llamaStore.isServerReady && adopted.gpu_selection?.mode === 'external') {
+      const url = adopted.server_url || '';
+      const current = adopted.current_model || '';
+      addLog(`使用連接埠上已在執行的翻譯服務：${url}（${current}）`);
+      const selected = llamaStore.selectedModelPath.split(/[\\/]/).pop() || '';
+      const selectedStem = selected.replace(/\.gguf$/i, '').toLowerCase();
+      const currentStem = current.replace(/\.gguf$/i, '').toLowerCase();
+      if (!current.trim()) addLog('????????????');
+      if (selectedStem && current.trim() && !currentStem.includes(selectedStem) && !selectedStem.includes(currentStem)) {
+        adoptedWarning.value = `⚠️ 使用連接埠上已在執行的翻譯服務：${url}（${current}），不是所選的 ${selected}。`;
+        addLog(adoptedWarning.value);
+      }
+    }
     // 使用新的 API 格式
     if (_homeAutoSaveTimer !== null) {
       clearTimeout(_homeAutoSaveTimer);
@@ -1106,6 +1123,7 @@ async function handleStart() {
 }
 
 async function handleStop() {
+  adoptedWarning.value = '';
   isLoading.value = true;
   addLog('停止翻譯系統...');
 
@@ -1181,6 +1199,7 @@ provideHomeContext({
       <!-- Error/Status Messages -->
       <HomeErrorNotice v-if="store.errorMessage" />
 
+      <HomeStatusNotice v-if="adoptedWarning" :message="adoptedWarning" @dismiss="adoptedWarning = ''" />
       <HomeStatusNotice v-if="store.statusMessage" />
 
       <!-- Dashboard Grid Layout -->

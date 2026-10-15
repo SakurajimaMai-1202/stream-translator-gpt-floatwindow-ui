@@ -32,7 +32,7 @@ export function useTranslationSettings(localConfig: Ref<any>, sectionSaveTimers:
       { value: 'none', label: '不翻譯' },
       { value: 'gpt', label: 'OpenAI GPT' },
       { value: 'gemini', label: 'Google Gemini' },
-      { value: 'llama', label: '🦙 Llama (本地)' },
+      { value: 'llama', label: '本機模型（llama.cpp）' },
     ];
     const customModels: any[] = localConfig.value?.translation?.custom_models || [];
     const customOptions: UiSelectOption[] = customModels.map((m: any) => ({

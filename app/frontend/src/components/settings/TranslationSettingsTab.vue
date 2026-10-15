@@ -1,26 +1,52 @@
 <script setup lang="ts">
-import { onMounted } from 'vue';
+import { onMounted, reactive, toRaw } from 'vue';
+import axios from 'axios';
 import UiSelect from '../UiSelect.vue';
 import { useSettingsTabBindings } from '../../composables/settings/settingsContext';
 const {
   glossaryScopeOptions, activeTab, activeTranslationFamily, servedModels, scheduleFamilyDetection, checkHyMt2Backend, deleteCustomModel, effectiveGlossaryCount, familyLabel, familySettings, hyMt2EffectiveBackend, hyMt2HealthChecking, hyMt2HealthResult, localConfig, openCustomModelDialog, previewBusy, previewContext, previewError, previewLatencyLabel, previewResult, previewText, previewValidationStatus, runTranslationPreview, selectedGlossaryPresetLabel, targetLanguageOptions, testConnection, testingGemini, testingGpt, translationBackendOptions, translationModelFamilyOptions, translationOutputFormatOptions
 } = useSettingsTabBindings();
+type CloudBackend = 'gpt' | 'gemini';
+const cloudModels = reactive<Record<CloudBackend, { ids: string[]; busy: boolean; status: string }>>({
+  gpt: { ids: [], busy: false, status: '' },
+  gemini: { ids: [], busy: false, status: '' },
+});
+async function loadCloudModels(backend: CloudBackend) {
+  const state = cloudModels[backend];
+  state.busy = true;
+  state.ids = [];
+  state.status = '正在載入…';
+  try {
+    const response = await axios.post('/api/translation/list-models', {
+      backend, config: { translation: toRaw(localConfig.value.translation) },
+    });
+    state.ids = response.data.models;
+    state.status = state.ids.length ? `已載入 ${state.ids.length} 個模型` : '帳號沒有可用模型';
+  } catch (error: any) {
+    state.status = error?.response?.data?.detail || '載入失敗，請稍後再試';
+  } finally { state.busy = false; }
+}
+// The preview returns glossary_hits as {source: target}.
+function glossaryHitLabels(hits: unknown): string[] {
+  if (!hits || typeof hits !== 'object') return [];
+  return Object.entries(hits as Record<string, unknown>).map(([source, target]) => `${source}→${target}`);
+}
 // Re-check whenever the tab opens; the server may have switched models meanwhile.
 onMounted(scheduleFamilyDetection);
 </script>
 
 <template>
           <div class="settings-paint-section apple-settings apple-translation">
-            <header class="apple-page-header"><h2>翻譯選項</h2><p>選擇翻譯服務與語言，再依模型調整詞條、前文與字幕風格。</p></header>
+            <header class="apple-page-header"><h2>翻譯選項</h2><p>選擇翻譯服務與語言，再依模型調整術語、前文與字幕風格。</p></header>
 
             <!-- 基本翻譯設定 -->
             <div class="bg-white/5 rounded-xl p-5 border border-white/10">
               <h3 class="commercial-section-title">基本設定</h3>
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label class="block text-white/70 font-semibold mb-2">翻譯後端</label>
-                  <UiSelect aria-label="翻譯後端" v-model="localConfig.translation.backend" :options="translationBackendOptions" />
-                  <p class="text-white/40 text-xs mt-1">選擇翻譯服務提供商</p>
+                  <label class="block text-white/70 font-semibold mb-2">翻譯服務</label>
+                  <UiSelect aria-label="翻譯服務" v-model="localConfig.translation.backend" :options="translationBackendOptions" />
+                  <p class="text-white/40 text-xs mt-1">雲端服務需要 API Key；本機模型在「本地翻譯」頁設定。</p>
                 </div>
 
                 <div>
@@ -37,9 +63,14 @@ onMounted(scheduleFamilyDetection);
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label class="block text-white/70 font-semibold mb-2">GPT 模型</label>
-                    <input v-model="localConfig.translation.gpt_model" type="text" placeholder="gpt-4o-mini"
+                    <div class="flex gap-2">
+                    <input v-model="localConfig.translation.gpt_model" type="text" list="gpt-available-models" placeholder="gpt-4o-mini"
                       class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-green-400" />
-                    <p class="text-white/40 text-xs mt-1">例如: gpt-4o, gpt-4o-mini, gpt-3.5-turbo</p>
+                      <button type="button" @click="loadCloudModels('gpt')" :disabled="cloudModels.gpt.busy" class="shrink-0 px-3 py-2 rounded-lg bg-blue-600/20 text-blue-300 text-xs disabled:opacity-50">載入可用模型</button>
+                    </div>
+                    <datalist id="gpt-available-models"><option v-for="id in cloudModels.gpt.ids" :key="id" :value="id" /></datalist>
+                    <p role="status" aria-live="polite" class="text-white/60 text-xs mt-1">{{ cloudModels.gpt.status }}</p>
+                    <p class="text-white/40 text-xs mt-1">可直接輸入模型名稱，或按「載入可用模型」從帳號讀取。</p>
                   </div>
 
                   <div>
@@ -73,9 +104,14 @@ onMounted(scheduleFamilyDetection);
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label class="block text-white/70 font-semibold mb-2">Gemini 模型</label>
-                    <input v-model="localConfig.translation.gemini_model" type="text" placeholder="gemini-2.5-flash-lite"
+                    <div class="flex gap-2">
+                    <input v-model="localConfig.translation.gemini_model" type="text" list="gemini-available-models" placeholder="gemini-2.5-flash-lite"
                       class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
-                    <p class="text-white/40 text-xs mt-1">例如: gemini-2.0-flash-exp, gemini-1.5-pro</p>
+                      <button type="button" @click="loadCloudModels('gemini')" :disabled="cloudModels.gemini.busy" class="shrink-0 px-3 py-2 rounded-lg bg-blue-600/20 text-blue-300 text-xs disabled:opacity-50">載入可用模型</button>
+                    </div>
+                    <datalist id="gemini-available-models"><option v-for="id in cloudModels.gemini.ids" :key="id" :value="id" /></datalist>
+                    <p role="status" aria-live="polite" class="text-white/60 text-xs mt-1">{{ cloudModels.gemini.status }}</p>
+                    <p class="text-white/40 text-xs mt-1">可直接輸入模型名稱，或按「載入可用模型」從帳號讀取。</p>
                   </div>
 
                   <div>
@@ -122,16 +158,16 @@ onMounted(scheduleFamilyDetection);
             <!-- 進階翻譯設定 (所有後端共用，但不翻譯時隱藏) -->
             <div v-if="localConfig.translation.backend !== 'none'" class="bg-white/5 rounded-xl p-5 border border-white/10">
               <h3 class="commercial-section-title">翻譯優化</h3>
-              <p class="text-white/40 text-xs mt-2"><template v-if="localConfig.translation.translation_model_family === 'auto' && ['hy_mt2', 'index_translate'].includes(activeTranslationFamily)">已自動偵測到 {{ familyLabel }}<template v-if="servedModels.length">（伺服器模型：{{ servedModels[0] }}）</template></template><template v-else>目前家族：{{ translationModelFamilyOptions.find(option => option.value === activeTranslationFamily)?.label || '一般翻譯' }}<template v-if="servedModels.length">（伺服器模型：{{ servedModels[0] }}）</template>。如果模型沒有被正確識別，可在下方「進階：模型與推理設定」手動指定。</template></p>
+              <p class="text-white/40 text-xs mt-2"><template v-if="localConfig.translation.translation_model_family === 'auto' && ['hy_mt2', 'index_translate'].includes(activeTranslationFamily)">已自動偵測到 {{ familyLabel }}<template v-if="servedModels.length">（伺服器模型：{{ servedModels[0] }}）</template></template><template v-else>模型類型：{{ translationModelFamilyOptions.find(option => option.value === activeTranslationFamily)?.label || '一般翻譯' }}<template v-if="servedModels.length">（伺服器模型：{{ servedModels[0] }}）</template>。如果模型沒有被正確識別，可在下方「進階：模型與推理設定」手動指定。</template></p>
               <div v-if="['hy_mt2', 'index_translate'].includes(activeTranslationFamily)" class="mt-4 border-t border-white/10 pt-4">
               <div class="flex flex-wrap items-start justify-between gap-4">
                 <div>
-                  <p class="font-semibold text-white">{{ familyLabel }} 策略控制</p>
-                  <p class="mt-1 text-sm text-white/55">讓日文直播字幕參考詞條、前文與台灣繁中風格。</p>
+                  <p class="font-semibold text-white">{{ familyLabel }} 翻譯優化</p>
+                  <p class="mt-1 text-sm text-white/55">讓日文直播字幕參考術語、前文與台灣繁中風格。</p>
                 </div>
                 <label class="flex items-center gap-2 rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm font-semibold text-white cursor-pointer">
                   <input v-model="localConfig.translation[familySettings + '_optimizer_enabled']" type="checkbox" class="h-4 w-4 accent-blue-500" />
-                  {{ localConfig.translation[familySettings + '_optimizer_enabled'] ? '詞條與前文已啟用' : '啟用詞條與前文' }}
+                  {{ localConfig.translation[familySettings + '_optimizer_enabled'] ? '術語與前文已啟用' : '啟用術語與前文' }}
                 </label>
               </div>
               <div class="mt-4 flex flex-wrap items-center gap-2">
@@ -139,11 +175,11 @@ onMounted(scheduleFamilyDetection);
               </div>
               <p v-if="hyMt2HealthResult" class="mt-2 text-sm text-white/75" role="status">{{ hyMt2HealthResult }}</p>
               <div class="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-blue-400/20 bg-blue-400/5 px-3 py-2 text-sm text-white/70">
-                <span>詞條情境：{{ selectedGlossaryPresetLabel }}</span>
-                <UiSelect v-model="localConfig.translation.translation_glossary_scope" :options="[{ value: '', label: '全域詞條' }, ...glossaryScopeOptions]" />
+                <span>術語情境：{{ selectedGlossaryPresetLabel }}</span>
+                <UiSelect v-model="localConfig.translation.translation_glossary_scope" :options="[{ value: '', label: '全域術語' }, ...glossaryScopeOptions]" />
                 <span class="text-white/35">·</span>
                 <span>約 {{ effectiveGlossaryCount }} 個原詞</span>
-                <button type="button" class="text-blue-300 underline" @click="activeTab = 'terminology'">管理詞條</button>
+                <button type="button" class="text-blue-300 underline" @click="activeTab = 'terminology'">管理術語</button>
               </div>
               <details class="mt-4 border-t border-white/10 pt-4 space-y-3">
                 <summary class="cursor-pointer font-semibold text-blue-200">試譯與策略比較</summary>
@@ -157,11 +193,15 @@ onMounted(scheduleFamilyDetection);
                     <p class="text-white whitespace-pre-wrap">{{ previewResult[mode].translation || '未取得可用譯文' }}</p>
                     <p v-if="previewResult[mode].error" role="alert" class="text-sm text-red-300">{{ previewResult[mode].error }}</p>
                     <p class="text-xs text-white/60">耗時 {{ previewLatencyLabel(previewResult[mode].latency_ms) }} · 修正 {{ previewResult[mode].retry_count }} 次</p>
-                    <p class="text-xs text-white/60">命中詞：{{ JSON.stringify(previewResult[mode].glossary_hits) }}</p>
+                    <div class="flex flex-wrap items-center gap-1 text-xs text-white/60">
+                      <span>命中術語：</span>
+                      <span v-for="label in glossaryHitLabels(previewResult[mode].glossary_hits)" :key="label" class="rounded-full bg-blue-500/20 px-2 py-0.5">{{ label }}</span>
+                      <span v-if="!glossaryHitLabels(previewResult[mode].glossary_hits).length">無</span>
+                    </div>
                     <p class="text-xs text-white/60">驗證：{{ previewValidationStatus(previewResult[mode]) }}</p>
-                    <p class="text-xs text-white/45">{{ previewResult[mode].validation_enforced ? '異常輸出會拒絕並有界修正' : '基本結果僅顯示驗證診斷' }}</p>
+                    <p class="text-xs text-white/45">{{ previewResult[mode].validation_enforced ? '異常譯文會自動重試修正' : '基本結果只顯示檢查結果，不自動修正' }}</p>
                     <details v-if="previewResult[mode].attempts?.length" class="text-xs text-white/60">
-                      <summary class="cursor-pointer">檢視原始試譯與修正記錄</summary>
+                      <summary class="cursor-pointer">檢視技術記錄</summary>
                       <pre class="mt-2 whitespace-pre-wrap break-all">{{ JSON.stringify(previewResult[mode].attempts, null, 2) }}</pre>
                     </details>
                   </article>
@@ -178,23 +218,23 @@ onMounted(scheduleFamilyDetection);
                 <div class="mt-3 space-y-1 text-xs text-white/55">
                   <p>目前模型：{{ hyMt2EffectiveBackend }}</p>
                   <p>模型測試只確認連線與回應格式；設定會在重新開始翻譯工作階段後生效。</p>
-                  <p v-if="localConfig.translation[familySettings + '_glossary_folder']">JSON 詞條資料夾未計入上方數量。</p>
+                  <p v-if="localConfig.translation[familySettings + '_glossary_folder']">JSON 術語資料夾未計入上方數量。</p>
                 </div>
               <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
                 <div class="md:col-span-2">
-                  <label class="block text-white/70 mb-1">推理後端</label>
+                  <label class="block text-white/70 mb-1">模型伺服器</label>
                   <UiSelect v-model="localConfig.translation[familySettings + '_provider']" :options="[
-                    { value: 'existing', label: '沿用目前翻譯後端' },
+                    { value: 'existing', label: '沿用目前翻譯服務' },
                     { value: 'lm_studio', label: 'LM Studio' },
-                    { value: 'llama_cpp', label: 'llama.cpp / llama-server' }
+                    { value: 'llama_cpp', label: '本機 llama.cpp 伺服器' }
                   ]" />
                 </div>
                 <template v-if="localConfig.translation[familySettings + '_provider'] === 'lm_studio'">
                   <label class="text-white/70">LM Studio Server URL
                     <input v-model="localConfig.translation[familySettings + '_lm_studio_url']" type="text" placeholder="http://127.0.0.1:1234/v1" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
                   </label>
-                  <label class="text-white/70">模型 ID（須與伺服器提供的一致）
-                    <input v-model="localConfig.translation[familySettings + '_lm_studio_model']" type="text" placeholder="實際模型 ID" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
+                  <label class="text-white/70">模型名稱（需與伺服器顯示的一致）
+                    <input v-model="localConfig.translation[familySettings + '_lm_studio_model']" type="text" placeholder="伺服器上的模型名稱" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
                   </label>
                   <label class="text-white/70">此服務 API Key（選填）
                     <input v-model="localConfig.translation[familySettings + '_lm_studio_api_key']" type="password" autocomplete="off" placeholder="服務要求驗證時填寫" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
@@ -204,8 +244,8 @@ onMounted(scheduleFamilyDetection);
                   <label class="text-white/70">llama-server URL
                     <input v-model="localConfig.translation[familySettings + '_llama_cpp_url']" type="text" placeholder="http://127.0.0.1:8081/v1" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
                   </label>
-                  <label class="text-white/70">模型 ID（須與伺服器提供的一致）
-                    <input v-model="localConfig.translation[familySettings + '_llama_cpp_model']" type="text" placeholder="實際模型 ID" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
+                  <label class="text-white/70">模型名稱（需與伺服器顯示的一致）
+                    <input v-model="localConfig.translation[familySettings + '_llama_cpp_model']" type="text" placeholder="伺服器上的模型名稱" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
                   </label>
                   <label class="text-white/70">此服務 API Key（選填）
                     <input v-model="localConfig.translation[familySettings + '_llama_cpp_api_key']" type="password" autocomplete="off" placeholder="服務要求驗證時填寫" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
@@ -214,7 +254,7 @@ onMounted(scheduleFamilyDetection);
               </div>
               </div>
               <details class="mt-4 rounded-lg border border-white/10 p-3">
-                <summary class="cursor-pointer text-sm text-blue-200">詞條、前文與風格設定</summary>
+                <summary class="cursor-pointer text-sm text-blue-200">術語、前文與風格設定</summary>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
                 <label class="text-white/70 md:col-span-2">JSON 術語資料夾（選填；相對於設定檔）
                   <input v-model="localConfig.translation[familySettings + '_glossary_folder']" type="text" placeholder="例如：data/glossary" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />

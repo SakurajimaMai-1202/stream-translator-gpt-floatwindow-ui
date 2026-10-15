@@ -108,6 +108,68 @@ async def detect_family(request: DetectFamilyRequest):
     return {"family": family, "served_models": served}
 
 
+
+class ListModelsRequest(BaseModel):
+    backend: str
+    config: dict = {}
+
+
+@router.post("/list-models")
+async def list_models(request: ListModelsRequest):
+    """Read available cloud models without persisting settings or exposing secrets."""
+    import httpx
+    if len(json.dumps(request.config, ensure_ascii=False)) > 200000:
+        raise HTTPException(status_code=400, detail="設定資料過大")
+    if request.backend not in {'gpt', 'gemini'}:
+        raise HTTPException(status_code=400, detail="請選擇 GPT 或 Gemini 服務")
+    manager = get_config_manager()
+    config = copy.deepcopy(manager.get_config())
+    incoming = restore_masked_secrets(request.config, config)
+    for section in ('translation', 'llama'):
+        if isinstance(incoming.get(section), dict):
+            config.setdefault(section, {}).update(incoming[section])
+    translation = config.get('translation', {})
+    is_gpt = request.backend == 'gpt'
+    key = str(translation.get('openai_api_key' if is_gpt else 'google_api_key') or '').strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="請先填寫 API Key")
+    base = str(translation.get('gpt_base_url' if is_gpt else 'gemini_base_url') or '').strip()
+    base = base or ('https://api.openai.com/v1' if is_gpt else 'https://generativelanguage.googleapis.com/v1beta')
+    options = {'timeout': 10.0}
+    if is_gpt and translation.get('processing_proxy'):
+        options['proxy'] = translation['processing_proxy']
+    try:
+        models = set()
+        async with httpx.AsyncClient(**options) as client:
+            token = None
+            for _ in range(1 if is_gpt else 5):
+                params = {} if is_gpt else {'key': key}
+                if token:
+                    params['pageToken'] = token
+                response = await client.get(
+                    base.rstrip('/') + '/models', params=params,
+                    headers={'Authorization': f'Bearer {key}'} if is_gpt else {})
+                if response.status_code in {401, 403}:
+                    raise HTTPException(status_code=400, detail="API Key 無效或沒有讀取模型的權限")
+                response.raise_for_status()
+                data = response.json()
+                for model in data.get('data' if is_gpt else 'models', []):
+                    if not is_gpt and 'generateContent' not in model.get('supportedGenerationMethods', []):
+                        continue
+                    name = model.get('id' if is_gpt else 'name')
+                    if isinstance(name, str) and name:
+                        models.add(name if is_gpt else name.removeprefix('models/'))
+                token = data.get('nextPageToken')
+                if is_gpt or not token:
+                    break
+        return {'models': sorted(models)}
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=502, detail="無法載入模型，請檢查服務端點或稍後再試") from None
+
+
+
 def _resolve_preview_args(request: FamilyPreviewRequest):
     if not request.text.strip() or len(request.text) > 4000:
         raise HTTPException(status_code=400, detail="請輸入 1–4000 字的原文")

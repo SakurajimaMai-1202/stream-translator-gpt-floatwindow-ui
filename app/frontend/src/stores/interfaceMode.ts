@@ -1,8 +1,9 @@
+import { useLocalTranslationSetup } from '../composables/useLocalTranslationSetup';
 import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
 import { configApi, modelApi, runtimeApi, translationApi, type CpuAsrSidecarInstallStatus } from '../services/api';
 import { useModelDownloadStore } from './modelDownload';
-import { llamaApi, type ModelInstallStatus, type RuntimeInstallStatus, type TranslationModelRecommendationInfo } from '../services/llamaApi';
+import { llamaApi, type TranslationModelRecommendationInfo } from '../services/llamaApi';
 import { normalizeAsrLanguage } from '../utils/asrCapabilities';
 import { simpleAsrModel } from '../utils/simpleAsr';
 
@@ -31,8 +32,8 @@ export const useInterfaceModeStore = defineStore('interfaceMode', () => {
   const translationChoice = ref<'local' | 'cloud' | null>(null);
   const googleApiKey = ref('');
   const hardware = ref<TranslationModelRecommendationInfo | null>(null);
-  const runtimeInstallStatus = ref<RuntimeInstallStatus | null>(null);
-  const localModelInstallStatus = ref<ModelInstallStatus | null>(null);
+  const localSetup = useLocalTranslationSetup(setupMessage);
+  const { runtimeInstallStatus, localModelInstallStatus } = localSetup;
   const existingAsrStoragePath = ref('');
   const existingLlamaServerExe = ref('');
   const existingLlamaModelPath = ref('');
@@ -223,33 +224,6 @@ export const useInterfaceModeStore = defineStore('interfaceMode', () => {
     } finally { busy.value = false; }
   }
 
-  async function waitForRuntime() {
-    for (let index = 0; index < 3600; index++) {
-      const status = await llamaApi.getRuntimeInstallStatus();
-      runtimeInstallStatus.value = status;
-      setupMessage.value = status.message || '正在準備本機翻譯引擎…';
-      if (status.state === 'completed') return;
-      if (status.state === 'error') throw new Error(status.error || 'llama.cpp 安裝失敗');
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
-    throw new Error('llama.cpp 安裝逾時，請重試。');
-  }
-
-  async function waitForLocalModel(): Promise<string> {
-    for (let index = 0; index < 10800; index++) {
-      const status = await llamaApi.getSimpleModelInstallStatus();
-      localModelInstallStatus.value = status;
-      setupMessage.value = status.message || '正在下載本機翻譯模型…';
-      if (status.state === 'completed') {
-        if (!status.path) throw new Error('翻譯模型安裝完成，但找不到模型檔案。');
-        return status.path;
-      }
-      if (status.state === 'error') throw new Error(status.error || '翻譯模型下載失敗');
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
-    throw new Error('翻譯模型下載逾時，請重試。');
-  }
-
   async function finishSimpleMode() {
     setupMessage.value = '正在準備 CPU 語音辨識…';
     await prepareCpuAsr();
@@ -296,32 +270,7 @@ export const useInterfaceModeStore = defineStore('interfaceMode', () => {
     onboardingStep.value = 'preparing';
     translationChoice.value = 'local';
     try {
-      setupMessage.value = '正在選擇適合這台電腦的 llama.cpp…';
-      const release = await llamaApi.getRuntimeReleases();
-      const variant = release.recommended_variant;
-      if (!variant) throw new Error('無法判斷這台電腦適用的 llama.cpp Runtime。');
-      if (variant === 'cpu') throw new Error('簡單模式不使用 CPU llama.cpp Runtime，請選擇 Gemini 或到進階模式手動設定。');
-      const selected = release.variants.find(item => item.id === variant);
-      if (!selected?.installable) throw new Error(selected?.compatibility_error || '找不到可安裝的 llama.cpp Runtime。');
-      if (!(release.is_latest && release.installed_variant === variant)) {
-        await llamaApi.installRuntime(variant);
-        await waitForRuntime();
-      }
-      setupMessage.value = `正在下載 ${setup.quant} 翻譯模型…`;
-      await llamaApi.installSimpleModel(setup.model_id);
-      const modelPath = await waitForLocalModel();
-      const port = await llamaApi.getAvailablePort(8081);
-      await configApi.updateSection('llama', {
-        local_llm_enabled: false, model_dir: modelPath.replace(/[\\/][^\\/]+$/, ''), model_path: modelPath,
-        host: '127.0.0.1', port, n_ctx: 4096, n_gpu_layers: 999, n_threads: 4, n_parallel: 1,
-        temp: 0.7, top_p: 0.6, top_k: 20, repeat_penalty: 1.05, n_predict: 4096,
-        model_profile_id: 'hy-mt2-7b',
-        flash_attn: 'auto', no_mmap: false,
-      });
-      await configApi.updateSection('translation', { backend: 'llama' });
-      // 首次導引只安裝並設定 Runtime/模型。模型服務由使用者進入首頁後
-      // 透過「本地 LLM 翻譯」開關啟動，避免完成下載便立刻占用 VRAM。
-      setupMessage.value = `本機翻譯已準備完成（預設連接埠 ${port}），進入首頁後可手動啟動。`;
+      await localSetup.run(hardware.value);
       await finishSimpleMode();
     } catch (cause: any) {
       error.value = cause?.response?.data?.detail || cause?.message || '本機翻譯設定失敗，請重試。';

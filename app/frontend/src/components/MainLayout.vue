@@ -16,7 +16,7 @@ watch(() => interfaceMode.mode, (mode) => {
   )) void router.replace('/');
 });
 const visibleSettingsGroups = computed(() => interfaceMode.isSimple
-  ? [{ groupName: '常用設定', items: [{ id: 'general', name: '一般設定' }] }]
+  ? [{ groupName: '常用設定', items: [{ id: 'general', name: '一般設定' }, { id: 'local-translation', path: '/local-translation', name: '本地翻譯', icon: 'llm-models' }] }]
   : settingsGroups);
 const appVersion = import.meta.env.VITE_APP_VERSION || '1.4.10';
 const isMobileMenuOpen = ref(false);

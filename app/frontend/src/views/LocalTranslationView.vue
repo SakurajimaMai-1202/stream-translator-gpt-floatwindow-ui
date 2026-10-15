@@ -1,10 +1,68 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { useInterfaceModeStore } from '../stores/interfaceMode';
+import { cancelModelInstallWithRetry, useLocalTranslationSetup } from '../composables/useLocalTranslationSetup';
 import LlamaSettings from '../components/LlamaSettings.vue';
 import { useLlamaStore } from '../stores/llama';
 import { useTranslationStore } from '../stores/translation';
 import { configApi } from '../services/api';
 import { llamaApi, type ModelInstallStatus, type TranslationModelRecommendationInfo } from '../services/llamaApi';
+
+const interfaceMode = useInterfaceModeStore();
+const setup = useLocalTranslationSetup();
+const { running: settingUp, progress: setupPercent, cancelled: setupCancelled } = setup;
+const simpleReady = computed(() => !!llamaStore.serverStatus?.runtime?.installed && !!llamaStore.selectedModelPath);
+const setupSize = computed(() => {
+  const choice = data.value?.simple_setup;
+  const model = data.value?.models.find(item => item.id === choice?.model_id)
+    || data.value?.models.find(item => /hy-mt2-7b/i.test(item.id));
+  if (!model || !choice) return 0;
+  return choice.quant === model.minimum_quant ? model.minimum_size_gb : choice.quant === model.recommended_quant ? model.model_size_gb : 0;
+});
+const modelName = computed(() => {
+  const filename = llamaStore.selectedModelPath.split(/[\\/]/).pop() || '';
+  if (/hy[-_]?mt2/i.test(filename)) return /1[._]8b/i.test(filename) ? 'Hy-MT2 1.8B' : 'Hy-MT2 7B';
+  return filename.replace(/\.gguf$/i, '').replace(/[-_.]Q\d[^ ]*$/i, '').replace(/[-_]/g, ' ') || '翻譯模型';
+});
+const simpleStatus = computed(() => llamaStore.errorMessage || llamaStore.serverStatus?.last_error ? '錯誤'
+  : llamaStore.isServerReady ? '已就緒' : actionBusy.value || llamaStore.isServerRunning ? '啟動中' : '未啟動');
+const setupStep = computed(() => setupCancelled.value ? setup.setupMessage.value : settingUp.value
+  ? setup.phase.value === 'model' ? '正在下載翻譯模型…' : setup.phase.value === 'saving' ? '正在儲存設定…' : '正在準備翻譯引擎…' : '');
+const testText = ref('');
+const testResult = ref('');
+const testing = ref(false);
+async function startSetup() {
+  error.value = '';
+  try {
+    await setup.run(data.value);
+    if (!setupCancelled.value) { await llamaStore.loadConfig(); backend.value = 'llama'; }
+  } catch { if (!setupCancelled.value) error.value = '設定失敗，請檢查網路與磁碟空間後重試。'; }
+}
+async function cancelSetup() {
+  try { await setup.cancel(); }
+  catch { error.value = '取消失敗，請再試一次。'; }
+}
+async function toggleSimpleServer() {
+  actionBusy.value = true;
+  error.value = '';
+  try {
+    if (llamaStore.isServerRunning) await llamaStore.stopServer();
+    else {
+      await switchBackend();
+      if (backend.value === 'llama') await llamaStore.startServer();
+    }
+  } catch { error.value = '無法啟動或停止翻譯，請再試一次。'; }
+  finally { actionBusy.value = false; }
+}
+async function testSimpleTranslation() {
+  if (!testText.value.trim() || testing.value) return;
+  testing.value = true;
+  error.value = '';
+  testResult.value = '';
+  try { testResult.value = await llamaStore.translate(testText.value.trim(), 'auto', 'Traditional Chinese'); }
+  catch { error.value = '試譯失敗，請確認翻譯已啟動後再試。'; }
+  finally { testing.value = false; }
+}
 
 type CatalogModel = TranslationModelRecommendationInfo['models'][number];
 const llamaStore = useLlamaStore();
@@ -134,7 +192,7 @@ async function cancel() {
   actionBusy.value = true;
   ++statusGeneration;
   if (timer) clearTimeout(timer);
-  try { await applyStatus(await llamaApi.cancelModelInstall()); }
+  try { await applyStatus(await cancelModelInstallWithRetry()); }
   catch { error.value = '取消下載失敗，請再試一次。'; }
   finally { actionBusy.value = false; schedulePoll(); }
 }
@@ -164,7 +222,7 @@ async function restoreDownload() {
   } catch { error.value = '無法讀取下載狀態，請按「重試」。'; }
 }
 onMounted(async () => {
-  void load();
+  const recommendations = load();
   try {
     await llamaStore.initialize();
     directory.value = llamaStore.modelDirectory;
@@ -172,13 +230,61 @@ onMounted(async () => {
     const config = await configApi.getConfig();
     backend.value = config.translation?.backend || '';
   } catch { error.value = '無法讀取設定，請重新開啟此頁。'; }
-  await restoreDownload();
+  if (!interfaceMode.isSimple) await restoreDownload();
+  else {
+    try {
+      await recommendations;
+      if (disposed) return;
+      if (await setup.restore(data.value)) { await llamaStore.loadConfig(); backend.value = 'llama'; }
+      else if (setup.setupMessage.value) error.value = setup.setupMessage.value;
+    } catch { if (!setupCancelled.value && !disposed) error.value = '無法接續設定，請重試。'; }
+    finally { statusReady.value = true; }
+  }
 });
 onUnmounted(() => { disposed = true; ++statusGeneration; if (timer) clearTimeout(timer); });
 </script>
 
 <template>
-  <div class="commercial-page local-translation mx-auto max-w-7xl space-y-5 p-5">
+  <div v-if="interfaceMode.isSimple" class="commercial-page local-translation mx-auto max-w-xl space-y-5 p-5">
+    <h1 class="text-2xl font-bold">本地翻譯</h1>
+    <p v-if="error" class="notice error" role="alert">{{ error }}</p>
+    <p v-if="!ready || (!statusReady && !settingUp && !setupCancelled)">正在讀取設定…</p>
+    <section v-else-if="!simpleReady || settingUp || setupCancelled" class="commercial-panel p-4 space-y-4">
+      <h2>使用這台電腦翻譯</h2>
+      <p>自動下載適合這台電腦的翻譯引擎與模型{{ setupSize ? `，大約需要 ${setupSize} GB。` : '。' }}</p>
+      <template v-if="data?.simple_setup.supported === false">
+        <p>{{ data.simple_setup.reason }}</p>
+        <p>可在「一般設定」改用雲端翻譯，或切換到進階模式。</p>
+      </template>
+      <button v-else-if="!settingUp" class="commercial-primary-action" :disabled="!data || loading || !statusReady || setup.runtimeBackgroundBusy.value" @click="startSetup">開始設定</button>
+      <button v-if="!data && !loading" @click="load(true)">重新偵測</button>
+      <div v-if="settingUp || setupCancelled" class="space-y-3" role="status" aria-live="polite">
+        <p>{{ setupStep }}</p>
+        <template v-if="settingUp">
+          <progress :value="setupPercent" max="100" aria-label="設定進度" />
+          <p>{{ setupPercent }}%</p>
+          <button :disabled="setupCancelled || setup.phase.value === 'saving'" @click="cancelSetup">取消</button>
+        </template>
+      </div>
+    </section>
+    <template v-else>
+      <section class="commercial-panel p-4 space-y-4">
+        <h2>{{ modelName }}</h2>
+        <span class="badge" role="status">{{ simpleStatus }}</span>
+        <div><button class="commercial-primary-action" :disabled="actionBusy || llamaStore.isLoading || testing" @click="toggleSimpleServer">{{ llamaStore.isServerRunning ? '停止' : '啟動' }}</button></div>
+      </section>
+      <section class="commercial-panel p-4 space-y-3">
+        <h2>試譯</h2>
+        <label for="simple-test">輸入想翻譯的文字</label>
+        <textarea id="simple-test" v-model="testText" rows="4" placeholder="翻譯成繁體中文" />
+        <button :disabled="!llamaStore.isServerReady || testing || actionBusy || !testText.trim()" @click="testSimpleTranslation">{{ testing ? '翻譯中…' : '試譯' }}</button>
+        <p v-if="!llamaStore.isServerReady">啟動後即可試譯。</p>
+        <p v-if="testResult" class="whitespace-pre-wrap" role="status">{{ testResult }}</p>
+      </section>
+      <small>切換到進階模式以選擇其他模型</small>
+    </template>
+  </div>
+  <div v-else class="commercial-page local-translation mx-auto max-w-7xl space-y-5 p-5">
     <header><h1 class="text-2xl font-bold">本地翻譯</h1><p>選擇模型、啟動服務，再試譯一段文字。</p></header>
     <p v-if="error" class="notice error" role="alert">{{ error }}</p>
     <p v-if="llamaStore.errorMessage" class="notice error" role="alert">{{ llamaStore.errorMessage }}</p>
@@ -264,9 +370,10 @@ onUnmounted(() => { disposed = true; ++statusGeneration; if (timer) clearTimeout
 .local-translation { color: var(--fw-text); min-width: 0; overflow-wrap: anywhere; }
 h2 { font-size: 1.2rem; font-weight: 650; } h3 { font-weight: 650; }
 p, small { color: var(--fw-text-secondary); } small { display: block; }
-button, input { min-height: 44px; border: 1px solid var(--fw-border-strong); border-radius: var(--fw-radius-md); padding: .6rem .85rem; color: var(--fw-text); background: var(--fw-surface-raised); max-width: 100%; }
+button, input, textarea { min-height: 44px; border: 1px solid var(--fw-border-strong); border-radius: var(--fw-radius-md); padding: .6rem .85rem; color: var(--fw-text); background: var(--fw-surface-raised); max-width: 100%; }
 button:disabled { opacity: .5; cursor: not-allowed; } button { cursor: pointer; }
-input { width: 100%; min-width: 0; } button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid var(--fw-primary); outline-offset: 2px; }
+textarea { width: 100%; resize: vertical; }
+input { width: 100%; min-width: 0; } button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visible { outline: 2px solid var(--fw-primary); outline-offset: 2px; }
 .segments { display: flex; flex-wrap: wrap; gap: .5rem; } [aria-pressed="true"], .selected { border-color: var(--fw-primary); background: var(--fw-primary-soft); }
 .badge, .notice, .quant-info { padding: .5rem .75rem; border-radius: var(--fw-radius-md); background: var(--fw-surface-subtle); }
 .badge { font-size: .75rem; } .error { color: #ed9a9a; } .notice { margin-bottom: 1rem; }

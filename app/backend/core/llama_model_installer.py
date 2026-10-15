@@ -11,7 +11,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from backend.core.http_downloader import HttpDownloader
@@ -195,7 +195,10 @@ class LlamaModelInstaller:
             else:
                 filename, url, size, expected = self._resolve(catalog["repo"], quant)
             check_cancelled()
-            if not re.fullmatch(r"[A-Za-z0-9._-]+\.gguf", filename):
+            # Repos may keep a quant in a subfolder; only the saved file name must be safe.
+            repo_path = PurePosixPath(filename)
+            if (repo_path.is_absolute() or ".." in repo_path.parts or "\\" in filename
+                    or not re.fullmatch(r"[A-Za-z0-9._-]+\.gguf", repo_path.name)):
                 raise RuntimeError("模型檔名不安全，僅接受英數字、點、底線及連字號的 .gguf 檔案")
             self._set(job_id, filename=filename)
             target_dir = simple_model_directory() if model_id in MODELS else model_directory()

@@ -59,7 +59,7 @@ export function useLocalTranslationSetup(setupMessage: Ref<string> = ref('')) {
       localModelInstallStatus.value = await cancelModelInstallWithRetry(localModelInstallStatus.value.job_id);
       if (isModelInstallBusy(localModelInstallStatus.value)) {
         cancelled.value = false;
-        throw new Error("??????????????????");
+        throw new Error('下載工作已變更，無法取消；請重新整理此頁。');
       }
     }
   }
@@ -141,7 +141,7 @@ export function useLocalTranslationSetup(setupMessage: Ref<string> = ref('')) {
           localModelInstallStatus.value = await cancelModelInstallWithRetry(job.job_id);
           if (isModelInstallBusy(localModelInstallStatus.value)) {
             cancelled.value = false;
-            throw new Error("??????????????????");
+            throw new Error('下載工作已變更，無法取消；請重新整理此頁。');
           }
         }
       }

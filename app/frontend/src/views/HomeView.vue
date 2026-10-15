@@ -1029,12 +1029,14 @@ async function handleStart() {
     if (effectiveTranslationEnabled.value && ['llama', 'localllm'].includes(selectedBackend.value)
       && !externalFamilyEndpoint.value && llamaStore.isServerReady && adopted.gpu_selection?.mode === 'external') {
       const url = adopted.server_url || '';
-      const current = adopted.current_model || '';
-      addLog(`使用連接埠上已在執行的翻譯服務：${url}（${current}）`);
+      // The probe reports 未知模型 when the server does not name its model.
+      const reported = adopted.current_model || '';
+      const current = reported === '未知模型' ? '' : reported;
+      addLog(`使用連接埠上已在執行的翻譯服務：${url}（${reported || '未知模型'}）`);
       const selected = llamaStore.selectedModelPath.split(/[\\/]/).pop() || '';
       const selectedStem = selected.replace(/\.gguf$/i, '').toLowerCase();
       const currentStem = current.replace(/\.gguf$/i, '').toLowerCase();
-      if (!current.trim()) addLog('????????????');
+      if (!current.trim()) addLog('無法確認執行中的模型名稱');
       if (selectedStem && current.trim() && !currentStem.includes(selectedStem) && !selectedStem.includes(currentStem)) {
         adoptedWarning.value = `⚠️ 使用連接埠上已在執行的翻譯服務：${url}（${current}），不是所選的 ${selected}。`;
         addLog(adoptedWarning.value);

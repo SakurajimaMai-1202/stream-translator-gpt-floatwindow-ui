@@ -136,7 +136,7 @@ watch(() => route.fullPath, () => {
       <template v-if="interfaceMode.onboardingStep === 'mode'">
       <h1 id="interface-mode-title" class="text-2xl font-bold">第一次使用，選擇操作方式</h1>
       <p class="text-sm text-slate-300">簡單模式會自動準備語音辨識與翻譯；選擇會記住，之後可在側欄切換。</p>
-      <p v-if="interfaceMode.localJobBusy" class="text-sm text-amber-200">??????????????????</p>
+      <p v-if="interfaceMode.localJobBusy" class="text-sm text-amber-200">下載或設定進行中，完成後才能切換模式。</p>
       <div v-if="interfaceMode.loaded" class="grid gap-4 sm:grid-cols-2">
         <button :disabled="interfaceMode.busy || interfaceMode.localJobBusy" class="rounded-2xl border border-indigo-400 bg-indigo-500/15 p-6 text-left disabled:opacity-50" @click="interfaceMode.select('simple')">
           <span class="block text-lg font-bold">簡單模式 · 推薦</span>

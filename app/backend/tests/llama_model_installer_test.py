@@ -365,7 +365,20 @@ def test_cancel_route_optional_job_id(monkeypatch, body):
         assert installer._cancel.is_set()
 
 
-@pytest.mark.parametrize("filename", ["../model-Q4_K_M.gguf", "sub/model-Q4_K_M.gguf",
+def test_quant_in_a_repo_subfolder_is_saved_by_its_file_name(tmp_path, monkeypatch):
+    payload = b"gguf"
+    digest = hashlib.sha256(payload).hexdigest()
+    installer = models.LlamaModelInstaller()
+    monkeypatch.setattr(installer, "_resolve", lambda *a: ("Q4_K_M/model-Q4_K_M.gguf", "url", len(payload), digest))
+    monkeypatch.setattr(models, "model_directory", lambda: tmp_path)
+    monkeypatch.setattr(models.HttpDownloader, "download", lambda self, url, path: path.write_bytes(payload))
+    job = installer.begin("index-translate-2b")
+    installer.install(job, "index-translate-2b")
+    assert installer.status()["state"] == "completed"
+    assert (tmp_path / "model-Q4_K_M.gguf").read_bytes() == payload
+
+
+@pytest.mark.parametrize("filename", ["../model-Q4_K_M.gguf", "/abs/model-Q4_K_M.gguf",
     "sub\\model-Q4_K_M.gguf", "model Q4_K_M.gguf", "model:Q4_K_M.gguf", "model-Q4_K_M.GGUF",
     "model-Q4_K_M.gguf\n"])
 def test_unsafe_resolved_filename_never_downloads(tmp_path, monkeypatch, filename):

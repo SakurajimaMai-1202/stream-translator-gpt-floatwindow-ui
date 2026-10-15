@@ -90,7 +90,7 @@ watch([install, setup.localModelInstallStatus], ([download, model]) => {
 watch(setup.runtimeInstallStatus, status => {
   if (status) interfaceMode.runtimeInstallStatus = status;
 }, { flush: 'sync' });
-const locked = computed(() => interfaceMode.localJobBusy || !ready.value || !statusReady.value || busy.value || actionBusy.value || llamaStore.isLoading);
+const locked = computed(() => interfaceMode.localTranslationJobBusy || !ready.value || !statusReady.value || busy.value || actionBusy.value || llamaStore.isLoading);
 const visibleModels = computed(() => (data.value?.models || []).filter(model =>
   filter.value === 'recommended' ? model.fit === 'recommended' : filter.value === 'novel_game' ? model.category === 'novel_game' : true));
 const localModels = computed(() => llamaStore.models.filter(model => model.name.toLowerCase().includes(search.value.trim().toLowerCase())));
@@ -206,7 +206,7 @@ async function cancel() {
   try {
     const status = await cancelModelInstallWithRetry(install.value?.job_id);
     await applyStatus(status);
-    if (isModelInstallBusy(status)) error.value = '??????????????????';
+    if (isModelInstallBusy(status)) error.value = '下載工作已變更，無法取消；請重新整理此頁。';
   }
   catch { error.value = '取消下載失敗，請再試一次。'; }
   finally { actionBusy.value = false; schedulePoll(); }

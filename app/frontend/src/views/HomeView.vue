@@ -1036,7 +1036,13 @@ async function handleStart() {
       const selected = llamaStore.selectedModelPath.split(/[\\/]/).pop() || '';
       const selectedStem = selected.replace(/\.gguf$/i, '').toLowerCase();
       const currentStem = current.replace(/\.gguf$/i, '').toLowerCase();
-      if (!current.trim()) addLog('無法確認執行中的模型名稱');
+      if (!current.trim()) {
+        addLog('無法確認執行中的模型名稱');
+        if (selected) {
+          adoptedWarning.value = `⚠️ 使用連接埠上已在執行的翻譯服務：${url}，無法確認是否為所選的 ${selected}。`;
+          addLog(adoptedWarning.value);
+        }
+      }
       if (selectedStem && current.trim() && !currentStem.includes(selectedStem) && !selectedStem.includes(currentStem)) {
         adoptedWarning.value = `⚠️ 使用連接埠上已在執行的翻譯服務：${url}（${current}），不是所選的 ${selected}。`;
         addLog(adoptedWarning.value);

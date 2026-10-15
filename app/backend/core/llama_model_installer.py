@@ -200,7 +200,7 @@ class LlamaModelInstaller:
             if (repo_path.is_absolute() or ".." in repo_path.parts or "\\" in filename
                     or not re.fullmatch(r"[A-Za-z0-9._-]+\.gguf", repo_path.name)):
                 raise RuntimeError("模型檔名不安全，僅接受英數字、點、底線及連字號的 .gguf 檔案")
-            self._set(job_id, filename=filename)
+            self._set(job_id, filename=repo_path.name)
             target_dir = simple_model_directory() if model_id in MODELS else model_directory()
             self._set(job_id, directory=str(target_dir))
             target_dir.mkdir(parents=True, exist_ok=True)

@@ -327,6 +327,7 @@ class RuntimeInstallRequest(BaseModel):
 
 class ModelInstallRequest(BaseModel):
     model_id: str
+    quant: str = ""
 
 class RuntimePathRequest(BaseModel):
     server_exe: str
@@ -709,10 +710,15 @@ async def get_model_install_status():
     return model_installer.status()
 
 
+@router.post("/model/install/cancel")
+async def cancel_model_install():
+    return model_installer.cancel()
+
+
 @router.post("/model/install")
 async def install_model(request: ModelInstallRequest, background_tasks: BackgroundTasks):
     try:
-        job_id = model_installer.begin(request.model_id)
+        job_id = model_installer.begin(request.model_id, request.quant)
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     background_tasks.add_task(model_installer.install, job_id, request.model_id)

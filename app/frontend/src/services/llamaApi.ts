@@ -178,7 +178,10 @@ export interface TranslationModelRecommendationInfo {
 }
 
 export interface ModelInstallStatus {
-  state: 'idle' | 'resolving' | 'downloading' | 'verifying' | 'completed' | 'error';
+  catalog_id: string;
+  quant: string;
+  deployment_config: ModelProfile['deployment_config'];
+  state: 'idle' | 'resolving' | 'downloading' | 'verifying' | 'completed' | 'cancelled' | 'error';
   message: string; progress: number; job_id: string; model_id: string; filename: string;
   path: string; bytes_downloaded: number; bytes_total: number; sha256: string; error: string;
 }
@@ -220,8 +223,12 @@ export const llamaApi = {
     const response = await axios.post(`${API_BASE}/model/validate`, { model_path: modelPath });
     return response.data;
   },
-  async installSimpleModel(modelId: string): Promise<{ success: boolean; message: string; job_id: string }> {
-    const response = await axios.post(`${API_BASE}/model/install`, { model_id: modelId });
+  async installSimpleModel(modelId: string, quant = ''): Promise<{ success: boolean; message: string; job_id: string }> {
+    const response = await axios.post(`${API_BASE}/model/install`, { model_id: modelId, quant });
+    return response.data;
+  },
+  async cancelModelInstall(): Promise<ModelInstallStatus> {
+    const response = await axios.post(`${API_BASE}/model/install/cancel`);
     return response.data;
   },
   async getSimpleModelInstallStatus(): Promise<ModelInstallStatus> {

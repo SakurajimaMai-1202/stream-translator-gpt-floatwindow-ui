@@ -8,6 +8,7 @@ param(
     [switch]$SkipFullZip,
     [string]$SharedGuiDir = "",
     [string]$SevenZipPath = "",
+    [string]$LlamaRuntimeSource = "",
     [ValidateRange(0, 9)][int]$CompressionLevel = 7,
     [ValidateRange(1, 128)][int]$CopyThreads = 16,
     [switch]$SkipRuntimeDependenciesInAppUpdate,
@@ -291,10 +292,22 @@ foreach ($name in @("ffmpeg.exe", "ffprobe.exe")) {
     if (Test-Path $source) { Copy-Item $source $ffmpegTarget }
 }
 
-# llama.cpp Runtime is installed on demand by the application and is intentionally
-# excluded from all Full packages. This keeps the three profiles smaller
-# and prevents an obsolete bundled server from being used accidentally.
-if (Test-Path -LiteralPath (Join-Path $releaseRoot "llama")) {
+# llama.cpp Runtime is installed on demand by the application and is excluded from
+# Full packages by default. -LlamaRuntimeSource opts in to a pre-seeded `llama`
+# folder (runtimes\<tag>-<variant> + active-runtime.txt) for a specific build.
+if ($LlamaRuntimeSource) {
+    $llamaSource = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($LlamaRuntimeSource)
+    $activeMarker = Join-Path $llamaSource "active-runtime.txt"
+    if (-not (Test-Path -LiteralPath $activeMarker -PathType Leaf)) {
+        throw "LlamaRuntimeSource missing active-runtime.txt: $llamaSource"
+    }
+    $activeRelative = (Get-Content -LiteralPath $activeMarker -Raw -Encoding utf8).Trim()
+    if (-not (Test-Path -LiteralPath (Join-Path $llamaSource "$activeRelative\llama-server.exe") -PathType Leaf)) {
+        throw "LlamaRuntimeSource active runtime has no llama-server.exe: $activeRelative"
+    }
+    Invoke-FastDirectoryCopy -Source $llamaSource -Destination (Join-Path $releaseRoot "llama") -Threads $CopyThreads
+    Write-Host "Bundled llama runtime: $activeRelative" -ForegroundColor Green
+} elseif (Test-Path -LiteralPath (Join-Path $releaseRoot "llama")) {
     throw "Packaging guard failed: llama folder must not be included in v$Version package"
 }
 

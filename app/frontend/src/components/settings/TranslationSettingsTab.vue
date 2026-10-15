@@ -29,10 +29,9 @@ onMounted(scheduleFamilyDetection);
                   <p class="text-white/40 text-xs mt-1">翻譯的目標語言</p>
                 </div>
               </div>
-            </div>
 
             <!-- OpenAI GPT 設定 -->
-            <div v-if="localConfig.translation.backend === 'gpt'" class="bg-gradient-to-br from-green-500/10 to-blue-500/10 rounded-xl p-5 border border-green-500/20">
+            <div v-if="localConfig.translation.backend === 'gpt'" class="mt-4">
               <h3 class="text-lg font-semibold text-green-300 mb-4">OpenAI GPT</h3>
               <div class="space-y-4">
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -68,7 +67,7 @@ onMounted(scheduleFamilyDetection);
             </div>
 
             <!-- Google Gemini 設定 -->
-            <div v-if="localConfig.translation.backend === 'gemini'" class="bg-gradient-to-br from-blue-500/10 to-indigo-500/10 rounded-xl p-5 border border-blue-500/20">
+            <div v-if="localConfig.translation.backend === 'gemini'" class="mt-4">
               <h3 class="text-lg font-semibold text-blue-300 mb-4">Google Gemini</h3>
               <div class="space-y-4">
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -103,17 +102,27 @@ onMounted(scheduleFamilyDetection);
               </div>
             </div>
 
-            <section v-if="localConfig.translation.backend.startsWith('custom:')" class="apple-current-service">
+            <section v-if="localConfig.translation.backend.startsWith('custom:')" class="apple-current-service mt-4">
               <div><h3>目前自訂服務</h3><p>{{ localConfig.translation.backend.replace('custom:', '') }}</p></div>
               <div class="apple-endpoint-copy" v-for="model in (localConfig.translation.custom_models || []).filter((item: any) => item.name === localConfig.translation.backend.replace('custom:', ''))" :key="model.name">
                 <span>{{ model.model_name || '未指定模型 ID' }}</span><span>{{ model.base_url || model.api_base || '預設端點' }}</span>
               </div>
             </section>
+              <div v-if="localConfig.translation.backend !== 'none'" class="mt-4">
+                <label class="flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer hover:bg-white/10 transition">
+                  <input v-model="localConfig.translation.paired_subtitle_mode" type="checkbox"
+                    class="w-5 h-5 accent-blue-500 mt-0.5" />
+                  <div>
+                    <span class="text-white font-medium">原文與翻譯成對顯示</span>
+                    <p class="text-white/50 text-sm mt-1">翻譯完成前不顯示該組字幕；翻譯失敗時略過整組，避免原文與譯文錯位。</p>
+                  </div>
+                </label>
+              </div>
+            </div>
             <!-- 進階翻譯設定 (所有後端共用，但不翻譯時隱藏) -->
             <div v-if="localConfig.translation.backend !== 'none'" class="bg-white/5 rounded-xl p-5 border border-white/10">
-              <h3 class="text-lg font-semibold text-blue-300 mb-4">模型翻譯策略</h3>
-              <UiSelect aria-label="模型翻譯策略" v-model="localConfig.translation.translation_model_family" :options="translationModelFamilyOptions" />
-              <p class="text-white/40 text-xs mt-2">目前家族：{{ activeTranslationFamily }}<template v-if="servedModels.length">（伺服器模型：{{ servedModels[0] }}）</template>。偵測不到時，請手動指定策略。</p>
+              <h3 class="commercial-section-title">翻譯優化</h3>
+              <p class="text-white/40 text-xs mt-2"><template v-if="localConfig.translation.translation_model_family === 'auto' && ['hy_mt2', 'index_translate'].includes(activeTranslationFamily)">已自動偵測到 {{ familyLabel }}<template v-if="servedModels.length">（伺服器模型：{{ servedModels[0] }}）</template></template><template v-else>目前家族：{{ translationModelFamilyOptions.find(option => option.value === activeTranslationFamily)?.label || '一般翻譯' }}<template v-if="servedModels.length">（伺服器模型：{{ servedModels[0] }}）</template>。如果模型沒有被正確識別，可在下方「進階：模型與推理設定」手動指定。</template></p>
               <div v-if="['hy_mt2', 'index_translate'].includes(activeTranslationFamily)" class="mt-4 border-t border-white/10 pt-4">
               <div class="flex flex-wrap items-start justify-between gap-4">
                 <div>
@@ -136,6 +145,35 @@ onMounted(scheduleFamilyDetection);
                 <span>約 {{ effectiveGlossaryCount }} 個原詞</span>
                 <button type="button" class="text-blue-300 underline" @click="activeTab = 'terminology'">管理詞條</button>
               </div>
+              <details class="mt-4 border-t border-white/10 pt-4 space-y-3">
+                <summary class="cursor-pointer font-semibold text-blue-200">試譯與策略比較</summary>
+                <textarea v-model="previewText" maxlength="4000" rows="3" aria-label="試譯日文" placeholder="輸入目前要翻譯的日文" class="w-full rounded-lg border border-white/20 bg-white/5 p-3 text-white" />
+                <textarea v-model="previewContext" maxlength="4000" rows="2" aria-label="試譯前文" placeholder="前文（選填；每行一句，最多 5 句）" class="w-full rounded-lg border border-white/20 bg-white/5 p-3 text-white" />
+                <button type="button" :disabled="previewBusy || !previewText.trim()" class="rounded-lg bg-blue-500/25 px-3 py-2 text-blue-100 disabled:opacity-50" @click="runTranslationPreview">{{ previewBusy ? '正在比較…' : '比較基本與優化' }}</button>
+                <p v-if="previewError" role="alert" class="text-red-300">{{ previewError }}</p>
+                <div v-if="previewResult" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <article v-for="mode in ['basic', 'optimized']" :key="mode" class="rounded-lg border border-white/15 p-3 space-y-2">
+                    <h5 class="text-blue-200">{{ mode === 'basic' ? (activeTranslationFamily === 'hy_mt2' ? '基本翻譯（沿用詞庫）' : '基本翻譯') : '優化翻譯' }}</h5>
+                    <p class="text-white whitespace-pre-wrap">{{ previewResult[mode].translation || '未取得可用譯文' }}</p>
+                    <p v-if="previewResult[mode].error" role="alert" class="text-sm text-red-300">{{ previewResult[mode].error }}</p>
+                    <p class="text-xs text-white/60">耗時 {{ previewLatencyLabel(previewResult[mode].latency_ms) }} · 修正 {{ previewResult[mode].retry_count }} 次</p>
+                    <p class="text-xs text-white/60">命中詞：{{ JSON.stringify(previewResult[mode].glossary_hits) }}</p>
+                    <p class="text-xs text-white/60">驗證：{{ previewValidationStatus(previewResult[mode]) }}</p>
+                    <p class="text-xs text-white/45">{{ previewResult[mode].validation_enforced ? '異常輸出會拒絕並有界修正' : '基本結果僅顯示驗證診斷' }}</p>
+                    <details v-if="previewResult[mode].attempts?.length" class="text-xs text-white/60">
+                      <summary class="cursor-pointer">檢視原始試譯與修正記錄</summary>
+                      <pre class="mt-2 whitespace-pre-wrap break-all">{{ JSON.stringify(previewResult[mode].attempts, null, 2) }}</pre>
+                    </details>
+                  </article>
+                </div>
+                <p class="text-xs text-white/45">試譯使用目前設定與直播相同策略；結果不代表日文譯意已人工驗證。</p>
+              </details>
+              </div>
+              <details class="apple-inline-disclosure mt-4">
+                <summary>進階：模型與推理設定</summary>
+                <div class="apple-disclosure-body">
+              <UiSelect aria-label="模型翻譯策略" v-model="localConfig.translation.translation_model_family" :options="translationModelFamilyOptions" />
+              <div v-if="['hy_mt2', 'index_translate'].includes(activeTranslationFamily)">
               <div class="mt-4">
                 <div class="mt-3 space-y-1 text-xs text-white/55">
                   <p>目前模型：{{ hyMt2EffectiveBackend }}</p>
@@ -200,30 +238,9 @@ onMounted(scheduleFamilyDetection);
                 <label class="flex items-center gap-2 text-white/70"><input v-model="localConfig.translation[familySettings + '_debug']" type="checkbox" />記錄提示詞與輸出（包含字幕內容）</label>
               </div>
               </details>
-              <details class="mt-4 border-t border-white/10 pt-4 space-y-3">
-                <summary class="cursor-pointer font-semibold text-blue-200">試譯與策略比較</summary>
-                <textarea v-model="previewText" maxlength="4000" rows="3" aria-label="試譯日文" placeholder="輸入目前要翻譯的日文" class="w-full rounded-lg border border-white/20 bg-white/5 p-3 text-white" />
-                <textarea v-model="previewContext" maxlength="4000" rows="2" aria-label="試譯前文" placeholder="前文（選填；每行一句，最多 5 句）" class="w-full rounded-lg border border-white/20 bg-white/5 p-3 text-white" />
-                <button type="button" :disabled="previewBusy || !previewText.trim()" class="rounded-lg bg-blue-500/25 px-3 py-2 text-blue-100 disabled:opacity-50" @click="runTranslationPreview">{{ previewBusy ? '正在比較…' : '比較基本與優化' }}</button>
-                <p v-if="previewError" role="alert" class="text-red-300">{{ previewError }}</p>
-                <div v-if="previewResult" class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <article v-for="mode in ['basic', 'optimized']" :key="mode" class="rounded-lg border border-white/15 p-3 space-y-2">
-                    <h5 class="text-blue-200">{{ mode === 'basic' ? (activeTranslationFamily === 'hy_mt2' ? '基本翻譯（沿用詞庫）' : '基本翻譯') : '優化翻譯' }}</h5>
-                    <p class="text-white whitespace-pre-wrap">{{ previewResult[mode].translation || '未取得可用譯文' }}</p>
-                    <p v-if="previewResult[mode].error" role="alert" class="text-sm text-red-300">{{ previewResult[mode].error }}</p>
-                    <p class="text-xs text-white/60">耗時 {{ previewLatencyLabel(previewResult[mode].latency_ms) }} · 修正 {{ previewResult[mode].retry_count }} 次</p>
-                    <p class="text-xs text-white/60">命中詞：{{ JSON.stringify(previewResult[mode].glossary_hits) }}</p>
-                    <p class="text-xs text-white/60">驗證：{{ previewValidationStatus(previewResult[mode]) }}</p>
-                    <p class="text-xs text-white/45">{{ previewResult[mode].validation_enforced ? '異常輸出會拒絕並有界修正' : '基本結果僅顯示驗證診斷' }}</p>
-                    <details v-if="previewResult[mode].attempts?.length" class="text-xs text-white/60">
-                      <summary class="cursor-pointer">檢視原始試譯與修正記錄</summary>
-                      <pre class="mt-2 whitespace-pre-wrap break-all">{{ JSON.stringify(previewResult[mode].attempts, null, 2) }}</pre>
-                    </details>
-                  </article>
-                </div>
-                <p class="text-xs text-white/45">試譯使用目前設定與直播相同策略；結果不代表日文譯意已人工驗證。</p>
-              </details>
               </div>
+                </div>
+              </details>
             </div>
                         <!-- 自訂模型管理（固定顯示，避免切換後端時找不到） -->
             <details class="apple-disclosure"><summary>自訂模型管理<span>{{ localConfig.translation.custom_models?.length || 0 }} 個服務</span></summary><div class="apple-disclosure-body">
@@ -271,7 +288,7 @@ onMounted(scheduleFamilyDetection);
 
 
             <details v-if="localConfig.translation.backend !== 'none'" class="apple-disclosure">
-              <summary>字幕處理與進階設定</summary><div class="apple-disclosure-body">
+              <summary>進階設定</summary><div class="apple-disclosure-body">
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
 
 
@@ -321,17 +338,6 @@ onMounted(scheduleFamilyDetection);
                   <input v-model.number="localConfig.translation.translation_max_output_tokens" type="number" min="16" max="2048" step="16"
                     class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
                   <p class="text-white/40 text-xs mt-1">直播短字幕建議 128，較長字幕可使用 192 或 256。</p>
-                </div>
-
-                <div class="md:col-span-2">
-                  <label class="flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer hover:bg-white/10 transition">
-                    <input v-model="localConfig.translation.paired_subtitle_mode" type="checkbox"
-                      class="w-5 h-5 accent-blue-500 mt-0.5" />
-                    <div>
-                      <span class="text-white font-medium">原文與翻譯成對顯示</span>
-                      <p class="text-white/50 text-sm mt-1">翻譯完成前不顯示該組字幕；翻譯失敗時略過整組，避免原文與譯文錯位。</p>
-                    </div>
-                  </label>
                 </div>
 
                 <div>
@@ -392,11 +398,7 @@ onMounted(scheduleFamilyDetection);
                 </div>
 
               </div>
-            </div></details>
-
-            <!-- 翻譯提示詞設定 (所有後端共用，但不翻譯時隱藏) -->
-            <details v-if="localConfig.translation.backend !== 'none'" class="apple-disclosure">
-              <summary>提示詞設定</summary><div class="apple-disclosure-body">
+              <section class="mt-5"><h4 class="commercial-section-title mb-3">提示詞設定</h4>
               <div class="space-y-4">
                 <label class="flex items-center gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer hover:bg-white/10 transition">
                   <input v-model="localConfig.translation.use_smart_prompt" type="checkbox" class="w-5 h-5 accent-blue-500" />
@@ -414,7 +416,9 @@ onMounted(scheduleFamilyDetection);
                   <p class="text-white/40 text-sm mt-2">關閉智能提示詞時，將使用此提示詞進行翻譯。</p>
                 </div>
               </div>
+              </section>
             </div></details>
+
           </div>
 </template>
 

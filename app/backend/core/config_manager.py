@@ -1276,12 +1276,12 @@ class ConfigManager:
                 and family not in {'hy_mt2', 'index_translate'}
                 and args.get('translation_provider') == 'openai_compatible'):
             # An alias such as "localllm" hides the family; ask the server what it serves.
-            from backend.core.model_identity import detect_served_family, family_probe_target
+            from backend.core.model_identity import detect_served_family, family_probe_target, is_loopback_probe
             probe_url, fallback_model = family_probe_target(backend, config, args)
             served_family = ''
-            if probe_url:
+            if is_loopback_probe(probe_url):
                 served_family, _ = detect_served_family(probe_url, args.get('openai_api_key', ''),
-                                                        args['translation_provider'])
+                                                        args['translation_provider'], args.get('gpt_model', ''))
             if not served_family and fallback_model:
                 # Server not up yet: the model selected in Llama settings is what it will load.
                 fallback_family = resolve_model_family('auto', fallback_model, args['translation_provider'])

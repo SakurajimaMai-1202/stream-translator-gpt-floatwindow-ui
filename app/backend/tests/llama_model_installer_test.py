@@ -341,3 +341,92 @@ def test_cancel_route_cancels_running_job(monkeypatch):
     assert result["progress"] == 0.0
     assert result["bytes_downloaded"] == 0
     assert installer._cancel.is_set()
+
+
+@pytest.mark.parametrize("body", ["matching", "empty", "stale"])
+def test_cancel_route_optional_job_id(monkeypatch, body):
+    from backend.api import llama
+
+    installer = models.LlamaModelInstaller()
+    monkeypatch.setattr(llama, "model_installer", installer)
+    job = installer.begin("hy-mt2-q6-k")
+    before = installer.status()
+    request = llama.ModelInstallCancelRequest(**({} if body == "empty" else {
+        "job_id": job if body == "matching" else "old-job"}))
+    if body == "stale":
+        with pytest.raises(llama.HTTPException) as error:
+            asyncio.run(llama.cancel_model_install(request))
+        assert error.value.status_code == 409
+        assert error.value.detail == "\u4e0b\u8f09\u5de5\u4f5c\u5df2\u8b8a\u66f4\uff0c\u8acb\u91cd\u65b0\u6574\u7406"
+        assert installer.status() == before
+        assert not installer._cancel.is_set()
+    else:
+        assert asyncio.run(llama.cancel_model_install(request))["state"] == "cancelled"
+        assert installer._cancel.is_set()
+
+
+@pytest.mark.parametrize("filename", ["../model-Q4_K_M.gguf", "sub/model-Q4_K_M.gguf",
+    "sub\\model-Q4_K_M.gguf", "model Q4_K_M.gguf", "model:Q4_K_M.gguf", "model-Q4_K_M.GGUF",
+    "model-Q4_K_M.gguf\n"])
+def test_unsafe_resolved_filename_never_downloads(tmp_path, monkeypatch, filename):
+    installer = models.LlamaModelInstaller()
+    monkeypatch.setattr(installer, "_resolve", lambda *a: (filename, "url", 4, "a" * 64))
+    monkeypatch.setattr(models, "model_directory", lambda: tmp_path)
+    monkeypatch.setattr(models.HttpDownloader, "download", lambda *a: pytest.fail("unsafe download"))
+    job = installer.begin("index-translate-2b")
+    installer.install(job, "index-translate-2b")
+    assert installer.status()["state"] == "error"
+    assert "\u6a94\u540d\u4e0d\u5b89\u5168" in installer.status()["error"]
+    assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("old_payload", [b"different size", b"bad!"])
+def test_existing_mismatched_file_is_preserved(tmp_path, monkeypatch, old_payload):
+    payload = b"gguf"
+    digest = hashlib.sha256(payload).hexdigest()
+    installer = models.LlamaModelInstaller()
+    model_id = "hy-mt2-q6-k"
+    target = tmp_path / models.MODELS[model_id]
+    target.write_bytes(old_payload)
+    alternate = target.with_name(f"{target.stem}.{digest[:8]}.gguf")
+    monkeypatch.setattr(models, "simple_model_directory", lambda: tmp_path)
+    monkeypatch.setattr(installer, "_metadata", lambda *a: ("url", len(payload), digest))
+    monkeypatch.setattr(models.HttpDownloader, "download", lambda self, url, path: path.write_bytes(payload))
+    job = installer.begin(model_id)
+    installer.install(job, model_id)
+    assert target.read_bytes() == old_payload
+    assert alternate.read_bytes() == payload
+    assert installer.status()["path"] == str(alternate)
+    assert installer.status()["filename"] == alternate.name
+    assert installer.status()["state"] == "completed"
+    monkeypatch.setattr(models.HttpDownloader, "download", lambda *a: pytest.fail("verified alternate"))
+    installer.install(installer.begin(model_id), model_id)
+    assert installer.status()["state"] == "completed"
+    alternate.write_bytes(b"another file")
+    installer.install(installer.begin(model_id), model_id)
+    assert installer.status()["state"] == "error"
+    assert alternate.read_bytes() == b"another file"
+    assert target.read_bytes() == old_payload
+
+
+def test_status_directory_uses_fallback_for_stale_config(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys.modules["backend.api.config"], "_read_config",
+                        lambda: {"llama": {"model_dir": str(tmp_path / "missing")}})
+    fallback = tmp_path / "fallback"
+    monkeypatch.setattr(models, "simple_model_directory", lambda: fallback)
+    installer = models.LlamaModelInstaller()
+    payload = b"gguf"
+    monkeypatch.setattr(installer, "_resolve", lambda *a: (
+        "model-Q4_K_M.gguf", "url", len(payload), hashlib.sha256(payload).hexdigest()))
+
+    def download(self, url, path):
+        assert installer.status()["directory"] == str(fallback)
+        assert installer.status()["state"] == "downloading"
+        path.write_bytes(payload)
+
+    monkeypatch.setattr(models.HttpDownloader, "download", download)
+    job = installer.begin("index-translate-2b")
+    installer.install(job, "index-translate-2b")
+    assert installer.status()["state"] == "completed"
+    assert installer.status()["directory"] == str(fallback)
+    assert installer.status()["path"] == str(fallback / "model-Q4_K_M.gguf")

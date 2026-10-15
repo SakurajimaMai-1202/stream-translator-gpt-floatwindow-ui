@@ -1,3 +1,4 @@
+import asyncio
 import copy
 import json
 from types import SimpleNamespace
@@ -140,8 +141,9 @@ def test_other_source_cannot_start_while_process_task_runs(monkeypatch):
     monkeypatch.setattr(api, 'get_config_manager', lambda: Manager())
     monkeypatch.setattr(api, 'active_translations', {'existing': SimpleNamespace(running=True, config={'url': 'process_audio'})})
     monkeypatch.setattr(api, 'create_task', lambda *args: pytest.fail('must not start second model'))
+    # start_translation builds its args off the event loop (asyncio.to_thread), so it needs a real loop.
     with pytest.raises(HTTPException) as exc:
-        run_inline(api.start_translation(StartTranslationRequest(audio_source='system_audio'), SimpleNamespace(headers={})))
+        asyncio.run(api.start_translation(StartTranslationRequest(audio_source='system_audio'), SimpleNamespace(headers={})))
     assert exc.value.status_code == 409
 
 

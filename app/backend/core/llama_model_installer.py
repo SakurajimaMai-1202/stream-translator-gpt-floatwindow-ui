@@ -42,6 +42,7 @@ class ModelInstallStatus:
     deployment_config: dict[str, Any] = field(default_factory=dict)
     filename: str = ""
     path: str = ""
+    directory: str = ""
     bytes_downloaded: int = 0
     bytes_total: int = 0
     sha256: str = ""
@@ -114,8 +115,10 @@ class LlamaModelInstaller:
             )
         return job_id
 
-    def cancel(self) -> dict[str, Any]:
+    def cancel(self, job_id: str | None = None) -> dict[str, Any]:
         with self._lock:
+            if job_id is not None and job_id != self._status.job_id:
+                raise RuntimeError("下載工作已變更，請重新整理")
             if self._status.state in BUSY:
                 self._cancel.set()
                 self._status.state = "cancelled"
@@ -192,19 +195,30 @@ class LlamaModelInstaller:
             else:
                 filename, url, size, expected = self._resolve(catalog["repo"], quant)
             check_cancelled()
+            if not re.fullmatch(r"[A-Za-z0-9._-]+\.gguf", filename):
+                raise RuntimeError("模型檔名不安全，僅接受英數字、點、底線及連字號的 .gguf 檔案")
             self._set(job_id, filename=filename)
             target_dir = simple_model_directory() if model_id in MODELS else model_directory()
+            self._set(job_id, directory=str(target_dir))
             target_dir.mkdir(parents=True, exist_ok=True)
             target = target_dir / Path(filename).name
             if self.status().get("job_id") != job_id:
                 return
-            if target.is_file() and target.stat().st_size == size:
-                actual = self._sha256(target, cancel)
-                if actual == expected:
-                    self._set(job_id, state="completed", message="翻譯模型已就緒", progress=1.0,
-                              path=str(target), bytes_downloaded=size, bytes_total=size, sha256=actual,
-                              deployment_config=deployment)
-                    return
+            for candidate in (target, target.with_name(f"{target.stem}.{expected[:8]}.gguf")):
+                target = candidate
+                self._set(job_id, filename=target.name)
+                if not target.exists():
+                    break
+                if target.is_file() and target.stat().st_size == size:
+                    actual = self._sha256(target, cancel)
+                    check_cancelled()
+                    if actual == expected:
+                        self._set(job_id, state="completed", message="翻譯模型已就緒", progress=1.0,
+                                  path=str(target), bytes_downloaded=size, bytes_total=size, sha256=actual,
+                                  deployment_config=deployment)
+                        return
+            else:
+                raise RuntimeError("模型檔案已存在且驗證不符，請先重新命名現有檔案")
             partial = target.with_suffix(target.suffix + ".part")
             self._set(job_id, state="downloading", message="正在下載本機翻譯模型",
                       bytes_total=size, sha256=expected)
@@ -225,7 +239,10 @@ class LlamaModelInstaller:
                 raise RuntimeError("翻譯模型 SHA-256 驗證失敗，請重新下載")
             with self._lock:
                 check_cancelled()
-                os.replace(partial, target)
+                # A file created during the download must also remain untouched.
+                if target.exists():
+                    raise RuntimeError("模型檔案已存在，請重新下載以選擇安全檔名")
+                os.rename(partial, target)
                 self._set(job_id, state="completed", message="翻譯模型已就緒", progress=1.0,
                           path=str(target), bytes_downloaded=size, bytes_total=size, sha256=actual,
                           deployment_config=deployment)

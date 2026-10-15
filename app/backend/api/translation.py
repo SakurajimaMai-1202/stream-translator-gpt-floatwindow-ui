@@ -92,14 +92,14 @@ async def detect_family(request: DetectFamilyRequest):
     if config.get('translation', {}).get('backend') == 'none':
         return {"family": "", "served_models": []}
     from stream_translator_gpt.translation_policy import resolve_model_family
-    from backend.core.model_identity import family_probe_target, served_model_names
+    from backend.core.model_identity import family_probe_target, served_model_names, is_loopback_probe
     try:
         args = await asyncio.to_thread(manager.to_main_args, config)
         probe_url, _ = family_probe_target(config['translation'].get('backend', ''), config, args)
         served = []
-        if args.get('translation_provider') != 'gemini' and probe_url:
+        if args.get('translation_provider') != 'gemini' and is_loopback_probe(probe_url):
             # A fresh probe refreshes the shared cache, so resolve the family again afterwards.
-            served = await asyncio.to_thread(served_model_names, probe_url, args.get('openai_api_key', ''), False)
+            served = await asyncio.to_thread(served_model_names, probe_url, args.get('openai_api_key', ''), False, args.get('gpt_model', ''))
             args = await asyncio.to_thread(manager.to_main_args, config)
     except (ValueError, TypeError):
         return {"family": "", "served_models": []}
@@ -210,7 +210,7 @@ def _resolve_preview_args(request: FamilyPreviewRequest):
 @router.post("/preview")
 async def preview_translation(request: FamilyPreviewRequest):
     from backend.core.llm_translator import create_family_preview_client
-    args = _resolve_preview_args(request)
+    args = await asyncio.to_thread(_resolve_preview_args, request)
     context = [item.model_dump() for item in request.context]
     try:
         results = {}
@@ -233,7 +233,7 @@ async def preview_translation(request: FamilyPreviewRequest):
 @router.post("/health")
 async def test_translation_family(request: FamilyPreviewRequest):
     from backend.core.llm_translator import create_family_preview_client
-    args = _resolve_preview_args(request)
+    args = await asyncio.to_thread(_resolve_preview_args, request)
     try:
         client = create_family_preview_client(args, False)
         try:
@@ -377,7 +377,7 @@ async def start_translation(request: StartTranslationRequest, http_request: Requ
             current_config['transcription'].pop('nemo_asr_decoding', None)
             current_config['transcription'].pop('nemo_asr_dtype', None)
 
-        cli_args = get_config_manager().to_main_args(current_config)
+        cli_args = await asyncio.to_thread(get_config_manager().to_main_args, current_config)
         process_source = cli_args.get('url') == 'process_audio'
         if process_source:
             target = current_config['input']

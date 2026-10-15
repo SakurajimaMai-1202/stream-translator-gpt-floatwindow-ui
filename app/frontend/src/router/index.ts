@@ -6,9 +6,8 @@ import SubtitleSettingsView from '../views/SubtitleSettingsView.vue';
 import MobileSubtitleView from '../views/MobileSubtitleView.vue';
 import DesktopSubtitleView from '../views/DesktopSubtitleView.vue';
 import MainLayout from '../components/MainLayout.vue';
-import LlamaModelsView from '../views/LlamaModelsView.vue';
+import LocalTranslationView from '../views/LocalTranslationView.vue';
 import GuideView from '../views/GuideView.vue';
-import TranslationModelsView from '../views/TranslationModelsView.vue';
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -33,15 +32,12 @@ const router = createRouter({
           component: SubtitleSettingsView
         },
         {
-          path: 'llm-models',
-          name: 'llm-models',
-          component: LlamaModelsView
+          path: 'local-translation',
+          name: 'local-translation',
+          component: LocalTranslationView
         },
-        {
-          path: 'translation-models',
-          name: 'translation-models',
-          component: TranslationModelsView
-        },
+        { path: 'llm-models', redirect: '/local-translation' },
+        { path: 'translation-models', redirect: '/local-translation' },
         {
           path: 'guide',
           name: 'guide',
@@ -70,6 +66,11 @@ const router = createRouter({
       component: DesktopSubtitleView
     }
   ]
+});
+
+router.beforeEach(to => {
+  const tab = Array.isArray(to.query.tab) ? to.query.tab[0] : to.query.tab;
+  if (to.path === '/settings' && tab === 'llama') return { path: '/local-translation', replace: true };
 });
 
 export default router;

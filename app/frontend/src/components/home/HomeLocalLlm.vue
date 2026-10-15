@@ -21,7 +21,7 @@ const localLlmStatusLabel = computed(() => {
 });
 
 const localLlmStatusDescription = computed(() => {
-  if (!llamaStore.selectedModelPath) return '請先到「LLM 模型管理」選擇 GGUF 模型';
+  if (!llamaStore.selectedModelPath) return '請先到「本地翻譯」選擇 GGUF 模型';
   if (llamaStore.isServerReady) {
     const runningUrl = llamaStore.serverStatus.server_url;
     if (runningUrl) return `本機翻譯正在 ${runningUrl} 運行`;
@@ -118,7 +118,7 @@ async function handleLocalLlmToggle(event: Event) {
               <label
                 class="flex flex-shrink-0 items-center gap-2.5"
                 :class="llamaStore.isLoading || (!llamaStore.selectedModelPath && !llamaStore.localLlmEnabled) ? 'cursor-not-allowed opacity-45' : 'cursor-pointer'"
-                :title="!llamaStore.selectedModelPath ? '請先到 LLM 模型管理選擇模型' : llamaStore.localLlmEnabled ? '關閉本地 LLM' : '啟動本地 LLM'"
+                :title="!llamaStore.selectedModelPath ? '請先到「本地翻譯」選擇模型' : llamaStore.localLlmEnabled ? '關閉本地 LLM' : '啟動本地 LLM'"
               >
                 <span class="text-xs font-bold" :class="llamaStore.localLlmEnabled ? 'text-emerald-300' : 'text-white/65'">
                   {{ llamaStore.localLlmEnabled ? '開啟' : '關閉' }}

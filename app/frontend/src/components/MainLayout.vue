@@ -12,7 +12,6 @@ const interfaceMode = useInterfaceModeStore();
 onMounted(() => { void interfaceMode.load(); });
 watch(() => interfaceMode.mode, (mode) => {
   if (mode === 'simple' && (
-    route.path === '/llm-models' || route.path === '/translation-models' ||
     (route.path === '/settings' && !['general', 'translation'].includes(String(route.query.tab || 'general')))
   )) void router.replace('/');
 });
@@ -29,7 +28,7 @@ const primaryNavigation = [
   { path: '/guide', name: '使用教學', id: 'guide' }
 ];
 
-type SettingsNavItem = { id: string; name: string; path?: string };
+type SettingsNavItem = { id: string; name: string; path?: string; icon?: string };
 const settingsGroups: Array<{ groupName: string; items: SettingsNavItem[] }> = [
   {
     groupName: '系統與輸入',
@@ -52,9 +51,7 @@ const settingsGroups: Array<{ groupName: string; items: SettingsNavItem[] }> = [
     groupName: '翻譯與術語',
     items: [
       { id: 'translation', name: '翻譯選項' },
-      { id: 'llama', name: 'Llama 執行設定' },
-      { id: 'llm-models', path: '/llm-models', name: 'LLM 模型管理' },
-      { id: 'translation-models', path: '/translation-models', name: '推薦翻譯模型' },
+      { id: 'local-translation', path: '/local-translation', name: '本地翻譯', icon: 'llm-models' },
       { id: 'terminology', name: '術語表' }
     ]
   }
@@ -62,8 +59,7 @@ const settingsGroups: Array<{ groupName: string; items: SettingsNavItem[] }> = [
 
 // Check active status
 function isTabActive(tabId: string) {
-  if (tabId === 'llm-models') return route.path === '/llm-models';
-  if (tabId === 'translation-models') return route.path === '/translation-models';
+  if (tabId === 'local-translation') return route.path === '/local-translation';
   if (route.path === '/settings') {
     return (route.query.tab || 'general') === tabId;
   }
@@ -344,7 +340,7 @@ watch(() => route.fullPath, () => {
                     : 'text-white/60 hover:bg-white/5 hover:text-white'
                 ]"
               >
-                <AppIcon :name="tab.id" />
+                <AppIcon :name="(tab as SettingsNavItem).icon || tab.id" />
                 {{ tab.name }}
               </button>
             </div>

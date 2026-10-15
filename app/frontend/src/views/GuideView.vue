@@ -98,15 +98,14 @@ function goToHome() {
     <section id="llama" class="fw-panel guide-section">
       <div class="guide-section-heading"><span class="guide-number">04</span><div><h2>本地 LLM／llama.cpp 怎麼設定</h2><p>本地 LLM 負責翻譯，不負責語音辨識</p></div></div>
       <div class="grid gap-4 md:grid-cols-2">
-        <div class="guide-card"><h3>A. 先準備 llama.cpp Runtime</h3><ol><li>到左側「Llama 執行設定」。</li><li>Runtime 區會自動核對目前版本與官方最新版。</li><li>如果已是最新版本，畫面會顯示「已是最新版本」，不需要再下載。</li><li>如果有新版，選擇依硬體推薦的 CUDA、HIP、Vulkan 或 CPU Runtime。</li><li>等待下載、驗證、安裝完成通知。</li></ol><p class="guide-muted">NVIDIA 通常選 CUDA；AMD 可選 HIP；不確定時使用畫面上的硬體推薦。</p></div>
-        <div class="guide-card"><h3>B. 下載並選擇 GGUF 模型</h3><ol><li>到左側「LLM 模型管理」。</li><li>下載或匯入 GGUF 格式模型，例如 Qwen、HY-MT 等。</li><li>回到「Llama 執行設定」，選擇模型檔案。</li><li>保留建議的上下文、執行緒與 GPU layers，先測試能否啟動。</li></ol><p class="guide-muted">模型越大通常翻譯品質越好，但需要更多 VRAM／RAM。第一次建議使用 7B、Q4 量化模型。</p></div>
+        <div class="guide-card"><h3>A. 先準備 llama.cpp Runtime</h3><ol><li>到左側「本地翻譯」。</li><li>Runtime 區（在「本地翻譯」頁最下方的「進階設定」）會自動核對目前版本與官方最新版。</li><li>如果已是最新版本，畫面會顯示「已是最新版本」，不需要再下載。</li><li>如果有新版，選擇依硬體推薦的 CUDA、HIP、Vulkan 或 CPU Runtime。</li><li>等待下載、驗證、安裝完成通知。</li></ol><p class="guide-muted">NVIDIA 通常選 CUDA；AMD 可選 HIP；不確定時使用畫面上的硬體推薦。</p></div>
+        <div class="guide-card"><h3>B. 選擇模型並試譯</h3><ol><li>在「本地翻譯」的「推薦下載」選擇適合這台電腦的模型，按「下載並使用」。</li><li>已有模型時，切換「本機已有」掃描資料夾並選擇模型。</li><li>在「啟動」將翻譯服務切換為本機模型，按「啟動伺服器」。</li><li>在「試譯」輸入文字，確認翻譯結果。</li></ol><p class="guide-muted">需要調整顯卡、執行環境或模型參數時，展開頁面下方的「進階設定」。</p></div>
       </div>
       <div class="guide-card mt-4"><h3>C. 在即時轉譯啟用本地翻譯</h3><ol><li>在即時轉譯頁確認「翻譯」已勾選。</li><li>在「翻譯模型／後端」選擇「Llama（本地）」。</li><li>打開底部「使用本地 LLM」開關。</li><li>看到「服務已就緒」後，再按「啟動即時轉譯」。</li></ol><div class="guide-warning">如果只想使用 OpenAI 或 Gemini，不要開啟本地 LLM；直接在翻譯模型／後端選擇對應服務並設定 API Key。</div></div>
-      <button type="button" class="guide-action" @click="goToSettings('llama')">前往 Llama 執行設定</button>
-      <button type="button" class="guide-action secondary" @click="router.push('/llm-models')">前往 LLM 模型管理</button>
+      <button type="button" class="guide-action" @click="router.push('/local-translation')">前往本地翻譯</button>
     </section>
 
-    <section class="fw-panel guide-section"><div class="guide-section-heading"><span class="guide-number">05</span><div><h2>常見問題</h2><p>遇到問題時先看這裡</p></div></div><div class="grid gap-3 md:grid-cols-2"><details class="guide-faq"><summary>按開始後為什麼要下載模型？</summary><p>模型沒有預先下載時，程式會先建立下載任務。看到進度完成後會自動接續啟動，不需要手動重開。</p></details><details class="guide-faq"><summary>ASR 有了，為什麼沒有翻譯？</summary><p>請確認「翻譯」勾選、目標語言已選擇，並且翻譯後端已設定。使用本地 LLM 時還要確認 llama.cpp 顯示服務已就緒。</p></details><details class="guide-faq"><summary>Gemini 測試連線失敗怎麼辦？</summary><p>回到「設定 → 翻譯選項」，確認後端是 Google Gemini、API Key 沒有多餘空白，模型名稱是帳戶目前可用的模型，再按一次「測試連線」。</p></details><details class="guide-faq"><summary>本地 LLM 啟動失敗怎麼辦？</summary><p>先確認 Runtime 已安裝、GGUF 模型路徑正確，再到 Llama 執行設定按測試。NVIDIA 優先選 CUDA Runtime。</p></details><details class="guide-faq"><summary>模型該選大還是小？</summary><p>先用較小模型確認流程正常，再依 VRAM／RAM 增加模型大小。即時翻譯通常要在品質與延遲之間取平衡。</p></details></div></section>
+    <section class="fw-panel guide-section"><div class="guide-section-heading"><span class="guide-number">05</span><div><h2>常見問題</h2><p>遇到問題時先看這裡</p></div></div><div class="grid gap-3 md:grid-cols-2"><details class="guide-faq"><summary>按開始後為什麼要下載模型？</summary><p>模型沒有預先下載時，程式會先建立下載任務。看到進度完成後會自動接續啟動，不需要手動重開。</p></details><details class="guide-faq"><summary>ASR 有了，為什麼沒有翻譯？</summary><p>請確認「翻譯」勾選、目標語言已選擇，並且翻譯後端已設定。使用本地 LLM 時還要確認 llama.cpp 顯示服務已就緒。</p></details><details class="guide-faq"><summary>Gemini 測試連線失敗怎麼辦？</summary><p>回到「設定 → 翻譯選項」，確認後端是 Google Gemini、API Key 沒有多餘空白，模型名稱是帳戶目前可用的模型，再按一次「測試連線」。</p></details><details class="guide-faq"><summary>本地 LLM 啟動失敗怎麼辦？</summary><p>先確認 Runtime 已安裝、GGUF 模型路徑正確，再到「本地翻譯」頁按測試。NVIDIA 優先選 CUDA Runtime。</p></details><details class="guide-faq"><summary>模型該選大還是小？</summary><p>先用較小模型確認流程正常，再依 VRAM／RAM 增加模型大小。即時翻譯通常要在品質與延遲之間取平衡。</p></details></div></section>
   </div>
 </template>
 

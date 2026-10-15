@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, watch, nextTick, toRaw, defineAsyncComponent } from 'vue';
+import { ref, onMounted, onUnmounted, computed, watch, nextTick, toRaw } from 'vue';
 import GeneralSettingsTab from '../components/settings/GeneralSettingsTab.vue';
 import DiagnosticsSettingsTab from '../components/settings/DiagnosticsSettingsTab.vue';
 import InputSettingsTab from '../components/settings/InputSettingsTab.vue';
@@ -29,7 +29,6 @@ import { coerceLanguageForModel,  } from '../utils/asrCapabilities';
 
 const testingGpt = ref(false);
 const testingGemini = ref(false);
-const LlamaSettings = defineAsyncComponent(() => import('../components/LlamaSettings.vue'));
 
 const autoSaveStatus = ref<'idle' | 'saving' | 'saved' | 'error'>('idle');
 const settingsReady = ref(false);
@@ -281,7 +280,6 @@ const settingsTabIds = new Set([
   'transcription',
   'model_management',
   'translation',
-  'llama',
   'terminology',
 ]);
 
@@ -856,11 +854,6 @@ provideSettingsTabBindings({ ...transcriptionSettings, ...terminologySettings, .
 
           <!-- Translation Settings -->
           <TranslationSettingsTab v-if="activeTab === 'translation'" />
-
-          <!-- Llama Settings -->
-          <div v-if="activeTab === 'llama'" class="settings-paint-section">
-            <LlamaSettings />
-          </div>
 
           <!-- Terminology Settings -->
           <TerminologySettingsTab v-if="activeTab === 'terminology'" />

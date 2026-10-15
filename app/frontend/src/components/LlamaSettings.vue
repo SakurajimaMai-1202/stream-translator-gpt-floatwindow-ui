@@ -1,5 +1,8 @@
 <template>
   <div class="llama-settings">
+    <slot name="status-heading" />
+    <div v-if="!props.hideErrors && llamaStore.errorMessage" class="alert alert-error" role="alert">{{ llamaStore.errorMessage }}</div>
+    <div v-if="llamaStore.successMessage" class="alert alert-success" role="status">{{ llamaStore.successMessage }}</div>
     <div class="status-card" :class="{ running: llamaStore.isServerRunning }">
       <div class="status-header">
         <div class="status-indicator">
@@ -11,7 +14,7 @@
             }"
           ></span>
           <div>
-            <h2 class="page-title">本地翻譯</h2>
+            <h3 class="page-title">本機服務</h3>
             <div class="status-text">
               {{
                 llamaStore.isServerReady
@@ -33,7 +36,7 @@
             @click="handleStartServer"
             :disabled="!llamaStore.selectedModelPath || llamaStore.isLoading"
             class="btn-start-quick"
-            :title="!llamaStore.selectedModelPath ? '請先在「模型管理」選擇一個模型' : ''"
+            :title="!llamaStore.selectedModelPath ? '請先在上方選擇模型' : ''"
           >
             <span v-if="llamaStore.isLoading">啟動中…</span>
             <span v-else>啟動伺服器</span>
@@ -59,29 +62,65 @@
         </div>
       </div>
 
-      <div class="quick-model-picker">
-        <div class="quick-model-label">
-          <span>翻譯模型</span>
-          <small v-if="llamaStore.currentModel">執行中：{{ llamaStore.currentModel }}</small>
-        </div>
-        <div class="quick-model-controls">
-          <UiSelect
-            :model-value="llamaStore.selectedModelPath"
-            :options="quickModelOptions"
-            searchable
-            search-placeholder="搜尋 GGUF 模型…"
-            placeholder="請先到模型管理掃描 GGUF"
-            button-class="quick-model-select"
-            @update:model-value="handleQuickModelSelect"
-          />
-          <button type="button" class="favorite-model-button" :disabled="!llamaStore.selectedModelPath" @click="llamaStore.toggleFavoriteModel(llamaStore.selectedModelPath)"
-            :title="isSelectedModelFavorite ? '取消收藏' : '收藏此模型'">{{ isSelectedModelFavorite ? '★' : '☆' }}</button>
-          <button type="button" class="ghost-button" @click="router.push('/llm-models')">管理模型</button>
-        </div>
-        <p v-if="llamaStore.modelProfileId" class="hint">已套用推薦參數；切換到非推薦模型時會恢復上次自訂的參數。</p>
-        <p v-if="hasPendingRuntimeChanges" class="quick-model-pending">已選擇新的模型或參數；目前服務不受影響，按「套用並重啟」後生效。</p>
+      <p v-if="llamaStore.modelProfileId" class="hint">已套用模型的推薦參數。</p>
+      <p v-if="hasPendingRuntimeChanges" class="quick-model-pending">模型或參數已變更，按「套用並重啟」後生效。</p>
+      <div v-if="!llamaStore.isServerRunning" class="status-target">
+        <span class="target-label">目標位址</span>
+        <span class="target-value">{{ llamaStore.serverConfig.host }}:{{ llamaStore.serverConfig.port }}</span>
+        <span v-if="!llamaStore.selectedModelPath" class="target-warn">尚未選擇模型</span>
+        <span v-else class="target-model">{{ getModelName(llamaStore.selectedModelPath) }}</span>
       </div>
 
+      <div v-if="llamaStore.isServerRunning" class="status-details">
+        <div class="detail-item">
+          <span class="label">執行中模型</span>
+          <span class="value">{{ llamaStore.currentModel || getModelName(llamaStore.selectedModelPath) }}</span>
+        </div>
+        <div class="detail-item">
+          <span class="label">服務位址</span>
+          <span class="value">{{ llamaStore.serverStatus.server_url || `${llamaStore.serverConfig.host}:${llamaStore.serverConfig.port}` }}</span>
+        </div>
+        <div class="detail-item">
+          <span class="label">程序 PID</span>
+          <span class="value">{{ llamaStore.serverStatus.pid || 'N/A' }}</span>
+        </div>
+      </div>
+
+    </div>
+    <slot name="test-heading" />
+      <details class="inline-test-workspace" open>
+        <summary>測試翻譯</summary>
+        <div class="inline-test-heading">
+          <div>
+            <strong>啟動與測試</strong>
+            <p>{{ llamaStore.isServerReady ? '服務已就緒，可直接驗證目前模型的翻譯效果。' : '選好模型後可在這裡啟動並立即測試。' }}</p>
+          </div>
+          <span v-if="hasPendingRuntimeChanges" class="sync-badge warn">參數尚未套用至執行中服務</span>
+        </div>
+        <textarea aria-label="試譯文字" v-model="testText" class="form-textarea" rows="3" placeholder="輸入要測試翻譯的文字…"></textarea>
+        <div class="inline-test-actions">
+          <button type="button" @click="executePrimaryTest" :disabled="!testText.trim() || !llamaStore.selectedModelPath || isTesting || llamaStore.isLoading" class="btn-test">
+            {{ primaryTestButtonLabel }}
+          </button>
+          <span v-if="llamaStore.serverStatus.performance?.latency_ms" class="test-performance">
+            {{ llamaStore.serverStatus.performance.latency_ms }} ms · {{ llamaStore.serverStatus.performance.tokens_predicted || 0 }} tokens · {{ llamaStore.serverStatus.performance.tokens_per_second || 0 }} tok/s
+          </span>
+        </div>
+        <div class="inline-test-result">
+          <span>翻譯結果</span>
+          <p v-if="testResult">{{ testResult }}</p>
+          <p v-else class="empty-result">尚未執行測試</p>
+        </div>
+      </details>
+    <section class="resource-strip" aria-label="即時資源" v-if="llamaStore.isServerRunning">
+      <span>CPU <strong>{{ llamaStore.serverStatus.resources?.cpu_percent ?? '—' }}%</strong></span>
+      <span>RAM <strong>{{ llamaStore.serverStatus.resources?.ram_used_gb ?? '—' }} / {{ llamaStore.serverStatus.resources?.ram_total_gb ?? '—' }} GB</strong></span>
+      <span>程序 RAM <strong>{{ llamaStore.serverStatus.resources?.process_ram_mb ?? '—' }} MB</strong></span>
+      <span>生成速度 <strong>{{ llamaStore.serverStatus.performance?.tokens_per_second ?? '—' }} tok/s</strong></span>
+      <span v-if="llamaStore.serverStatus.gpu_selection?.confirmed">GPU 卸載 <strong>{{ llamaStore.serverStatus.gpu_selection.offloaded_layers ?? '—' }} 層</strong></span>
+    </section>
+    <details class="advanced-settings">
+      <summary>進階設定</summary>
     <section class="panel">
       <div class="panel-header">
         <div><h3>翻譯模型顯卡</h3><p class="hint">自動選擇單張獨顯；GPU 層數為 0 時使用 CPU。AMD 與 Intel 預設推薦 Vulkan。</p></div>
@@ -164,61 +203,6 @@
               </div>
               <p class="hint">只做單一路翻譯可維持 1，多工時再慢慢加。</p>
             </div></div>
-      <div v-if="!llamaStore.isServerRunning" class="status-target">
-        <span class="target-label">目標位址</span>
-        <span class="target-value">{{ llamaStore.serverConfig.host }}:{{ llamaStore.serverConfig.port }}</span>
-        <span v-if="!llamaStore.selectedModelPath" class="target-warn">尚未選擇模型</span>
-        <span v-else class="target-model">{{ getModelName(llamaStore.selectedModelPath) }}</span>
-      </div>
-
-      <div v-if="llamaStore.isServerRunning" class="status-details">
-        <div class="detail-item">
-          <span class="label">執行中模型</span>
-          <span class="value">{{ llamaStore.currentModel || getModelName(llamaStore.selectedModelPath) }}</span>
-        </div>
-        <div class="detail-item">
-          <span class="label">服務位址</span>
-          <span class="value">{{ llamaStore.serverStatus.server_url || `${llamaStore.serverConfig.host}:${llamaStore.serverConfig.port}` }}</span>
-        </div>
-        <div class="detail-item">
-          <span class="label">程序 PID</span>
-          <span class="value">{{ llamaStore.serverStatus.pid || 'N/A' }}</span>
-        </div>
-      </div>
-
-      <details class="inline-test-workspace" open>
-        <summary>測試翻譯</summary>
-        <div class="inline-test-heading">
-          <div>
-            <strong>啟動與測試</strong>
-            <p>{{ llamaStore.isServerReady ? '服務已就緒，可直接驗證目前模型的翻譯效果。' : '選好模型後可在這裡啟動並立即測試。' }}</p>
-          </div>
-          <span v-if="hasPendingRuntimeChanges" class="sync-badge warn">參數尚未套用至執行中服務</span>
-        </div>
-        <textarea aria-label="試譯文字" v-model="testText" class="form-textarea" rows="3" placeholder="輸入要測試翻譯的文字…"></textarea>
-        <div class="inline-test-actions">
-          <button type="button" @click="executePrimaryTest" :disabled="!testText.trim() || !llamaStore.selectedModelPath || isTesting || llamaStore.isLoading" class="btn-test">
-            {{ primaryTestButtonLabel }}
-          </button>
-          <span v-if="llamaStore.serverStatus.performance?.latency_ms" class="test-performance">
-            {{ llamaStore.serverStatus.performance.latency_ms }} ms · {{ llamaStore.serverStatus.performance.tokens_predicted || 0 }} tokens · {{ llamaStore.serverStatus.performance.tokens_per_second || 0 }} tok/s
-          </span>
-        </div>
-        <div class="inline-test-result">
-          <span>翻譯結果</span>
-          <p v-if="testResult">{{ testResult }}</p>
-          <p v-else class="empty-result">尚未執行測試</p>
-        </div>
-      </details>
-    </div>
-
-    <section class="resource-strip" aria-label="即時資源" v-if="llamaStore.isServerRunning">
-      <span>CPU <strong>{{ llamaStore.serverStatus.resources?.cpu_percent ?? '—' }}%</strong></span>
-      <span>RAM <strong>{{ llamaStore.serverStatus.resources?.ram_used_gb ?? '—' }} / {{ llamaStore.serverStatus.resources?.ram_total_gb ?? '—' }} GB</strong></span>
-      <span>程序 RAM <strong>{{ llamaStore.serverStatus.resources?.process_ram_mb ?? '—' }} MB</strong></span>
-      <span>生成速度 <strong>{{ llamaStore.serverStatus.performance?.tokens_per_second ?? '—' }} tok/s</strong></span>
-      <span v-if="llamaStore.serverStatus.gpu_selection?.confirmed">GPU 卸載 <strong>{{ llamaStore.serverStatus.gpu_selection.offloaded_layers ?? '—' }} 層</strong></span>
-    </section>
     <details class="panel runtime-management">
       <summary>執行環境 <small>{{ llamaStore.serverStatus.runtime?.version || "llama.cpp" }}</small></summary>
         <p class="runtime-version">{{ llamaStore.serverStatus.runtime?.version || '讀取中…' }}</p>
@@ -291,8 +275,6 @@
       </template>
     </section>
 
-    <div v-if="llamaStore.errorMessage" class="alert alert-error">{{ llamaStore.errorMessage }}</div>
-    <div v-if="llamaStore.successMessage" class="alert alert-success">{{ llamaStore.successMessage }}</div>
 
     <details class="panel preset-management">
       <summary>配置預設 <small>{{ selectedPresetLabel }}</small></summary>
@@ -476,6 +458,7 @@
       </div>
     </details>
 
+    </details>
     <div v-if="showSaveDialog" class="modal-overlay" @click.self="showSaveDialog = false">
       <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="save-preset-title">
         <h3 id="save-preset-title">保存配置預設</h3>
@@ -583,10 +566,11 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useStatusSync } from '../composables/useStatusSync';
-import { useRouter } from 'vue-router';
 import UiSelect, { type UiSelectOption } from './UiSelect.vue';
 import { useLlamaStore } from '../stores/llama';
 import { llamaApi, type RuntimeInstallStatus, type RuntimeReleaseInfo, type RuntimeDevice, type ServerConfig } from '../services/llamaApi';
+
+const props = withDefaults(defineProps<{ initialized?: boolean; hideErrors?: boolean }>(), { initialized: false, hideErrors: false });
 
 const showRuntimeInstaller = ref(false);
 const runtimeReleaseLoading = ref(false);
@@ -795,7 +779,6 @@ const quickProfiles = [
 ] as const;
 
 const llamaStore = useLlamaStore();
-const router = useRouter();
 const modelDirectory = ref('');
 
 
@@ -905,35 +888,6 @@ const primaryTestButtonLabel = computed(() => {
   if (hasPendingRuntimeChanges.value) return '套用、重啟並測試';
   return '🧪 測試翻譯';
 });
-const isSelectedModelFavorite = computed(() => llamaStore.favoriteModelPaths.includes(llamaStore.selectedModelPath));
-const quickModelOptions = computed<UiSelectOption[]>(() => {
-  const byPath = new Map(llamaStore.models.map(model => [model.path, model]));
-  const format = (path: string, status = '') => {
-    const model = byPath.get(path);
-    const name = model?.name || getModelName(path);
-    const size = model ? ` · ${model.size_mb.toFixed(0)} MB` : '';
-    return { value: path, label: `${status}${name}${size}` };
-  };
-  const favorites = llamaStore.favoriteModelPaths.filter(path => byPath.has(path));
-  const recent = llamaStore.recentModelPaths.filter(path => byPath.has(path) && !favorites.includes(path));
-  const used = new Set([...favorites, ...recent]);
-  const options: UiSelectOption[] = [
-    ...favorites.map(path => ({ ...format(path, '★ '), group: '收藏模型' })),
-    ...recent.map(path => ({ ...format(path, '最近 · '), group: '最近使用' })),
-    ...llamaStore.models.filter(model => !used.has(model.path)).map(model => ({ ...format(model.path), group: '全部模型' })),
-  ];
-  if (llamaStore.selectedModelPath && !byPath.has(llamaStore.selectedModelPath)) {
-    options.unshift({ ...format(llamaStore.selectedModelPath, '✓ '), group: '目前選擇' });
-  }
-  return options;
-});
-
-function handleQuickModelSelect(value: string | number | null) {
-  if (typeof value === 'string' && value) llamaStore.selectModel(value);
-}
-
-
-
 const savePresetSummaryItems = computed(() => [
   { label: '模型', value: getModelName(llamaStore.selectedModelPath) },
   { label: '服務位址', value: `${llamaStore.serverConfig.host}:${llamaStore.serverConfig.port}` },
@@ -1118,7 +1072,7 @@ function cancelEditSeries() {
 }
 
 onMounted(async () => {
-  await llamaStore.initialize();
+  if (!props.initialized) await llamaStore.initialize();
   gpuSettingsInitialized = true;
   void refreshGpuDevices();
   void refreshRuntimeRelease(true);
@@ -1216,6 +1170,11 @@ async function executePrimaryTest() {
 </script>
 
 <style scoped>
+.advanced-settings > summary { cursor: pointer; font-weight: 650; padding: 1rem 0; }
+.llama-settings { min-width: 0; overflow-wrap: anywhere; }
+.llama-settings :deep(*) { min-width: 0; }
+@media (max-width: 480px) { .status-header, .panel-header { flex-direction: column; } .status-card, .panel { padding: 1rem; } }
+
 .llama-settings { color:var(--fw-text); font-family:system-ui,-apple-system,"Segoe UI",sans-serif; font-size:.9375rem; line-height:1.5; }
 .status-card,.panel { background:var(--fw-surface); border:1px solid var(--fw-border); border-radius:16px; padding:1.25rem; margin-bottom:1rem; }
 .status-card { padding:1.5rem; } .status-card .panel { background:transparent; border:0; border-top:1px solid var(--fw-border); border-radius:0; padding:1.25rem 0 0; margin:1.25rem 0; }

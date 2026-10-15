@@ -16,7 +16,6 @@ defineProps<{ name: string }>();
     <template v-else-if="name === 'translation'"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></template>
     <template v-else-if="name === 'llama'"><path d="M7 20v-8l2-3V5l2-2 2 2h3l2 3v12M7 14H4v6M18 14h2v6M10 9h.01M15 9h.01"/></template>
     <template v-else-if="name === 'llm-models'"><path d="M8 4a3 3 0 0 0-3 3v2a3 3 0 0 0 0 6v2a3 3 0 0 0 5 2 3 3 0 0 0 2-3V7a3 3 0 0 0-4-3zM16 4a3 3 0 0 1 3 3v2a3 3 0 0 1 0 6v2a3 3 0 0 1-5 2 3 3 0 0 1-2-3V7a3 3 0 0 1 4-3z"/></template>
-    <template v-else-if="name === 'translation-models'"><path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M18.4 5.6l-2.8 2.8M8.4 15.6l-2.8 2.8"/><circle cx="12" cy="12" r="3"/></template>
     <template v-else-if="name === 'url'"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></template>
     <template v-else-if="name === 'file'"><path d="M4 4h6l2 3h8v13H4z"/></template>
     <template v-else-if="name === 'microphone'"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6"/></template>

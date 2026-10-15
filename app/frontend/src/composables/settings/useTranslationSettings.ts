@@ -47,6 +47,7 @@ export function useTranslationSettings(localConfig: Ref<any>, sectionSaveTimers:
   // model the server really serves when the name alone gives no hint.
   const detectedFamily = ref('');
   const servedModels = ref<string[]>([]);
+  const familyDetecting = ref(false);
   let detectTimer: ReturnType<typeof setTimeout> | undefined;
   let detectSeq = 0;
   const nameFamily = computed(() => resolveTranslationFamily(localConfig.value?.translation || {}));
@@ -58,6 +59,7 @@ export function useTranslationSettings(localConfig: Ref<any>, sectionSaveTimers:
   });
   async function detectServedFamily() {
     const seq = ++detectSeq;
+    familyDetecting.value = true;
     try {
       const response = await axios.post('/api/translation/detect-family', {config: {translation: toRaw(localConfig.value.translation), llama: toRaw(localConfig.value.llama)}});
       if (seq !== detectSeq) return;
@@ -65,14 +67,24 @@ export function useTranslationSettings(localConfig: Ref<any>, sectionSaveTimers:
       servedModels.value = Array.isArray(response.data?.served_models) ? response.data.served_models : [];
     } catch {
       if (seq === detectSeq) { detectedFamily.value = ''; servedModels.value = []; }
+    } finally {
+      if (seq === detectSeq) familyDetecting.value = false;
     }
   }
   const llamaStore = useLlamaStore();
+  // Opening settings first leaves the llama store empty; load it to name the selected model.
+  if (!llamaStore.selectedModelPath) void llamaStore.loadConfig().catch(() => {});
   function scheduleFamilyDetection() {
     if (detectTimer) clearTimeout(detectTimer);
     detectSeq++;
-    if (familyNeedsServerProbe.value) detectTimer = setTimeout(detectServedFamily, 400);
-    else { detectedFamily.value = ''; servedModels.value = []; }
+    if (familyNeedsServerProbe.value) {
+      familyDetecting.value = true;
+      detectTimer = setTimeout(detectServedFamily, 400);
+    } else {
+      familyDetecting.value = false;
+      detectedFamily.value = '';
+      servedModels.value = [];
+    }
   }
   // Switching models restarts the server without touching translation settings.
   watch(() => [llamaStore.isServerRunning, llamaStore.currentModel], scheduleFamilyDetection);
@@ -86,7 +98,12 @@ export function useTranslationSettings(localConfig: Ref<any>, sectionSaveTimers:
     detectSeq++;
     detectedFamily.value = '';
     servedModels.value = [];
-    if (familyNeedsServerProbe.value) detectTimer = setTimeout(detectServedFamily, 400);
+    if (familyNeedsServerProbe.value) {
+      familyDetecting.value = true;
+      detectTimer = setTimeout(detectServedFamily, 400);
+    } else {
+      familyDetecting.value = false;
+    }
   }, {immediate: true});
   onBeforeUnmount(() => { if (detectTimer) clearTimeout(detectTimer); });
   const activeTranslationFamily = computed(() => (
@@ -94,6 +111,7 @@ export function useTranslationSettings(localConfig: Ref<any>, sectionSaveTimers:
       ? detectedFamily.value : nameFamily.value));
   const familySettings = computed(() => activeTranslationFamily.value === 'index_translate' ? 'index_translate' : 'hy_mt2');
   const familyLabel = computed(() => activeTranslationFamily.value === 'index_translate' ? 'Index-Translate' : 'HY-MT2');
+  const optimizerEffective = computed(() => String(localConfig.value.translation.backend || 'none') !== 'none' && ['hy_mt2', 'index_translate'].includes(activeTranslationFamily.value) && (localConfig.value.translation.family_optimizer_auto === true || localConfig.value.translation[familySettings.value + '_optimizer_enabled'] === true));
   const previewText = ref('今日はすいちゃんと一緒にゲームをします。');
   const previewContext = ref('');
   const previewBusy = ref(false);
@@ -134,8 +152,16 @@ export function useTranslationSettings(localConfig: Ref<any>, sectionSaveTimers:
       return `${provider === 'lm_studio' ? 'LM Studio' : 'llama.cpp'} · ${t[familySettings.value + '_' + provider + '_model'] || '尚未填模型 ID'}`;
     }
     const selected = String(t.backend || 'none');
+    if (servedModels.value.length) return servedModels.value[0];
+    if (['llama', 'localllm'].includes(selected)) {
+      // The settings page's localConfig has no llama section; the llama store holds the selected GGUF.
+      const modelPath = String(llamaStore.selectedModelPath || localConfig.value.llama?.model_path || '');
+      const modelFile = modelPath.split(/[\\/]/).pop() || '';
+      return modelFile || t.gpt_model;
+    }
     const custom = (t.custom_models || []).find((m: any) => `custom:${m.name}` === selected);
-    return `目前模型 · ${custom?.model_name || t.gpt_model || selected}`;
+    if (selected.startsWith('custom:')) return custom?.model_name || custom?.name || t.gpt_model;
+    return t.gpt_model || selected;
   });
 
   async function checkHyMt2Backend() {
@@ -166,9 +192,11 @@ export function useTranslationSettings(localConfig: Ref<any>, sectionSaveTimers:
     translationBackendOptions,
     activeTranslationFamily,
     servedModels,
+    familyDetecting,
     scheduleFamilyDetection,
     familySettings,
     familyLabel,
+    optimizerEffective,
     previewText,
     previewContext,
     previewBusy,
@@ -181,3 +209,4 @@ export function useTranslationSettings(localConfig: Ref<any>, sectionSaveTimers:
     checkHyMt2Backend,
   };
 }
+

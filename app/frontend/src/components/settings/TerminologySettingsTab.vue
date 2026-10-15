@@ -2,7 +2,7 @@
 import UiSelect from '../UiSelect.vue';
 import { useSettingsTabBindings } from '../../composables/settings/settingsContext';
 const {
-  GLOSSARY_PAGE_SIZE, LARGE_LIST_BATCH_SIZE, addAsrCorrection, addGlossaryScope, addTerm, applySelectedGlossaryScope, asrCorrectionRenderLimit, asrCorrectionSearchQuery, asrCorrectionsImporting, bulkGlossaryScope, customGlossaryScopes, customizePresetTerm, editingGlossaryScope, editingGlossaryScopeName, effectiveGlossaryCount, expandedGlossaryTerm, exportAsrCorrections, exportGlossary, familySettings, filteredAsrCorrections, filteredGlossary, glossaryEntryForm, glossaryImporting, glossaryListMode, glossaryRenderLimit, glossaryScopeOptions, glossaryUserList, importAsrCorrections, importGlossary, localConfig, newAsrAliases, newAsrCanonical, newGlossaryScopeName, newTermAliases, newTermOriginal, newTermScope, newTermTranslated, removeAsrCorrection, removeGlossaryScope, removeTermEntry, removedGlossaryTerm, renameGlossaryScope, selectVisibleGlossaryTerms, selectedGlossaryTerms, selectedPresetPreview, setTermAliases, setTermScope, termSearchQuery, terminologySubTab, toggleGlossarySelection, undoRemovedGlossaryTerm, userGlossaryBySource, visibleAsrCorrections, visibleGlossary
+  GLOSSARY_PAGE_SIZE, LARGE_LIST_BATCH_SIZE, addAsrCorrection, addGlossaryScope, addTerm, applySelectedGlossaryScope, asrCorrectionRenderLimit, asrCorrectionSearchQuery, asrCorrectionsImporting, bulkGlossaryScope, customGlossaryScopes, customizePresetTerm, editingGlossaryScope, editingGlossaryScopeName, effectiveGlossaryCount, expandedGlossaryTerm, exportAsrCorrections, exportGlossary, filteredAsrCorrections, filteredGlossary, glossaryEntryForm, glossaryImporting, glossaryListMode, glossaryRenderLimit, glossaryScopeOptions, glossaryUserList, importAsrCorrections, importGlossary, localConfig, newAsrAliases, newAsrCanonical, newGlossaryScopeName, newTermAliases, newTermOriginal, newTermScope, newTermTranslated, removeAsrCorrection, removeGlossaryScope, removeTermEntry, removedGlossaryTerm, renameGlossaryScope, selectVisibleGlossaryTerms, selectedGlossaryTerms, selectedPresetPreview, setTermAliases, setTermScope, termSearchQuery, terminologySubTab, toggleGlossarySelection, undoRemovedGlossaryTerm, userGlossaryBySource, visibleAsrCorrections, visibleGlossary, optimizerEffective
 } = useSettingsTabBindings();
 </script>
 
@@ -45,7 +45,7 @@ const {
                 </div>
                 </div>
               </details>
-              <p class="text-sm text-white/70">{{ localConfig.translation[familySettings + '_optimizer_enabled'] ? '下次翻譯會使用' : '啟用家族優化後可使用' }}約 {{ effectiveGlossaryCount }} 個原詞：我的詞條 {{ userGlossaryBySource.size }} 個、內建 {{ selectedPresetPreview.length }} 個；同名時以我的譯法為準。</p>
+              <p class="text-sm text-white/70">{{ optimizerEffective ? '下次翻譯會使用' : '啟用家族優化後可使用' }}約 {{ effectiveGlossaryCount }} 個原詞：我的詞條 {{ userGlossaryBySource.size }} 個、內建 {{ selectedPresetPreview.length }} 個；同名時以我的譯法為準。</p>
               <p v-if="localConfig.translation.hy_mt2_glossary_folder" class="text-xs text-white/45">JSON 資料夾的詞條仍會加入翻譯，但不包含在此處的預覽與數量中。</p>
               <details v-if="selectedPresetPreview.length" class="rounded-lg border border-white/10 bg-black/15 p-3">
                 <summary class="cursor-pointer text-sm font-semibold text-white/80">查看內建詞條（{{ selectedPresetPreview.length }} 筆）</summary>
@@ -269,3 +269,4 @@ const {
 </template>
 
 <style scoped src="./settings-shared.css"></style>
+

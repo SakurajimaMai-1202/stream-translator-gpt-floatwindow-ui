@@ -10,7 +10,7 @@ def test_optimizer_aliases_and_options_reach_translator(tmp_path):
         "enabled": True,
         "use_smart_prompt": False,
         "translation_prompt": "翻譯",
-        "hy_mt2_optimizer_enabled": True,
+        "family_optimizer_auto": False, "hy_mt2_optimizer_enabled": True,
         "hy_mt2_context_window": 2,
     })
     config["terminology"].update({
@@ -30,7 +30,7 @@ def test_local_provider_switch_preserves_prompt_configuration(tmp_path):
     config = manager.get_config()
     config["translation"].update({
         "enabled": True,
-        "hy_mt2_optimizer_enabled": True,
+        "family_optimizer_auto": False, "hy_mt2_optimizer_enabled": True,
         "hy_mt2_lm_studio_url": "http://127.0.0.1:1234/v1",
         "hy_mt2_lm_studio_model": "model-a",
         "hy_mt2_llama_cpp_url": "http://127.0.0.1:8080/v1",
@@ -51,7 +51,7 @@ def test_local_provider_switch_preserves_prompt_configuration(tmp_path):
 def test_local_provider_requires_model_id(tmp_path):
     manager = ConfigManager(tmp_path / "config.yaml")
     config = manager.get_config()
-    config["translation"].update({"enabled": True, "hy_mt2_optimizer_enabled": True,
+    config["translation"].update({"enabled": True, "family_optimizer_auto": False, "hy_mt2_optimizer_enabled": True,
                                   "hy_mt2_provider": "lm_studio", "hy_mt2_lm_studio_model": ""})
     try:
         manager.to_main_args(config)
@@ -64,7 +64,7 @@ def test_local_provider_requires_model_id(tmp_path):
 def test_relative_glossary_folder_resolves_from_config_location(tmp_path):
     manager = ConfigManager(tmp_path / "config.yaml")
     config = manager.get_config()
-    config["translation"].update({"enabled": True, "hy_mt2_optimizer_enabled": True,
+    config["translation"].update({"enabled": True, "family_optimizer_auto": False, "hy_mt2_optimizer_enabled": True,
                                   "hy_mt2_glossary_folder": "data/glossary"})
     args = manager.to_main_args(config)
     assert args["hy_mt2_glossary_folder"] == str(tmp_path / "data" / "glossary")
@@ -73,7 +73,7 @@ def test_relative_glossary_folder_resolves_from_config_location(tmp_path):
 def test_opt_in_glossary_preset_switches_without_replacing_user_terms(tmp_path):
     manager = ConfigManager(tmp_path / "config.yaml")
     config = manager.get_config()
-    config["translation"].update({"enabled": True, "hy_mt2_optimizer_enabled": True})
+    config["translation"].update({"enabled": True, "family_optimizer_auto": False, "hy_mt2_optimizer_enabled": True})
     config["terminology"].update({
         "use_terminology_glossary": True,
         "glossary_list": [{"original": "ホロメン", "translated": "我的譯法", "aliases": []}],
@@ -96,7 +96,7 @@ def test_opt_in_glossary_preset_switches_without_replacing_user_terms(tmp_path):
 def test_glossary_scope_keeps_legacy_global_and_prefers_current_profile(tmp_path):
     manager = ConfigManager(tmp_path / "config.yaml")
     config = manager.get_config()
-    config["translation"].update({"enabled": True, "hy_mt2_optimizer_enabled": True})
+    config["translation"].update({"enabled": True, "family_optimizer_auto": False, "hy_mt2_optimizer_enabled": True})
     config["terminology"].update({
         "use_terminology_glossary": True,
         "glossary_list": [
@@ -124,7 +124,7 @@ def test_custom_glossary_scope_persists_and_only_activates_selected_terms(tmp_pa
     manager = ConfigManager(tmp_path / "config.yaml")
     config = manager.get_config()
     scope = "custom_12345678-1234-1234-1234-123456789abc"
-    config["translation"].update({"enabled": True, "hy_mt2_optimizer_enabled": True,
+    config["translation"].update({"enabled": True, "family_optimizer_auto": False, "hy_mt2_optimizer_enabled": True,
                                   "hy_mt2_glossary_preset": scope})
     config["terminology"].update({
         "use_terminology_glossary": True,

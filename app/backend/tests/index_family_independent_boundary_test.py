@@ -17,6 +17,7 @@ def _local_family_args(config_manager, family):
         "translation_provider": "openai_compatible",
         "gpt_model": "Index-Translate-9B" if family == "index_translate" else "HY-MT2",
         "gpt_base_url": "http://127.0.0.1:1234/v1",
+        "family_optimizer_auto": False,  # this file checks the manual per-family switches
         "hy_mt2_optimizer_enabled": True,
         "hy_mt2_style_text": "HY PRIVATE STYLE",
         "index_translate_optimizer_enabled": True,

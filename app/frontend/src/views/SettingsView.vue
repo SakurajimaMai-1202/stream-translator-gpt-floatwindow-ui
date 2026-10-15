@@ -188,6 +188,7 @@ const localConfig = ref<any>({
     translation_output_format: 'auto',
     translation_max_concurrency: 0,
     translation_max_output_tokens: 128,
+    family_optimizer_auto: true,
     hy_mt2_optimizer_enabled: false,
     hy_mt2_context_window: 3,
     hy_mt2_max_context_chars: 1000,

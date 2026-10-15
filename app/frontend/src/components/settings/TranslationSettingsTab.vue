@@ -4,7 +4,7 @@ import axios from 'axios';
 import UiSelect from '../UiSelect.vue';
 import { useSettingsTabBindings } from '../../composables/settings/settingsContext';
 const {
-  glossaryScopeOptions, activeTab, activeTranslationFamily, servedModels, scheduleFamilyDetection, checkHyMt2Backend, deleteCustomModel, effectiveGlossaryCount, familyLabel, familySettings, hyMt2EffectiveBackend, hyMt2HealthChecking, hyMt2HealthResult, localConfig, openCustomModelDialog, previewBusy, previewContext, previewError, previewLatencyLabel, previewResult, previewText, previewValidationStatus, runTranslationPreview, selectedGlossaryPresetLabel, targetLanguageOptions, testConnection, testingGemini, testingGpt, translationBackendOptions, translationModelFamilyOptions, translationOutputFormatOptions
+  glossaryScopeOptions, activeTab, activeTranslationFamily, familyDetecting, servedModels, scheduleFamilyDetection, checkHyMt2Backend, deleteCustomModel, effectiveGlossaryCount, familyLabel, familySettings, hyMt2EffectiveBackend, hyMt2HealthChecking, hyMt2HealthResult, localConfig, openCustomModelDialog, previewBusy, previewContext, previewError, previewLatencyLabel, previewResult, previewText, previewValidationStatus, runTranslationPreview, selectedGlossaryPresetLabel, targetLanguageOptions, testConnection, testingGemini, testingGpt, translationBackendOptions, translationModelFamilyOptions, translationOutputFormatOptions
 } = useSettingsTabBindings();
 type CloudBackend = 'gpt' | 'gemini';
 const cloudModels = reactive<Record<CloudBackend, { ids: string[]; busy: boolean; status: string }>>({
@@ -158,16 +158,18 @@ onMounted(scheduleFamilyDetection);
             <!-- 進階翻譯設定 (所有後端共用，但不翻譯時隱藏) -->
             <div v-if="localConfig.translation.backend !== 'none'" class="bg-white/5 rounded-xl p-5 border border-white/10">
               <h3 class="commercial-section-title">翻譯優化</h3>
-              <p class="text-white/40 text-xs mt-2"><template v-if="localConfig.translation.translation_model_family === 'auto' && ['hy_mt2', 'index_translate'].includes(activeTranslationFamily)">已自動偵測到 {{ familyLabel }}<template v-if="servedModels.length">（伺服器模型：{{ servedModels[0] }}）</template></template><template v-else>模型類型：{{ translationModelFamilyOptions.find(option => option.value === activeTranslationFamily)?.label || '一般翻譯' }}<template v-if="servedModels.length">（伺服器模型：{{ servedModels[0] }}）</template>。如果模型沒有被正確識別，可在下方「進階：模型與推理設定」手動指定。</template></p>
+              <p class="text-white/40 text-xs mt-2"><template v-if="familyDetecting">正在偵測模型…</template><template v-else-if="localConfig.translation.translation_model_family === 'auto' && ['hy_mt2', 'index_translate'].includes(activeTranslationFamily)">已自動偵測到 {{ familyLabel }}<template v-if="servedModels.length">（伺服器模型：{{ servedModels[0] }}）</template></template><template v-else>模型類型：{{ translationModelFamilyOptions.find(option => option.value === activeTranslationFamily)?.label || '一般翻譯' }}<template v-if="servedModels.length">（伺服器模型：{{ servedModels[0] }}）</template>。如果模型沒有被正確識別，可在下方「進階：模型與推理設定」手動指定。</template></p>
+              <label class="mt-4 flex items-center gap-2 font-semibold text-white"><input v-model="localConfig.translation.family_optimizer_auto" type="checkbox" class="h-4 w-4 accent-blue-500" />依模型自動套用翻譯優化</label>
+              <p class="mt-1 text-sm text-white/55">偵測到 HY-MT2 或 Index-Translate 時，自動使用術語、前文與台灣繁中風格。</p>
               <div v-if="['hy_mt2', 'index_translate'].includes(activeTranslationFamily)" class="mt-4 border-t border-white/10 pt-4">
               <div class="flex flex-wrap items-start justify-between gap-4">
                 <div>
                   <p class="font-semibold text-white">{{ familyLabel }} 翻譯優化</p>
                   <p class="mt-1 text-sm text-white/55">讓日文直播字幕參考術語、前文與台灣繁中風格。</p>
                 </div>
-                <label class="flex items-center gap-2 rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm font-semibold text-white cursor-pointer">
-                  <input v-model="localConfig.translation[familySettings + '_optimizer_enabled']" type="checkbox" class="h-4 w-4 accent-blue-500" />
-                  {{ localConfig.translation[familySettings + '_optimizer_enabled'] ? '術語與前文已啟用' : '啟用術語與前文' }}
+                <label :class="['flex items-center gap-2 rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm font-semibold text-white', localConfig.translation.family_optimizer_auto ? 'cursor-default' : 'cursor-pointer']">
+                  <input v-if="!localConfig.translation.family_optimizer_auto" v-model="localConfig.translation[familySettings + '_optimizer_enabled']" type="checkbox" class="h-4 w-4 accent-blue-500" />
+                  {{ localConfig.translation.family_optimizer_auto ? '術語與前文：自動套用' : (localConfig.translation[familySettings + '_optimizer_enabled'] ? '術語與前文已啟用' : '啟用術語與前文') }}
                 </label>
               </div>
               <div class="mt-4 flex flex-wrap items-center gap-2">
@@ -209,6 +211,7 @@ onMounted(scheduleFamilyDetection);
                 <p class="text-xs text-white/45">試譯使用目前設定與直播相同策略；結果不代表日文譯意已人工驗證。</p>
               </details>
               </div>
+              <p v-else-if="!familyDetecting" class="mt-4 text-sm text-white/60">這個模型沒有專屬翻譯優化，使用一般翻譯。</p>
               <details class="apple-inline-disclosure mt-4">
                 <summary>進階：模型與推理設定</summary>
                 <div class="apple-disclosure-body">

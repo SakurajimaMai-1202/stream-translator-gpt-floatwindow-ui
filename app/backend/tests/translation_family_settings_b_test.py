@@ -13,6 +13,7 @@ def test_index_basic_retains_endpoint_and_independent_settings_after_reload(tmp_
         'backend': 'localllm', 'translation_model_family': 'index_translate',
         'hy_mt2_optimizer_enabled': True, 'hy_mt2_provider': 'lm_studio',
         'hy_mt2_lm_studio_model': 'HY-MT2', 'hy_mt2_context_window': 4,
+        'family_optimizer_auto': False,
         'index_translate_optimizer_enabled': False, 'index_translate_context_window': 0,
         'index_translate_provider': 'llama_cpp',
         'index_translate_llama_cpp_url': 'http://127.0.0.1:8081/v1',

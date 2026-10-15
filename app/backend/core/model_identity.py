@@ -46,9 +46,14 @@ def served_model_names(base_url: str, api_key: str = "", use_cache: bool = True,
             return list(cached[1])
 
     names: list[str] = []
+    unreachable = False
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     try:
-        with httpx.Client(timeout=_PROBE_TIMEOUT_SECONDS, headers=headers, trust_env=False) as client:
+        # Windows takes ~2 s to report a refused loopback port; a live local server accepts in <1 ms.
+        # Remote hosts keep the normal connect timeout.
+        timeout = (httpx.Timeout(_PROBE_TIMEOUT_SECONDS, connect=0.3) if is_loopback_probe(root)
+                   else _PROBE_TIMEOUT_SECONDS)
+        with httpx.Client(timeout=timeout, headers=headers, trust_env=False) as client:
             try:
                 props = client.get(f"{root}/props")
                 if props.status_code == 200:
@@ -59,6 +64,10 @@ def served_model_names(base_url: str, api_key: str = "", use_cache: bool = True,
                     alias = str(data.get("model_alias") or "").strip()
                     if alias:
                         names.append(alias)
+            except (httpx.ConnectError, httpx.ConnectTimeout):
+                # Nothing listens there; /v1/models is the same server.
+                unreachable = True
+                raise
             except (httpx.HTTPError, ValueError, AttributeError):
                 pass
             try:
@@ -77,8 +86,10 @@ def served_model_names(base_url: str, api_key: str = "", use_cache: bool = True,
         logger.debug("Model identity probe failed for %s", root, exc_info=True)
 
     unique = list(dict.fromkeys(name for name in names if name))
-    with _lock:
-        _cache[cache_key] = (now, unique)
+    if not unreachable:
+        # A server that is still starting must be re-probed next time, not cached as empty.
+        with _lock:
+            _cache[cache_key] = (now, unique)
     return unique
 
 

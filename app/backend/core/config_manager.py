@@ -169,6 +169,7 @@ class ConfigManager:
             'translation_output_format': 'auto',
             'translation_max_concurrency': 0,
             'translation_max_output_tokens': 128,
+            'family_optimizer_auto': True,
             'hy_mt2_optimizer_enabled': False,
             'hy_mt2_context_window': 3,
             'hy_mt2_max_context_chars': 1000,
@@ -1139,6 +1140,7 @@ class ConfigManager:
             'translation_history_size': translation_config.get('translation_history_size', 0),
             'translation_timeout': translation_config.get('translation_timeout', 10),
             'translation_model_family': translation_config.get('translation_model_family', 'auto'),
+            'family_optimizer_auto': translation_config.get('family_optimizer_auto', True),
             'translation_output_format': translation_config.get('translation_output_format', 'auto'),
             'translation_max_concurrency': translation_config.get('translation_max_concurrency', 0),
             'translation_max_output_tokens': translation_config.get('translation_max_output_tokens', 128),
@@ -1172,60 +1174,6 @@ class ConfigManager:
             'use_json_result': translation_config.get('use_json_result', False),
             'retry_if_translation_fails': translation_config.get('retry_if_translation_fails', True),
         })
-        if translation_config.get('hy_mt2_optimizer_enabled', False):
-            aliases = {}
-            if args.get('translation_glossary'):
-                from backend.core.hy_mt2_glossary_presets import active_user_terms
-                for item in active_user_terms(
-                        config.get('terminology', {}),
-                        str(translation_config.get('translation_glossary_scope') if translation_config.get('translation_glossary_scope') is not None else translation_config.get('hy_mt2_glossary_preset', ''))):
-                    target = item.get('translated')
-                    names = item.get('aliases', [])
-                    if isinstance(names, str):
-                        names = names.split(',')
-                    if target and isinstance(names, list):
-                        for name in names:
-                            if isinstance(name, str) and name.strip():
-                                aliases[name.strip()] = target
-            from backend.core.hy_mt2_glossary_presets import get_preset_terms
-            for source, target in get_preset_terms(str(translation_config.get('translation_glossary_scope') if translation_config.get('translation_glossary_scope') is not None else translation_config.get('hy_mt2_glossary_preset', ''))).items():
-                aliases.setdefault(source, target)
-            if aliases:
-                args['hy_mt2_aliases'] = json.dumps(aliases, ensure_ascii=False)
-        glossary_folder = str(translation_config.get('hy_mt2_glossary_folder', '') or '').strip()
-        if glossary_folder and translation_config.get('hy_mt2_optimizer_enabled', False):
-            folder_path = Path(glossary_folder)
-            if not folder_path.is_absolute():
-                folder_path = self.config_path.parent / folder_path
-            args['hy_mt2_glossary_folder'] = str(folder_path)
-        
-        if translation_config.get('index_translate_optimizer_enabled', False):
-            aliases = {}
-            if args.get('translation_glossary'):
-                from backend.core.hy_mt2_glossary_presets import active_user_terms
-                for item in active_user_terms(
-                        config.get('terminology', {}),
-                        str(translation_config.get('translation_glossary_scope') if translation_config.get('translation_glossary_scope') is not None else translation_config.get('hy_mt2_glossary_preset', ''))):
-                    target = item.get('translated')
-                    names = item.get('aliases', [])
-                    if isinstance(names, str):
-                        names = names.split(',')
-                    if target and isinstance(names, list):
-                        for name in names:
-                            if isinstance(name, str) and name.strip():
-                                aliases[name.strip()] = target
-            from backend.core.hy_mt2_glossary_presets import get_preset_terms
-            for source, target in get_preset_terms(str(translation_config.get('translation_glossary_scope') if translation_config.get('translation_glossary_scope') is not None else translation_config.get('hy_mt2_glossary_preset', ''))).items():
-                aliases.setdefault(source, target)
-            if aliases:
-                args['index_translate_aliases'] = json.dumps(aliases, ensure_ascii=False)
-        glossary_folder = str(translation_config.get('index_translate_glossary_folder', '') or '').strip()
-        if glossary_folder and translation_config.get('index_translate_optimizer_enabled', False):
-            folder_path = Path(glossary_folder)
-            if not folder_path.is_absolute():
-                folder_path = self.config_path.parent / folder_path
-            args['index_translate_glossary_folder'] = str(folder_path)
-
         # 後端模型邏輯
         backend = config['translation'].get('backend', '')
         gpt_model = config['translation'].get('gpt_model', 'gpt-4o-mini')
@@ -1266,6 +1214,7 @@ class ConfigManager:
         else:
             args['gpt_model'] = gpt_model
             args['openai_api_key'] = resolved_api_keys.get('openai_api_key', '')
+
         # Both local servers use the same OpenAI-compatible request path. Only
         # endpoint identity changes; glossary, context and prompt stay upstream.
         # Explicit family wins over stale optimizer/provider settings from another family.
@@ -1309,6 +1258,50 @@ class ConfigManager:
                 args['gpt_base_url'] = endpoint
                 args['gpt_model'] = model_id
                 args['openai_api_key'] = str(translation_config.get(f'{prefix}_api_key', '') or '').strip() or '114514'
+
+        auto_optimizer = bool(translation_config.get('family_optimizer_auto', True))
+        legacy_hy = bool(translation_config.get('hy_mt2_optimizer_enabled', False))
+        legacy_index = bool(translation_config.get('index_translate_optimizer_enabled', False))
+        if auto_optimizer:
+            hy_enabled = backend != 'none' and family == 'hy_mt2'
+            index_enabled = backend != 'none' and family == 'index_translate'
+        else:
+            hy_enabled = legacy_hy
+            index_enabled = legacy_index
+        args['hy_mt2_optimizer_enabled'] = hy_enabled
+        args['index_translate_optimizer_enabled'] = index_enabled
+        for _family, _enabled in (('hy_mt2', hy_enabled), ('index_translate', index_enabled)):
+            if not _enabled:
+                continue
+            aliases = {}
+            if args.get('translation_glossary'):
+                from backend.core.hy_mt2_glossary_presets import active_user_terms
+                scope = translation_config.get('translation_glossary_scope')
+                if scope is None:
+                    scope = translation_config.get('hy_mt2_glossary_preset', '')
+                for item in active_user_terms(config.get('terminology', {}), str(scope)):
+                    target = item.get('translated')
+                    names = item.get('aliases', [])
+                    if isinstance(names, str):
+                        names = names.split(',')
+                    if target and isinstance(names, list):
+                        for name in names:
+                            if isinstance(name, str) and name.strip():
+                                aliases[name.strip()] = target
+            from backend.core.hy_mt2_glossary_presets import get_preset_terms
+            scope = translation_config.get('translation_glossary_scope')
+            if scope is None:
+                scope = translation_config.get('hy_mt2_glossary_preset', '')
+            for source, target in get_preset_terms(str(scope)).items():
+                aliases.setdefault(source, target)
+            if aliases:
+                args[f'{_family}_aliases'] = json.dumps(aliases, ensure_ascii=False)
+            folder = str(translation_config.get(f'{_family}_glossary_folder', '') or '').strip()
+            if folder:
+                path = Path(folder)
+                if not path.is_absolute():
+                    path = self.config_path.parent / path
+                args[f'{_family}_glossary_folder'] = str(path)
 
         args['google_api_key'] = resolved_api_keys.get('google_api_key', '')
         args['openai_transcription_api_key'] = str(
@@ -1457,3 +1450,4 @@ class ConfigManager:
             if self.config_path.exists():
                 shutil.copy2(self.config_path, self._backup_path('bak'))
             return self._persist_locked(self._profile_defaults())
+

@@ -631,6 +631,13 @@ async def get_server_status():
     )
 
 
+@router.post("/server/probe", response_model=ServerStatus)
+async def probe_server():
+    """Adopt a compatible server that started after app launch (e.g. LM Studio on the configured port)."""
+    await probe_existing_llama_server()
+    return await get_server_status()
+
+
 @router.get("/server/available-port")
 async def get_available_port(preferred: int = 8081):
     for port in range(max(1024, preferred), min(65535, preferred + 100)):

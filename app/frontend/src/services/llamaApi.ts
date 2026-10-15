@@ -267,6 +267,10 @@ export const llamaApi = {
     const response = await axios.get(`${API_BASE}/server/status`);
     return response.data;
   },
+  async probeServer(): Promise<ServerStatus> {
+    const response = await axios.post(`${API_BASE}/server/probe`);
+    return response.data;
+  },
   async getAvailablePort(preferred = 8081): Promise<number> {
     const response = await axios.get(`${API_BASE}/server/available-port`, { params: { preferred } });
     return response.data.port;

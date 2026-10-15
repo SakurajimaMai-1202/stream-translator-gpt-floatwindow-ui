@@ -551,3 +551,22 @@ def test_stop_adopted_external_server_preserves_state(monkeypatch):
     assert "並非由本應用程式啟動" in stopped.value.detail
     assert "手動關閉" in stopped.value.detail
     assert vars(state) == before
+
+
+def test_probe_route_adopts_a_server_started_after_launch(monkeypatch):
+    import asyncio
+
+    calls = []
+
+    async def fake_probe():
+        calls.append("probe")
+        return True
+
+    async def fake_status():
+        return {"is_running": True, "is_ready": True}
+
+    monkeypatch.setattr(llama, "probe_existing_llama_server", fake_probe)
+    monkeypatch.setattr(llama, "get_server_status", fake_status)
+
+    assert asyncio.run(llama.probe_server()) == {"is_running": True, "is_ready": True}
+    assert calls == ["probe"]

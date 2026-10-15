@@ -22,6 +22,7 @@ import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router';
 import { useTranslationStore } from '../stores/translation';
 import { useLlamaStore } from '../stores/llama';
+import { llamaApi } from '../services/llamaApi';
 import { useInterfaceModeStore } from '../stores/interfaceMode';
 import { simpleAsrModel } from '../utils/simpleAsr';
 import { sameLanguage } from '../utils/languageIdentity';
@@ -986,10 +987,35 @@ async function handleStart() {
   addLog(`目標語言: ${selectedOutputLanguage.value}`);
 
   try {
-    if (effectiveTranslationEnabled.value && !externalFamilyEndpoint.value && llamaStore.localLlmEnabled && !llamaStore.isServerReady) {
-      addLog('🦙 正在啟動本地 LLM...');
-      await llamaStore.startServer();
-      addLog('✅ 本地 LLM 已就緒');
+    if (effectiveTranslationEnabled.value && ['llama', 'localllm'].includes(selectedBackend.value) && !externalFamilyEndpoint.value) {
+      // A compatible server may have started after launch on the configured port; adopt it first.
+      try { await llamaApi.probeServer(); } catch { /* fall back to the cached status */ }
+      await llamaStore.refreshServerStatus();
+      if (llamaStore.isServerRunning && !llamaStore.isServerReady) {
+        addLog('正在等待本機翻譯模型就緒…');
+        // Match the store's startup polling limit and interval.
+        const maxRetries = 60;
+        for (let retries = 0; retries < maxRetries; retries++) {
+          await llamaStore.refreshServerStatus();
+          if (llamaStore.isServerReady) break;
+          if (!llamaStore.isServerRunning) {
+            throw new Error(llamaStore.serverStatus.last_error || 'llama.cpp 啟動後立即結束');
+          }
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        if (!llamaStore.isServerReady) {
+          throw new Error('伺服器啟動超時，請檢查日誌');
+        }
+        addLog('本機翻譯模型已就緒');
+      } else if (!llamaStore.isServerReady) {
+        if (!llamaStore.selectedModelPath) {
+          store.errorMessage = '尚未選擇本機翻譯模型，請先到「本地翻譯」頁選擇或下載。';
+          return;
+        }
+        addLog('正在啟動本機翻譯模型…');
+        await llamaStore.setLocalLlmEnabled(true);
+        addLog('本機翻譯模型已就緒');
+      }
     }
     // 使用新的 API 格式
     const result = await translationApi.start({

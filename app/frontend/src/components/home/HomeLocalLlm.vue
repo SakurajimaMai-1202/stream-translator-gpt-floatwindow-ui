@@ -21,7 +21,6 @@ const localLlmStatusLabel = computed(() => {
 });
 
 const localLlmStatusDescription = computed(() => {
-  if (!llamaStore.selectedModelPath) return '請先到「本地翻譯」選擇 GGUF 模型';
   if (llamaStore.isServerReady) {
     const runningUrl = llamaStore.serverStatus.server_url;
     if (runningUrl) return `本機翻譯正在 ${runningUrl} 運行`;
@@ -29,15 +28,15 @@ const localLlmStatusDescription = computed(() => {
   }
   if (llamaStore.isLoading || llamaStore.isServerRunning) return '正在載入模型，完成後即可開始轉譯';
   if (llamaStore.localLlmEnabled && llamaStore.serverStatus.last_error) return llamaStore.serverStatus.last_error;
-  return '開啟後會啟動 llama.cpp，關閉則不使用本地模型';
+  if (!llamaStore.selectedModelPath) return '請先到「本地翻譯」選擇 GGUF 模型';
+  return '開啟會啟動模型伺服器，關閉會停止模型伺服器';
 });
 
-// The toggle means "this app runs llama-server"; the 'llama' backend means
-// "use a llama-compatible endpoint", which may also be LM Studio.
-const localLlmUsageHint = computed<'external' | 'idle' | null>(() => {
+// The switch controls the model server; local translation also starts it on demand.
+const localLlmUsageHint = computed<'autoStart' | 'idle' | null>(() => {
   const backend = selectedBackend.value;
   const usesLlamaBackend = translationEnabled.value && (backend === 'llama' || backend === 'localllm');
-  if (usesLlamaBackend && !llamaStore.localLlmEnabled) return 'external';
+  if (usesLlamaBackend && !externalFamilyEndpoint.value && llamaStore.selectedModelPath && !llamaStore.serverStatus.last_error && !llamaStore.isServerRunning && !llamaStore.isServerReady) return 'autoStart';
   const usesNoLocalModel = !translationEnabled.value || ['none', 'gpt', 'gemini'].includes(backend);
   if (usesNoLocalModel && !externalFamilyEndpoint.value && (llamaStore.localLlmEnabled || llamaStore.isServerRunning)) return 'idle';
   return null;
@@ -53,7 +52,10 @@ async function stopLocalLlm() {
 }
 
 async function handleLocalLlmToggle(event: Event) {
-  const enabled = (event.target as HTMLInputElement).checked;
+  await setLocalLlmEnabled((event.target as HTMLInputElement).checked);
+}
+
+async function setLocalLlmEnabled(enabled: boolean) {
   try {
     await llamaStore.setLocalLlmEnabled(enabled);
     addLog(enabled ? '✅ 已啟用本地 LLM' : '⏹️ 已停用本地 LLM');
@@ -82,7 +84,7 @@ async function handleLocalLlmToggle(event: Event) {
                 </div>
                 <div class="min-w-0">
                   <div class="mb-1 flex flex-wrap items-center gap-2">
-                    <h3 class="text-xs font-bold tracking-wide text-white">本地 LLM 翻譯</h3>
+                    <h3 class="text-xs font-bold tracking-wide text-white">本機翻譯模型</h3>
                     <span
                       class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-bold"
                       :class="llamaStore.isServerReady
@@ -101,12 +103,16 @@ async function handleLocalLlmToggle(event: Event) {
                   <p class="truncate text-xs font-semibold" :class="llamaStore.selectedModelPath ? 'text-cyan-200/90' : 'text-amber-300/80'">
                     {{ localLlmModelName }}
                   </p>
-                  <p class="mt-0.5 max-w-[560px] truncate text-xs text-white/60" :title="localLlmStatusDescription">
+                  <p class="mt-0.5 max-w-[560px] break-words text-xs text-white/60" :title="localLlmStatusDescription">
                     {{ localLlmStatusDescription }}
                   </p>
-                  <p v-if="localLlmUsageHint === 'external'" class="mt-1.5 text-xs leading-5 text-cyan-200/90" role="status">
-                    翻譯後端為 Llama，但本機伺服器未開啟：將使用外部 llama 相容服務（例如 LM Studio）。
-                    <button type="button" class="ml-1 underline underline-offset-2 hover:text-white" @click="router.push({ path: '/settings', query: { tab: 'translation' } })">查看服務位址</button>
+                  <div v-if="llamaStore.localLlmEnabled && llamaStore.serverStatus.last_error" class="mt-1.5 flex flex-wrap items-center gap-2 text-xs leading-5 text-amber-200/90">
+                    <button type="button" class="local-llm-inline-action rounded-md border border-amber-300/30 px-2 text-amber-100 hover:bg-amber-300/10 disabled:opacity-50" :disabled="llamaStore.isLoading" @click="setLocalLlmEnabled(true)">重試</button>
+                    <button type="button" class="underline underline-offset-2 hover:text-white" @click="router.push('/local-translation')">前往本地翻譯</button>
+                  </div>
+                  <button v-if="!llamaStore.selectedModelPath" type="button" class="mt-1.5 text-xs leading-5 text-cyan-200/90 underline underline-offset-2 hover:text-white" @click="router.push('/local-translation')">選擇模型</button>
+                  <p v-if="localLlmUsageHint === 'autoStart'" class="mt-1.5 text-xs leading-5 text-cyan-200/90" role="status">
+                    開始轉譯時會自動啟動；也可以現在先開啟。
                   </p>
                   <p v-else-if="localLlmUsageHint === 'idle'" class="mt-1.5 flex flex-wrap items-center gap-2 text-xs leading-5 text-amber-200/90" role="status">
                     <span>目前翻譯未使用本機模型，伺服器仍在佔用顯存。</span>
@@ -118,7 +124,7 @@ async function handleLocalLlmToggle(event: Event) {
               <label
                 class="flex flex-shrink-0 items-center gap-2.5"
                 :class="llamaStore.isLoading || (!llamaStore.selectedModelPath && !llamaStore.localLlmEnabled) ? 'cursor-not-allowed opacity-45' : 'cursor-pointer'"
-                :title="!llamaStore.selectedModelPath ? '請先到「本地翻譯」選擇模型' : llamaStore.localLlmEnabled ? '關閉本地 LLM' : '啟動本地 LLM'"
+                :title="!llamaStore.selectedModelPath ? '請先到「本地翻譯」選擇模型' : llamaStore.localLlmEnabled ? '停止模型伺服器' : '啟動模型伺服器'"
               >
                 <span class="text-xs font-bold" :class="llamaStore.localLlmEnabled ? 'text-emerald-300' : 'text-white/65'">
                   {{ llamaStore.localLlmEnabled ? '開啟' : '關閉' }}

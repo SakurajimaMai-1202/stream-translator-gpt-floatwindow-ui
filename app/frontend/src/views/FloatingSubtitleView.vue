@@ -6,7 +6,7 @@ import { useSubtitleStream } from '../composables/useSubtitleStream';
 const store = useTranslationStore();
 
 // 基本顯示設定
-const fontSize = ref(24);
+const fontSize = ref(18);
 const fontWeight = ref(700);
 const opacity = ref(100);
 const showOriginal = ref(true);

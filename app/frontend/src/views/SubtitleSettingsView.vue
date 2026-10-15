@@ -7,7 +7,7 @@ const isStandalone = computed(() => route.path === '/subtitle-settings');
 const settingsReady = ref(false);
 
 // 基本顯示設定
-const fontSize = ref(24);
+const fontSize = ref(18);
 const fontWeight = ref(700);
 const showOriginal = ref(true);
 const showTranslated = ref(true);

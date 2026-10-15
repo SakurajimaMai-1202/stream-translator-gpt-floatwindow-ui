@@ -254,7 +254,7 @@ class ConfigManager:
         },
         'subtitle_settings': {
             '_visibility_defaults_v2': False,
-            'fontSize': 24,
+            'fontSize': 18,
             'fontWeight': 700,
             'opacity': 100,
             'showOriginal': True,

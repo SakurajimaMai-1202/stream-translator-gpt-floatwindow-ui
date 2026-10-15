@@ -1,7 +1,8 @@
-import { ref, computed, toRaw, type Ref } from 'vue';
+import { ref, computed, toRaw, watch, onBeforeUnmount, type Ref } from 'vue';
 import axios from 'axios';
 import type { UiSelectOption } from '../../components/UiSelect.vue';
 import { resolveTranslationFamily } from '../../utils/translationFamily';
+import { useLlamaStore } from '../../stores/llama';
 
 export function useTranslationSettings(localConfig: Ref<any>, sectionSaveTimers: Map<string, ReturnType<typeof setTimeout>>, saveSectionNow: (section: string) => Promise<void>) {
   const hyMt2HealthChecking = ref(false);
@@ -42,7 +43,55 @@ export function useTranslationSettings(localConfig: Ref<any>, sectionSaveTimers:
     return [...base, ...customOptions];
   });
 
-  const activeTranslationFamily = computed(() => resolveTranslationFamily(localConfig.value.translation));
+  // A local alias such as "localllm" hides the family, so ask the backend which
+  // model the server really serves when the name alone gives no hint.
+  const detectedFamily = ref('');
+  const servedModels = ref<string[]>([]);
+  let detectTimer: ReturnType<typeof setTimeout> | undefined;
+  let detectSeq = 0;
+  const nameFamily = computed(() => resolveTranslationFamily(localConfig.value?.translation || {}));
+  const familyNeedsServerProbe = computed(() => {
+    const t = localConfig.value?.translation || {};
+    return String(t.translation_model_family || 'auto') === 'auto'
+      && !['hy_mt2', 'index_translate'].includes(nameFamily.value)
+      && String(t.backend || 'none') !== 'none';
+  });
+  async function detectServedFamily() {
+    const seq = ++detectSeq;
+    try {
+      const response = await axios.post('/api/translation/detect-family', {config: {translation: toRaw(localConfig.value.translation), llama: toRaw(localConfig.value.llama)}});
+      if (seq !== detectSeq) return;
+      detectedFamily.value = String(response.data?.family || '');
+      servedModels.value = Array.isArray(response.data?.served_models) ? response.data.served_models : [];
+    } catch {
+      if (seq === detectSeq) { detectedFamily.value = ''; servedModels.value = []; }
+    }
+  }
+  const llamaStore = useLlamaStore();
+  function scheduleFamilyDetection() {
+    if (detectTimer) clearTimeout(detectTimer);
+    detectSeq++;
+    if (familyNeedsServerProbe.value) detectTimer = setTimeout(detectServedFamily, 400);
+    else { detectedFamily.value = ''; servedModels.value = []; }
+  }
+  // Switching models restarts the server without touching translation settings.
+  watch(() => [llamaStore.isServerRunning, llamaStore.currentModel], scheduleFamilyDetection);
+  watch(() => {
+    const t = localConfig.value?.translation || {};
+    return JSON.stringify([t.backend, t.gpt_model, t.translation_model_family, t.index_translate_provider, t.hy_mt2_provider,
+      (t.custom_models || []).map((m: any) => [m.name, m.base_url || m.api_url, m.model_name]),
+      localConfig.value?.llama?.model_path, localConfig.value?.llama?.host, localConfig.value?.llama?.port]);
+  }, () => {
+    if (detectTimer) clearTimeout(detectTimer);
+    detectSeq++;
+    detectedFamily.value = '';
+    servedModels.value = [];
+    if (familyNeedsServerProbe.value) detectTimer = setTimeout(detectServedFamily, 400);
+  }, {immediate: true});
+  onBeforeUnmount(() => { if (detectTimer) clearTimeout(detectTimer); });
+  const activeTranslationFamily = computed(() => (
+    familyNeedsServerProbe.value && ['hy_mt2', 'index_translate'].includes(detectedFamily.value)
+      ? detectedFamily.value : nameFamily.value));
   const familySettings = computed(() => activeTranslationFamily.value === 'index_translate' ? 'index_translate' : 'hy_mt2');
   const familyLabel = computed(() => activeTranslationFamily.value === 'index_translate' ? 'Index-Translate' : 'HY-MT2');
   const previewText = ref('今日はすいちゃんと一緒にゲームをします。');
@@ -116,6 +165,8 @@ export function useTranslationSettings(localConfig: Ref<any>, sectionSaveTimers:
     targetLanguageOptions,
     translationBackendOptions,
     activeTranslationFamily,
+    servedModels,
+    scheduleFamilyDetection,
     familySettings,
     familyLabel,
     previewText,

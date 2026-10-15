@@ -74,6 +74,40 @@ class FamilyPreviewRequest(BaseModel):
     config: dict = {}
 
 
+class DetectFamilyRequest(BaseModel):
+    config: dict = {}
+
+
+@router.post("/detect-family")
+async def detect_family(request: DetectFamilyRequest):
+    """Resolve the auto family, asking the server which model it really serves."""
+    if len(json.dumps(request.config, ensure_ascii=False)) > 200000:
+        raise HTTPException(status_code=400, detail="設定資料過大")
+    manager = get_config_manager()
+    config = copy.deepcopy(manager.get_config())
+    incoming = restore_masked_secrets(request.config, config)
+    for section in ('translation', 'llama'):
+        if isinstance(incoming.get(section), dict):
+            config.setdefault(section, {}).update(incoming[section])
+    if config.get('translation', {}).get('backend') == 'none':
+        return {"family": "", "served_models": []}
+    from stream_translator_gpt.translation_policy import resolve_model_family
+    from backend.core.model_identity import family_probe_target, served_model_names
+    try:
+        args = await asyncio.to_thread(manager.to_main_args, config)
+        probe_url, _ = family_probe_target(config['translation'].get('backend', ''), config, args)
+        served = []
+        if args.get('translation_provider') != 'gemini' and probe_url:
+            # A fresh probe refreshes the shared cache, so resolve the family again afterwards.
+            served = await asyncio.to_thread(served_model_names, probe_url, args.get('openai_api_key', ''), False)
+            args = await asyncio.to_thread(manager.to_main_args, config)
+    except (ValueError, TypeError):
+        return {"family": "", "served_models": []}
+    family = resolve_model_family(args.get('translation_model_family'), args.get('gpt_model'),
+                                  args.get('translation_provider'))
+    return {"family": family, "served_models": served}
+
+
 def _resolve_preview_args(request: FamilyPreviewRequest):
     if not request.text.strip() or len(request.text) > 4000:
         raise HTTPException(status_code=400, detail="請輸入 1–4000 字的原文")

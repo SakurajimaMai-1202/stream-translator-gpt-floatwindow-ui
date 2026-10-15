@@ -1,9 +1,12 @@
 <script setup lang="ts">
+import { onMounted } from 'vue';
 import UiSelect from '../UiSelect.vue';
 import { useSettingsTabBindings } from '../../composables/settings/settingsContext';
 const {
-  glossaryScopeOptions, activeTab, activeTranslationFamily, checkHyMt2Backend, deleteCustomModel, effectiveGlossaryCount, familyLabel, familySettings, hyMt2EffectiveBackend, hyMt2HealthChecking, hyMt2HealthResult, localConfig, openCustomModelDialog, previewBusy, previewContext, previewError, previewLatencyLabel, previewResult, previewText, previewValidationStatus, runTranslationPreview, selectedGlossaryPresetLabel, targetLanguageOptions, testConnection, testingGemini, testingGpt, translationBackendOptions, translationModelFamilyOptions, translationOutputFormatOptions
+  glossaryScopeOptions, activeTab, activeTranslationFamily, servedModels, scheduleFamilyDetection, checkHyMt2Backend, deleteCustomModel, effectiveGlossaryCount, familyLabel, familySettings, hyMt2EffectiveBackend, hyMt2HealthChecking, hyMt2HealthResult, localConfig, openCustomModelDialog, previewBusy, previewContext, previewError, previewLatencyLabel, previewResult, previewText, previewValidationStatus, runTranslationPreview, selectedGlossaryPresetLabel, targetLanguageOptions, testConnection, testingGemini, testingGpt, translationBackendOptions, translationModelFamilyOptions, translationOutputFormatOptions
 } = useSettingsTabBindings();
+// Re-check whenever the tab opens; the server may have switched models meanwhile.
+onMounted(scheduleFamilyDetection);
 </script>
 
 <template>
@@ -110,7 +113,7 @@ const {
             <div v-if="localConfig.translation.backend !== 'none'" class="bg-white/5 rounded-xl p-5 border border-white/10">
               <h3 class="text-lg font-semibold text-blue-300 mb-4">模型翻譯策略</h3>
               <UiSelect aria-label="模型翻譯策略" v-model="localConfig.translation.translation_model_family" :options="translationModelFamilyOptions" />
-              <p class="text-white/40 text-xs mt-2">目前家族：{{ activeTranslationFamily }}。模型名稱不明確時，請手動指定策略。</p>
+              <p class="text-white/40 text-xs mt-2">目前家族：{{ activeTranslationFamily }}<template v-if="servedModels.length">（伺服器模型：{{ servedModels[0] }}）</template>。偵測不到時，請手動指定策略。</p>
               <div v-if="['hy_mt2', 'index_translate'].includes(activeTranslationFamily)" class="mt-4 border-t border-white/10 pt-4">
               <div class="flex flex-wrap items-start justify-between gap-4">
                 <div>

@@ -1274,6 +1274,24 @@ class ConfigManager:
         family = resolve_model_family(requested_family, args.get('gpt_model'), args.get('translation_provider'))
         if (str(requested_family or 'auto').lower() == 'auto'
                 and family not in {'hy_mt2', 'index_translate'}
+                and args.get('translation_provider') == 'openai_compatible'):
+            # An alias such as "localllm" hides the family; ask the server what it serves.
+            from backend.core.model_identity import detect_served_family, family_probe_target
+            probe_url, fallback_model = family_probe_target(backend, config, args)
+            served_family = ''
+            if probe_url:
+                served_family, _ = detect_served_family(probe_url, args.get('openai_api_key', ''),
+                                                        args['translation_provider'])
+            if not served_family and fallback_model:
+                # Server not up yet: the model selected in Llama settings is what it will load.
+                fallback_family = resolve_model_family('auto', fallback_model, args['translation_provider'])
+                if fallback_family in {'hy_mt2', 'index_translate'}:
+                    served_family = fallback_family
+            if served_family:
+                family = served_family
+                args['translation_model_family'] = family
+        if (str(requested_family or 'auto').lower() == 'auto'
+                and family not in {'hy_mt2', 'index_translate'}
                 and translation_config.get('hy_mt2_optimizer_enabled')
                 and translation_config.get('hy_mt2_provider') in {'lm_studio', 'llama_cpp'}):
             # Preserve old local HY configs predating an explicit family selector.

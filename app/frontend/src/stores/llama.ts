@@ -103,6 +103,12 @@ export const useLlamaStore = defineStore('llama', () => {
     no_mmap: false
   });
 
+  const appliedRuntimeFingerprint = ref('');
+  const runtimeFingerprint = computed(() => JSON.stringify({ ...serverConfig.value, model_path: selectedModelPath.value }));
+  const hasPendingRuntimeChanges = computed(() => isServerRunning.value
+    && Boolean(appliedRuntimeFingerprint.value)
+    && runtimeFingerprint.value !== appliedRuntimeFingerprint.value);
+
   // Computed
   const isServerRunning = computed(() => serverStatus.value?.is_running ?? false);
   const isServerReady = computed(() => serverStatus.value?.is_ready ?? false);
@@ -145,8 +151,15 @@ export const useLlamaStore = defineStore('llama', () => {
   async function refreshServerStatus() {
     try {
       const nextStatus = await llamaApi.getServerStatus();
+      if (!nextStatus.is_running) appliedRuntimeFingerprint.value = '';
+      else if (!isInitializing.value && !isApplyingRemoteConfig.value
+        && !appliedRuntimeFingerprint.value && nextStatus.pid
+        && nextStatus.gpu_selection?.mode !== 'external') {
+        appliedRuntimeFingerprint.value = runtimeFingerprint.value;
+      }
       if (JSON.stringify(nextStatus) !== JSON.stringify(serverStatus.value)) {
         serverStatus.value = nextStatus;
+
       }
     } catch (error: any) {
       console.error('獲取伺服器狀態失敗:', error);
@@ -157,10 +170,11 @@ export const useLlamaStore = defineStore('llama', () => {
     isLoading.value = true;
     errorMessage.value = '';
     try {
-      const finalConfig = config || {
+      const finalConfig = { ...(config || {
         ...serverConfig.value,
         model_path: selectedModelPath.value
-      };
+      }) };
+      const startingFingerprint = JSON.stringify({ ...serverConfig.value, model_path: finalConfig.model_path });
 
       if (!finalConfig.model_path) {
         throw new Error('請選擇模型');
@@ -187,6 +201,8 @@ export const useLlamaStore = defineStore('llama', () => {
       if (!serverStatus.value.is_ready) {
         throw new Error('伺服器啟動超時，請檢查日誌');
       }
+
+      appliedRuntimeFingerprint.value = startingFingerprint;
 
       // Starting from the execution-settings page has the same meaning as
       // enabling the Home-page switch. Keep the persisted UI state aligned
@@ -216,6 +232,7 @@ export const useLlamaStore = defineStore('llama', () => {
     errorMessage.value = '';
     try {
       await llamaApi.stopServer();
+      appliedRuntimeFingerprint.value = '';
       await refreshServerStatus();
 
       if (updateEnabledState && localLlmEnabled.value) {
@@ -404,6 +421,11 @@ export const useLlamaStore = defineStore('llama', () => {
             local_llm_enabled: false,
           });
         }
+      }
+      if (serverStatus.value.is_running && serverStatus.value.pid
+        && serverStatus.value.gpu_selection?.mode !== 'external'
+        && !appliedRuntimeFingerprint.value) {
+        appliedRuntimeFingerprint.value = runtimeFingerprint.value;
       }
     } catch (error: any) {
       console.error('載入 Llama 配置失敗:', error);
@@ -750,6 +772,9 @@ export const useLlamaStore = defineStore('llama', () => {
     errorMessage,
     successMessage,
     serverConfig,
+    appliedRuntimeFingerprint,
+    runtimeFingerprint,
+    hasPendingRuntimeChanges,
     customPresets,
     systemPresets,
     customModelSeries,

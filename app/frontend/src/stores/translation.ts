@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { translationApi, configApi, runtimeApi, type Config, type AudioSource, type RuntimeStatus, type SubtitleLatencyTrace, type LatencyWindowSnapshot } from '../services/api';
 
 export interface HomeInputState {
@@ -74,6 +74,29 @@ export const useTranslationStore = defineStore('translation', () => {
     output_notification: {},
     ui: {}
   });
+  // The pending-session banner compares the server's saved config only, kept apart from
+  // `config` so sync echoes never roll back selections being edited on Home.
+  const sessionServerConfig = ref<{ translation?: unknown; transcription?: unknown } | null>(null);
+  const appliedSessionSnapshot = ref('');
+  // Key-sorted so REST and SSE serializations of the same config compare equal.
+  function stableStringify(value: unknown): string {
+    if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+    if (value && typeof value === 'object') {
+      return `{${Object.keys(value as object).sort()
+        .map(key => `${JSON.stringify(key)}:${stableStringify((value as Record<string, unknown>)[key])}`).join(',')}}`;
+    }
+    return JSON.stringify(value) ?? 'null';
+  }
+  const sessionFingerprint = computed(() => sessionServerConfig.value ? stableStringify(sessionServerConfig.value) : '');
+  const hasPendingSessionChanges = computed(() => isRunning.value
+    && Boolean(appliedSessionSnapshot.value)
+    && Boolean(sessionFingerprint.value)
+    && sessionFingerprint.value !== appliedSessionSnapshot.value);
+  // Stopping invalidates the baseline; starting requires a successful config load.
+  watch(isRunning, (running) => {
+    if (!running) appliedSessionSnapshot.value = '';
+  }, { flush: 'sync' });
+
   const errorMessage = ref('');
   const statusMessage = ref('');
   const runtimeStatus = ref<RuntimeStatus | null>(null);
@@ -124,12 +147,30 @@ export const useTranslationStore = defineStore('translation', () => {
   });
 
   // Actions
-  async function loadConfig(force = false) {
+  async function loadConfig(force = false, options: { quiet?: boolean } = {}) {
     try {
       config.value = await configApi.getConfig(force);
+      return true;
     } catch (error: any) {
-      errorMessage.value = `載入配置失敗: ${error.message}`;
+      if (!options.quiet) errorMessage.value = `載入配置失敗: ${error.message}`;
     }
+  }
+
+  // Pass a config snapshot from a sync event, or omit it to fetch the saved config quietly.
+  // The first successful read while a session runs without a baseline becomes the baseline.
+  async function refreshSessionServerConfig(snapshot?: Config | null): Promise<boolean> {
+    let source = snapshot;
+    if (!source) {
+      try { source = await configApi.getConfig(true); } catch { return false; }
+    }
+    sessionServerConfig.value = { translation: source.translation, transcription: source.transcription };
+    if (isRunning.value && !appliedSessionSnapshot.value) appliedSessionSnapshot.value = sessionFingerprint.value;
+    return true;
+  }
+
+  async function markSessionStarted() {
+    appliedSessionSnapshot.value = '';
+    if (await refreshSessionServerConfig()) appliedSessionSnapshot.value = sessionFingerprint.value;
   }
 
   async function loadRuntimeStatus() {
@@ -211,6 +252,7 @@ export const useTranslationStore = defineStore('translation', () => {
       currentUrl.value = url;
       currentTaskId.value = response.task_id;
       isRunning.value = true;
+      await markSessionStarted();
       asrReady.value = false;
       subtitles.value = [];
       errorMessage.value = '';
@@ -266,6 +308,7 @@ export const useTranslationStore = defineStore('translation', () => {
 
       if (runningTask) {
         isRunning.value = true;
+        if (!wasRunning) await refreshSessionServerConfig();
         asrReady.value = !!runningTask.asr_ready;
         currentTaskId.value = runningTask.task_id || '';
         currentUrl.value = runningTask.url || currentUrl.value;
@@ -479,6 +522,9 @@ export const useTranslationStore = defineStore('translation', () => {
     currentTaskId,
     subtitles,
     config,
+    appliedSessionSnapshot,
+    sessionFingerprint,
+    hasPendingSessionChanges,
     errorMessage,
     statusMessage,
     runtimeStatus,
@@ -491,6 +537,8 @@ export const useTranslationStore = defineStore('translation', () => {
 
     // Actions
     loadConfig,
+    markSessionStarted,
+    refreshSessionServerConfig,
     applyConfigSnapshot,
     applyConfigSections,
     loadRuntimeStatus,

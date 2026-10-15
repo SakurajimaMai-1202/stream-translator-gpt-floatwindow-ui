@@ -432,7 +432,13 @@ function buildHomeConfigSnapshotFromRefs(): string {
 }
 
 /** 將 HomeView UI ref 的值逆向映射並批次寫回 config.yaml */
-async function saveHomeConfigToBackend(requireSuccess = false) {
+let homeConfigSave: Promise<void> = Promise.resolve();
+function saveHomeConfigToBackend(requireSuccess = false) {
+  homeConfigSave = homeConfigSave.catch(() => {}).then(() => persistHomeConfigToBackend(requireSuccess));
+  return homeConfigSave;
+}
+
+async function persistHomeConfigToBackend(requireSuccess = false) {
   try {
     const engine = selectedTranscriptionEngine.value;
     const computeBackendChanged = store.config.transcription?.asr_compute_backend !== selectedAsrComputeBackend.value;
@@ -1018,6 +1024,11 @@ async function handleStart() {
       }
     }
     // 使用新的 API 格式
+    if (_homeAutoSaveTimer !== null) {
+      clearTimeout(_homeAutoSaveTimer);
+      _homeAutoSaveTimer = null;
+    }
+    await saveHomeConfigToBackend(true);
     const result = await translationApi.start({
       audio_source: audioSource.value,
       ...(audioSource.value === 'process_audio' && selectedProcessTarget.value ? {
@@ -1065,6 +1076,7 @@ async function handleStart() {
     });
 
     // 更新 store 狀態
+    await store.markSessionStarted();
     store.isRunning = true;
     store.asrReady = false;
     store.currentTaskId = result.task_id;

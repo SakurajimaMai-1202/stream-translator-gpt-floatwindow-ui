@@ -785,7 +785,6 @@ const modelDirectory = ref('');
 const testText = ref('Hello, how are you today?');
 const testResult = ref('');
 const isTesting = ref(false);
-const appliedRuntimeFingerprint = ref('');
 const showSaveDialog = ref(false);
 const presetName = ref('');
 
@@ -878,10 +877,7 @@ const presetSyncText = computed(() => {
   return isSelectedPresetSynced.value ? '與所選預設完全同步' : '已偏離所選預設，建議另存新版本';
 });
 
-const runtimeFingerprint = computed(() => JSON.stringify({ ...llamaStore.serverConfig, model_path: llamaStore.selectedModelPath }));
-const hasPendingRuntimeChanges = computed(() => llamaStore.isServerRunning
-  && Boolean(appliedRuntimeFingerprint.value)
-  && runtimeFingerprint.value !== appliedRuntimeFingerprint.value);
+const hasPendingRuntimeChanges = computed(() => llamaStore.hasPendingRuntimeChanges);
 const primaryTestButtonLabel = computed(() => {
   if (isTesting.value) return '測試中…';
   if (!llamaStore.isServerReady) return '🚀 啟動並測試';
@@ -990,7 +986,6 @@ async function handleDeletePreset() {
 async function handleStartServer() {
   try {
     await llamaStore.startServer();
-    appliedRuntimeFingerprint.value = runtimeFingerprint.value;
   } catch (error) {
     console.error('啟動失敗:', error);
   }
@@ -1076,7 +1071,6 @@ onMounted(async () => {
   gpuSettingsInitialized = true;
   void refreshGpuDevices();
   void refreshRuntimeRelease(true);
-  if (llamaStore.isServerRunning) appliedRuntimeFingerprint.value = runtimeFingerprint.value;
   if (llamaStore.modelDirectory) {
     modelDirectory.value = llamaStore.modelDirectory;
   }
@@ -1143,7 +1137,6 @@ async function handleApplyAndRestart() {
   if (!confirm('將停止目前服務，套用模型與參數後重新啟動。是否繼續？')) return;
   try {
     await llamaStore.applyAndRestart();
-    appliedRuntimeFingerprint.value = runtimeFingerprint.value;
   } catch (error) {
     console.error('套用並重啟失敗:', error);
   }
@@ -1156,10 +1149,8 @@ async function executePrimaryTest() {
   try {
     if (!llamaStore.isServerReady) {
       await llamaStore.startServer();
-      appliedRuntimeFingerprint.value = runtimeFingerprint.value;
     } else if (hasPendingRuntimeChanges.value) {
       await llamaStore.applyAndRestart();
-      appliedRuntimeFingerprint.value = runtimeFingerprint.value;
     }
     await executeTest();
     await llamaStore.refreshServerStatus();

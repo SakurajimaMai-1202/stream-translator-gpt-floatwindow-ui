@@ -1,10 +1,58 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useInterfaceModeStore } from '../stores/interfaceMode';
 import { useRouter, useRoute } from 'vue-router';
 import BrandIcon from './BrandIcon.vue';
 import AppIcon from './AppIcon.vue';
 import UiSelect from './UiSelect.vue';
+
+import { useLlamaStore } from '../stores/llama';
+import { useTranslationStore } from '../stores/translation';
+import { acquireSyncEventSource, releaseSyncEventSource } from '../composables/sharedSyncSource';
+
+const llamaStore = useLlamaStore();
+const translationStore = useTranslationStore();
+// Include this client's saves too: the page-level sync helper filters them out. Only the
+// banner's server-side copy is updated, never the config being edited on Home.
+let configSyncSource: EventSource | null = null;
+const configEvents = ['config.updated', 'config.reset', 'config.imported'];
+const refreshSessionConfig = (event?: Event) => {
+  let snapshot = null;
+  if (event && 'data' in event) {
+    try { snapshot = JSON.parse((event as MessageEvent).data)?.config || null; }
+    catch { /* Fetch quietly if the event cannot provide a snapshot. */ }
+  }
+  void translationStore.refreshSessionServerConfig(snapshot);
+};
+onMounted(() => {
+  configSyncSource = acquireSyncEventSource();
+  configEvents.forEach(name => configSyncSource!.addEventListener(name, refreshSessionConfig));
+  refreshSessionConfig();
+});
+onUnmounted(() => {
+  configEvents.forEach(name => configSyncSource?.removeEventListener(name, refreshSessionConfig));
+  if (configSyncSource) releaseSyncEventSource();
+});
+const dismissedRuntime = ref(false);
+const dismissedSession = ref(false);
+const restarting = ref(false);
+const restartError = ref('');
+watch(() => [llamaStore.runtimeFingerprint, llamaStore.appliedRuntimeFingerprint], () => {
+  dismissedRuntime.value = false;
+});
+watch(() => [translationStore.sessionFingerprint, translationStore.appliedSessionSnapshot], () => {
+  dismissedSession.value = false;
+});
+const showRuntimeNotice = computed(() => llamaStore.hasPendingRuntimeChanges
+  && !dismissedRuntime.value && route.path !== '/local-translation');
+const showSessionNotice = computed(() => translationStore.hasPendingSessionChanges && !dismissedSession.value);
+async function restartLocalModel() {
+  restarting.value = true;
+  restartError.value = '';
+  try { await llamaStore.applyAndRestart(); }
+  catch (error: any) { restartError.value = llamaStore.errorMessage || error?.message || '重新啟動失敗'; }
+  finally { restarting.value = false; }
+}
 
 const router = useRouter();
 const route = useRoute();
@@ -362,12 +410,36 @@ watch(() => route.fullPath, () => {
 
     <!-- Right Content Panel -->
     <main class="commercial-main app-scroll-surface relative min-h-0 min-w-0 flex-1 overflow-y-auto bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950/40">
+      <div v-if="showRuntimeNotice || showSessionNotice || (route.path !== '/local-translation' && (restarting || restartError))" class="commercial-pending-banner" aria-live="polite">
+        <div v-if="route.path !== '/local-translation' && (showRuntimeNotice || restarting || restartError)" class="pending-line">
+          <div class="pending-message">
+            <span>本機翻譯模型的設定已變更，需要重新啟動才會生效。</span>
+            <button type="button" :disabled="restarting || llamaStore.isLoading" @click="restartLocalModel">{{ restarting ? '重新啟動中…' : '套用並重啟' }}</button>
+            <span v-if="restartError" role="alert">{{ restartError }}</span>
+          </div>
+          <button type="button" aria-label="關閉本機模型設定提示" :disabled="restarting" @click="dismissedRuntime = true; restartError = ''">✕</button>
+        </div>
+        <div v-if="showSessionNotice" class="pending-line">
+          <div class="pending-message">
+            <span>翻譯或辨識設定已變更，會在下次開始轉譯時生效。</span>
+            <button v-if="route.path !== '/'" type="button" @click="navigateTo('/')">前往即時轉譯</button>
+          </div>
+          <button type="button" aria-label="關閉轉譯設定提示" @click="dismissedSession = true">✕</button>
+        </div>
+      </div>
       <router-view />
     </main>
   </div>
 </template>
 
 <style scoped>
+.commercial-pending-banner { margin: .75rem; padding: .5rem .75rem; border: 1px solid #e7b86766; border-radius: 10px; background: var(--fw-surface, #182235); color: #e7b867; font-size: .8125rem; line-height: 1.5; }
+.pending-line { display: flex; align-items: flex-start; gap: .5rem; }
+.pending-line + .pending-line { margin-top: .5rem; }
+.pending-message { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: .35rem .75rem; overflow-wrap: anywhere; }
+.commercial-pending-banner button { min-height: 36px; padding: .25rem .5rem; border: 1px solid #e7b86755; border-radius: 6px; color: inherit; background: #e7b86710; font: inherit; cursor: pointer; }
+.commercial-pending-banner button:disabled { opacity: .5; cursor: wait; }
+.commercial-pending-banner button:focus-visible { outline: 2px solid var(--fw-primary); outline-offset: 2px; }
 .app-scroll-surface {
   background-color: rgb(2 6 23);
   overscroll-behavior: contain;

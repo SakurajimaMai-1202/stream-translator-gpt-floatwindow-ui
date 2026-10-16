@@ -203,34 +203,51 @@ def build_translation_model_recommendations(devices: Iterable[GpuDevice]) -> dic
         item["catalog_order"],
     ))
     supported_gpu = bool(selected and _supports_local_setup(selected))
-    if supported_gpu and tier_id == "unknown":
+    options: list[dict[str, Any]] = []
+    if supported_gpu:
+        hy_id, hy_quant, hy_size = {
+            "8gb_plus": ("hy-mt2-q6-k", "Q6_K", 6.16),
+            "4_to_8gb": ("hy-mt2-iq4-nl", "IQ4_NL", 4.38),
+        }.get(tier_id, ("hy-mt2-iq3-xxs", "UD-IQ3_XXS", 3.13))
+        index_id = "index-translate-9b" if tier_id == "8gb_plus" else "index-translate-2b"
+        catalog = {model["id"]: model for model in MODEL_CATALOG}
+        hy_note = "33 種語言，繁體中文品質穩定"
+        if tier_id == "under_4gb":
+            hy_note += "；顯示卡記憶體可能不足，執行速度可能較慢"
+        elif tier_id == "unknown":
+            hy_note += "；無法讀取顯示卡記憶體，先使用較小的版本"
+        options = [
+            {
+                "key": hy_id, "model_id": hy_id, "quant": hy_quant,
+                "name": "Hy-MT2 7B", "family": "hy_mt2", "size_gb": hy_size,
+                "recommended": False, "note": hy_note, "profile_id": "hy-mt2-7b",
+                "deployment_config": dict(catalog["hy-mt2-7b"]["deployment_config"]),
+            },
+            {
+                "key": f"{index_id}-q4_k_m", "model_id": index_id, "quant": "Q4_K_M",
+                "name": catalog[index_id]["name"], "family": "index_translate",
+                "size_gb": catalog[index_id]["model_size_gb"], "recommended": False,
+                "note": "支援約 150 種語言，" + (
+                    "需要較多顯示卡記憶體" if tier_id == "8gb_plus" else "檔案較小"
+                ),
+                "profile_id": index_id,
+                "deployment_config": dict(catalog[index_id]["deployment_config"]),
+            },
+        ]
+        if tier_id == "under_4gb":
+            options.reverse()
+        recommended = options[0]
+        recommended["recommended"] = True
         simple_setup = {
-            "supported": True, "model_id": "hy-mt2-iq3-xxs",
-            "filename": "Hy-MT2-7B-UD-IQ3_XXS.gguf", "quant": "UD-IQ3_XXS",
-            "reason": f"偵測到 {selected.name}，但無法可靠讀取 VRAM；先使用較小量化。",
-        }
-    elif supported_gpu and tier_id == "8gb_plus":
-        simple_setup = {
-            "supported": True, "model_id": "hy-mt2-q6-k",
-            "filename": "Hy-MT2-7B-Q6_K.gguf", "quant": "Q6_K",
-            "reason": f"偵測到 {selected.name}，屬於 {tier_label}，使用高品質量化。",
-        }
-    elif supported_gpu and tier_id == "4_to_8gb":
-        simple_setup = {
-            "supported": True, "model_id": "hy-mt2-iq4-nl",
-            "filename": "Hy-MT2-7B-IQ4_NL.gguf", "quant": "IQ4_NL",
-            "reason": f"偵測到 {selected.name}，屬於 {tier_label}，使用兼顧品質與顯存的量化。",
-        }
-    elif supported_gpu and tier_id == "under_4gb":
-        simple_setup = {
-            "supported": True, "model_id": "hy-mt2-iq3-xxs",
-            "filename": "Hy-MT2-7B-UD-IQ3_XXS.gguf", "quant": "UD-IQ3_XXS",
-            "reason": f"偵測到 {selected.name}，屬於 {tier_label}；使用 GPU Runtime 與最省資源量化。",
+            "supported": True, "model_id": recommended["model_id"],
+            "filename": f"Hy-MT2-7B-{hy_quant}.gguf" if recommended["family"] == "hy_mt2" else "",
+            "quant": recommended["quant"], "options": options,
+            "reason": f"偵測到 {selected.name}，使用 GPU Runtime；{recommended['note']}（推薦）。",
         }
     else:
         simple_setup = {
-            "supported": False, "model_id": "", "filename": "", "quant": "",
-            "reason": "未偵測到可自動設定的 NVIDIA／AMD／Intel Arc 獨立顯卡，建議使用 Gemini，或到進階模式手動設定。",
+            "supported": False, "model_id": "", "filename": "", "quant": "", "options": [],
+            "reason": "未偵測到可自動設定的 NVIDIA、AMD、Intel Arc 獨立顯卡，建議使用 Gemini，或到進階模式手動設定。",
         }
 
     return {

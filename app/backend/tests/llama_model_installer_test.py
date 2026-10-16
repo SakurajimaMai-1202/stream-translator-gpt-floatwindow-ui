@@ -443,3 +443,27 @@ def test_status_directory_uses_fallback_for_stale_config(tmp_path, monkeypatch):
     assert installer.status()["state"] == "completed"
     assert installer.status()["directory"] == str(fallback)
     assert installer.status()["path"] == str(fallback / "model-Q4_K_M.gguf")
+
+
+@pytest.mark.parametrize("vram_mb", [None, 3072, 6144, 12288])
+def test_every_simple_setup_option_is_accepted_and_resolves_to_one_file(monkeypatch, vram_mb):
+    from backend.core.hardware_detector import GpuDevice
+    from backend.core.translation_model_recommender import build_translation_model_recommendations
+
+    device = GpuDevice(index=0, name="NVIDIA GeForce RTX", vendor="nvidia", backend="cuda",
+                       memory_mb=vram_mb, is_integrated=False)
+    options = build_translation_model_recommendations([device])["simple_setup"]["options"]
+    assert len(options) == 2
+    index_files = [f"Index-Translate-{size}.{quant}.gguf" for size in ("2B", "9B")
+                   for quant in ("Q2_K", "Q4_K_M", "Q6_K", "Q8_0", "mmproj-Q8_0")]
+    siblings = [{"rfilename": name, "lfs": {"sha256": "a" * 64, "size": 1}} for name in index_files]
+    monkeypatch.setattr(models.LlamaModelInstaller, "_siblings", staticmethod(lambda repo: [
+        item for item in siblings if repo.split("/")[-1].replace("-GGUF", "") in item["rfilename"]]))
+    for option in options:
+        installer = models.LlamaModelInstaller()
+        installer.begin(option["model_id"], option["quant"])
+        assert installer.status()["quant"] == option["quant"]
+        if option["family"] == "index_translate":
+            repo = next(m["repo"] for m in models.MODEL_CATALOG if m["id"] == option["model_id"])
+            filename, *_ = installer._resolve(repo, option["quant"])
+            assert filename.endswith(".Q4_K_M.gguf") and "mmproj" not in filename

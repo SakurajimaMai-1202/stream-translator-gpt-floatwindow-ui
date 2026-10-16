@@ -143,7 +143,7 @@ def test_simple_setup_uses_q6_model_for_eight_gb_nvidia():
 def test_simple_setup_uses_small_gpu_model_below_four_gb():
     result = build_translation_model_recommendations([gpu("NVIDIA GeForce RTX", 3072)])
     assert result["simple_setup"]["supported"] is True
-    assert result["simple_setup"]["model_id"] == "hy-mt2-iq3-xxs"
+    assert result["simple_setup"]["model_id"] == "index-translate-2b"
     assert result["vram_tier"] == "under_4gb"
     assert "GPU Runtime" in result["simple_setup"]["reason"]
 
@@ -235,3 +235,45 @@ def test_catalog_matcher_rejects_unmatched_filenames_and_copies_config():
     original = next(model for model in MODEL_CATALOG if model["id"] == "hy-mt2-7b")["deployment_config"]
     result["deployment_config"]["temp"] = 9.0
     assert original["temp"] == 0.7
+
+
+def test_simple_setup_options_follow_vram_tiers_and_catalog_profiles():
+    cases = [
+        (8192, ["hy-mt2-q6-k", "index-translate-9b-q4_k_m"], [6.16, 5.78]),
+        (4096, ["hy-mt2-iq4-nl", "index-translate-2b-q4_k_m"], [4.38, 1.31]),
+        (3072, ["index-translate-2b-q4_k_m", "hy-mt2-iq3-xxs"], [1.31, 3.13]),
+        (None, ["hy-mt2-iq3-xxs", "index-translate-2b-q4_k_m"], [3.13, 1.31]),
+    ]
+    catalog = {model["id"]: model for model in MODEL_CATALOG}
+    for memory, keys, sizes in cases:
+        setup = build_translation_model_recommendations([gpu("NVIDIA GPU", memory)])["simple_setup"]
+        options = setup["options"]
+        assert [option["key"] for option in options] == keys
+        assert [option["size_gb"] for option in options] == sizes
+        assert sum(option["recommended"] for option in options) == 1
+        assert options[0]["recommended"] is True
+        assert setup["supported"] is True
+        assert setup["model_id"] == options[0]["model_id"]
+        assert setup["quant"] == options[0]["quant"]
+        assert options[0]["note"] in setup["reason"]
+        assert setup["filename"] == (f"Hy-MT2-7B-{setup['quant']}.gguf"
+                                      if options[0]["family"] == "hy_mt2" else "")
+        for option in options:
+            assert option["size_gb"] > 0
+            assert option["name"] and option["note"]
+            assert option["deployment_config"] == catalog[option["profile_id"]]["deployment_config"]
+            assert option["family"] in {"hy_mt2", "index_translate"}
+            if option["family"] == "index_translate":
+                assert option["profile_id"] == option["model_id"]
+                assert option["quant"] == "Q4_K_M"
+            else:
+                assert option["profile_id"] == "hy-mt2-7b"
+
+
+def test_unsupported_simple_setup_has_no_options():
+    for devices in ([], [gpu("Intel UHD Graphics", 8192, integrated=True, vendor="intel")],
+                    [gpu("Virtual GPU", 8192, vendor="unknown")]):
+        setup = build_translation_model_recommendations(devices)["simple_setup"]
+        assert setup["supported"] is False
+        assert setup["options"] == []
+        assert setup["model_id"] == setup["filename"] == setup["quant"] == ""

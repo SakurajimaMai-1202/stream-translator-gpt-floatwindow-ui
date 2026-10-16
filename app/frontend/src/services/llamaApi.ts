@@ -157,6 +157,13 @@ export interface RuntimeInstallStatus {
   }> | null;
 }
 
+export interface SimpleSetupOption {
+  key: string; model_id: string; quant: string; name: string;
+  family: 'hy_mt2' | 'index_translate'; size_gb: number; recommended: boolean;
+  note: string; profile_id: string;
+  deployment_config: Partial<Pick<ServerConfig, 'temp' | 'top_p' | 'top_k' | 'repeat_penalty' | 'n_ctx' | 'n_predict'>>;
+}
+
 export interface TranslationModelRecommendationInfo {
   selected_gpu: null | { name: string; vendor: string; backend: string; memory_mb: number | null; is_integrated: boolean };
   detected_gpus: Array<{ name: string; vendor: string; backend: string; memory_mb: number | null; is_integrated: boolean }>;
@@ -164,7 +171,7 @@ export interface TranslationModelRecommendationInfo {
   vram_tier: 'under_4gb' | '4_to_8gb' | '8gb_plus' | 'unknown';
   vram_tier_label: string;
   notice: string;
-  simple_setup: { supported: boolean; model_id: string; filename: string; quant: string; reason: string };
+  simple_setup: { supported: boolean; model_id: string; filename: string; quant: string; reason: string; options: SimpleSetupOption[] };
   models: Array<{
     id: string; name: string; repo: string; url: string; recommended_quant: string;
     model_size_gb: number; minimum_quant: string; minimum_size_gb: number; min_vram_gb: number; comfortable_vram_gb: number; vram_basis: string; category: string; use_case?: string;

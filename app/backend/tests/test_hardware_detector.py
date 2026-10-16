@@ -177,3 +177,16 @@ def test_cpu_profile_forces_cpu():
 
     assert selected.kind == "cpu"
     assert selected.device is None
+
+
+def test_simple_setup_model_choices_at_exact_vram_boundaries():
+    from backend.core.translation_model_recommender import build_translation_model_recommendations
+
+    for memory, model_id in ((4095, "index-translate-2b"), (4096, "hy-mt2-iq4-nl"),
+                             (8191, "hy-mt2-iq4-nl"), (8192, "hy-mt2-q6-k"),
+                             (None, "hy-mt2-iq3-xxs")):
+        device = GpuDevice(0, "NVIDIA GPU", "nvidia", "cuda", memory, False)
+        setup = build_translation_model_recommendations([device])["simple_setup"]
+        assert setup["model_id"] == model_id
+        assert setup["options"][0]["model_id"] == model_id
+        assert setup["options"][0]["recommended"] is True

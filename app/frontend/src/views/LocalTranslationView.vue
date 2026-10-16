@@ -12,30 +12,37 @@ const interfaceMode = useInterfaceModeStore();
 const setup = useLocalTranslationSetup();
 const { running: settingUp, progress: setupPercent, cancelled: setupCancelled } = setup;
 const simpleReady = computed(() => !!llamaStore.serverStatus?.runtime?.installed && !!llamaStore.selectedModelPath);
-const setupSize = computed(() => {
-  const choice = data.value?.simple_setup;
-  const model = data.value?.models.find(item => item.id === choice?.model_id)
-    || data.value?.models.find(item => /hy-mt2-7b/i.test(item.id));
-  if (!model || !choice) return 0;
-  return choice.quant === model.minimum_quant ? model.minimum_size_gb : choice.quant === model.recommended_quant ? model.model_size_gb : 0;
-});
+const changingModel = ref(false);
+const selectedOptionKey = ref('');
+const setupOptions = computed(() => data.value?.simple_setup.options ?? []);
+const selectedOption = computed(() => setupOptions.value.find(option => option.key === selectedOptionKey.value)
+  ?? setupOptions.value.find(option => option.recommended));
+function cancelModelChange() {
+  changingModel.value = false;
+  setupCancelled.value = false;
+  error.value = '';
+}
 const modelName = computed(() => {
   const filename = llamaStore.selectedModelPath.split(/[\\/]/).pop() || '';
+  const index = /index[-_. ]?translate[-_. ]?(2|9)b/i.exec(filename);
+  if (index) return `Index-Translate ${index[1]}B`;
   if (/hy[-_]?mt2/i.test(filename)) return /1[._]8b/i.test(filename) ? 'Hy-MT2 1.8B' : 'Hy-MT2 7B';
   return filename.replace(/\.gguf$/i, '').replace(/[-_.]Q\d[^ ]*$/i, '').replace(/[-_]/g, ' ') || '翻譯模型';
 });
 const simpleStatus = computed(() => llamaStore.errorMessage || llamaStore.serverStatus?.last_error ? '錯誤'
   : llamaStore.isServerReady ? '已就緒' : actionBusy.value || llamaStore.isServerRunning ? '啟動中' : '未啟動');
 const setupStep = computed(() => setupCancelled.value ? setup.setupMessage.value : settingUp.value
-  ? setup.phase.value === 'model' ? '正在下載翻譯模型…' : setup.phase.value === 'saving' ? '正在儲存設定…' : '正在準備翻譯引擎…' : '');
+  ? setup.phase.value === 'model' ? setup.setupMessage.value : setup.phase.value === 'saving' ? '正在儲存設定…' : '正在準備翻譯引擎…' : '');
 const testText = ref('');
 const testResult = ref('');
 const testing = ref(false);
 async function startSetup() {
   error.value = '';
   try {
-    await setup.run(data.value);
-    if (!setupCancelled.value) { await llamaStore.loadConfig(); backend.value = 'llama'; }
+    // A running server would keep serving the old model under the new model's settings.
+    if (changingModel.value && llamaStore.isServerRunning) await llamaStore.stopServer();
+    await setup.run(data.value, undefined, selectedOption.value);
+    if (!setupCancelled.value) { await llamaStore.loadConfig(); backend.value = 'llama'; changingModel.value = false; }
   } catch { if (!setupCancelled.value) error.value = '設定失敗，請檢查網路與磁碟空間後重試。'; }
 }
 async function cancelSetup() {
@@ -277,14 +284,26 @@ onUnmounted(() => { interfaceMode.localViewJobBusy = false; disposed = true; ++s
     <h1 class="text-2xl font-bold">本地翻譯</h1>
     <p v-if="error" class="notice error" role="alert">{{ error }}</p>
     <p v-if="!ready || (!statusReady && !settingUp && !setupCancelled)">正在讀取設定…</p>
-    <section v-else-if="!simpleReady || settingUp || setupCancelled" class="commercial-panel p-4 space-y-4">
+    <section v-else-if="!simpleReady || changingModel || settingUp || setupCancelled" class="commercial-panel p-4 space-y-4">
       <h2>使用這台電腦翻譯</h2>
-      <p>自動下載適合這台電腦的翻譯引擎與模型{{ setupSize ? `，大約需要 ${setupSize} GB。` : '。' }}</p>
+      <p>自動下載適合這台電腦的翻譯引擎與模型{{ selectedOption ? `，大約需要 ${selectedOption.size_gb} GB。` : '。' }}</p>
+      <fieldset v-if="!settingUp && setupOptions.length" class="space-y-3">
+        <legend>選擇翻譯模型</legend>
+        <label v-for="option in setupOptions" :key="option.key" class="flex items-start gap-3">
+          <input type="radio" name="simple-model" :value="option.key" :checked="selectedOption?.key === option.key"
+            style="width: auto" @change="selectedOptionKey = option.key">
+          <span>{{ option.name }} · {{ option.quant }} · 約 {{ option.size_gb }} GB
+            <span v-if="option.recommended" class="badge">推薦</span>
+            <small>{{ option.note }}</small>
+          </span>
+        </label>
+      </fieldset>
       <template v-if="data?.simple_setup.supported === false">
         <p>{{ data.simple_setup.reason }}</p>
         <p>可在「一般設定」改用雲端翻譯，或切換到進階模式。</p>
       </template>
-      <button v-else-if="!settingUp" class="commercial-primary-action" :disabled="!data || loading || !statusReady || setup.runtimeBackgroundBusy.value" @click="startSetup">開始設定</button>
+      <button v-else-if="!settingUp" class="commercial-primary-action" :disabled="!selectedOption || loading || !statusReady || setup.runtimeBackgroundBusy.value" @click="startSetup">開始設定</button>
+      <button v-if="changingModel && !settingUp" @click="cancelModelChange">取消</button>
       <button v-if="!data && !loading" @click="load(true)">重新偵測</button>
       <div v-if="settingUp || setupCancelled" class="space-y-3" role="status" aria-live="polite">
         <p>{{ setupStep }}</p>
@@ -309,7 +328,7 @@ onUnmounted(() => { interfaceMode.localViewJobBusy = false; disposed = true; ++s
         <p v-if="!llamaStore.isServerReady">啟動後即可試譯。</p>
         <p v-if="testResult" class="whitespace-pre-wrap" role="status">{{ testResult }}</p>
       </section>
-      <small>切換到進階模式以選擇其他模型</small>
+      <button :disabled="locked || testing" @click="changingModel = true">更換模型</button>
     </template>
   </div>
   <div v-else class="commercial-page local-translation mx-auto max-w-7xl space-y-5 p-5">

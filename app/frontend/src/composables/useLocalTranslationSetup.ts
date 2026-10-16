@@ -1,6 +1,6 @@
 import { computed, getCurrentScope, onScopeDispose, ref, type Ref } from 'vue';
 import { configApi } from '../services/api';
-import { llamaApi, type ModelInstallStatus, type RuntimeInstallStatus, type TranslationModelRecommendationInfo } from '../services/llamaApi';
+import { llamaApi, type SimpleSetupOption, type ModelInstallStatus, type RuntimeInstallStatus, type TranslationModelRecommendationInfo } from '../services/llamaApi';
 
 export const isRuntimeInstallBusy = (status: RuntimeInstallStatus | null) =>
   !!status && !['idle', 'completed', 'error'].includes(status.state);
@@ -77,14 +77,14 @@ export function useLocalTranslationSetup(setupMessage: Ref<string> = ref('')) {
     throw new Error('llama.cpp 安裝逾時，請重試。');
   }
 
-  async function waitForLocalModel(): Promise<string> {
+  async function waitForLocalModel(choice: SimpleSetupOption): Promise<string> {
     for (let index = 0; index < 10800; index++) {
       checkCancelled();
       const status = await llamaApi.getSimpleModelInstallStatus();
       checkCancelled();
       localModelInstallStatus.value = status;
       if (status.state === 'cancelled') throw new Error('已取消設定。');
-      setupMessage.value = status.message || '正在下載本機翻譯模型…';
+      setupMessage.value = `${choice.name} ${choice.quant}：${status.message || '正在下載本機翻譯模型…'}`;
       if (status.state === 'completed') {
         if (!status.path) throw new Error('翻譯模型安裝完成，但找不到模型檔案。');
         return status.path;
@@ -97,10 +97,13 @@ export function useLocalTranslationSetup(setupMessage: Ref<string> = ref('')) {
 
   async function run(hardware: TranslationModelRecommendationInfo | null, existing?: {
     runtime: RuntimeInstallStatus; model: ModelInstallStatus;
-  }) {
+  }, option?: SimpleSetupOption) {
     if (running.value || runtimeBackgroundBusy.value || disposed) return;
     const setup = hardware?.simple_setup;
     if (!existing && !setup?.supported) throw new Error(setup?.reason || '這台電腦不適合自動設定本機翻譯，請選擇雲端翻譯。');
+    const choice = option ?? setup?.options.find(item => item.recommended);
+    if (!choice) throw new Error('無法取得本機翻譯模型選項，請重新偵測。');
+    const config = choice.deployment_config;
     running.value = true;
     cancelled.value = false;
     phase.value = 'runtime';
@@ -134,8 +137,8 @@ export function useLocalTranslationSetup(setupMessage: Ref<string> = ref('')) {
       phase.value = 'model';
       if (!attachingModel) {
         if (!setup?.supported) throw new Error(setup?.reason || '無法取得本機翻譯模型設定，請重新偵測。');
-        setupMessage.value = `正在下載 ${setup.quant} 翻譯模型…`;
-        const job = await llamaApi.installSimpleModel(setup.model_id);
+        setupMessage.value = `正在下載 ${choice.name} ${choice.quant} 翻譯模型…`;
+        const job = await llamaApi.installSimpleModel(choice.model_id, choice.quant);
         localModelInstallStatus.value = { job_id: job.job_id, state: 'resolving' } as ModelInstallStatus;
         if (cancelled.value) {
           localModelInstallStatus.value = await cancelModelInstallWithRetry(job.job_id);
@@ -146,15 +149,16 @@ export function useLocalTranslationSetup(setupMessage: Ref<string> = ref('')) {
         }
       }
       checkCancelled();
-      const modelPath = await waitForLocalModel();
+      const modelPath = await waitForLocalModel(choice);
       checkCancelled();
       phase.value = 'saving';
       const port = await llamaApi.getAvailablePort(8081);
       await configApi.updateSection('llama', {
         local_llm_enabled: false, model_dir: modelPath.replace(/[\\/][^\\/]+$/, ''), model_path: modelPath,
-        host: '127.0.0.1', port, n_ctx: 4096, n_gpu_layers: 999, n_threads: 4, n_parallel: 1,
-        temp: 0.7, top_p: 0.6, top_k: 20, repeat_penalty: 1.05, n_predict: 4096,
-        model_profile_id: 'hy-mt2-7b',
+        host: '127.0.0.1', port, n_ctx: config?.n_ctx ?? 4096, n_gpu_layers: 999, n_threads: 4, n_parallel: 1,
+        temp: config?.temp ?? 0.7, top_p: config?.top_p ?? 0.6, top_k: config?.top_k ?? 20,
+        repeat_penalty: config?.repeat_penalty ?? 1.05, n_predict: config?.n_predict ?? 4096,
+        model_profile_id: choice.profile_id,
         flash_attn: 'auto', no_mmap: false,
       });
       await configApi.updateSection('translation', { backend: 'llama' });
@@ -171,13 +175,14 @@ export function useLocalTranslationSetup(setupMessage: Ref<string> = ref('')) {
       llamaApi.getRuntimeInstallStatus(), llamaApi.getSimpleModelInstallStatus(),
     ]);
     if (disposed || (!isRuntimeInstallBusy(runtime) && !isModelInstallBusy(model))) return false;
-    // A download started on the advanced page is a different model; finishing it here
-    // would write the simple-setup profile for the wrong file.
-    if (isModelInstallBusy(model) && model.model_id !== hardware?.simple_setup?.model_id) {
+    const option = hardware?.simple_setup.options.find(item => item.model_id === model.model_id
+      && (!model.quant || item.quant === model.quant));
+    // Only attach downloads whose model and quant match an offered profile.
+    if (isModelInstallBusy(model) && !option) {
       setupMessage.value = '另一個翻譯模型正在下載，完成後再按「開始設定」。';
       return false;
     }
-    await run(hardware, { runtime, model });
+    await run(hardware, { runtime, model }, isModelInstallBusy(model) ? option : undefined);
     return !cancelled.value;
   }
   return { runtimeBackgroundBusy, restore, setupMessage, runtimeInstallStatus, localModelInstallStatus, running, cancelled, phase, progress, run, cancel };

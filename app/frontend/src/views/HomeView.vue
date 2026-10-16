@@ -884,9 +884,20 @@ onMounted(async () => {
       selectedBackend,
       translationEnabled,
     ],
-    () => {
+    (values, previous) => {
       if (isApplyingExternalConfig.value) return;
-      debouncedSaveHomeConfig();
+      // Only the typed URL needs debouncing; a switch or selection is saved at once so
+      // it survives a reload or closing the window right after the change.
+      const onlyUrlChanged = values.every((value, index) => index === 0 || value === previous[index]);
+      if (onlyUrlChanged) {
+        debouncedSaveHomeConfig();
+        return;
+      }
+      if (_homeAutoSaveTimer !== null) {
+        clearTimeout(_homeAutoSaveTimer);
+        _homeAutoSaveTimer = null;
+      }
+      void saveHomeConfigToBackend();
     },
     { flush: 'post' }
   );

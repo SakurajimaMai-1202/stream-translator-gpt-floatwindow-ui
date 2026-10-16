@@ -141,13 +141,16 @@ def resolve_output_format(requested: str | None, capabilities: TranslationCapabi
 
 
 def _matching_glossary(source_text: str, glossary: dict[str, str], limit: int = 20) -> dict[str, str]:
-    source_lower = source_text.lower()
-    matches = (
-        (source, target)
-        for source, target in glossary.items()
-        if str(source).lower() in source_lower
-    )
-    return dict(sorted(matches, key=lambda item: len(str(item[0])), reverse=True)[:limit])
+    remaining = source_text.lower()
+    matches = []
+    # Longest first, masking each match, so コスプレ is not also required
+    # where the source only says コスプレイヤー.
+    for source, target in sorted(glossary.items(), key=lambda item: len(str(item[0])), reverse=True):
+        term = str(source).lower()
+        if term and term in remaining:
+            matches.append((source, target))
+            remaining = remaining.replace(term, "\0")
+    return dict(matches[:limit])
 
 
 def residual_kana_runs(request: TranslationRequest, translation: str) -> tuple[str, ...]:
@@ -156,6 +159,72 @@ def residual_kana_runs(request: TranslationRequest, translation: str) -> tuple[s
         if element:
             remainder = remainder.replace(element, "")
     return tuple(dict.fromkeys(re.findall(r"[\u3041-\u3096]+", remainder)))
+
+
+# Last resort for kana the model kept after its repair attempt. Common words
+# get a fixed translation; the rest are almost always names or misheard
+# terms, which fan subtitles write in romaji rather than leave in kana.
+_KANA_WORDS = {
+    "いつも": "總是", "なんとか": "某某", "みんな": "大家", "ありがとう": "謝謝",
+    "ごめん": "抱歉", "まさか": "難道", "もしかして": "該不會", "けれども": "不過",
+    "だから": "所以", "でも": "但是", "なんか": "好像", "たぶん": "大概",
+    "もちろん": "當然", "まあ": "嘛", "はい": "好", "です": "", "でした": "",
+    "ですね": "", "ですよ": "", "でしょう": "",
+    # A lone kana left in Chinese text is a particle, not a name.
+    "の": "的", "と": "和", "も": "也", "に": "", "を": "", "は": "", "が": "",
+    "で": "", "へ": "", "か": "", "ね": "", "よ": "", "な": "", "わ": "", "さ": "",
+}
+_HONORIFIC_ZH = (("ちゃん", "醬"), ("さん", "桑"), ("くん", "君"))
+_ROMAJI = dict(zip(
+    "あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんがぎぐげござじずぜぞだぢづでどばびぶべぼぱぴぷぺぽぁぃぅぇぉゔ",
+    "a i u e o ka ki ku ke ko sa shi su se so ta chi tsu te to na ni nu ne no ha hi fu he ho ma mi mu me mo ya yu yo ra ri ru re ro wa o n ga gi gu ge go za ji zu ze zo da ji zu de do ba bi bu be bo pa pi pu pe po a i u e o vu".split()))
+_YOUON = {"ゃ": "ya", "ゅ": "yu", "ょ": "yo"}
+
+
+def _romanize_hiragana(run: str) -> str:
+    out = []
+    double = False
+    for index, char in enumerate(run):
+        if char == "っ":
+            double = True
+            continue
+        if char in _YOUON:
+            if out and len(out[-1]) >= 2 and out[-1].endswith("i"):
+                stem = out[-1][:-1]
+                out[-1] = stem + (_YOUON[char][1:] if stem in ("sh", "ch", "j") else _YOUON[char])
+            else:
+                out.append(_YOUON[char])
+            continue
+        syllable = _ROMAJI.get(char, "")
+        if double and syllable:
+            syllable = ("t" if syllable.startswith("ch") else syllable[0]) + syllable
+        double = False
+        out.append(syllable)
+    text = "".join(out)
+    return text[:1].upper() + text[1:]
+
+
+def _localize_kana_run(run: str) -> str:
+    if run in _KANA_WORDS:
+        return _KANA_WORDS[run]
+    for honorific, chinese in _HONORIFIC_ZH:
+        if run.endswith(honorific) and len(run) > len(honorific):
+            return _romanize_hiragana(run[:-len(honorific)]) + chinese
+    return _romanize_hiragana(run)
+
+
+def localize_residual_kana(request: TranslationRequest, translation: str) -> str:
+    protected = [element for element in (*request.preserve_elements, *(request.glossary or {}).values())
+                 if element and re.search(r"[\u3041-\u3096]", element)]
+    if protected:
+        pattern = "(" + "|".join(re.escape(e) for e in sorted(set(protected), key=len, reverse=True)) + ")"
+        parts = re.split(pattern, translation)
+    else:
+        parts = [translation]
+    text = "".join(part if index % 2 else re.sub(r"[\u3041-\u3096]+", lambda m: _localize_kana_run(m.group(0)), part)
+                   for index, part in enumerate(parts))
+    # A dropped particle can leave the quotes that held it.
+    return re.sub(r"\u300c\u300d|\u300e\u300f", "", text)
 
 
 def _kana_repair_line(request: TranslationRequest) -> str:
@@ -308,7 +377,9 @@ class IndexTranslatePromptStrategy(TranslationPromptStrategy):
                        + (kana_line if kana_line else "") + f"\n\n{request.source_text.strip()}")
         if background:
             content = background + content
-        return PreparedPrompt(None, content, "text", 0.0, 1.0, None, None)
+        # Greedy decoding repeats the rejected answer verbatim, so a repair
+        # attempt samples to get a different candidate.
+        return PreparedPrompt(None, content, "text", 0.5 if request.repair else 0.0, 1.0, None, None)
 
 
 @dataclass(frozen=True)

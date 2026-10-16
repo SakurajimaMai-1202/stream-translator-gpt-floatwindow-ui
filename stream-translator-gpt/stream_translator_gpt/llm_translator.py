@@ -19,6 +19,7 @@ from .translation_policy import (
     resolve_output_format,
     validate_translation,
     residual_kana_runs,
+    localize_residual_kana,
     _matching_glossary,
 )
 from .translation_glossary_auditor import TranslationGlossaryAuditor
@@ -455,7 +456,9 @@ class LLMClient():
             # Reverse iteration makes equal counts prefer the later attempt.
             candidate = min(reversed(task._family_kana_candidates),
                             key=lambda text: len(re.findall(r"[\u3041-\u3096]", text)))
-            task.translation = normalize_translation_output(candidate, self.translation_target_language)
+            # Kana checks only run for Chinese targets, so this is always one.
+            task.translation = localize_residual_kana(normalized_request,
+                normalize_translation_output(candidate, self.translation_target_language))
             task.translation_failed = False
             task.translation_validation_rejected = False
             task.translation_error = None

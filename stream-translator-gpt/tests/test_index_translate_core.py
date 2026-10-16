@@ -138,8 +138,8 @@ def test_kana_repair_hint_only_when_requested(family):
 @pytest.mark.parametrize('family', ['index_translate', 'hy_mt2'])
 @pytest.mark.parametrize('preview', [False, True])
 @pytest.mark.parametrize('source, outputs, expected, fallback', [
-    ('のんでりだと思う。', ('我覺得是「のんでり」。', '我猜是「のんでり」。'), '我猜是「のんでり」。', True),
-    ('のんでりだと思う。', ('我觉得是「に」。', '我猜是「のんでり」。'), '我覺得是「に」。', True),
+    ('のんでりだと思う。', ('我覺得是「のんでり」。', '我猜是「のんでり」。'), '我猜是「Nonderi」。', True),
+    ('のんでりだと思う。', ('我觉得是「に」。', '我猜是「のんでり」。'), '我覺得是。', True),
     ('のんでりだと思う。', ('我覺得是「のんでり」。', '【源文】我猜是這樣。'), '', False),
     ('のんでりだと思う。', ('【源文】我覺得是這樣。', '我猜是「のんでり」。'), '', False),
     ('なんか普通に喜ぶだから。', ('普通に開心的話完全沒問題啊。', '普通開心的話完全沒問題啊。'), '普通開心的話完全沒問題啊。', False),
@@ -515,3 +515,32 @@ def test_missing_opencc_after_successful_http_never_reports_validation_pass(monk
             assert result["attempts"][0]["raw_model_response"] == "你好"
         finally:
             client.close()
+
+
+def test_index_repair_attempt_samples_instead_of_greedy():
+    strategy = create_prompt_strategy('index_translate', 'translate', 'text')
+    strategy.optimizer_settings = OptimizerSettings()
+    assert strategy.prepare(TranslationRequest(1, 'どこかさん。')).temperature == 0
+    repair = TranslationRequest(1, 'どこかさん。', repair=True, residual_kana=('どこかさん',))
+    assert strategy.prepare(repair).temperature > 0
+
+
+def test_name_honorifics_become_chinese_but_kana_words_stay():
+    from stream_translator_gpt.translation_output import normalize_translation_output
+    convert = lambda text, _: text
+    assert normalize_translation_output('Shinoさん、ケンちゃん、大輝くん', 'Traditional Chinese', convert) == 'Shino桑、ケン醬、大輝君'
+    # After hiragana it is part of a word or a kana name; leave it for the kana check.
+    assert normalize_translation_output('みなさん、どこかさん', 'Traditional Chinese', convert) == 'みなさん、どこかさん'
+    assert normalize_translation_output('Shinoさん', 'Japanese', convert) == 'Shinoさん'
+    assert validate_translation(TranslationRequest(1, 'しのさんこんにちは'), 'Shinoさん，你好',
+        normalize_output=lambda text: normalize_translation_output(text, 'Traditional Chinese', convert)) == ()
+
+
+def test_residual_kana_fallback_writes_romaji_or_chinese():
+    from stream_translator_gpt.translation_policy import localize_residual_kana
+    request = TranslationRequest(1, 'source')
+    assert localize_residual_kana(request, '好希望ゆるき能回來。ゆるきさん！') == '好希望Yuruki能回來。Yuruki桑！'
+    assert localize_residual_kana(request, '「しゃしん」ちょっと') == '「Shashin」Chotto'
+    assert localize_residual_kana(request, '嗯，いつも可愛照片的「に」') == '嗯，總是可愛照片的'
+    preserved = TranslationRequest(1, 'すいちゃん', glossary={'すいちゃん': 'すいちゃん'})
+    assert localize_residual_kana(preserved, '謝謝すいちゃん、ふぶき') == '謝謝すいちゃん、Fubuki'

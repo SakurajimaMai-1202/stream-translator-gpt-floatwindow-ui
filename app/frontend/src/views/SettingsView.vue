@@ -242,7 +242,7 @@ const localConfig = ref<any>({
     glossary_list: [],
     custom_glossary_scopes: [],
     glossary_to_asr_corrections: true,
-    glossary_to_asr_prompt: true
+    glossary_to_asr_prompt: false
   },
   output: {
     output_dir: './output',

@@ -14,7 +14,7 @@ def _config(manager, backend, **terminology):
     config["transcription"].update({"backend": backend, "transcription_initial_prompt": "手打ち",
                                     "asr_correction_rules": [{"canonical": "すいちゃん", "aliases": ["スイちゃん", "らスイちゃ"]}]})
     config["translation"]["translation_glossary_scope"] = "cosplay"
-    config["terminology"].update({"use_terminology_glossary": True, "glossary_list": [
+    config["terminology"].update({"use_terminology_glossary": True, "glossary_to_asr_prompt": True, "glossary_list": [
         {"original": "リハさん", "translated": "Riha桑", "aliases": ["ツイハさん", "リハーサルさん"], "scope": "cosplay"},
         {"original": "らスイちゃ", "translated": "Sui醬", "scope": "all"},
         {"original": "別情境", "translated": "x", "aliases": ["別情况"], "scope": "hololive_vtuber"},
@@ -121,3 +121,23 @@ def test_legacy_glossary_keys_follow_scoped_rows(tmp_path):
     config = _config(manager, "faster-whisper", terminology_glossary={"旧辞書": "舊字典", "リハさん": "Riha"})
     config["terminology"]["glossary_list"].append({"original": "非使用全域", "scope": "all"})
     assert manager.to_main_args(config)["transcription_initial_prompt"] == "手打ち, リハさん, 旧辞書"
+
+
+def test_asr_prompt_feed_is_opt_in(tmp_path):
+    manager = ConfigManager(tmp_path / "config.yaml")
+    manager._coerce_transcription_backend = lambda requested, capabilities: requested
+    assert manager.get_config()["terminology"]["glossary_to_asr_prompt"] is False
+    config = _config(manager, "faster-whisper")
+    del config["terminology"]["glossary_to_asr_prompt"]
+    # Whisper can echo prompt words as subtitles on BGM or silence.
+    assert manager.to_main_args(config)["transcription_initial_prompt"] == "手打ち"
+
+
+def test_alias_inside_another_original_is_not_a_correction():
+    terminology = {"glossary_list": [
+        {"original": "兎田ぺこら", "translated": "Pekora", "aliases": ["ぺこらちゃん"]},
+        {"original": "ぺこちゃん", "translated": "x", "aliases": ["ぺこら", "ペコ"]},
+    ]}
+    rules = glossary_asr_rules(terminology, "")
+    assert {"canonical": "ぺこちゃん", "aliases": ["ペコ"]} in rules
+    assert all("ぺこら" not in rule["aliases"] for rule in rules)

@@ -116,7 +116,8 @@ def glossary_asr_rules(terminology: dict, preset: str) -> list[dict]:
     originals = {str(item.get("original") or "").strip() for item in rows}
     for item in rows:
         original = str(item.get("original") or "").strip()
-        aliases = [alias for alias in _term_aliases(item) if alias not in original and alias not in originals]
+        # An alias inside any original (its own or another row's) would rewrite that correct word.
+        aliases = [alias for alias in _term_aliases(item) if not any(alias in name for name in originals)]
         if original and aliases:
             rules.append({"canonical": original, "aliases": aliases})
     terms = PRESETS.get(preset, {})

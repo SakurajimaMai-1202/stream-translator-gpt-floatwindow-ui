@@ -125,7 +125,7 @@ const glossaryAliasCount = computed(() => (localConfig.value.terminology?.glossa
               </label>
               <label class="flex items-start gap-2 cursor-pointer text-sm text-white/80">
                 <input v-model="localConfig.terminology.glossary_to_asr_prompt" type="checkbox" class="mt-0.5 w-4 h-4 accent-cyan-500" />
-                <span>把原詞加入 ASR 提示詞（Whisper、faster-whisper、SimulStreaming、OpenAI 轉錄 API、Fun-ASR-Nano）</span>
+                <span>把原詞加入 ASR 提示詞（Whisper、faster-whisper、SimulStreaming、OpenAI 轉錄 API、Fun-ASR-Nano；預設關閉：Whisper 遇到 BGM 或靜音時可能把提示詞當成字幕輸出）</span>
               </label>
               <p class="text-xs" :class="asrPromptSupport.prompted ? 'text-cyan-200/80' : 'text-amber-200/80'">
                 目前的 ASR：{{ asrPromptSupport.name }} —

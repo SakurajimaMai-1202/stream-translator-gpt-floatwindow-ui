@@ -230,7 +230,7 @@ class ConfigManager:
             'glossary_list': [],
             'custom_glossary_scopes': [],
             'glossary_to_asr_corrections': True,
-            'glossary_to_asr_prompt': True,
+            'glossary_to_asr_prompt': False,
         },
         'output': {
             'output_file': '',
@@ -1039,7 +1039,7 @@ class ConfigManager:
                 # Manual rules come first so they win when both claim an alias.
                 args['asr_correction_rules'] = json.dumps(
                     list(manual_rules) + derived_rules, ensure_ascii=False, separators=(',', ':'))
-            if (terminology_config.get('glossary_to_asr_prompt', True)
+            if (terminology_config.get('glossary_to_asr_prompt', False)
                     and transcription_backend in ASR_PROMPT_BACKENDS):
                 misheard = {str(alias).strip() for rule in list(manual_rules) + derived_rules
                             if isinstance(rule, dict) for alias in (rule.get('aliases') or [])}

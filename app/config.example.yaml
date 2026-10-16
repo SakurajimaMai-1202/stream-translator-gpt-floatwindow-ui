@@ -165,7 +165,7 @@ terminology:
   glossary: ''
   glossary_list: []
   glossary_to_asr_corrections: true
-  glossary_to_asr_prompt: true
+  glossary_to_asr_prompt: false
 output:
   output_file: ''
   show_timestamp: true

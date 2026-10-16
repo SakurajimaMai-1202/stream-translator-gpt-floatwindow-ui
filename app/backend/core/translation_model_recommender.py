@@ -66,11 +66,14 @@ MODEL_CATALOG: tuple[dict[str, Any], ...] = (
         "minimum_quant": "Q2_K",
         "minimum_size_gb": 3.91,
         "category": "translation",
+        "app_preferred": True,
+        "app_preferred_order": 1,
+        "app_preference_reason": "本程式具備 Index-Translate 專用提示詞，並關閉思考模式以加快字幕翻譯，建議優先使用。",
         "summary": "9B 多語翻譯模型，支援翻譯指令、術語與格式要求；建議量化需較多顯存，與 ASR 共用 GPU 時請預留餘量。",
         "languages": ["150 語"],
         "deployment_config": {"temp": 0.0, "top_p": 1.0, "top_k": 0, "repeat_penalty": 1.0, "n_ctx": 4096, "n_predict": 1024},
         "parameter_source": "官方 client 使用 temperature=0、max_tokens=1024；其餘採樣停用、4096 上下文為本程式短句翻譯設定",
-        "runtime_note": "請使用支援 Qwen3.5 的近期 llama.cpp；文字翻譯無需 mmproj。Q2_K 僅供顯存受限時嘗試，品質可能明顯下降。本程式尚未實測此模型推論。",
+        "runtime_note": "請使用支援 Qwen3.5 的近期 llama.cpp；文字翻譯無需 mmproj。Q2_K 僅供顯存受限時嘗試，品質可能明顯下降。",
     },
     {
         "id": "gemma-4-e2b-qat",
@@ -116,6 +119,7 @@ MODEL_CATALOG: tuple[dict[str, Any], ...] = (
         "minimum_size_gb": 3.13,
         "category": "translation",
         "app_preferred": True,
+        "app_preferred_order": 0,
         "app_preference_reason": "本程式具備 Hy-MT2 專用提示詞、術語與上下文策略，建議優先使用。",
         "summary": "新一代 33 語專用翻譯模型；支援繁體中文與複雜翻譯指令，並需為 KV cache 與 ASR 保留額外顯存。",
         "languages": ["33 語", "繁體中文"],
@@ -215,6 +219,7 @@ def build_translation_model_recommendations(devices: Iterable[GpuDevice]) -> dic
     models.sort(key=lambda item: (
         rank[item["fit"]],
         0 if item.get("app_preferred") else 1,
+        item.get("app_preferred_order", 0),
         item["comfortable_vram_gb"],
         item["catalog_order"],
     ))

@@ -108,6 +108,10 @@ def test_hymt2_is_first_when_it_fits_but_does_not_override_hardware_fit():
     eight_gb = build_translation_model_recommendations([gpu("NVIDIA GeForce RTX", 8192)])
     assert eight_gb["models"][0]["id"] == "hy-mt2-7b"
     assert eight_gb["models"][0]["app_preferred"] is True
+    assert eight_gb["models"][1]["id"] == "index-translate-9b"
+    assert eight_gb["models"][1]["app_preferred"] is True
+    assert [model["id"] for model in eight_gb["models"] if model.get("app_preferred")] == [
+        "hy-mt2-7b", "index-translate-9b"]
 
     four_gb = build_translation_model_recommendations([gpu("NVIDIA GeForce RTX", 4096)])
     assert four_gb["models"][0]["id"] != "hy-mt2-7b"
@@ -211,7 +215,8 @@ def test_index_models_use_official_gguf_sources_and_separate_memory_fits():
         assert model["deployment_config"]["temp"] == 0
         assert model["deployment_config"]["n_predict"] == 1024
         assert "本程式" in model["parameter_source"]
-        assert "尚未實測" in model["runtime_note"]
+    assert "尚未實測" in small["runtime_note"]
+    assert "尚未實測" not in large["runtime_note"]
     # Catalog additions do not change the simple-setup download choice.
     assert four_gb["simple_setup"]["model_id"] == "hy-mt2-iq3-xxs"
 

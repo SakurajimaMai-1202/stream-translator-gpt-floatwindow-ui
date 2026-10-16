@@ -6,7 +6,7 @@ from backend.core.translation_model_recommender import (
 )
 
 
-def gpu(name: str, memory_mb: int, integrated: bool = False, vendor: str = "nvidia") -> GpuDevice:
+def gpu(name: str, memory_mb: int | None, integrated: bool = False, vendor: str = "nvidia") -> GpuDevice:
     backend = "cuda" if vendor == "nvidia" else "rocm" if vendor == "amd" else "unknown"
     return GpuDevice(index=0, name=name, vendor=vendor, backend=backend, memory_mb=memory_mb, is_integrated=integrated)
 
@@ -124,11 +124,11 @@ def test_sakura_parameters_distinguish_model_card_facts_from_app_defaults():
     assert "未公布" in sakura14b["parameter_source"]
 
 
-def test_simple_setup_uses_small_model_for_four_gb_nvidia():
-    result = build_translation_model_recommendations([gpu("NVIDIA GeForce RTX", 4096)])
+def test_simple_setup_four_gb_card_gets_iq3_instead_of_iq4():
+    result = build_translation_model_recommendations([gpu("NVIDIA GeForce GTX 1650", 4096)])
     assert result["simple_setup"]["supported"] is True
-    assert result["simple_setup"]["model_id"] == "hy-mt2-iq4-nl"
-    assert result["simple_setup"]["quant"] == "IQ4_NL"
+    assert result["simple_setup"]["model_id"] == "hy-mt2-iq3-xxs"
+    assert result["simple_setup"]["quant"] == "UD-IQ3_XXS"
     assert result["vram_tier"] == "4_to_8gb"
 
 
@@ -140,12 +140,29 @@ def test_simple_setup_uses_q6_model_for_eight_gb_nvidia():
     assert result["vram_tier"] == "8gb_plus"
 
 
-def test_simple_setup_uses_small_gpu_model_below_four_gb():
+def test_simple_setup_three_gb_card_gets_hy_iq3():
     result = build_translation_model_recommendations([gpu("NVIDIA GeForce RTX", 3072)])
     assert result["simple_setup"]["supported"] is True
-    assert result["simple_setup"]["model_id"] == "index-translate-2b"
+    assert result["simple_setup"]["model_id"] == "hy-mt2-iq3-xxs"
     assert result["vram_tier"] == "under_4gb"
     assert "GPU Runtime" in result["simple_setup"]["reason"]
+
+
+def test_simple_setup_uses_index_2b_below_three_gb():
+    for memory in (2048, 2899):
+        setup = build_translation_model_recommendations([gpu("NVIDIA GeForce MX450", memory)])["simple_setup"]
+        recommended = [option for option in setup["options"] if option["recommended"]]
+        assert [option["model_id"] for option in recommended] == ["index-translate-2b"]
+        assert setup["model_id"] == "index-translate-2b"
+        assert setup["quant"] == "Q4_K_M"
+        assert setup["filename"] == ""
+        assert recommended[0]["note"] in setup["reason"]
+
+
+def test_simple_setup_treats_negative_memory_as_unknown():
+    setup = build_translation_model_recommendations([gpu("NVIDIA GPU", -1)])["simple_setup"]
+    assert setup["model_id"] == "hy-mt2-iq3-xxs"
+    assert "無法讀取顯示卡記憶體" in setup["options"][0]["note"]
 
 
 def test_simple_setup_supports_amd_in_middle_and_high_tiers():
@@ -196,7 +213,7 @@ def test_index_models_use_official_gguf_sources_and_separate_memory_fits():
         assert "本程式" in model["parameter_source"]
         assert "尚未實測" in model["runtime_note"]
     # Catalog additions do not change the simple-setup download choice.
-    assert four_gb["simple_setup"]["model_id"] == "hy-mt2-iq4-nl"
+    assert four_gb["simple_setup"]["model_id"] == "hy-mt2-iq3-xxs"
 
 
 def test_catalog_entries_have_filename_match_tokens():
@@ -240,9 +257,17 @@ def test_catalog_matcher_rejects_unmatched_filenames_and_copies_config():
 def test_simple_setup_options_follow_vram_tiers_and_catalog_profiles():
     cases = [
         (8192, ["hy-mt2-q6-k", "index-translate-9b-q4_k_m"], [6.16, 5.78]),
-        (4096, ["hy-mt2-iq4-nl", "index-translate-2b-q4_k_m"], [4.38, 1.31]),
-        (3072, ["index-translate-2b-q4_k_m", "hy-mt2-iq3-xxs"], [1.31, 3.13]),
+        (4096, ["hy-mt2-iq3-xxs", "index-translate-2b-q4_k_m"], [3.13, 1.31]),
+        (3072, ["hy-mt2-iq3-xxs", "index-translate-2b-q4_k_m"], [3.13, 1.31]),
+        (2048, ["index-translate-2b-q4_k_m", "hy-mt2-iq3-xxs"], [1.31, 3.13]),
+        (6144, ["hy-mt2-iq4-nl", "index-translate-2b-q4_k_m"], [4.38, 1.31]),
         (None, ["hy-mt2-iq3-xxs", "index-translate-2b-q4_k_m"], [3.13, 1.31]),
+        (0, ["hy-mt2-iq3-xxs", "index-translate-2b-q4_k_m"], [3.13, 1.31]),
+        (2899, ["index-translate-2b-q4_k_m", "hy-mt2-iq3-xxs"], [1.31, 3.13]),
+        (2900, ["hy-mt2-iq3-xxs", "index-translate-2b-q4_k_m"], [3.13, 1.31]),
+        (5799, ["hy-mt2-iq3-xxs", "index-translate-2b-q4_k_m"], [3.13, 1.31]),
+        (5800, ["hy-mt2-iq4-nl", "index-translate-2b-q4_k_m"], [4.38, 1.31]),
+        (8191, ["hy-mt2-iq4-nl", "index-translate-2b-q4_k_m"], [4.38, 1.31]),
     ]
     catalog = {model["id"]: model for model in MODEL_CATALOG}
     for memory, keys, sizes in cases:
@@ -268,6 +293,25 @@ def test_simple_setup_options_follow_vram_tiers_and_catalog_profiles():
                 assert option["quant"] == "Q4_K_M"
             else:
                 assert option["profile_id"] == "hy-mt2-7b"
+
+
+def test_simple_setup_notes_describe_cpu_spill_and_translation_tradeoffs():
+    base = "33 種語言，繁體中文品質穩定"
+    for memory in (2048, 3072, 4096, 4599, 4600, 6144, 8192, None, 0):
+        setup = build_translation_model_recommendations([gpu("NVIDIA GPU", memory)])["simple_setup"]
+        hy = next(option for option in setup["options"] if option["family"] == "hy_mt2")
+        expected = base
+        if memory and memory < 4600:
+            expected += "；這張顯示卡記憶體較少，部分會交給 CPU，速度較慢"
+        elif not memory:
+            expected += "；無法讀取顯示卡記憶體，先使用較小的版本"
+        assert hy["note"] == expected
+        assert ("CPU" in hy["note"]) is bool(memory and memory < 4600)
+        index = next(option for option in setup["options"] if option["family"] == "index_translate")
+        assert index["note"] == (
+            "支援約 150 種語言，需要較多顯示卡記憶體" if memory and memory >= 8192
+            else "支援約 150 種語言，速度快、檔案小，但日文口語偶有誤譯"
+        )
 
 
 def test_unsupported_simple_setup_has_no_options():

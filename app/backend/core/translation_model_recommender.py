@@ -17,6 +17,22 @@ def _supports_local_setup(device: GpuDevice) -> bool:
     )
 
 
+# Below this, Hy-MT2 IQ3_XXS (3.76 GB measured with a 4096 context) spills onto the CPU.
+HY_CPU_SPILL_MB = 4600
+
+
+def _simple_band(memory_mb: int | None) -> str:
+    if memory_mb is None or memory_mb <= 0:
+        return "unknown"
+    if memory_mb < 2900:
+        return "under_3gb"
+    if memory_mb < 5800:
+        return "3_to_6gb"
+    if memory_mb < 8192:
+        return "6_to_8gb"
+    return "8gb_plus"
+
+
 def _next_vram_tier(required_gb: float) -> int:
     return next((tier for tier in VRAM_TIERS_GB if tier >= required_gb), int(required_gb + 0.999))
 
@@ -205,16 +221,17 @@ def build_translation_model_recommendations(devices: Iterable[GpuDevice]) -> dic
     supported_gpu = bool(selected and _supports_local_setup(selected))
     options: list[dict[str, Any]] = []
     if supported_gpu:
+        band = _simple_band(selected.memory_mb)
         hy_id, hy_quant, hy_size = {
             "8gb_plus": ("hy-mt2-q6-k", "Q6_K", 6.16),
-            "4_to_8gb": ("hy-mt2-iq4-nl", "IQ4_NL", 4.38),
-        }.get(tier_id, ("hy-mt2-iq3-xxs", "UD-IQ3_XXS", 3.13))
-        index_id = "index-translate-9b" if tier_id == "8gb_plus" else "index-translate-2b"
+            "6_to_8gb": ("hy-mt2-iq4-nl", "IQ4_NL", 4.38),
+        }.get(band, ("hy-mt2-iq3-xxs", "UD-IQ3_XXS", 3.13))
+        index_id = "index-translate-9b" if band == "8gb_plus" else "index-translate-2b"
         catalog = {model["id"]: model for model in MODEL_CATALOG}
         hy_note = "33 種語言，繁體中文品質穩定"
-        if tier_id == "under_4gb":
-            hy_note += "；顯示卡記憶體可能不足，執行速度可能較慢"
-        elif tier_id == "unknown":
+        if band != "unknown" and selected.memory_mb < HY_CPU_SPILL_MB:
+            hy_note += "；這張顯示卡記憶體較少，部分會交給 CPU，速度較慢"
+        elif band == "unknown":
             hy_note += "；無法讀取顯示卡記憶體，先使用較小的版本"
         options = [
             {
@@ -228,13 +245,13 @@ def build_translation_model_recommendations(devices: Iterable[GpuDevice]) -> dic
                 "name": catalog[index_id]["name"], "family": "index_translate",
                 "size_gb": catalog[index_id]["model_size_gb"], "recommended": False,
                 "note": "支援約 150 種語言，" + (
-                    "需要較多顯示卡記憶體" if tier_id == "8gb_plus" else "檔案較小"
+                    "需要較多顯示卡記憶體" if band == "8gb_plus" else "速度快、檔案小，但日文口語偶有誤譯"
                 ),
                 "profile_id": index_id,
                 "deployment_config": dict(catalog[index_id]["deployment_config"]),
             },
         ]
-        if tier_id == "under_4gb":
+        if band == "under_3gb":
             options.reverse()
         recommended = options[0]
         recommended["recommended"] = True

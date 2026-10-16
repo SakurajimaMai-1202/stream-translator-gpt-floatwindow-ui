@@ -182,7 +182,9 @@ def test_cpu_profile_forces_cpu():
 def test_simple_setup_model_choices_at_exact_vram_boundaries():
     from backend.core.translation_model_recommender import build_translation_model_recommendations
 
-    for memory, model_id in ((4095, "index-translate-2b"), (4096, "hy-mt2-iq4-nl"),
+    for memory, model_id in ((2899, "index-translate-2b"), (2900, "hy-mt2-iq3-xxs"),
+                             (4095, "hy-mt2-iq3-xxs"), (4096, "hy-mt2-iq3-xxs"),
+                             (5799, "hy-mt2-iq3-xxs"), (5800, "hy-mt2-iq4-nl"),
                              (8191, "hy-mt2-iq4-nl"), (8192, "hy-mt2-q6-k"),
                              (None, "hy-mt2-iq3-xxs")):
         device = GpuDevice(0, "NVIDIA GPU", "nvidia", "cuda", memory, False)

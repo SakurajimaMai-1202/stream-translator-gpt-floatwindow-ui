@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useInterfaceModeStore } from '../stores/interfaceMode';
 import { cancelModelInstallWithRetry, isModelInstallBusy, useLocalTranslationSetup } from '../composables/useLocalTranslationSetup';
+import { useNativePicker } from '../composables/useNativePicker';
 import LlamaSettings from '../components/LlamaSettings.vue';
 import { useLlamaStore } from '../stores/llama';
 import { useTranslationStore } from '../stores/translation';
@@ -9,6 +10,17 @@ import { configApi } from '../services/api';
 import { llamaApi, type ModelInstallStatus, type TranslationModelRecommendationInfo } from '../services/llamaApi';
 
 const interfaceMode = useInterfaceModeStore();
+const { available, pickFolder } = useNativePicker();
+async function chooseModelFolder() {
+  const path = await pickFolder('選擇模型資料夾', directory.value);
+  // A download may have started while the dialog was open.
+  if (!path || locked.value) return;
+  directory.value = path;
+  await scan();
+}
+function scrollToStep(id: string) {
+  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
 const setup = useLocalTranslationSetup();
 const { running: settingUp, progress: setupPercent, cancelled: setupCancelled } = setup;
 const simpleReady = computed(() => !!llamaStore.serverStatus?.runtime?.installed && !!llamaStore.selectedModelPath);
@@ -336,6 +348,14 @@ onUnmounted(() => { interfaceMode.localViewJobBusy = false; disposed = true; ++s
     <p v-if="error" class="notice error" role="alert">{{ error }}</p>
     <p v-if="llamaStore.errorMessage" class="notice error" role="alert">{{ llamaStore.errorMessage }}</p>
     <button v-if="ready && !statusReady" @click="restoreDownload">重試下載狀態</button>
+    <aside class="commercial-panel p-4 space-y-2" aria-labelledby="usage-guide">
+      <h2 id="usage-guide">使用步驟</h2>
+      <ol class="space-y-2 text-sm">
+        <li>① <span v-if="llamaStore.selectedModelPath">✓ </span>在下方「1. 選擇模型」按「下載並使用」，或到「本機已有」選資料夾掃描後選擇模型。<button type="button" class="smaller-version-link" @click="scrollToStep('choose-model')">選擇模型 ↓</button></li>
+        <li>② <span v-if="llamaStore.isServerRunning">✓ </span>下載完成後往下捲到「2. 啟動」，按啟動服務。<button type="button" class="smaller-version-link" @click="scrollToStep('start-server')">啟動服務 ↓</button></li>
+        <li>③ 在「3. 試譯」輸入一句確認能翻譯，之後首頁的「本地 LLM 翻譯」開關就能直接使用。<button type="button" class="smaller-version-link" @click="scrollToStep('test-translation')">試譯 ↓</button></li>
+      </ol>
+    </aside>
     <section aria-labelledby="choose-model" class="space-y-4">
       <h2 id="choose-model">1. 選擇模型</h2>
       <div class="segments" role="group" aria-label="模型來源">
@@ -379,7 +399,7 @@ onUnmounted(() => { interfaceMode.localViewJobBusy = false; disposed = true; ++s
       <template v-else>
         <div class="commercial-panel p-4 space-y-3">
           <label for="model-folder">模型資料夾</label>
-          <div class="scan-row"><input id="model-folder" v-model="directory" placeholder="例如 D:\Models" @keyup.enter="scan"><button :disabled="locked" @click="scan">{{ llamaStore.isLoading ? '掃描中…' : '掃描' }}</button></div>
+          <div class="scan-row"><input id="model-folder" v-model="directory" placeholder="例如 D:\Models" @keyup.enter="scan"><button v-if="available" :disabled="locked" @click="chooseModelFolder">選擇資料夾…</button><button :disabled="locked" @click="scan">{{ llamaStore.isLoading ? '掃描中…' : '掃描' }}</button></div>
           <label for="model-search">搜尋模型</label><input id="model-search" v-model="search" placeholder="輸入模型名稱">
         </div>
         <div class="grid gap-3 md:grid-cols-2">
@@ -400,14 +420,14 @@ onUnmounted(() => { interfaceMode.localViewJobBusy = false; disposed = true; ++s
     </section>
     <LlamaSettings v-if="ready" initialized hide-errors>
       <template #status-heading>
-        <h2 class="step-title">2. 啟動</h2>
+        <h2 id="start-server" class="step-title">2. 啟動</h2>
         <div v-if="backend !== 'llama' && backend !== 'localllm'" class="notice space-y-2">
           <p>翻譯服務尚未使用本機模型。</p>
           <button :disabled="switching" @click="switchBackend">{{ switching ? '儲存中…' : '將翻譯服務切換為本機模型' }}</button>
         </div>
         <p v-else class="notice">翻譯服務已設為本機模型。</p>
       </template>
-      <template #test-heading><h2 class="step-title">3. 試譯</h2></template>
+      <template #test-heading><h2 id="test-translation" class="step-title">3. 試譯</h2></template>
     </LlamaSettings>
     <p v-else>正在讀取本機設定…</p>
   </div>
@@ -425,7 +445,7 @@ input { width: 100%; min-width: 0; } button:focus-visible, input:focus-visible, 
 .badge, .notice, .quant-info { padding: .5rem .75rem; border-radius: var(--fw-radius-md); background: var(--fw-surface-subtle); }
 .badge { font-size: .75rem; } .error { color: #ed9a9a; } .notice { margin-bottom: 1rem; }
 .model-card { display: flex; flex-direction: column; min-width: 0; } .card-actions { margin-top: auto; display: grid; gap: .5rem; padding-top: .75rem; }
-.scan-row { display: flex; gap: .75rem; } .local-model { display: flex; gap: .5rem; align-items: start; min-width: 0; }
+.scan-row { display: flex; gap: .75rem; } .scan-row input { flex: 1; min-width: 0; } .scan-row button { flex-shrink: 0; white-space: nowrap; } .local-model { display: flex; gap: .5rem; align-items: start; min-width: 0; }
 .model-select { flex: 1; min-width: 0; text-align: left; overflow-wrap: anywhere; } .model-select small { margin-top: .5rem; }
 .smaller-version-link { border: 0; background: transparent; color: var(--fw-primary); text-decoration: underline; }
 progress { width: 100%; accent-color: var(--fw-primary); } .step-title { margin: 1.5rem 0 1rem; }

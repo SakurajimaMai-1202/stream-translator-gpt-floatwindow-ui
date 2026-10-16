@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useInterfaceModeStore } from '../stores/interfaceMode';
 import { useRouter, useRoute } from 'vue-router';
+import { useNativePicker } from '../composables/useNativePicker';
 import BrandIcon from './BrandIcon.vue';
 import AppIcon from './AppIcon.vue';
 import UiSelect from './UiSelect.vue';
@@ -11,6 +12,15 @@ import { useTranslationStore } from '../stores/translation';
 import { acquireSyncEventSource, releaseSyncEventSource } from '../composables/sharedSyncSource';
 import { runtimeApi } from '../services/api';
 
+const { available, pickFolder, pickFile } = useNativePicker();
+type ResourcePathField = 'existingAsrStoragePath' | 'existingLlamaServerExe' | 'existingLlamaModelPath' | 'offlineCpuAsrArchive';
+async function browseResource(field: ResourcePathField, title: string, filter?: string) {
+  if (interfaceMode.busy) return;
+  const path = filter
+    ? await pickFile(title, filter)
+    : await pickFolder(title, interfaceMode[field]);
+  if (path) interfaceMode[field] = path;
+}
 const llamaStore = useLlamaStore();
 const translationStore = useTranslationStore();
 // Include this client's saves too: the page-level sync helper filters them out. Only the
@@ -140,8 +150,9 @@ watch(() => route.fullPath, () => {
 </script>
 
 <template>
-  <div v-if="!interfaceMode.loaded || !interfaceMode.mode || interfaceMode.pendingMode" class="fw-onboarding flex min-h-screen items-center justify-center bg-slate-950 p-6 text-white">
-    <section class="w-full max-w-2xl space-y-6" aria-labelledby="interface-mode-title">
+  <div v-if="!interfaceMode.loaded || !interfaceMode.mode || interfaceMode.pendingMode" class="fw-onboarding flex h-screen overflow-y-auto bg-slate-950 p-6 text-white">
+    <!-- body has overflow hidden; m-auto centres the card when it fits and lets it scroll when it does not. -->
+    <section class="m-auto w-full max-w-2xl space-y-6" aria-labelledby="interface-mode-title">
       <template v-if="interfaceMode.onboardingStep === 'mode'">
       <h1 id="interface-mode-title" class="text-2xl font-bold">第一次使用，選擇操作方式</h1>
       <p class="text-sm text-slate-300">簡單模式會自動準備語音辨識與翻譯；選擇會記住，之後可在側欄切換。</p>
@@ -214,11 +225,19 @@ watch(() => route.fullPath, () => {
           <span class="ml-2 rounded-full bg-indigo-400/15 px-2 py-1 text-xs text-indigo-200">{{ interfaceMode.hardware.vram_tier_label }}</span>
         </div>
         <div class="grid gap-4 sm:grid-cols-2">
-          <button :disabled="interfaceMode.busy || !interfaceMode.hardware?.simple_setup.supported" class="rounded-2xl border border-emerald-400/40 bg-emerald-500/10 p-5 text-left disabled:opacity-45" @click="interfaceMode.configureLocal()">
-            <span class="block text-lg font-bold">使用這台電腦翻譯</span>
-            <span class="mt-2 block text-sm text-slate-300">自動下載 llama.cpp 與適合顯存的 Hy-MT2 模型。</span>
-            <span class="mt-3 block text-xs text-emerald-200">{{ interfaceMode.hardware?.simple_setup.reason }}</span>
-          </button>
+          <fieldset :disabled="interfaceMode.busy || !interfaceMode.hardware?.simple_setup.supported" class="min-w-0 rounded-2xl border border-emerald-400/40 bg-emerald-500/10 p-5 text-left disabled:opacity-45" aria-labelledby="local-translation-title">
+            <h2 id="local-translation-title" class="text-lg font-bold">使用這台電腦翻譯</h2>
+            <label v-for="option in interfaceMode.hardware?.simple_setup.options ?? []" :key="option.key" class="mt-3 flex items-start gap-2 text-sm">
+              <input v-model="interfaceMode.selectedLocalOptionKey" type="radio" name="onboarding-local-model" :value="option.key" class="mt-1" />
+              <span>{{ option.name }} · {{ option.quant }} · 約 {{ option.size_gb }} GB
+                <span v-if="option.recommended" class="ml-1 rounded bg-emerald-400/15 px-1.5 py-0.5 text-xs text-emerald-200">推薦</span>
+                <small class="mt-1 block text-slate-300">{{ option.note }}</small>
+              </span>
+            </label>
+            <p class="mt-3 text-xs text-emerald-200">{{ interfaceMode.hardware?.simple_setup.reason }}</p>
+            <p class="mt-3 text-xs leading-5 text-slate-300">下載完成後進入首頁，打開『本地 LLM 翻譯』開關即可啟動；之後可在「本地翻譯」頁更換模型。</p>
+            <button :disabled="interfaceMode.busy || !interfaceMode.hardware?.simple_setup.supported || !interfaceMode.selectedLocalOption" class="mt-3 w-full rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold disabled:opacity-45" @click="interfaceMode.configureLocal()">下載並設定</button>
+          </fieldset>
           <div class="rounded-2xl border border-indigo-400/40 bg-indigo-500/10 p-5">
             <span class="block text-lg font-bold">使用 Gemini 雲端翻譯</span>
             <span class="mt-2 block text-sm text-slate-300">不下載翻譯模型，需要網路與 Google API Key。</span>
@@ -238,17 +257,29 @@ watch(() => route.fullPath, () => {
         </div>
         <div class="space-y-4 rounded-2xl border border-white/10 bg-white/5 p-5">
           <label class="block text-sm text-slate-200">ASR 模型根目錄
-            <input v-model="interfaceMode.existingAsrStoragePath" type="text" placeholder="例如 D:\\StreamTranslatorModels" class="mt-2 w-full rounded-lg border border-white/20 bg-slate-950 px-3 py-2 text-white" />
+            <div class="mt-2 flex gap-2">
+              <input v-model="interfaceMode.existingAsrStoragePath" type="text" placeholder="例如 D:\\StreamTranslatorModels" class="min-w-0 flex-1 rounded-lg border border-white/20 bg-slate-950 px-3 py-2 text-white" />
+              <button v-if="available" type="button" :disabled="interfaceMode.busy" class="shrink-0 rounded-lg border border-white/20 px-3 py-2 text-sm disabled:opacity-50" @click="browseResource('existingAsrStoragePath', '選擇 ASR 模型根目錄')">瀏覽…</button>
+            </div>
           </label>
           <label class="block text-sm text-slate-200">llama.cpp Runtime 資料夾
-            <input v-model="interfaceMode.existingLlamaServerExe" type="text" placeholder="例如 D:\\llama.cpp" class="mt-2 w-full rounded-lg border border-white/20 bg-slate-950 px-3 py-2 text-white" />
+            <div class="mt-2 flex gap-2">
+              <input v-model="interfaceMode.existingLlamaServerExe" type="text" placeholder="例如 D:\\llama.cpp" class="min-w-0 flex-1 rounded-lg border border-white/20 bg-slate-950 px-3 py-2 text-white" />
+              <button v-if="available" type="button" :disabled="interfaceMode.busy" class="shrink-0 rounded-lg border border-white/20 px-3 py-2 text-sm disabled:opacity-50" @click="browseResource('existingLlamaServerExe', '選擇 llama.cpp Runtime 資料夾')">瀏覽…</button>
+            </div>
           </label>
           <p class="text-xs text-slate-400">填入包含 llama-server.exe 的資料夾，驗證時會自動偵測。</p>
           <label class="block text-sm text-slate-200">GGUF 翻譯模型
-            <input v-model="interfaceMode.existingLlamaModelPath" type="text" placeholder="例如 D:\\Models\\Hy-MT2.gguf" class="mt-2 w-full rounded-lg border border-white/20 bg-slate-950 px-3 py-2 text-white" />
+            <div class="mt-2 flex gap-2">
+              <input v-model="interfaceMode.existingLlamaModelPath" type="text" placeholder="例如 D:\\Models\\Hy-MT2.gguf" class="min-w-0 flex-1 rounded-lg border border-white/20 bg-slate-950 px-3 py-2 text-white" />
+              <button v-if="available" type="button" :disabled="interfaceMode.busy" class="shrink-0 rounded-lg border border-white/20 px-3 py-2 text-sm disabled:opacity-50" @click="browseResource('existingLlamaModelPath', '選擇 GGUF 翻譯模型', 'GGUF 模型 (*.gguf);;所有檔案 (*.*)')">瀏覽…</button>
+            </div>
           </label>
           <label class="block text-sm text-slate-200">CPU ASR Runtime 離線 ZIP（選填）
-            <input v-model="interfaceMode.offlineCpuAsrArchive" type="text" placeholder="例如 D:\\Downloads\\StreamTranslator-CPU-ASR-Sidecar.zip" class="mt-2 w-full rounded-lg border border-white/20 bg-slate-950 px-3 py-2 text-white" />
+            <div class="mt-2 flex gap-2">
+              <input v-model="interfaceMode.offlineCpuAsrArchive" type="text" placeholder="例如 D:\\Downloads\\StreamTranslator-CPU-ASR-Sidecar.zip" class="min-w-0 flex-1 rounded-lg border border-white/20 bg-slate-950 px-3 py-2 text-white" />
+              <button v-if="available" type="button" :disabled="interfaceMode.busy" class="shrink-0 rounded-lg border border-white/20 px-3 py-2 text-sm disabled:opacity-50" @click="browseResource('offlineCpuAsrArchive', '選擇 CPU ASR Runtime 離線 ZIP', 'ZIP 壓縮檔 (*.zip);;所有檔案 (*.*)')">瀏覽…</button>
+            </div>
           </label>
           <p class="text-xs leading-5 text-slate-400">ASR 根目錄應包含 hub、modelscope 或 sherpa-onnx 子目錄；變更位置不會搬移或刪除既有檔案。</p>
         </div>

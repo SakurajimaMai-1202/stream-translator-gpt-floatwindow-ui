@@ -130,6 +130,17 @@ class HomeBridge(QObject):
         )
         return file_path or ""
 
+    @pyqtSlot(str, str, result=str)
+    def chooseFolder(self, title: str, start_dir: str) -> str:
+        directory = start_dir if Path(start_dir).is_dir() else ""
+        return QFileDialog.getExistingDirectory(None, title, directory) or ""
+
+    @pyqtSlot(str, str, str, result=str)
+    def chooseFile(self, title: str, start_dir: str, name_filter: str) -> str:
+        directory = start_dir if Path(start_dir).is_dir() else ""
+        file_path, _ = QFileDialog.getOpenFileName(None, title, directory, name_filter)
+        return file_path or ""
+
     @pyqtSlot(str, result=bool)
     def copyToClipboard(self, text: str) -> bool:
         """從 JavaScript 呼叫以將文字複製到系統剪貼簿"""

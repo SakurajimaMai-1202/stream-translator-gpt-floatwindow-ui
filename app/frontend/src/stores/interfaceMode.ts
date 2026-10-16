@@ -33,6 +33,15 @@ export const useInterfaceModeStore = defineStore('interfaceMode', () => {
   const translationChoice = ref<'local' | 'cloud' | null>(null);
   const googleApiKey = ref('');
   const hardware = ref<TranslationModelRecommendationInfo | null>(null);
+  const selectedLocalOptionKey = ref('');
+  const selectedLocalOption = computed(() => hardware.value?.simple_setup.options.find(
+    option => option.key === selectedLocalOptionKey.value));
+  watch([hardware, selectedLocalOptionKey], () => {
+    const options = hardware.value?.simple_setup.options ?? [];
+    if (!selectedLocalOptionKey.value || !options.some(option => option.key === selectedLocalOptionKey.value)) {
+      selectedLocalOptionKey.value = (options.find(option => option.recommended) ?? options[0])?.key ?? '';
+    }
+  }, { flush: 'sync' });
   const localSetup = useLocalTranslationSetup(setupMessage);
   const { runtimeInstallStatus, localModelInstallStatus } = localSetup;
   // Local-translation jobs (runtime install, GGUF download) lock the 本地翻譯 page;
@@ -307,7 +316,7 @@ export const useInterfaceModeStore = defineStore('interfaceMode', () => {
     onboardingStep.value = 'preparing';
     translationChoice.value = 'local';
     try {
-      await localSetup.run(hardware.value);
+      await localSetup.run(hardware.value, undefined, selectedLocalOption.value);
       await finishSimpleMode();
     } catch (cause: any) {
       error.value = cause?.response?.data?.detail || cause?.message || '本機翻譯設定失敗，請重試。';
@@ -325,7 +334,7 @@ export const useInterfaceModeStore = defineStore('interfaceMode', () => {
 
   return { mode, loaded, busy, localJobBusy, localTranslationJobBusy, localViewJobBusy, error, isSimple, pendingMode, setupMessage, sidecarStatus, preparingModels,
     modelProgress, onboardingStep, selectedSource, selectedLanguage, selectedStarterModel,
-    translationChoice, googleApiKey, hardware, runtimeInstallStatus,
+    translationChoice, googleApiKey, hardware, selectedLocalOptionKey, selectedLocalOption, runtimeInstallStatus,
     localModelInstallStatus, existingAsrStoragePath, existingLlamaServerExe, existingLlamaModelPath,
     offlineCpuAsrArchive, load, select, continueFromPurpose, configureCloud, configureLocal, cancelPreparation, backToModeChoice,
     skipSetup, openExistingResources, configureExistingResources };

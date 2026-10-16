@@ -9,6 +9,7 @@ import UiSelect from './UiSelect.vue';
 import { useLlamaStore } from '../stores/llama';
 import { useTranslationStore } from '../stores/translation';
 import { acquireSyncEventSource, releaseSyncEventSource } from '../composables/sharedSyncSource';
+import { runtimeApi } from '../services/api';
 
 const llamaStore = useLlamaStore();
 const translationStore = useTranslationStore();
@@ -66,7 +67,15 @@ watch(() => interfaceMode.mode, (mode) => {
 const visibleSettingsGroups = computed(() => interfaceMode.isSimple
   ? [{ groupName: '常用設定', items: [{ id: 'general', name: '一般設定' }, { id: 'local-translation', path: '/local-translation', name: '本地翻譯', icon: 'llm-models' }] }]
   : settingsGroups);
-const appVersion = import.meta.env.VITE_APP_VERSION || '1.4.10';
+// Packaged builds bake VITE_APP_VERSION in; the running backend is the authoritative
+// source (backend/config.py APP_VERSION), so a dev build never shows a stale number.
+const appVersion = ref<string>(import.meta.env.VITE_APP_VERSION || '');
+onMounted(async () => {
+  try {
+    const status = await runtimeApi.getAppUpdateStatus();
+    if (status?.current_version) appVersion.value = status.current_version;
+  } catch { /* Keep the build-time version when the backend is unreachable. */ }
+});
 const isMobileMenuOpen = ref(false);
 
 // Define navigation items
@@ -406,7 +415,7 @@ watch(() => route.fullPath, () => {
           button-class="w-full rounded-lg border border-white/20 bg-slate-900 p-2 text-white"
           @update:model-value="interfaceMode.select($event as 'simple' | 'advanced')" />
         <p v-if="interfaceMode.error" role="alert" class="text-red-300">{{ interfaceMode.error }}</p>
-        <div class="pt-2">v{{ appVersion }}</div>
+        <div v-if="appVersion" class="pt-2">v{{ appVersion }}</div>
       </div>
     </aside>
 

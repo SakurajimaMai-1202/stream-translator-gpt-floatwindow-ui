@@ -203,7 +203,8 @@ async function loadProcessAudioTargets() {
   } finally { isLoadingProcessTargets.value = false; }
 }
 
-watch(selectedProcessTargetKey, () => { sourceCheck.value = null; });
+// A test result describes the source it ran on; any change to the source makes it stale.
+watch([selectedProcessTargetKey, urlInput, selectedDeviceIndex], () => { sourceCheck.value = null; });
 
 // 模型選擇
 const whisperModels = ['tiny', 'base', 'small', 'medium', 'large-v2', 'large-v3', 'large-v3-turbo'];
@@ -287,7 +288,8 @@ const selectedAsrModelDownloaded = computed(() => !selectedDownloadEngine.value 
 const audioSourceChosen = computed(() => {
   if (audioSource.value === 'url' || audioSource.value === 'file') return !!urlInput.value.trim();
   if (audioSource.value === 'process_audio') return !!selectedProcessTarget.value;
-  return selectedDeviceIndex.value !== null;
+  // No device picked means the system default device, which Start accepts.
+  return true;
 });
 const readinessItems = computed(() => [
   sourceCheck.value

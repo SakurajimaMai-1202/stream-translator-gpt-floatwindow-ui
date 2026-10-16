@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
+import { configApi, translationApi } from '../../services/api';
 import UiSelect, { type UiSelectOption } from '../UiSelect.vue';
 import { simpleAsrModel, simpleAsrLanguages } from '../../utils/simpleAsr';
 import { isModelLanguageCompatible, languageOptionsForModel } from '../../utils/asrCapabilities';
@@ -9,6 +10,75 @@ const {
 } = useHomeContext();
 
 const showAdvancedConfig = ref(true);
+const { llamaStore } = useHomeContext();
+const isLocalTranslation = computed(() => ['llama', 'localllm'].includes(selectedBackend.value));
+const cloudOptions = computed(() => [
+  { value: 'gemini', label: 'Google Gemini' },
+  { value: 'gpt', label: 'OpenAI GPT' },
+  ...backendOptions.value.filter(option => String(option.value).startsWith('custom:')),
+]);
+let lastCloudBackend = '';
+try { lastCloudBackend = localStorage.getItem('fw.simple.lastCloudBackend') || ''; } catch { /* Storage unavailable. */ }
+// Not immediate: HomeView starts at the default 'gpt' before the saved config loads,
+// which would overwrite the remembered service on every page load.
+watch(selectedBackend, value => {
+  if (value !== 'gpt' && value !== 'gemini' && !value.startsWith('custom:')) return;
+  lastCloudBackend = value;
+  try { localStorage.setItem('fw.simple.lastCloudBackend', value); } catch { /* Keep memory fallback. */ }
+}, { flush: 'sync' });
+function chooseTranslationMethod(local: boolean) {
+  selectedBackend.value = local ? 'llama'
+    : cloudOptions.value.some(option => option.value === lastCloudBackend) ? lastCloudBackend
+    : store.config?.translation?.google_api_key ? 'gemini'
+    : store.config?.translation?.openai_api_key ? 'gpt' : 'gemini';
+}
+const localModelName = computed(() => (llamaStore.selectedModelPath || '').split(/[\\/]/).pop()?.replace(/\.gguf$/i, '') || '');
+const apiKeyField = computed(() => selectedBackend.value === 'gemini' ? 'google_api_key'
+  : selectedBackend.value === 'gpt' ? 'openai_api_key' : null);
+const hasApiKey = computed(() => !!(apiKeyField.value && store.config?.translation?.[apiKeyField.value]));
+function cancelKeyEdit() {
+  editingKey.value = false;
+  apiKeyInput.value = '';
+  keyError.value = '';
+}
+const editingKey = ref(false);
+const apiKeyInput = ref('');
+const savingKey = ref(false);
+const keyError = ref('');
+const keySaved = ref(false);
+watch(selectedBackend, () => {
+  editingKey.value = false;
+  apiKeyInput.value = '';
+  keyError.value = '';
+  keySaved.value = false;
+});
+async function saveApiKey() {
+  const field = apiKeyField.value;
+  const key = apiKeyInput.value.trim();
+  if (!field || !key || savingKey.value || store.isRunning || !translationEnabled.value) return;
+  savingKey.value = true;
+  keyError.value = '';
+  keySaved.value = false;
+  try {
+    if (field === 'google_api_key') {
+      await translationApi.testGemini(key, store.config.translation.gemini_model || 'gemini-2.5-flash-lite');
+    }
+    await configApi.updateSection('translation', { [field]: key });
+    // Must match backend config_secrets._mask (MASK_PREFIX '••••'): a later Home save sends
+    // this value back, and only that prefix is restored to the real key on the server.
+    store.config.translation[field] = key.length >= 8 ? `••••${key.slice(-4)}` : '••••••••';
+    if (apiKeyField.value === field) {
+      apiKeyInput.value = '';
+      editingKey.value = false;
+      keySaved.value = true;
+    }
+  } catch (cause: any) {
+    if (apiKeyField.value === field) {
+      const message = cause?.response?.data?.detail || cause?.message || '儲存失敗，請重試。';
+      keyError.value = String(message).split(key).join('〔已隱藏〕');
+    }
+  } finally { savingKey.value = false; }
+}
 
 const asrComputeBackendOptions: UiSelectOption[] = [
   { value: 'auto', label: '自動（GPU 優先）' },
@@ -194,16 +264,60 @@ const transcriptionEngineOptions = computed<UiSelectOption[]>(() =>
             <!-- 進階配置摺疊區 (轉錄引擎、模型選擇、翻譯後端) -->
             <div v-if="interfaceMode.isSimple" class="mb-5">
               <div class="mb-1 flex items-center justify-between gap-3">
-                <label class="commercial-field-label">翻譯模型／後端</label>
+                <label class="commercial-field-label">翻譯方式</label>
                 <button type="button" class="text-xs text-indigo-300 hover:text-indigo-200" @click="router.push({ path: '/settings', query: { tab: 'translation' } })">翻譯詳細設定</button>
               </div>
-              <UiSelect
-                v-model="selectedBackend"
-                :options="backendOptions"
-                :disabled="store.isRunning || !translationEnabled"
-                button-class="bg-white/5 border border-white/15 text-xs rounded-xl disabled:opacity-40"
-              />
-              <p class="mt-1 text-xs text-white/65">選擇翻譯服務或模型；API 金鑰等選項可在翻譯詳細設定中調整。</p>
+              <div class="inline-flex rounded-lg border border-white/15 bg-white/5 p-0.5" role="group" aria-label="翻譯方式">
+                <button v-for="option in [{ local: false, label: '雲端翻譯' }, { local: true, label: '本機翻譯' }]"
+                  :key="option.label" type="button"
+                  class="translation-mode-option rounded-md px-3 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50"
+                  :class="translationEnabled && isLocalTranslation === option.local ? 'bg-blue-600 text-white' : 'text-white/65 hover:text-white'"
+                  :aria-pressed="translationEnabled && isLocalTranslation === option.local"
+                  :disabled="store.isRunning || !translationEnabled || savingKey"
+                  @click="chooseTranslationMethod(option.local)">{{ option.label }}</button>
+              </div>
+              <p class="mt-1 text-xs text-white/65">雲端：需要 API 金鑰，速度快。本機：免費、不用上網，需要先下載模型。</p>
+              <p v-if="!translationEnabled" class="mt-3 text-xs text-white/65" role="status">目前為「僅轉錄」，不會翻譯。</p>
+              <div v-else-if="!isLocalTranslation" class="mt-3 space-y-2">
+                <div class="text-xs text-white/65">
+                  <span aria-hidden="true">雲端服務</span>
+                  <UiSelect v-model="selectedBackend" :options="cloudOptions" aria-label="雲端服務"
+                    :disabled="store.isRunning || !translationEnabled || savingKey"
+                    button-class="mt-1 bg-white/5 border border-white/15 text-xs rounded-xl disabled:opacity-40" />
+                </div>
+                <template v-if="apiKeyField">
+                  <p v-if="hasApiKey" class="flex items-center gap-2 text-xs text-white/75">
+                    已設定 API 金鑰
+                    <button type="button" class="text-indigo-300 disabled:opacity-50"
+                      :disabled="store.isRunning || !translationEnabled || savingKey" @click="editingKey = true; keySaved = false">更換</button>
+                  </p>
+                  <form v-if="!hasApiKey || editingKey" class="flex flex-col gap-2 min-[480px]:flex-row" @submit.prevent="saveApiKey">
+                    <input v-model="apiKeyInput" type="password" aria-label="API 金鑰" placeholder="輸入 API 金鑰" autocomplete="off"
+                      :disabled="store.isRunning || !translationEnabled || savingKey"
+                      class="min-w-0 flex-1 rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-xs text-white disabled:opacity-50" />
+                    <button type="submit" :disabled="store.isRunning || !translationEnabled || savingKey || !apiKeyInput.trim()"
+                      class="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">
+                      {{ savingKey ? (selectedBackend === 'gemini' ? '正在測試…' : '正在儲存…') : '儲存' }}
+                    </button>
+                    <button v-if="hasApiKey" type="button" :disabled="savingKey"
+                      class="rounded-lg border border-white/15 px-3 py-2 text-xs text-white/75 disabled:opacity-50" @click="cancelKeyEdit">取消</button>
+                  </form>
+                  <p v-if="keyError" role="alert" class="text-xs text-red-300">{{ keyError }}</p>
+                  <p v-if="keySaved" role="status" class="text-xs text-emerald-300">已儲存</p>
+                  <a v-if="selectedBackend === 'gemini' && !hasApiKey" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" class="inline-block text-xs text-indigo-300 underline">取得 Gemini API 金鑰</a>
+                </template>
+              </div>
+              <div v-else class="mt-3 flex flex-wrap items-center gap-2 text-xs" role="status">
+                <template v-if="!llamaStore.selectedModelPath">
+                  <span class="text-amber-300">尚未設定本機翻譯模型</span>
+                  <button type="button" class="text-indigo-300 underline" @click="router.push('/local-translation')">一鍵設定本機翻譯</button>
+                </template>
+                <template v-else>
+                  <span class="break-all text-white/75">使用 {{ localModelName }}</span>
+                  <span class="text-white/65">{{ llamaStore.isServerReady ? '模型已就緒' : '按下啟動時會自動載入模型' }}</span>
+                  <button type="button" class="text-indigo-300 underline" @click="router.push('/local-translation')">更換模型</button>
+                </template>
+              </div>
             </div>
             <div v-if="!interfaceMode.isSimple" class="mb-5">
               <button

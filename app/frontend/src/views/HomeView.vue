@@ -752,13 +752,18 @@ watch(() => store.errorMessage, (newVal) => {
   }
 });
 
+// Turning translation back on returns to the service used before 僅轉錄, not always OpenAI.
+let lastTranslationBackend = '';
 watch(translationEnabled, (newVal) => {
   if (newVal && selectedBackend.value === 'none') {
-    selectedBackend.value = 'gpt';
+    let rememberedCloud = '';
+    try { rememberedCloud = localStorage.getItem('fw.simple.lastCloudBackend') || ''; } catch { /* Storage unavailable. */ }
+    selectedBackend.value = lastTranslationBackend || rememberedCloud || 'gpt';
   }
 });
 
 watch(selectedBackend, (newVal) => {
+  if (newVal !== 'none') lastTranslationBackend = newVal;
   if (newVal === 'none') {
     translationEnabled.value = false;
   } else {
@@ -1229,7 +1234,7 @@ provideHomeContext({
 
           </div>
 
-          <HomeLocalLlm />
+          <HomeLocalLlm v-if="!interfaceMode.isSimple || selectedBackend === 'llama' || selectedBackend === 'localllm'" />
 
         </div>
 

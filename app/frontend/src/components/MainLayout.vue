@@ -65,7 +65,7 @@ watch(() => interfaceMode.mode, (mode) => {
   )) void router.replace('/');
 });
 const visibleSettingsGroups = computed(() => interfaceMode.isSimple
-  ? [{ groupName: '常用設定', items: [{ id: 'general', name: '一般設定' }, { id: 'local-translation', path: '/local-translation', name: '本地翻譯', icon: 'llm-models' }] }]
+  ? [{ groupName: '常用設定', items: [{ id: 'general', name: '一般設定' }, { id: 'translation', name: '翻譯選項' }, { id: 'local-translation', path: '/local-translation', name: '本地翻譯', icon: 'llm-models' }] }]
   : settingsGroups);
 // Packaged builds bake VITE_APP_VERSION in; the running backend is the authoritative
 // source (backend/config.py APP_VERSION), so a dev build never shows a stale number.

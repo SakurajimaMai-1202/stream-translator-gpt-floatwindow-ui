@@ -263,9 +263,8 @@ const transcriptionEngineOptions = computed<UiSelectOption[]>(() =>
 
             <!-- 進階配置摺疊區 (轉錄引擎、模型選擇、翻譯後端) -->
             <div v-if="interfaceMode.isSimple" class="mb-5">
-              <div class="mb-1 flex items-center justify-between gap-3">
+              <div class="mb-1">
                 <label class="commercial-field-label">翻譯方式</label>
-                <button type="button" class="text-xs text-indigo-300 hover:text-indigo-200" @click="router.push({ path: '/settings', query: { tab: 'translation' } })">翻譯詳細設定</button>
               </div>
               <div class="inline-flex rounded-lg border border-white/15 bg-white/5 p-0.5" role="group" aria-label="翻譯方式">
                 <button v-for="option in [{ local: false, label: '雲端翻譯' }, { local: true, label: '本機翻譯' }]"

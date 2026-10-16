@@ -283,8 +283,16 @@ const selectedAsrModelDownloaded = computed(() => !selectedDownloadEngine.value 
   selectedAsrModelId.value,
   selectedModelComputeBackend.value,
 ));
+// The source test is optional: a chosen source counts as ready unless a test failed.
+const audioSourceChosen = computed(() => {
+  if (audioSource.value === 'url' || audioSource.value === 'file') return !!urlInput.value.trim();
+  if (audioSource.value === 'process_audio') return !!selectedProcessTarget.value;
+  return selectedDeviceIndex.value !== null;
+});
 const readinessItems = computed(() => [
-  { label: '音訊來源', status: sourceCheck.value?.status || 'unknown', detail: sourceCheck.value?.message || '請先選擇來源並執行來源測試' },
+  sourceCheck.value
+    ? { label: '音訊來源', status: sourceCheck.value.status, detail: sourceCheck.value.message }
+    : { label: '音訊來源', status: audioSourceChosen.value ? 'ready' : 'unknown', detail: audioSourceChosen.value ? '已選擇音訊來源' : '請先選擇音訊來源' },
   { label: '語音辨識', status: selectedAsrModelDownloaded.value ? 'ready' : (selectedAsrDownloadTask.value?.status === 'failed' ? 'error' : 'unknown'), detail: selectedAsrModelDownloaded.value ? '辨識模型已準備完成' : '請先完成辨識模型設定' },
 ]);
 const showReadinessChecklist = computed(() => readinessItems.value.some(item => item.status !== 'ready'));

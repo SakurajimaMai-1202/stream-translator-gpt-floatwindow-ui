@@ -240,7 +240,9 @@ const localConfig = ref<any>({
     translation_glossary_audit_enabled: false,
     glossary: '',
     glossary_list: [],
-    custom_glossary_scopes: []
+    custom_glossary_scopes: [],
+    glossary_to_asr_corrections: true,
+    glossary_to_asr_prompt: true
   },
   output: {
     output_dir: './output',

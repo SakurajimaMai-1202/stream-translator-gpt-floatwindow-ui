@@ -900,7 +900,9 @@ class FunASRNanoTranscriber(SenseVoiceTranscriber):
                 'batch_size': 1,
                 'llm_kwargs': {'do_sample': False},
             }
-            hotwords = (initial_prompt or self.transcription_initial_prompt or '').strip()
+            # initial_prompt also carries the previous transcript as context;
+            # only the configured prompt is a hotword list.
+            hotwords = (self.transcription_initial_prompt or '').strip()
             if hotwords:
                 kwargs['hotwords'] = [item.strip() for item in hotwords.split(',') if item.strip()]
             result = self._quiet_call(self.model.generate, **kwargs)

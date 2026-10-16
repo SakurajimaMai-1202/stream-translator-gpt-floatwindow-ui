@@ -1,9 +1,23 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import UiSelect from '../UiSelect.vue';
 import { useSettingsTabBindings } from '../../composables/settings/settingsContext';
 const {
   GLOSSARY_PAGE_SIZE, LARGE_LIST_BATCH_SIZE, addAsrCorrection, addGlossaryScope, addTerm, applySelectedGlossaryScope, asrCorrectionRenderLimit, asrCorrectionSearchQuery, asrCorrectionsImporting, bulkGlossaryScope, customGlossaryScopes, customizePresetTerm, editingGlossaryScope, editingGlossaryScopeName, effectiveGlossaryCount, expandedGlossaryTerm, exportAsrCorrections, exportGlossary, filteredAsrCorrections, filteredGlossary, glossaryEntryForm, glossaryImporting, glossaryListMode, glossaryRenderLimit, glossaryScopeOptions, glossaryUserList, importAsrCorrections, importGlossary, localConfig, newAsrAliases, newAsrCanonical, newGlossaryScopeName, newTermAliases, newTermOriginal, newTermScope, newTermTranslated, removeAsrCorrection, removeGlossaryScope, removeTermEntry, removedGlossaryTerm, renameGlossaryScope, selectVisibleGlossaryTerms, selectedGlossaryTerms, selectedPresetPreview, setTermAliases, setTermScope, termSearchQuery, terminologySubTab, toggleGlossarySelection, undoRemovedGlossaryTerm, userGlossaryBySource, visibleAsrCorrections, visibleGlossary, optimizerEffective
 } = useSettingsTabBindings();
+
+// Mirrors ASR_PROMPT_BACKENDS in backend/core/hy_mt2_glossary_presets.py.
+const asrPromptSupport = computed(() => {
+  const t = localConfig.value.transcription || {};
+  if (t.use_fun_asr) return { name: 'Fun-ASR-Nano', prompted: true };
+  if (t.use_sensevoice_asr) return { name: 'SenseVoice', prompted: false };
+  if (t.use_nemo_asr) return { name: 'Parakeet', prompted: false };
+  if (t.use_qwen3_asr) return { name: 'Qwen3-ASR', prompted: false };
+  if (t.use_openai_transcription_api) return { name: 'OpenAI 轉錄 API', prompted: true };
+  return { name: 'Whisper', prompted: true };
+});
+const glossaryAliasCount = computed(() => (localConfig.value.terminology?.glossary_list || [])
+  .filter((term: any) => (Array.isArray(term.aliases) ? term.aliases.length : String(term.aliases || '').trim())).length);
 </script>
 
 <template>
@@ -89,6 +103,23 @@ const {
               </label>
             </div>
 
+            <div v-if="terminologySubTab === 'asr'" class="rounded-xl p-5 border border-white/10 bg-white/[0.03] space-y-3">
+              <h3 class="text-lg font-semibold text-cyan-300">同步翻譯詞條</h3>
+              <p class="text-white/60 text-sm">翻譯詞條的「日文原詞」是正確寫法，「別名／常見誤辨」是 ASR 常聽錯的寫法；同一份詞條可同時用於辨識。只套用這次情境生效的詞條，且需啟用「我的詞條」。</p>
+              <label class="flex items-start gap-2 cursor-pointer text-sm text-white/80">
+                <input v-model="localConfig.terminology.glossary_to_asr_corrections" type="checkbox" class="mt-0.5 w-4 h-4 accent-cyan-500" />
+                <span>把別名當作誤辨修正成原詞（所有 ASR 都適用；目前 {{ glossaryAliasCount }} 筆詞條有別名；需啟用上方修正）</span>
+              </label>
+              <label class="flex items-start gap-2 cursor-pointer text-sm text-white/80">
+                <input v-model="localConfig.terminology.glossary_to_asr_prompt" type="checkbox" class="mt-0.5 w-4 h-4 accent-cyan-500" />
+                <span>把原詞加入 ASR 提示詞（Whisper、faster-whisper、SimulStreaming、OpenAI 轉錄 API、Fun-ASR-Nano）</span>
+              </label>
+              <p class="text-xs" :class="asrPromptSupport.prompted ? 'text-cyan-200/80' : 'text-amber-200/80'">
+                目前的 ASR：{{ asrPromptSupport.name }} —
+                {{ asrPromptSupport.prompted ? '會收到提示詞，並套用誤辨修正。' : asrPromptSupport.name === 'Qwen3-ASR' ? '不送提示詞（雜音或唱歌時會把提示詞當成辨識結果輸出），只套用誤辨修正。' : '不支援提示詞，只套用誤辨修正。' }}
+              </p>
+            </div>
+
             <div v-if="terminologySubTab === 'asr'" class="rounded-xl p-5 border border-white/10 bg-white/[0.03] space-y-4">
               <div class="grid grid-cols-1 lg:grid-cols-[minmax(180px,0.8fr)_minmax(260px,1.4fr)_auto] gap-3">
                 <input v-model="newAsrCanonical" type="text" placeholder="標準名稱，例如：桜島麻衣"
@@ -172,7 +203,7 @@ const {
                 <label class="text-sm text-white/70">繁中譯法
                   <input v-model="newTermTranslated" type="text" placeholder="例如：Sui醬" class="mt-1 w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
                 </label>
-                <label class="text-sm text-white/70">別名（可留空，逗號分隔）
+                <label class="text-sm text-white/70">別名／常見誤辨（可留空，逗號分隔）
                   <input v-model="newTermAliases" type="text" placeholder="例如：スイちゃん" class="mt-1 w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
                 </label>
                 <div class="text-sm text-white/70">適用情境
@@ -243,7 +274,7 @@ const {
                   <div class="text-sm text-white/70">適用情境
                     <UiSelect :model-value="term.scope || 'all'" :options="glossaryScopeOptions" :aria-label="`${term.original} 的適用情境`" button-class="mt-1" @update:model-value="setTermScope(term, $event)" />
                   </div>
-                  <label class="text-sm text-white/70 md:col-span-2">別名（可留空，逗號分隔）
+                  <label class="text-sm text-white/70 md:col-span-2">別名／常見誤辨（可留空，逗號分隔）
                     <input :value="Array.isArray(term.aliases) ? term.aliases.join(', ') : (term.aliases || '')" @change="setTermAliases(term, $event)" class="mt-1 w-full rounded-lg border border-white/20 bg-white/5 px-3 py-2 text-white" />
                   </label>
                   <div class="md:col-span-2 flex justify-end"><button type="button" class="text-sm text-red-300 hover:text-red-200" @click="removeTermEntry(term)">刪除此詞條</button></div>

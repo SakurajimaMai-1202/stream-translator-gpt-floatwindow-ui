@@ -252,3 +252,17 @@ def test_parakeet_ctc_ja_dtype_falls_back_to_float16_without_bfloat16():
 
     assert NemoASRTranscriber._resolve_dtype(_Torch, "bfloat16", "cuda:0") == ("float16", "fp16")
     assert NemoASRTranscriber._resolve_dtype(_Torch, "float32", "cuda:0") == ("float32", None)
+
+
+def test_fun_asr_hotwords_are_the_configured_prompt_not_the_previous_line():
+    import numpy as np
+    transcriber = FunASRNanoTranscriber.__new__(FunASRNanoTranscriber)
+    transcriber.language = "日文"
+    transcriber.transcription_initial_prompt = "マシュマロ, チェキ"
+    calls = []
+    transcriber._quiet_call = lambda fn, **kwargs: calls.append(kwargs) or []
+    transcriber.model = type("Model", (), {"generate": None})()
+    transcriber._extract_text = lambda result: ""
+    # The loop passes the configured prompt plus the previous transcript.
+    transcriber.transcribe(np.zeros(1600, dtype=np.float32), initial_prompt="マシュマロ, チェキ, 前の文です、続き")
+    assert calls[0]["hotwords"] == ["マシュマロ", "チェキ"]

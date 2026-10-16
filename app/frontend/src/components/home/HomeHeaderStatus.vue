@@ -2,7 +2,7 @@
 import { computed } from 'vue';
 import { useHomeContext } from '../../composables/home/homeContext';
 const {
-  router, store, configWarnings, hasErrors
+  store, configWarnings, hasErrors
 } = useHomeContext();
 
 const latestQueueTrace = computed(() => store.latestSubtitle?.latency_trace);
@@ -52,9 +52,6 @@ const queueStatusText = computed(() => {
           <div v-if="store.currentUrl" class="text-white/60 text-xs truncate max-w-xs sm:max-w-md font-mono bg-white/5 px-2.5 py-0.5 rounded-lg border border-white/5">
             {{ store.currentUrl }}
           </div>
-          <button type="button" class="rounded-lg border border-cyan-400/20 bg-cyan-400/10 px-2.5 py-1 text-xs font-bold text-cyan-200 transition hover:bg-cyan-400/20" @click="router.push('/guide')">
-            使用教學
-          </button>
         </div>
       </div>
 </template>

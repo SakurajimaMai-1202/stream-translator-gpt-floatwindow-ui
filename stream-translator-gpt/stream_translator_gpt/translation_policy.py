@@ -174,10 +174,23 @@ _KANA_WORDS = {
     "の": "的", "と": "和", "も": "也", "に": "", "を": "", "は": "", "が": "",
     "で": "", "へ": "", "か": "", "ね": "", "よ": "", "な": "", "わ": "", "さ": "",
 }
+_KANA_WORDS.update({
+    "みなさん": "大家", "みんなさん": "大家", "おじさん": "大叔", "おばさん": "阿姨",
+    "おじいさん": "爺爺", "おじいちゃん": "爺爺", "おばあさん": "奶奶", "おばあちゃん": "奶奶",
+    "おにいさん": "哥哥", "おにいちゃん": "哥哥", "おねえさん": "姊姊", "おねえちゃん": "姊姊",
+    "おかあさん": "媽媽", "おとうさん": "爸爸", "あかちゃん": "寶寶", "お": "", "ご": "",
+})
+_KANA_PHRASES = {
+    "皆さん": "大家", "お父さん": "爸爸", "お母さん": "媽媽", "お兄さん": "哥哥",
+    "お兄ちゃん": "哥哥", "兄ちゃん": "哥哥", "お姉さん": "姊姊", "お姉ちゃん": "姊姊",
+    "姉ちゃん": "姊姊", "赤ちゃん": "寶寶", "奥さん": "太太",
+    "お疲れ様": "辛苦了", "お疲れさま": "辛苦了", "お疲れ": "辛苦了",
+}
 _HONORIFIC_ZH = (("ちゃん", "醬"), ("さん", "桑"), ("くん", "君"))
 _ROMAJI = dict(zip(
     "あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんがぎぐげござじずぜぞだぢづでどばびぶべぼぱぴぷぺぽぁぃぅぇぉゔ",
     "a i u e o ka ki ku ke ko sa shi su se so ta chi tsu te to na ni nu ne no ha hi fu he ho ma mi mu me mo ya yu yo ra ri ru re ro wa o n ga gi gu ge go za ji zu ze zo da ji zu de do ba bi bu be bo pa pi pu pe po a i u e o vu".split()))
+_ROMAJI.update({"ゐ": "i", "ゑ": "e", "ゎ": "wa"})
 _YOUON = {"ゃ": "ya", "ゅ": "yu", "ょ": "yo"}
 
 
@@ -191,7 +204,7 @@ def _romanize_hiragana(run: str) -> str:
         if char in _YOUON:
             if out and len(out[-1]) >= 2 and out[-1].endswith("i"):
                 stem = out[-1][:-1]
-                out[-1] = stem + (_YOUON[char][1:] if stem in ("sh", "ch", "j") else _YOUON[char])
+                out[-1] = stem + (_YOUON[char][1:] if stem.endswith(("sh", "ch", "j")) else _YOUON[char])
             else:
                 out.append(_YOUON[char])
             continue
@@ -207,22 +220,40 @@ def _romanize_hiragana(run: str) -> str:
 def _localize_kana_run(run: str) -> str:
     if run in _KANA_WORDS:
         return _KANA_WORDS[run]
+    # A one-kana stem is a word of its own (もの, おに), not word + particle.
+    stem = run[:-1]
+    if (len(stem) > 1 and run[-1] in "はがのにをもとでへやかねよ"
+            and (stem in _KANA_WORDS or stem.endswith(tuple(h for h, _ in _HONORIFIC_ZH)))):
+        return _localize_kana_run(run[:-1]) + _KANA_WORDS.get(run[-1], "")
     for honorific, chinese in _HONORIFIC_ZH:
-        if run.endswith(honorific) and len(run) > len(honorific):
+        if run == honorific:
+            return chinese
+        if run.endswith(honorific):
             return _romanize_hiragana(run[:-len(honorific)]) + chinese
     return _romanize_hiragana(run)
 
 
-def localize_residual_kana(request: TranslationRequest, translation: str) -> str:
+def _residual_kana_parts(request: TranslationRequest, translation: str) -> list[str]:
     protected = [element for element in (*request.preserve_elements, *(request.glossary or {}).values())
-                 if element and re.search(r"[\u3041-\u3096]", element)]
+                 if element]
     if protected:
         pattern = "(" + "|".join(re.escape(e) for e in sorted(set(protected), key=len, reverse=True)) + ")"
-        parts = re.split(pattern, translation)
-    else:
-        parts = [translation]
-    text = "".join(part if index % 2 else re.sub(r"[\u3041-\u3096]+", lambda m: _localize_kana_run(m.group(0)), part)
-                   for index, part in enumerate(parts))
+        return re.split(pattern, translation)
+    return [translation]
+
+
+def residual_kana_share(request: TranslationRequest, text: str) -> float:
+    remainder = "".join(_residual_kana_parts(request, text)[::2])
+    return len(re.findall(r"[\u3041-\u3096]", remainder)) / max(1, len(remainder))
+
+
+def localize_residual_kana(request: TranslationRequest, translation: str) -> str:
+    parts = _residual_kana_parts(request, translation)
+    phrases = "|".join(re.escape(word) for word in sorted(_KANA_PHRASES, key=len, reverse=True))
+    for index in range(0, len(parts), 2):
+        part = re.sub(phrases, lambda m: _KANA_PHRASES[m.group(0)], parts[index])
+        parts[index] = re.sub(r"[\u3041-\u3096]+", lambda m: _localize_kana_run(m.group(0)), part)
+    text = "".join(parts)
     # A dropped particle can leave the quotes that held it.
     return re.sub(r"\u300c\u300d|\u300e\u300f", "", text)
 

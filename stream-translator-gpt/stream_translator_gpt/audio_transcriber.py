@@ -904,7 +904,7 @@ class FunASRNanoTranscriber(SenseVoiceTranscriber):
             # only the configured prompt is a hotword list.
             hotwords = (self.transcription_initial_prompt or '').strip()
             if hotwords:
-                kwargs['hotwords'] = [item.strip() for item in hotwords.split(',') if item.strip()]
+                kwargs['hotwords'] = [item.strip() for item in re.split(r"[,\uff0c\u3001]", hotwords) if item.strip()]
             result = self._quiet_call(self.model.generate, **kwargs)
         finally:
             try:

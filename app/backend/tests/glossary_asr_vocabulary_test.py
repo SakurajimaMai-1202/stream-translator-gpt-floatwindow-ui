@@ -3,7 +3,7 @@ import json
 import pytest
 
 from backend.core.config_manager import ConfigManager
-from backend.core.hy_mt2_glossary_presets import glossary_asr_rules, glossary_hotwords
+from backend.core.hy_mt2_glossary_presets import active_user_terms, glossary_asr_rules, glossary_hotwords
 
 
 def _config(manager, backend, **terminology):
@@ -44,7 +44,8 @@ def test_glossary_originals_reach_only_prompt_capable_asr(tmp_path, backend, pro
     if prompted:
         words = prompt.split(", ")
         assert words[:2] == ["手打ち", "リハさん"]
-        assert "マシュマロ" in words and "マシモロ" not in words
+        assert "マシュマロ" not in words and "マシモロ" not in words
+        assert {"canonical": "マシュマロ", "aliases": ["マシュモロ", "マシモロ"]} in json.loads(args["asr_correction_rules"])
         # An original kept for a misheard spelling is not a hint.
         assert "らスイちゃ" not in words
     else:
@@ -68,3 +69,55 @@ def test_hotwords_stay_within_budget():
     words = glossary_hotwords(terminology, "", max_chars=30)
     assert words == ["名前00", "名前01", "名前02", "名前03", "名前04"]
     assert glossary_asr_rules(terminology, "") == []
+
+
+
+def test_aliases_cannot_expand_correct_originals():
+    terminology = {"glossary_list": [
+        {"original": "桜島麻衣", "aliases": ["麻衣", "桜島麻衣", "マイ", "別名"]},
+        {"original": "マイ", "scope": "cosplay"}, {"original": "別名", "scope": "other"},
+    ]}
+    assert glossary_asr_rules(terminology, "cosplay")[0] == {"canonical": "桜島麻衣", "aliases": ["別名"]}
+
+
+def test_all_scope_does_not_duplicate_global_rows():
+    rows = [{"original": "全域"}, {"original": "明示全域", "scope": "all"},
+            {"original": "別情境", "scope": "cosplay"}]
+    assert active_user_terms({"glossary_list": rows}, "all") == rows[:2]
+
+
+def test_hotwords_only_use_user_rows_and_skip_separators():
+    terminology = {"glossary_list": [
+        {"original": "全域"}, {"original": "情境", "scope": "cosplay"},
+        *({"original": f"前{separator}後"} for separator in (",", "，", "、")),
+    ]}
+    assert glossary_hotwords(terminology, "cosplay") == ["情境", "全域"]
+
+
+@pytest.mark.parametrize('typed', ['手打ち, ，、  ', '手打ち、', '手打ち，'])
+def test_prompt_strips_trailing_separators(tmp_path, typed):
+    manager = ConfigManager(tmp_path / "config.yaml")
+    manager._coerce_transcription_backend = lambda requested, capabilities: requested
+    config = _config(manager, "faster-whisper")
+    config["transcription"]["transcription_initial_prompt"] = typed
+    assert manager.to_main_args(config)["transcription_initial_prompt"] == "手打ち, リハさん"
+
+
+@pytest.mark.parametrize('length, expected_words', [(294, True), (295, False), (300, False), (301, False)])
+def test_combined_prompt_budget(tmp_path, length, expected_words):
+    manager = ConfigManager(tmp_path / "config.yaml")
+    manager._coerce_transcription_backend = lambda requested, capabilities: requested
+    config = _config(manager, "faster-whisper")
+    typed = "字" * length
+    config["transcription"]["transcription_initial_prompt"] = typed
+    prompt = manager.to_main_args(config)["transcription_initial_prompt"]
+    assert prompt == typed + (", リハさん" if expected_words else "")
+    assert len(prompt) <= max(300, length)
+
+
+def test_legacy_glossary_keys_follow_scoped_rows(tmp_path):
+    manager = ConfigManager(tmp_path / "config.yaml")
+    manager._coerce_transcription_backend = lambda requested, capabilities: requested
+    config = _config(manager, "faster-whisper", terminology_glossary={"旧辞書": "舊字典", "リハさん": "Riha"})
+    config["terminology"]["glossary_list"].append({"original": "非使用全域", "scope": "all"})
+    assert manager.to_main_args(config)["transcription_initial_prompt"] == "手打ち, リハさん, 旧辞書"

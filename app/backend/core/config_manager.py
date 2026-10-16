@@ -1043,10 +1043,10 @@ class ConfigManager:
                     and transcription_backend in ASR_PROMPT_BACKENDS):
                 misheard = {str(alias).strip() for rule in list(manual_rules) + derived_rules
                             if isinstance(rule, dict) for alias in (rule.get('aliases') or [])}
-                words = glossary_hotwords(terminology_config, str(scope), misheard)
-                typed = str(args.get('transcription_initial_prompt') or '').strip().rstrip(',')
-                if words:
-                    args['transcription_initial_prompt'] = ', '.join(([typed] if typed else []) + words)
+                typed = str(args.get('transcription_initial_prompt') or '').strip().rstrip(',，、 ')
+                words = glossary_hotwords(terminology_config, str(scope), misheard,
+                    max_chars=max(0, 300 - len(typed)))
+                args['transcription_initial_prompt'] = ', '.join(([typed] if typed else []) + words)
 
         # Qwen3-ASR 語言格式轉換：短碼 → 完整名稱
         if transcription_backend == 'qwen3-asr':

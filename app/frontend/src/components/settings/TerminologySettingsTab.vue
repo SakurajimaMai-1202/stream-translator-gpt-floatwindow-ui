@@ -14,6 +14,19 @@ const asrPromptSupport = computed(() => {
   if (t.use_nemo_asr) return { name: 'Parakeet', prompted: false };
   if (t.use_qwen3_asr) return { name: 'Qwen3-ASR', prompted: false };
   if (t.use_openai_transcription_api) return { name: 'OpenAI 轉錄 API', prompted: true };
+  const backend = String(t.backend || '').toLowerCase();
+  const backends: Record<string, { name: string; prompted: boolean }> = {
+    'fun-asr-nano': { name: 'Fun-ASR-Nano', prompted: true },
+    sensevoice: { name: 'SenseVoice', prompted: false },
+    'parakeet-ctc-ja': { name: 'Parakeet', prompted: false },
+    'qwen3-asr': { name: 'Qwen3-ASR', prompted: false },
+    'openai-api': { name: 'OpenAI 轉錄 API', prompted: true },
+  };
+  if (backends[backend]) return backends[backend];
+  const model = String(t.model || '').toLowerCase();
+  for (const [key, backend] of [['sensevoice', 'sensevoice'], ['parakeet', 'parakeet-ctc-ja'], ['fun-asr', 'fun-asr-nano'], ['qwen3-asr', 'qwen3-asr']]) {
+    if (model.includes(key)) return backends[backend];
+  }
   return { name: 'Whisper', prompted: true };
 });
 const glossaryAliasCount = computed(() => (localConfig.value.terminology?.glossary_list || [])

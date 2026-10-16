@@ -19,6 +19,7 @@ from .translation_policy import (
     resolve_output_format,
     validate_translation,
     residual_kana_runs,
+    residual_kana_share,
     localize_residual_kana,
     _matching_glossary,
 )
@@ -440,10 +441,10 @@ class LLMClient():
             return None
         task._family_failure_reasons = getattr(task, "_family_failure_reasons", ()) + reasons
         kana_reasons = {"target_language_mismatch", "residual_kana"}
+        from dataclasses import replace
+        normalized_request = replace(request, glossary={source: normalize_translation_output(target, self.translation_target_language) if target else target
+            for source, target in (request.glossary or {}).items()})
         if kana_reasons.intersection(reasons):
-            from dataclasses import replace
-            normalized_request = replace(request, glossary={source: normalize_translation_output(target, self.translation_target_language) if target else target
-                for source, target in (request.glossary or {}).items()})
             task._family_residual_kana = residual_kana_runs(normalized_request,
                 normalize_translation_output(task.translation, self.translation_target_language))
         else:
@@ -457,8 +458,9 @@ class LLMClient():
             candidate = min(reversed(task._family_kana_candidates),
                             key=lambda text: len(re.findall(r"[\u3041-\u3096]", text)))
             # Kana checks only run for Chinese targets, so this is always one.
-            task.translation = localize_residual_kana(normalized_request,
-                normalize_translation_output(candidate, self.translation_target_language))
+            candidate = normalize_translation_output(candidate, self.translation_target_language)
+            task.translation = (localize_residual_kana(normalized_request, candidate)
+                if residual_kana_share(normalized_request, candidate) < 0.25 else candidate)
             task.translation_failed = False
             task.translation_validation_rejected = False
             task.translation_error = None

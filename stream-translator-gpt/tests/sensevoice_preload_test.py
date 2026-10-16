@@ -266,3 +266,7 @@ def test_fun_asr_hotwords_are_the_configured_prompt_not_the_previous_line():
     # The loop passes the configured prompt plus the previous transcript.
     transcriber.transcribe(np.zeros(1600, dtype=np.float32), initial_prompt="マシュマロ, チェキ, 前の文です、続き")
     assert calls[0]["hotwords"] == ["マシュマロ", "チェキ"]
+
+    transcriber.transcription_initial_prompt = " マシュマロ 、 チェキ， 衣装 , ウィッグ "
+    transcriber.transcribe(np.zeros(1600, dtype=np.float32), initial_prompt="前の文です、続き")
+    assert calls[1]["hotwords"] == ["マシュマロ", "チェキ", "衣装", "ウィッグ"]

@@ -7,10 +7,8 @@ from .qwen3_asr_postprocess import (
 )
 
 
-# A model often keeps the honorific after a name it romanized or left in
-# katakana ("Shinoさん"). Only convert it after a non-hiragana character, so
-# hiragana words such as みなさん or おじさん are left for the kana check.
-_NAME_HONORIFIC = re.compile(r"(?<=[A-Za-z0-9\u30a1-\u30fa\u30fc\u4e00-\u9fff])(さん|ちゃん|くん)(?![\u3041-\u3096])")
+# Only Latin and katakana names are safe to convert before kana validation.
+_NAME_HONORIFIC = re.compile(r"(?<=[A-Za-z0-9\u30a1-\u30fa\u30fc])(さん|ちゃん|くん)(?=[^\u3041-\u3096]|$|[\u306f\u304c\u306e\u306b\u3092\u3082\u3068\u3067\u3078\u3084\u304b\u306d\u3088](?![\u3041-\u3096]))")
 _HONORIFIC_ZH = {"さん": "桑", "ちゃん": "醬", "くん": "君"}
 
 

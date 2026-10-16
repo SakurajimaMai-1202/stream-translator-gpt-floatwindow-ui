@@ -138,7 +138,9 @@ def test_kana_repair_hint_only_when_requested(family):
 @pytest.mark.parametrize('family', ['index_translate', 'hy_mt2'])
 @pytest.mark.parametrize('preview', [False, True])
 @pytest.mark.parametrize('source, outputs, expected, fallback', [
-    ('のんでりだと思う。', ('我覺得是「のんでり」。', '我猜是「のんでり」。'), '我猜是「Nonderi」。', True),
+    ('のんでりだと思う。', ('我覺得是「のんでり」。', '我猜是「のんでり」。'), '我猜是「のんでり」。', True),
+    ('のんでりだと思う。', ('我覺得這個人應該是「のんでり」才對吧。', '我猜這個人應該是「のんでり」才對吧。'), '我猜這個人應該是「Nonderi」才對吧。', True),
+    ('のんでりだと思う。', ('これは日本語です。', 'それは日本語です。'), 'それは日本語です。', True),
     ('のんでりだと思う。', ('我觉得是「に」。', '我猜是「のんでり」。'), '我覺得是。', True),
     ('のんでりだと思う。', ('我覺得是「のんでり」。', '【源文】我猜是這樣。'), '', False),
     ('のんでりだと思う。', ('【源文】我覺得是這樣。', '我猜是「のんでり」。'), '', False),
@@ -201,7 +203,9 @@ def test_kana_repair_http_live_and_preview(monkeypatch, tmp_path, capsys, family
         assert '上次译文' not in prompts[0]
         if '【源文】' not in outputs[0]:
             assert '上次译文残留日文' in prompts[1]
-            assert ('「に」' if 'に' in outputs[0] else '「のんでり」') in prompts[1]
+            from stream_translator_gpt.translation_policy import residual_kana_runs
+            for run in residual_kana_runs(TranslationRequest(1, source), outputs[0]):
+                assert f'「{run}」' in prompts[1]
         else:
             assert '上次译文' not in prompts[1]
         assert list(client.history_pairs) == ([(source, expected)] if expected else [])
@@ -528,7 +532,7 @@ def test_index_repair_attempt_samples_instead_of_greedy():
 def test_name_honorifics_become_chinese_but_kana_words_stay():
     from stream_translator_gpt.translation_output import normalize_translation_output
     convert = lambda text, _: text
-    assert normalize_translation_output('Shinoさん、ケンちゃん、大輝くん', 'Traditional Chinese', convert) == 'Shino桑、ケン醬、大輝君'
+    assert normalize_translation_output('Shinoさん、ケンちゃん、大輝くん', 'Traditional Chinese', convert) == 'Shino桑、ケン醬、大輝くん'
     # After hiragana it is part of a word or a kana name; leave it for the kana check.
     assert normalize_translation_output('みなさん、どこかさん', 'Traditional Chinese', convert) == 'みなさん、どこかさん'
     assert normalize_translation_output('Shinoさん', 'Japanese', convert) == 'Shinoさん'
@@ -544,3 +548,64 @@ def test_residual_kana_fallback_writes_romaji_or_chinese():
     assert localize_residual_kana(request, '嗯，いつも可愛照片的「に」') == '嗯，總是可愛照片的'
     preserved = TranslationRequest(1, 'すいちゃん', glossary={'すいちゃん': 'すいちゃん'})
     assert localize_residual_kana(preserved, '謝謝すいちゃん、ふぶき') == '謝謝すいちゃん、Fubuki'
+
+
+@pytest.mark.parametrize('text, expected', [
+    ('赤ちゃん', '赤ちゃん'), ('皆さん', '皆さん'), ('お父さん', 'お父さん'),
+    ('奥さん', '奥さん'), ('本屋さん', '本屋さん'), ('Shinoさんは', 'Shino桑は'),
+    ('ミオちゃん', 'ミオ醬'), ('Shinoさんはじめ', 'Shinoさんはじめ'),
+])
+def test_name_honorific_boundaries(text, expected):
+    from stream_translator_gpt.translation_output import localize_name_honorifics
+    assert localize_name_honorifics(text) == expected
+
+
+@pytest.mark.parametrize('text, expected', [
+    ('皆さん', '大家'), ('お父さん', '爸爸'), ('お母さん', '媽媽'),
+    ('お兄さん', '哥哥'), ('お兄ちゃん', '哥哥'), ('兄ちゃん', '哥哥'),
+    ('お姉さん', '姊姊'), ('お姉ちゃん', '姊姊'), ('姉ちゃん', '姊姊'),
+    ('赤ちゃん', '寶寶'), ('奥さん', '太太'), ('お疲れ様', '辛苦了'),
+    ('お疲れさま', '辛苦了'), ('お疲れ', '辛苦了'),
+    ('みなさん', '大家'), ('みんなさん', '大家'), ('おじさん', '大叔'), ('おばさん', '阿姨'),
+    ('おじいさん', '爺爺'), ('おじいちゃん', '爺爺'), ('おばあさん', '奶奶'), ('おばあちゃん', '奶奶'),
+    ('おにいさん', '哥哥'), ('おにいちゃん', '哥哥'), ('おねえさん', '姊姊'), ('おねえちゃん', '姊姊'),
+    ('おかあさん', '媽媽'), ('おとうさん', '爸爸'), ('あかちゃん', '寶寶'),
+    ('お茶、ご飯', '茶、飯'), ('さん', '桑'), ('ちゃん', '醬'), ('くん', '君'),
+    ('さんは', '桑'), ('みなさんの', '大家的'), ('ゆるきさんは', 'Yuruki桑'), ('ゆきの', 'Yukino'),
+])
+def test_residual_kana_words_and_phrases(text, expected):
+    from stream_translator_gpt.translation_policy import localize_residual_kana
+    assert localize_residual_kana(TranslationRequest(1, 'source'), text) == expected
+
+
+@pytest.mark.parametrize('kwargs', [
+    {'preserve_elements': ('お疲れ様', '赤ちゃん')},
+    {'glossary': {'x': 'お疲れ様', 'y': '赤ちゃん'}},
+])
+def test_residual_kana_protected_phrases(kwargs):
+    from stream_translator_gpt.translation_policy import localize_residual_kana
+    request = TranslationRequest(1, 'source', **kwargs)
+    assert localize_residual_kana(request, 'お疲れ様、赤ちゃん、皆さん') == 'お疲れ様、赤ちゃん、大家'
+
+
+@pytest.mark.parametrize('text, expected', [
+    ('いっしょ', 'Issho'), ('まっちゃ', 'Matcha'), ('っじゃ', 'Jja'), ('ゐゑゎ', 'Iewa'), ('あっ', 'A'),
+])
+def test_romaji_small_and_historic_kana(text, expected):
+    from stream_translator_gpt.translation_policy import _romanize_hiragana
+    assert _romanize_hiragana(text) == expected
+
+
+def test_residual_kana_share_excludes_all_protected_elements():
+    from stream_translator_gpt.translation_policy import residual_kana_share
+    request = TranslationRequest(1, 'source', preserve_elements=('すいちゃん',), glossary={'x': '中文字'})
+    assert residual_kana_share(request, 'すいちゃん中文字あ中中中') == 0.25
+    assert residual_kana_share(request, 'すいちゃん中文字') == 0
+
+
+def test_one_kana_stem_is_not_split_into_word_and_particle():
+    from stream_translator_gpt.translation_policy import localize_residual_kana
+    request = TranslationRequest(1, 'source')
+    assert localize_residual_kana(request, '那個もの') == '那個Mono'
+    assert localize_residual_kana(request, '是おに嗎') == '是Oni嗎'
+    assert localize_residual_kana(request, 'Shino，さんは') == 'Shino，桑'

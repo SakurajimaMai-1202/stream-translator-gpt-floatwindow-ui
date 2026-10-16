@@ -68,7 +68,7 @@ def active_user_terms(terminology: dict, preset: str) -> list[dict]:
     if not isinstance(rows, list):
         return []
     global_rows = [item for item in rows if isinstance(item, dict) and str(item.get("scope") or "all") == "all"]
-    scoped_rows = [item for item in rows if isinstance(item, dict) and preset and item.get("scope") == preset]
+    scoped_rows = [item for item in rows if isinstance(item, dict) and preset and preset != "all" and item.get("scope") == preset]
     return global_rows + scoped_rows
 
 
@@ -112,9 +112,11 @@ def _term_aliases(item: dict) -> list[str]:
 def glossary_asr_rules(terminology: dict, preset: str) -> list[dict]:
     """Turn glossary aliases into ASR corrections toward the glossary original."""
     rules = []
-    for item in active_user_terms(terminology, preset):
+    rows = active_user_terms(terminology, preset)
+    originals = {str(item.get("original") or "").strip() for item in rows}
+    for item in rows:
         original = str(item.get("original") or "").strip()
-        aliases = [alias for alias in _term_aliases(item) if alias != original]
+        aliases = [alias for alias in _term_aliases(item) if alias not in original and alias not in originals]
         if original and aliases:
             rules.append({"canonical": original, "aliases": aliases})
     terms = PRESETS.get(preset, {})
@@ -125,17 +127,19 @@ def glossary_asr_rules(terminology: dict, preset: str) -> list[dict]:
 
 
 def glossary_hotwords(terminology: dict, preset: str, misheard=frozenset(), max_chars: int = 200) -> list[str]:
-    """Glossary originals for ASR prompts: this scope's rows, global rows, then built-ins.
+    """Glossary originals for ASR prompts: this scope's rows, then active global words.
 
     Some originals are themselves a misheard spelling kept for translation;
     anything in misheard must not be suggested to the ASR as the right word."""
     rows = active_user_terms(terminology, preset)
     scoped = [item for item in rows if preset and item.get("scope") == preset]
     ordered = [item.get("original") for item in scoped + [item for item in rows if item not in scoped]]
-    ordered += list(PRESETS.get(preset, {}))
+    legacy = terminology.get("terminology_glossary") or {}
+    if isinstance(legacy, dict) and legacy:
+        ordered = [item.get("original") for item in scoped] + list(legacy)
     words, used = [], 0
     for word in dict.fromkeys(str(value or "").strip() for value in ordered):
-        if not word or word in PRESET_ASR_VARIANTS_FLAT or word in misheard:
+        if not word or any(char in word for char in ",，、") or word in PRESET_ASR_VARIANTS_FLAT or word in misheard:
             continue
         if used + len(word) + 2 > max_chars:
             break

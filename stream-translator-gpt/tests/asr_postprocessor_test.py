@@ -102,6 +102,8 @@ def test_suggest_aliases_skips_matched_target_but_finds_another_target():
         "canonical": "あぼさん",
         "score": 0.97,
         "matched_anchor": "あぼさん",
+        # Surface mode (no reading add-on) cannot tell homophones apart.
+        "reading_match": None,
     }]
 
 

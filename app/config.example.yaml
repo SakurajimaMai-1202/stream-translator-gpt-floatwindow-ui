@@ -168,6 +168,7 @@ terminology:
   terminology_glossary: {}
   glossary: ''
   glossary_list: []
+  ignored_alias_suggestions: []
   glossary_to_asr_prompt: false
 output:
   output_file: ''

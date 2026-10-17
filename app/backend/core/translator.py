@@ -613,7 +613,9 @@ class TranslationContext:
             # 設定環境變數
             env = apply_model_cache_environment()
             _apply_source_pythonpath(env, str(cwd))
-            env['STREAM_TRANSLATOR_ASR_CORRECTION_LOG_DIR'] = str(resolve_log_dir())
+            env['STREAM_TRANSLATOR_ASR_CORRECTION_LOG_DIR'] = os.environ.get('STREAM_TRANSLATOR_ASR_CORRECTION_LOG_DIR', '').strip() or str(resolve_log_dir())
+            from backend.core.reading_addon_installer import apply_reading_addon_environment
+            apply_reading_addon_environment(env)
             env['STREAM_TRANSLATOR_LOG_DIR'] = str(resolve_log_dir())
             env['PYTHONIOENCODING'] = 'utf-8'
             env['PYTHONUTF8'] = '1'

@@ -211,3 +211,5 @@ app/docs/*_EVIDENCE*.json
 /config_remote_ver.py
 .wrangler/
 /app/docs/PRODUCT_VIDEO_*.md
+# Optional reading add-on (Janome), downloaded at runtime
+/app/addons/

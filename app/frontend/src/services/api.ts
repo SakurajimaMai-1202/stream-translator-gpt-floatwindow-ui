@@ -580,3 +580,47 @@ export const modelApi = {
     return response.data;
   }
 };
+
+export interface AliasSuggestion {
+  alias: string;
+  canonical: string;
+  count: number;
+  best_score: number;
+  reading_match: boolean | null;
+  examples: string[];
+  asr_engines: string[];
+}
+export interface AliasSuggestionsResponse {
+  log_enabled: boolean;
+  reading_enabled: boolean;
+  updated_at: string | null;
+  suggestions: AliasSuggestion[];
+}
+export interface ReadingAddonStatus {
+  installed: boolean;
+  version: string;
+  size_bytes: number | null;
+  state: 'idle' | 'downloading' | 'installing' | 'error';
+  progress: number;
+  error: string | null;
+}
+export const terminologyApi = {
+  async getAliasSuggestions(): Promise<AliasSuggestionsResponse> {
+    const response = await axios.get(`${API_BASE}/terminology/alias-suggestions`);
+    return response.data;
+  },
+  async clearAliasSuggestions(): Promise<void> {
+    await axios.delete(`${API_BASE}/terminology/alias-suggestions`);
+  },
+  async getReadingAddon(): Promise<ReadingAddonStatus> {
+    const response = await axios.get(`${API_BASE}/terminology/reading-addon`);
+    return response.data;
+  },
+  async installReadingAddon(): Promise<ReadingAddonStatus> {
+    const response = await axios.post(`${API_BASE}/terminology/reading-addon/install`);
+    return response.data;
+  },
+  async removeReadingAddon(): Promise<void> {
+    await axios.delete(`${API_BASE}/terminology/reading-addon`);
+  },
+};

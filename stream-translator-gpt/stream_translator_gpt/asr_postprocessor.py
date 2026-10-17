@@ -143,6 +143,58 @@ def _name_core(value: str) -> str:
     return value
 
 
+def _candidate_score(normalized_anchor: str, normalized_candidate: str) -> float:
+    target_length = len(normalized_anchor)
+    anchor_core = _name_core(normalized_anchor)
+    raw_score = SequenceMatcher(
+        None,
+        normalized_anchor,
+        normalized_candidate,
+    ).ratio()
+    score = raw_score - (
+        0.06 * abs(target_length - len(normalized_candidate))
+    )
+    if target_length == len(normalized_candidate):
+        differing_indexes = [
+            index
+            for index, (left, right) in enumerate(zip(
+                normalized_anchor,
+                normalized_candidate,
+            ))
+            if left != right
+        ]
+        trailing_particle = (
+            differing_indexes == [target_length - 1]
+            and normalized_candidate[-1] in "がはをにでとのもへ"
+        )
+        if len(differing_indexes) == 1 and not trailing_particle:
+            score = max(score, 0.97)
+    if (
+        len(anchor_core) >= 3
+        and normalized_candidate == anchor_core
+    ):
+        score = max(score, 0.90)
+    if (
+        len(normalized_candidate) >= 4
+        and abs(target_length - len(normalized_candidate)) <= 3
+        and (
+            normalized_anchor.startswith(normalized_candidate)
+            or normalized_candidate.startswith(normalized_anchor)
+        )
+    ):
+        length_difference = abs(
+            target_length - len(normalized_candidate)
+        )
+        prefix_score = 0.92 - 0.02 * length_difference
+        if (
+            normalized_anchor.startswith(normalized_candidate)
+            and normalized_candidate != anchor_core
+        ):
+            prefix_score = 0.96 - 0.01 * length_difference
+        score = max(score, prefix_score)
+    return score
+
+
 def configure_asr_correction_learning(
     enabled: bool,
     candidate_log_path: str | Path | None = None,
@@ -222,14 +274,35 @@ def configure_asr_correction_learning(
                         canonical = str(record.get("canonical") or "").strip()
                         if normalized_alias and canonical:
                             key = f"{normalized_alias}\0{canonical}"
+                            record.setdefault("last_seen", datetime.now(timezone.utc).isoformat())
                             _asr_correction_candidate_records[key] = record
             except (OSError, TypeError, ValueError, json.JSONDecodeError):
                 _asr_correction_candidate_records = {}
 
 
+def _apply_suggestions_clear():
+    """Read the external clear watermark before merging observations or writing."""
+    try:
+        payload = json.loads(_asr_correction_candidate_summary_path.read_text(encoding="utf-8"))
+        cleared_at = payload.get("cleared_at")
+        cutoff = datetime.fromisoformat(cleared_at)
+        if cutoff.tzinfo is None:
+            return None
+        for key, record in list(_asr_correction_candidate_records.items()):
+            seen = datetime.fromisoformat(record["last_seen"])
+            if seen < cutoff:
+                del _asr_correction_candidate_records[key]
+        return cleared_at
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return None
+
+
 def _write_candidate_summary() -> None:
     if _asr_correction_candidate_summary_path is None:
         return
+    cleared_at = _apply_suggestions_clear()
+    for record in _asr_correction_candidate_records.values():
+        record.setdefault("reading_match", None)
     all_records = sorted(
         _asr_correction_candidate_records.values(),
         key=lambda record: (
@@ -253,6 +326,8 @@ def _write_candidate_summary() -> None:
         "records": records,
         "pending_records": pending_records,
     }
+    if cleared_at:
+        payload["cleared_at"] = cleared_at
     temporary_path = _asr_correction_candidate_summary_path.with_name(
         f"{_asr_correction_candidate_summary_path.name}.tmp"
     )
@@ -289,6 +364,7 @@ def observe_asr_correction_candidate(
         engine_label = asr_engine or "unknown"
         suggestion_counts: list[dict[str, Any]] = []
 
+        _apply_suggestions_clear()
         for suggestion in suggestions:
             alias = str(suggestion.get("alias") or "").strip()
             canonical = str(suggestion.get("canonical") or "").strip()
@@ -315,6 +391,9 @@ def observe_asr_correction_candidate(
                 }
                 _asr_correction_candidate_records[key] = record
 
+            reading_match = suggestion.get("reading_match")
+            if record.get("reading_match") is not True:
+                record["reading_match"] = reading_match
             record["count"] = int(record.get("count", 0)) + 1
             record["last_seen"] = now
             score = float(suggestion.get("score", 0))
@@ -366,6 +445,9 @@ class ASRTermCorrector:
     """Apply non-chaining ASR term corrections using longest aliases first."""
 
     def __init__(self, rules: Any = None, case_sensitive: bool = False):
+        self._reading_tokenizer = None
+        self._reading_attempted = False
+        self._anchor_readings = {}
         self.case_sensitive = bool(case_sensitive)
         self._replacements: dict[str, str] = {}
         self._canonicals: list[str] = []
@@ -422,6 +504,12 @@ class ASRTermCorrector:
         if not text or not self._suggestion_targets:
             return []
 
+        tokenizer = self._get_reading_tokenizer()
+        if tokenizer is not None:
+            try:
+                return self._suggest_readings(text, tokenizer, minimum_score)
+            except Exception:
+                logging.getLogger(__name__).debug("Reading tokenizer failed; using surfaces", exc_info=True)
         normalized_text = _normalize_candidate_text(
             text,
             case_sensitive=self.case_sensitive,
@@ -472,52 +560,7 @@ class ASRTermCorrector:
                             if normalized_candidate in known_aliases:
                                 continue
 
-                            raw_score = SequenceMatcher(
-                                None,
-                                normalized_anchor,
-                                normalized_candidate,
-                            ).ratio()
-                            score = raw_score - (
-                                0.06 * abs(target_length - len(normalized_candidate))
-                            )
-                            if target_length == len(normalized_candidate):
-                                differing_indexes = [
-                                    index
-                                    for index, (left, right) in enumerate(zip(
-                                        normalized_anchor,
-                                        normalized_candidate,
-                                    ))
-                                    if left != right
-                                ]
-                                trailing_particle = (
-                                    differing_indexes == [target_length - 1]
-                                    and normalized_candidate[-1] in "がはをにでとのもへ"
-                                )
-                                if len(differing_indexes) == 1 and not trailing_particle:
-                                    score = max(score, 0.97)
-                            if (
-                                len(anchor_core) >= 3
-                                and normalized_candidate == anchor_core
-                            ):
-                                score = max(score, 0.90)
-                            if (
-                                len(normalized_candidate) >= 4
-                                and abs(target_length - len(normalized_candidate)) <= 3
-                                and (
-                                    normalized_anchor.startswith(normalized_candidate)
-                                    or normalized_candidate.startswith(normalized_anchor)
-                                )
-                            ):
-                                length_difference = abs(
-                                    target_length - len(normalized_candidate)
-                                )
-                                prefix_score = 0.92 - 0.02 * length_difference
-                                if (
-                                    normalized_anchor.startswith(normalized_candidate)
-                                    and normalized_candidate != anchor_core
-                                ):
-                                    prefix_score = 0.96 - 0.01 * length_difference
-                                score = max(score, prefix_score)
+                            score = _candidate_score(normalized_anchor, normalized_candidate)
 
                             if score > best_score:
                                 best_candidate = candidate
@@ -538,12 +581,82 @@ class ASRTermCorrector:
                 "alias": best_candidate,
                 "canonical": canonical,
                 "score": round(best_score, 3),
+                "reading_match": None,
             }
             if best_anchor:
                 suggestion["matched_anchor"] = best_anchor
             suggestions.append(suggestion)
 
         return sorted(suggestions, key=lambda item: -float(item["score"]))[:5]
+
+    def _get_reading_tokenizer(self):
+        # No import or path mutation on the normal correction path.
+        if self._reading_tokenizer is not None:
+            return self._reading_tokenizer
+        if self._reading_attempted or _asr_correction_candidate_log_handler is None:
+            return None
+        self._reading_attempted = True
+        addon = os.environ.get("STREAM_TRANSLATOR_READING_ADDON", "").strip()
+        if not addon:
+            return None
+        root = Path(addon).resolve()
+        try:
+            sys.path.insert(0, str(root))
+            import janome
+            if not Path(janome.__file__).resolve().is_relative_to(root):
+                raise ImportError("Janome did not load from the reading add-on")
+            from janome.tokenizer import Tokenizer
+            self._reading_tokenizer = Tokenizer()
+        except Exception:
+            logging.getLogger(__name__).debug("Reading add-on unavailable", exc_info=True)
+        finally:
+            if str(root) in sys.path:
+                sys.path.remove(str(root))
+        return self._reading_tokenizer
+
+    def _suggest_readings(self, text, tokenizer, minimum_score):
+        def normalize(value):
+            return _normalize_candidate_text(value, self.case_sensitive)
+
+        def tokens(value):
+            return [(token.surface, normalize(
+                token.surface if token.reading == "*" else token.reading
+            )) for token in tokenizer.tokenize(value)]
+
+        chunks = [tokens(chunk) for chunk in _candidate_chunks(text)]
+        normalized_text = normalize(text)
+        suggestions = []
+        for target in self._suggestion_targets:
+            anchors = target["anchors"]
+            known = {normalize(anchor) for anchor in anchors}
+            if any(len(anchor) >= 3 and anchor in normalized_text for anchor in known):
+                continue
+            best = None
+            for anchor in anchors:
+                if anchor not in self._anchor_readings:
+                    self._anchor_readings[anchor] = "".join(reading for _, reading in tokens(anchor))
+                reading = self._anchor_readings[anchor]
+                if len(reading) < 3:
+                    continue
+                for chunk in chunks:
+                    for start in range(len(chunk)):
+                        surface = candidate_reading = ""
+                        for end in range(start, len(chunk)):
+                            surface += chunk[end][0]
+                            candidate_reading += chunk[end][1]
+                            if len(candidate_reading) > len(reading) + 3:
+                                break
+                            if len(candidate_reading) < 3 or normalize(surface) in known:
+                                continue
+                            score = _candidate_score(reading, candidate_reading)
+                            if score >= minimum_score and (best is None or score > best["score"]):
+                                best = {"alias": surface, "canonical": target["canonical"],
+                                        "matched_anchor": anchor, "score": score,
+                                        "reading_match": candidate_reading == reading}
+            if best is not None:
+                best["score"] = round(best["score"], 3)
+                suggestions.append(best)
+        return sorted(suggestions, key=lambda item: -item["score"])[:5]
 
     @staticmethod
     def _normalize_rules(rules: Any) -> list[dict[str, Any]]:

@@ -231,6 +231,7 @@ class ConfigManager:
             'terminology_glossary': {},
             'glossary': '',
             'glossary_list': [],
+            'ignored_alias_suggestions': [],
             'custom_glossary_scopes': [],
             'glossary_to_asr_prompt': False,
         },

@@ -1,5 +1,7 @@
-import { ref, computed, watch, nextTick, toRaw, type Ref } from 'vue';
+import { ref, computed, watch, nextTick, toRaw, onScopeDispose, type Ref } from 'vue';
 import type { useTranslationStore } from '../../stores/translation';
+
+import { terminologyApi, type AliasSuggestion, type ReadingAddonStatus } from '../../services/api';
 
 type Term = { original: string; translated: string; aliases: string[]; scope: string };
 type Category = { id: string; label: string; terms: Record<string, string>; asr_variants: Record<string, string[]> };
@@ -7,6 +9,94 @@ export function normalizeTermAliases(value: unknown): string[] {
   return [...new Set((Array.isArray(value) ? value : String(value || '').split(/[,，、\n]/)).map(value => String(value).trim()).filter(Boolean))];
 }
 export function useTerminologySettings(localConfig: Ref<any>, store: ReturnType<typeof useTranslationStore>, saveBulkImport: (section: 'terminology' | 'transcription', applyImport: () => void) => Promise<void>) {
+  const aliasSuggestions = ref<AliasSuggestion[]>([]);
+  const suggestionsError = ref('');
+  const addonError = ref('');
+  const readingAddon = ref<ReadingAddonStatus | null>(null);
+  const suggestionActionBusy = ref(false);
+  const addonActionBusy = ref(false);
+  const addonRunning = computed(() => ['downloading', 'installing'].includes(readingAddon.value?.state || ''));
+  const suggestionsVisible = computed(() => !!localConfig.value.transcription.asr_correction_learning_enabled || aliasSuggestions.value.length > 0);
+  let pollTimer: ReturnType<typeof setTimeout> | undefined;
+  let disposed = false;
+  function scheduleAddonPoll() {
+    clearTimeout(pollTimer);
+    if (!disposed && addonRunning.value) pollTimer = setTimeout(() => { void refreshReadingAddon(); }, 1000);
+  }
+  async function refreshReadingAddon() {
+    try {
+      const status = await terminologyApi.getReadingAddon();
+      if (disposed) return;
+      readingAddon.value = status;
+      addonError.value = status.state === 'error' ? '讀音元件安裝失敗，請重試。' : '';
+    } catch {
+      if (!disposed) addonError.value = '無法讀取讀音元件狀態，請重試。';
+    }
+    finally { scheduleAddonPoll(); }
+  }
+  async function refreshAliasSuggestions() {
+    try {
+      const result = await terminologyApi.getAliasSuggestions();
+      if (disposed) return;
+      aliasSuggestions.value = result.suggestions.filter(suggestion =>
+        !rows.value.some(row => row.original === suggestion.canonical && normalizeTermAliases(row.aliases).includes(suggestion.alias)) &&
+        !(localConfig.value.terminology.ignored_alias_suggestions || []).some((item: { alias: string; canonical: string }) => item.alias === suggestion.alias && item.canonical === suggestion.canonical));
+      suggestionsError.value = '';
+    } catch {
+      if (!disposed) suggestionsError.value = '無法讀取建議，請稍後重試。';
+    }
+  }
+  async function startSuggestionReview() {
+    disposed = false;
+    await Promise.allSettled([refreshAliasSuggestions(), refreshReadingAddon()]);
+  }
+  function stopSuggestionReview() {
+    disposed = true;
+    clearTimeout(pollTimer);
+  }
+  onScopeDispose(stopSuggestionReview);
+  async function changeReadingAddon(install: boolean) {
+    if (addonActionBusy.value || addonRunning.value) return;
+    addonActionBusy.value = true;
+    addonError.value = '';
+    try {
+      if (install) {
+        readingAddon.value = await terminologyApi.installReadingAddon();
+        if (readingAddon.value.state === 'error') addonError.value = '讀音元件安裝失敗，請重試。';
+        scheduleAddonPoll();
+      } else {
+        await terminologyApi.removeReadingAddon();
+        await refreshReadingAddon();
+      }
+    } catch { addonError.value = install ? '無法安裝讀音元件，請重試。' : '無法移除讀音元件，請重試。'; }
+    finally { addonActionBusy.value = false; }
+  }
+  function dismissAliasSuggestion(suggestion: AliasSuggestion) {
+    aliasSuggestions.value = aliasSuggestions.value.filter(item => item.alias !== suggestion.alias || item.canonical !== suggestion.canonical);
+  }
+  function acceptAliasSuggestion(suggestion: AliasSuggestion) {
+    const matches = rows.value.filter(row => row.original === suggestion.canonical);
+    if (matches.length) for (const row of matches) row.aliases = normalizeTermAliases([...normalizeTermAliases(row.aliases), suggestion.alias]);
+    else localConfig.value.terminology.glossary_list = [...rows.value, { original: suggestion.canonical, translated: '', aliases: [suggestion.alias], scope: 'all' }];
+    dismissAliasSuggestion(suggestion);
+  }
+  function ignoreAliasSuggestion(suggestion: AliasSuggestion) {
+    const ignored = localConfig.value.terminology.ignored_alias_suggestions || [];
+    if (!ignored.some((item: { alias: string; canonical: string }) => item.alias === suggestion.alias && item.canonical === suggestion.canonical)) {
+      localConfig.value.terminology.ignored_alias_suggestions = [...ignored, { alias: suggestion.alias, canonical: suggestion.canonical }];
+    }
+    dismissAliasSuggestion(suggestion);
+  }
+  async function clearAliasSuggestions() {
+    if (suggestionActionBusy.value || !window.confirm('確定清除全部建議？')) return;
+    suggestionActionBusy.value = true;
+    try {
+      await terminologyApi.clearAliasSuggestions();
+      aliasSuggestions.value = [];
+      suggestionsError.value = '';
+    } catch { suggestionsError.value = '無法清除建議，請重試。'; }
+    finally { suggestionActionBusy.value = false; }
+  }
   const presetCategories = ref<Category[]>([]);
   const presetLoadError = ref(false);
   const glossaryImporting = ref(false);
@@ -350,5 +440,5 @@ export function useTerminologySettings(localConfig: Ref<any>, store: ReturnType<
   function exportGlossary() {
     void downloadCsv('glossary.csv', [['正確寫法', '譯法', '常見誤辨', '分類'], ...rows.value.map(term => [term.original, term.translated, normalizeTermAliases(term.aliases).join('、'), glossaryScopeOptions.value.find(c => c.value === (term.scope || 'all'))?.label || term.scope])], '術語表');
   }
-  return { presetCategories, presetLoadError, glossaryImporting, newTermOriginal, newTermTranslated, newTermAliases, newTermScope, newGlossaryScopeName, termSearchQuery, glossaryListMode, editingGlossaryScope, editingGlossaryScopeName, deletingScope, highlightedTerm, removedGlossaryTerm, expandedGroups, groupLimits, glossaryScopeOptions, activeCategoryLabels, effectiveGlossaryCount, groups, categoryCounts, isActive, isBuiltinEnabled, toggleCategory, toggleBuiltin, addGlossaryScope, renameGlossaryScope, removeGlossaryScope, addTerm, setTermOriginal, setTermScope, setTermAliases, registerTermRow, customizePresetTerm, removeTermEntry, undoRemovedGlossaryTerm, importGlossary, exportGlossary, normalizeTermAliases };
+  return { aliasSuggestions, suggestionsError, addonError, readingAddon, suggestionActionBusy, addonActionBusy, addonRunning, suggestionsVisible, startSuggestionReview, stopSuggestionReview, refreshAliasSuggestions, refreshReadingAddon, changeReadingAddon, acceptAliasSuggestion, ignoreAliasSuggestion, clearAliasSuggestions, presetCategories, presetLoadError, glossaryImporting, newTermOriginal, newTermTranslated, newTermAliases, newTermScope, newGlossaryScopeName, termSearchQuery, glossaryListMode, editingGlossaryScope, editingGlossaryScopeName, deletingScope, highlightedTerm, removedGlossaryTerm, expandedGroups, groupLimits, glossaryScopeOptions, activeCategoryLabels, effectiveGlossaryCount, groups, categoryCounts, isActive, isBuiltinEnabled, toggleCategory, toggleBuiltin, addGlossaryScope, renameGlossaryScope, removeGlossaryScope, addTerm, setTermOriginal, setTermScope, setTermAliases, registerTermRow, customizePresetTerm, removeTermEntry, undoRemovedGlossaryTerm, importGlossary, exportGlossary, normalizeTermAliases };
 }

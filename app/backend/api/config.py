@@ -317,3 +317,11 @@ async def test_connection(request: TestConnectionRequest):
     else:
         return {"success": False, "message": f"不支援的測試後端: {backend}"}
 
+
+
+# Keep terminology administration under the same app registration/auth as config.
+_config_router = router
+router = APIRouter()
+router.include_router(_config_router)
+from backend.api.terminology import router as terminology_router
+router.include_router(terminology_router)

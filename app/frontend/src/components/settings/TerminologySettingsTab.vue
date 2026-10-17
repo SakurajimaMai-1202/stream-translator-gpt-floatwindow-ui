@@ -1,8 +1,25 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref, onMounted, onUnmounted } from 'vue';
 import UiSelect from '../UiSelect.vue';
 import { useSettingsTabBindings } from '../../composables/settings/settingsContext';
-const { localConfig, presetLoadError, glossaryImporting, newTermOriginal, newTermTranslated, newTermAliases, newTermScope, newGlossaryScopeName, termSearchQuery, glossaryListMode, editingGlossaryScope, editingGlossaryScopeName, deletingScope, highlightedTerm, removedGlossaryTerm, expandedGroups, groupLimits, glossaryScopeOptions, groups, categoryCounts, isActive, isBuiltinEnabled, toggleCategory, toggleBuiltin, addGlossaryScope, renameGlossaryScope, removeGlossaryScope, addTerm, setTermOriginal, setTermScope, setTermAliases, registerTermRow, customizePresetTerm, removeTermEntry, undoRemovedGlossaryTerm, importGlossary, exportGlossary, normalizeTermAliases } = useSettingsTabBindings();
+const { aliasSuggestions, suggestionsError, addonError, readingAddon, suggestionActionBusy, addonActionBusy, addonRunning, suggestionsVisible, startSuggestionReview, stopSuggestionReview, refreshAliasSuggestions, refreshReadingAddon, changeReadingAddon, acceptAliasSuggestion, ignoreAliasSuggestion, clearAliasSuggestions, localConfig, presetLoadError, glossaryImporting, newTermOriginal, newTermTranslated, newTermAliases, newTermScope, newGlossaryScopeName, termSearchQuery, glossaryListMode, editingGlossaryScope, editingGlossaryScopeName, deletingScope, highlightedTerm, removedGlossaryTerm, expandedGroups, groupLimits, glossaryScopeOptions, groups, categoryCounts, isActive, isBuiltinEnabled, toggleCategory, toggleBuiltin, addGlossaryScope, renameGlossaryScope, removeGlossaryScope, addTerm, setTermOriginal, setTermScope, setTermAliases, registerTermRow, customizePresetTerm, removeTermEntry, undoRemovedGlossaryTerm, importGlossary, exportGlossary, normalizeTermAliases } = useSettingsTabBindings();
+const suggestionsExpanded = ref(false);
+// Records collected before the reading add-on (or without it) carry no reading
+// verdict; they are glyph matches and often false positives (お姉ちゃん ↔ 水ちゃん).
+const isLegacySuggestion = (suggestion: { reading_match: boolean | null }) =>
+  !!readingAddon.value?.installed && suggestion.reading_match === null;
+const legacySuggestionCount = computed(() => aliasSuggestions.value.filter(isLegacySuggestion).length);
+onMounted(async () => {
+  await startSuggestionReview();
+  suggestionsExpanded.value = aliasSuggestions.value.length > 0;
+});
+onUnmounted(stopSuggestionReview);
+function exampleParts(sentence: string, alias: string) {
+  if (!alias) return [{ text: sentence, highlight: false }];
+  return sentence.split(alias).flatMap((text, index) => index
+    ? [{ text: alias, highlight: true }, { text, highlight: false }]
+    : [{ text, highlight: false }]);
+}
 const termIds = new WeakMap<object, number>();
 let nextTermId = 0;
 function termKey(term: object & { original: string; scope: string }, builtin: boolean) {
@@ -78,6 +95,48 @@ const asrPromptSupport = computed(() => {
       <button type="button" :disabled="glossaryImporting" @click="importGlossary">{{ glossaryImporting ? '匯入並儲存中…' : '匯入 CSV' }}</button>
       <button type="button" @click="exportGlossary">匯出 CSV</button>
     </div>
+    <p v-if="suggestionsError && !suggestionsVisible" class="suggestion-error" role="status">{{ suggestionsError }} <button type="button" @click="refreshAliasSuggestions">重試</button></p>
+    <section v-if="suggestionsVisible" class="commercial-panel term-panel suggestion-panel">
+      <button type="button" class="suggestion-heading" :aria-expanded="suggestionsExpanded" aria-controls="alias-suggestion-content" @click="suggestionsExpanded = !suggestionsExpanded">{{ suggestionsExpanded ? '▾' : '▸' }} 建議的常見誤辨（{{ aliasSuggestions.length }}）</button>
+      <div v-if="suggestionsExpanded" id="alias-suggestion-content" class="suggestion-content">
+        <div v-if="!localConfig.transcription.asr_correction_learning_enabled" class="term-wrap">
+          <p>開啟「收集未命中詞」後，直播時會自動記錄可能的誤辨</p>
+          <button type="button" @click="localConfig.transcription.asr_correction_learning_enabled = true">開啟</button>
+        </div>
+        <div class="suggestion-addon">
+          <div v-if="readingAddon" class="term-wrap">
+            <template v-if="readingAddon.installed">
+              <p>讀音比對：已啟用</p>
+              <button type="button" class="addon-remove" :disabled="addonActionBusy || addonRunning" @click="changeReadingAddon(false)">移除</button>
+            </template>
+            <template v-else>
+              <p>安裝讀音比對元件（約 20 MB 下載），可分辨同音字、減少誤報</p>
+              <button type="button" :disabled="addonActionBusy || addonRunning" @click="changeReadingAddon(true)">{{ addonRunning ? (readingAddon.state === 'installing' ? '安裝中…' : '下載中…') : addonActionBusy ? '處理中…' : '安裝' }}</button>
+            </template>
+            <template v-if="addonRunning">
+              <progress :value="Math.min(1, Math.max(0, readingAddon.progress))" max="1" aria-label="讀音元件安裝進度"></progress>
+              <span>{{ Math.round(Math.min(1, Math.max(0, readingAddon.progress)) * 100) }}%</span>
+            </template>
+          </div>
+          <p v-if="addonError" class="suggestion-error" role="status">{{ addonError }} <button type="button" :disabled="addonActionBusy" @click="refreshReadingAddon">重試</button></p>
+        </div>
+        <p v-if="suggestionsError" class="suggestion-error" role="status">{{ suggestionsError }} <button type="button" @click="refreshAliasSuggestions">重試</button></p>
+        <p v-if="!aliasSuggestions.length">目前沒有建議。</p>
+        <p v-if="legacySuggestionCount" class="suggestion-error" role="status">有 {{ legacySuggestionCount }} 筆是安裝讀音比對前收集的，可能有誤報；建議「清除全部建議」後重新收集。</p>
+        <article v-for="suggestion in aliasSuggestions" :key="JSON.stringify([suggestion.alias, suggestion.canonical])" class="suggestion-row">
+          <div class="term-wrap">
+            <strong>{{ suggestion.alias }} → {{ suggestion.canonical }}</strong>
+            <span>{{ suggestion.count }} 次</span><span v-if="suggestion.reading_match" class="active-badge">同音</span><span v-else-if="isLegacySuggestion(suggestion)" class="legacy-badge">舊方法</span>
+          </div>
+          <p v-for="(example, index) in suggestion.examples.slice(0, 3)" :key="index" class="suggestion-example"><template v-for="(part, partIndex) in exampleParts(example, suggestion.alias)" :key="partIndex"><mark v-if="part.highlight">{{ part.text }}</mark><template v-else>{{ part.text }}</template></template></p>
+          <div class="term-wrap">
+            <button type="button" :disabled="suggestionActionBusy" @click="acceptAliasSuggestion(suggestion)">加入為誤辨</button>
+            <button type="button" :disabled="suggestionActionBusy" @click="ignoreAliasSuggestion(suggestion)">忽略</button>
+          </div>
+        </article>
+        <button v-if="aliasSuggestions.length" type="button" :disabled="suggestionActionBusy" @click="clearAliasSuggestions">清除全部建議</button>
+      </div>
+    </section>
     <p v-if="removedGlossaryTerm" role="status">已刪除「{{ removedGlossaryTerm.term.original }}」 <button type="button" @click="undoRemovedGlossaryTerm">復原</button></p>
     <p v-if="!groups.length">沒有符合的詞條。</p>
     <section v-for="group in groups" :key="group.value" class="commercial-panel term-panel">
@@ -148,6 +207,18 @@ const asrPromptSupport = computed(() => {
 
 <style scoped src="./settings-shared.css"></style>
 <style scoped>
+.suggestion-content { display: grid; gap: 10px; min-width: 0; }
+.suggestion-panel .suggestion-heading { text-align: left; font-weight: 600; }
+.suggestion-addon { padding: 10px; border-radius: 8px; background: #ffffff05; min-width: 0; }
+.suggestion-row { display: grid; gap: 6px; min-width: 0; padding-top: 10px; border-top: 1px solid #ffffff15; }
+.suggestion-panel p, .suggestion-row span { font-size: 12px; }
+.suggestion-example { white-space: pre-wrap; overflow-wrap: anywhere; }
+.suggestion-example mark { color: #fef3c7; background: #f59e0b35; border-radius: 2px; }
+.suggestion-error { font-size: 12px; color: #fcd34d; }
+.legacy-badge { margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: 11px; color: #cbd5e1; background: #ffffff12; }
+.suggestion-addon progress { width: 120px; max-width: 100%; }
+.suggestion-addon .addon-remove { padding: 0; background: transparent; text-decoration: underline; }
+.suggestion-panel .term-wrap > * { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
 .terminology-page { min-width: 0; overflow-wrap: anywhere; }
 .term-panel { padding: 16px; display: grid; gap: 12px; min-width: 0; }
 h3 { font-weight: 600; }

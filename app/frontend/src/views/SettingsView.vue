@@ -242,6 +242,7 @@ const localConfig = ref<any>({
     custom_glossary_scopes: [],
     active_categories: [],
     builtin_disabled: [],
+    ignored_alias_suggestions: [],
     schema_version: 2,
     glossary_to_asr_prompt: false
   },

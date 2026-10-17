@@ -38,8 +38,12 @@ export function useTerminologySettings(localConfig: Ref<any>, store: ReturnType<
   const isBuiltinEnabled = (category: string, source: string) => !(localConfig.value.terminology.builtin_disabled || []).some((entry: any) => entry.category === category && entry.source === source);
   const effectiveGlossaryCount = computed(() => {
     const sources = new Set<string>();
+    const userOn = localConfig.value.terminology.use_terminology_glossary;
+    // Mirrors session_vocabulary: a blank 譯法 in the same built-in category drops it.
+    const blanked = (category: string, source: string) => userOn && rows.value.some(row =>
+      (row.scope || 'all') === category && row.original.trim() === source && !row.translated.trim());
     for (const c of presetCategories.value.filter(c => isActive(c.id))) {
-      for (const source of Object.keys(c.terms)) if (isBuiltinEnabled(c.id, source)) sources.add(source);
+      for (const source of Object.keys(c.terms)) if (isBuiltinEnabled(c.id, source) && !blanked(c.id, source)) sources.add(source);
     }
     if (localConfig.value.terminology.use_terminology_glossary) {
       for (const row of rows.value) if (isActive(row.scope || 'all') && row.original.trim() && row.translated.trim()) sources.add(row.original.trim());

@@ -144,6 +144,17 @@ def session_vocabulary(config: dict) -> dict:
             if aliases:
                 variants[source] = aliases
                 terms.update({alias: target for alias in aliases})
+    # A user row filed under a built-in category overrides that built-in term;
+    # with an empty 譯法 it means "correct recognition only", so the built-in
+    # translation must go too. Rows in other categories (e.g. migrated 一般
+    # ASR-only rows) are not overrides.
+    for row in active_user_terms(user, categories):
+        source = str(row.get("original") or "").strip()
+        category = row.get("scope") or "all"
+        if (not str(row.get("translated") or "").strip() and source in PRESETS.get(category, {})
+                and (category, source) not in disabled):
+            for key in (source, *PRESET_ASR_VARIANTS.get(category, {}).get(source, [])):
+                terms.pop(key, None)
     terms.update(effective_user_glossary(user, categories))
     originals = {str(row.get("original") or "").strip() for row in rows}
     originals.update(source for category in categories for source in PRESETS.get(category, {})

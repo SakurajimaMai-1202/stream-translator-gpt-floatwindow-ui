@@ -232,3 +232,15 @@ def test_alias_safety_for_asr_only_substrings_and_exact_originals(translated, ke
     assert ("らスイちゃ" in rules["すいちゃん"]) is kept
     assert "スイちゃん" in rules["すいちゃん"]
     assert rules["真衣"] == ["Safe"]
+
+
+def test_blank_override_in_builtin_category_drops_builtin_translation_only():
+    base = [{"original": "マシュマロ", "translated": "", "aliases": [], "scope": "general_chat"}]
+    result = vocabulary(active_categories=["general_chat"], glossary_list=base)
+    assert "マシュマロ" not in result["translation_terms"]
+    assert "マシュモロ" not in result["translation_terms"]
+    # The built-in ASR variants still correct recognition.
+    assert {"canonical": "マシュマロ", "aliases": ["マシュモロ", "マシモロ"]} in result["asr_rules"]
+    # A blank 一般 row (e.g. a migrated ASR rule) is not an override.
+    other = vocabulary(active_categories=["general_chat"], glossary_list=[{**base[0], "scope": "all"}])
+    assert other["translation_terms"]["マシュマロ"] == "棉花糖"

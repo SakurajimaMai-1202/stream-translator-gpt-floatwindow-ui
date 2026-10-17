@@ -27,7 +27,11 @@ export function useTerminologySettings(localConfig: Ref<any>, store: ReturnType<
   const rowElements = new WeakMap<Term, HTMLElement>();
   const rows = computed<Term[]>(() => localConfig.value.terminology.glossary_list || []);
   const customGlossaryScopes = computed<{ value: string; label: string }[]>(() => localConfig.value.terminology.custom_glossary_scopes || []);
-  const glossaryScopeOptions = computed(() => [{ value: 'all', label: '一般' }, ...presetCategories.value.map(c => ({ value: c.id, label: c.label })), ...customGlossaryScopes.value]);
+  // Fallback labels keep 翻譯選項 truthful if the preset request fails.
+  const builtinFallback = [{ value: 'general_chat', label: '一般直播' }, { value: 'hololive_vtuber', label: 'Hololive／VTuber' }, { value: 'cosplay', label: 'Cosplay' }];
+  const glossaryScopeOptions = computed(() => [{ value: 'all', label: '一般' },
+    ...(presetCategories.value.length ? presetCategories.value.map(c => ({ value: c.id, label: c.label })) : builtinFallback),
+    ...customGlossaryScopes.value]);
   const activeCategories = computed<string[]>(() => ['all', ...(localConfig.value.terminology.active_categories || [])]);
   const activeCategoryLabels = computed(() => glossaryScopeOptions.value.filter(c => activeCategories.value.includes(c.value)).map(c => c.label).join('、'));
   const isActive = (id: string) => activeCategories.value.includes(id);
@@ -45,7 +49,10 @@ export function useTerminologySettings(localConfig: Ref<any>, store: ReturnType<
   const groups = computed(() => glossaryScopeOptions.value.map(category => {
     const preset = presetCategories.value.find(c => c.id === category.value);
     const users = rows.value.filter(row => (row.scope || 'all') === category.value);
-    const builtins = preset ? [...new Set([...Object.keys(preset.terms), ...Object.keys(preset.asr_variants || {})])].filter(original => !users.some(row => row.original.trim() === original)).map(original => ({ original, translated: preset.terms[original] || '', aliases: preset.asr_variants?.[original] || [], scope: category.value })) : [];
+    // A user row overrides (and hides) a built-in only while 我的詞條 is on; the
+    // backend falls back to the built-in otherwise.
+    const overrides = localConfig.value.terminology.use_terminology_glossary ? users : [];
+    const builtins = preset ? [...new Set([...Object.keys(preset.terms), ...Object.keys(preset.asr_variants || {})])].filter(original => !overrides.some(row => row.original.trim() === original)).map(original => ({ original, translated: preset.terms[original] || '', aliases: preset.asr_variants?.[original] || [], scope: category.value })) : [];
     const query = termSearchQuery.value.trim().toLocaleLowerCase();
     const matches = (row: Term) => [row.original, row.translated, ...normalizeTermAliases(row.aliases)].some(value => value.toLocaleLowerCase().includes(query));
     const entries = [...users.map(term => ({ term, builtin: false })), ...(glossaryListMode.value === 'mine' ? [] : builtins.map(term => ({ term, builtin: true })))].filter(entry => matches(entry.term));
@@ -56,7 +63,7 @@ export function useTerminologySettings(localConfig: Ref<any>, store: ReturnType<
   const categoryCounts = computed(() => Object.fromEntries(glossaryScopeOptions.value.map(category => {
     const preset = presetCategories.value.find(c => c.id === category.value);
     const users = rows.value.filter(row => (row.scope || 'all') === category.value && row.original.trim());
-    const overridden = new Set(users.map(row => row.original.trim()));
+    const overridden = new Set(localConfig.value.terminology.use_terminology_glossary ? users.map(row => row.original.trim()) : []);
     const builtins = preset ? [...new Set([...Object.keys(preset.terms), ...Object.keys(preset.asr_variants || {})])]
       .filter(original => !overridden.has(original) && isBuiltinEnabled(category.value, original)) : [];
     return [category.value, { mine: users.length, applicable: builtins.length + (localConfig.value.terminology.use_terminology_glossary ? users.length : 0) }];

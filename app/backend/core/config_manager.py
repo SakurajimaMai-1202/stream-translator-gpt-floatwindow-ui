@@ -1025,28 +1025,30 @@ class ConfigManager:
 
         # Glossary rows double as the ASR vocabulary: aliases become corrections
         # for every engine, originals become prompt words where the engine has one.
+        # Built-in variants follow the scope even when 我的詞條 is off, like the
+        # built-in translation terms do.
         terminology_config = config.get('terminology', {})
-        if terminology_config.get('use_terminology_glossary', False):
-            from backend.core.hy_mt2_glossary_presets import (
-                ASR_PROMPT_BACKENDS, glossary_asr_rules, glossary_hotwords)
-            translation_section = config.get('translation', {})
-            scope = translation_section.get('translation_glossary_scope')
-            if scope is None:
-                scope = translation_section.get('hy_mt2_glossary_preset', '')
-            manual_rules = config['transcription'].get('asr_correction_rules', []) or []
-            derived_rules = glossary_asr_rules(terminology_config, str(scope))
-            if terminology_config.get('glossary_to_asr_corrections', True) and derived_rules:
-                # Manual rules come first so they win when both claim an alias.
-                args['asr_correction_rules'] = json.dumps(
-                    list(manual_rules) + derived_rules, ensure_ascii=False, separators=(',', ':'))
-            if (terminology_config.get('glossary_to_asr_prompt', False)
-                    and transcription_backend in ASR_PROMPT_BACKENDS):
-                misheard = {str(alias).strip() for rule in list(manual_rules) + derived_rules
-                            if isinstance(rule, dict) for alias in (rule.get('aliases') or [])}
-                typed = str(args.get('transcription_initial_prompt') or '').strip().rstrip(',，、 ')
-                words = glossary_hotwords(terminology_config, str(scope), misheard,
-                    max_chars=max(0, 300 - len(typed)))
-                args['transcription_initial_prompt'] = ', '.join(([typed] if typed else []) + words)
+        use_user_terms = bool(terminology_config.get('use_terminology_glossary', False))
+        from backend.core.hy_mt2_glossary_presets import (
+            ASR_PROMPT_BACKENDS, glossary_asr_rules, glossary_hotwords)
+        translation_section = config.get('translation', {})
+        scope = translation_section.get('translation_glossary_scope')
+        if scope is None:
+            scope = translation_section.get('hy_mt2_glossary_preset', '')
+        manual_rules = config['transcription'].get('asr_correction_rules', []) or []
+        derived_rules = glossary_asr_rules(terminology_config if use_user_terms else {}, str(scope))
+        if terminology_config.get('glossary_to_asr_corrections', True) and derived_rules:
+            # Manual rules come first so they win when both claim an alias.
+            args['asr_correction_rules'] = json.dumps(
+                list(manual_rules) + derived_rules, ensure_ascii=False, separators=(',', ':'))
+        if (use_user_terms and terminology_config.get('glossary_to_asr_prompt', False)
+                and transcription_backend in ASR_PROMPT_BACKENDS):
+            misheard = {str(alias).strip() for rule in list(manual_rules) + derived_rules
+                        if isinstance(rule, dict) for alias in (rule.get('aliases') or [])}
+            typed = str(args.get('transcription_initial_prompt') or '').strip().rstrip(',，、 ')
+            words = glossary_hotwords(terminology_config, str(scope), misheard,
+                max_chars=max(0, 300 - len(typed)))
+            args['transcription_initial_prompt'] = ', '.join(([typed] if typed else []) + words)
 
         # Qwen3-ASR 語言格式轉換：短碼 → 完整名稱
         if transcription_backend == 'qwen3-asr':

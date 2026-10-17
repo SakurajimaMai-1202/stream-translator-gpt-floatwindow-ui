@@ -10,6 +10,21 @@ _LIVESTREAM_TERMS = {
     "チェキ": "拍立得",
     "レンタルスペース": "租借場地",
     "レンスペ": "租借場地",
+    # Everyday chat words collected from real streams. Ambiguous ones such as
+    # ポスト (post box) or トマホーク (missile) are left to the model.
+    "ノンデリ": "沒神經",
+    "チャッピー": "ChatGPT",
+    "ハッシュタグ": "hashtag",
+    "ツイート": "推文",
+    "リツイート": "轉推",
+    "お便り": "來信",
+    "ふつおた": "普通來信",
+    "メン限": "會員限定",
+    "バーチャルアイドル": "虛擬偶像",
+    "ポンポンペイン": "肚子痛",
+    "アクアパッツァ": "義式水煮魚",
+    "鯛の塩釜焼き": "鹽釜烤鯛魚",
+    "塩釜焼き": "鹽釜燒",
 }
 
 PRESETS: dict[str, dict[str, str]] = {
@@ -89,6 +104,9 @@ def effective_user_glossary(terminology: dict, preset: str) -> dict[str, str]:
 # How ASR usually mishears the built-in terms; corrected before translation.
 PRESET_ASR_VARIANTS: dict[str, list[str]] = {
     "マシュマロ": ["マシュモロ", "マシモロ"],
+    "ノンデリ": ["のんでり"],
+    "メン限": ["面言"],
+    "バーチャルアイドル": ["バーチャルアイトル"],
 }
 PRESET_ASR_VARIANTS_FLAT = frozenset(alias for aliases in PRESET_ASR_VARIANTS.values() for alias in aliases)
 

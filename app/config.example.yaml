@@ -74,7 +74,7 @@ transcription:
   nemo_asr_device: auto
   nemo_asr_decoding: tdt
   nemo_asr_dtype: bfloat16
-  asr_corrections_enabled: false
+  asr_corrections_enabled: true
   asr_correction_log_enabled: false
   asr_correction_learning_enabled: false
   asr_corrections_case_sensitive: false
@@ -143,7 +143,7 @@ translation:
   index_translate_llama_cpp_api_key: ''
   index_translate_glossary_folder: ''
   index_translate_glossary_preset: ''
-  translation_glossary_scope: null
+  translation_glossary_scope: general_chat
   paired_subtitle_mode: true
   deduplicate_asr_overlap: true
   subtitle_assembler_enabled: true

@@ -141,3 +141,26 @@ def test_alias_inside_another_original_is_not_a_correction():
     rules = glossary_asr_rules(terminology, "")
     assert {"canonical": "ぺこちゃん", "aliases": ["ペコ"]} in rules
     assert all("ぺこら" not in rule["aliases"] for rule in rules)
+
+
+def test_builtin_asr_variants_apply_without_user_glossary(tmp_path):
+    manager = ConfigManager(tmp_path / "config.yaml")
+    config = _config(manager, "qwen3-asr", use_terminology_glossary=False)
+    config["translation"]["translation_glossary_scope"] = "general_chat"
+    rules = json.loads(manager.to_main_args(config)["asr_correction_rules"])
+    assert {"canonical": "ノンデリ", "aliases": ["のんでり"]} in rules
+    # The user's own aliases stay off with 我的詞條.
+    assert all(rule["canonical"] != "リハさん" for rule in rules)
+
+
+def test_new_installs_ship_general_livestream_terms(tmp_path):
+    import shutil
+    from pathlib import Path
+    example = Path(__file__).resolve().parents[2] / "config.example.yaml"
+    shutil.copy(example, tmp_path / "config.yaml")
+    manager = ConfigManager(tmp_path / "config.yaml")
+    config = manager.get_config()
+    assert config["translation"]["translation_glossary_scope"] == "general_chat"
+    assert config["transcription"]["asr_corrections_enabled"] is True
+    args = manager.to_main_args(config)
+    assert {"canonical": "メン限", "aliases": ["面言"]} in json.loads(args["asr_correction_rules"])

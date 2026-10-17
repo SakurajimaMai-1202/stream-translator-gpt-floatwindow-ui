@@ -609,3 +609,11 @@ def test_one_kana_stem_is_not_split_into_word_and_particle():
     assert localize_residual_kana(request, '那個もの') == '那個Mono'
     assert localize_residual_kana(request, '是おに嗎') == '是Oni嗎'
     assert localize_residual_kana(request, 'Shino，さんは') == 'Shino，桑'
+
+
+def test_builtin_nested_terms_only_require_the_longest_match():
+    from stream_translator_gpt.translation_policy import _matching_glossary
+    glossary = {"ツイート": "推文", "リツイート": "轉推", "塩釜焼き": "鹽釜燒", "鯛の塩釜焼き": "鹽釜烤鯛魚"}
+    assert _matching_glossary("リツイートありがとう", glossary) == {"リツイート": "轉推"}
+    assert _matching_glossary("鯛の塩釜焼きを作った", glossary) == {"鯛の塩釜焼き": "鹽釜烤鯛魚"}
+    assert _matching_glossary("ツイートした", glossary) == {"ツイート": "推文"}

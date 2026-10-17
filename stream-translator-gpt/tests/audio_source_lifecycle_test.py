@@ -267,3 +267,11 @@ def test_ffmpeg_403_404_must_repeat_before_giving_up(message):
         getter._check_stream_error(message)
     with pytest.raises(RuntimeError, match='串流設定錯誤'):
         getter._check_stream_error(message)
+
+
+def test_ffmpeg_denial_with_changing_pointers_still_gives_up():
+    getter = audio_getter.StreamAudioGetter('https://example.com/live', 'ba', '', '')
+    for attempt in range(4):
+        getter._check_stream_error(f'[https @ 00000{attempt}a1b3c4d5e0] HTTP error 403 Forbidden')
+    with pytest.raises(RuntimeError, match='403'):
+        getter._check_stream_error('[https @ 0000099999999] Server returned 403 Forbidden (access denied)')

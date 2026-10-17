@@ -21,6 +21,7 @@ from .common import AudioSourceQueue, AUDIO_STREAM_GAP, SAMPLE_RATE, SAMPLES_PER
 
 
 # Definite configuration failures; ambiguous extractor/decoder failures need repetition.
+_HTTP_DENIED = '來源拒絕存取或不存在（403／404）'
 _STREAM_CONFIG_ERRORS = (
     (r'unsupported url|invalid url|not a valid url', '網址無效或不受支援', True),
     (r'no module named [\'"]?yt_dlp|ffmpeg.*(?:not found|not installed)', '缺少 yt-dlp 或 ffmpeg', True),
@@ -28,8 +29,8 @@ _STREAM_CONFIG_ERRORS = (
     # yt-dlp reports "HTTP Error 403: Forbidden". ffmpeg's "HTTP error 404 Not
     # Found" / "Server returned 403" can be a live playlist that is not ready
     # yet, so it must repeat before the stream is given up.
-    (r'http error\s*(?:403|404):', '來源拒絕存取或不存在（403／404）', True),
-    (r'(?:http(?: error)?|server returned)\s*(?:403|404)\b', '來源拒絕存取或不存在（403／404）', False),
+    (r'http error\s*(?:403|404):', _HTTP_DENIED, True),
+    (r'(?:http(?: error)?|server returned)\s*(?:403|404)\b', _HTTP_DENIED, False),
     (r'this video is private|private video|members.only|sign in to confirm', '來源需要登入或會員權限', True),
     (r'cookies?.*(?:no such file|not found)', 'Cookies 檔案不存在', True),
     (r'unable to extract|invalid data found when processing input', '無法解析來源音訊', False),
@@ -410,7 +411,9 @@ class StreamAudioGetter(LoopWorkerBase):
                     reason, permanent = label, definite
                     break
         if reason and not permanent and not self._received_audio:
-            signature = text.strip()
+            # ffmpeg lines carry a per-process pointer ("[https @ 0x…]") and often
+            # a signed URL, so the same denial never repeats as identical text.
+            signature = reason if reason == _HTTP_DENIED else text.strip()
             self._startup_failures = self._startup_failures + 1 if signature == self._startup_error else 1
             self._startup_error = signature
             permanent = self._startup_failures >= 5

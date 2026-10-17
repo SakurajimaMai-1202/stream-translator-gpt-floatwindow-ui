@@ -163,4 +163,7 @@ def test_new_installs_ship_general_livestream_terms(tmp_path):
     assert config["translation"]["translation_glossary_scope"] == "general_chat"
     assert config["transcription"]["asr_corrections_enabled"] is True
     args = manager.to_main_args(config)
-    assert {"canonical": "メン限", "aliases": ["面言"]} in json.loads(args["asr_correction_rules"])
+    rules = json.loads(args["asr_correction_rules"])
+    assert {"canonical": "ノンデリ", "aliases": ["のんでり"]} in rules
+    # 面言 would rewrite 当面言わない; it must not ship as a built-in variant.
+    assert all("面言" not in rule["aliases"] for rule in rules)

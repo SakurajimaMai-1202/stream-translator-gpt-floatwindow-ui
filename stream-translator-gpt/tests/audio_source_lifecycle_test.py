@@ -275,3 +275,9 @@ def test_ffmpeg_denial_with_changing_pointers_still_gives_up():
         getter._check_stream_error(f'[https @ 00000{attempt}a1b3c4d5e0] HTTP error 403 Forbidden')
     with pytest.raises(RuntimeError, match='403'):
         getter._check_stream_error('[https @ 0000099999999] Server returned 403 Forbidden (access denied)')
+
+
+def test_login_message_beats_an_ffmpeg_403_in_the_same_tail():
+    getter = audio_getter.StreamAudioGetter('https://example.com/live', 'ba', '', '')
+    with pytest.raises(RuntimeError, match='登入'):
+        getter._check_stream_error('Server returned 403 Forbidden\nERROR: Sign in to confirm your age')

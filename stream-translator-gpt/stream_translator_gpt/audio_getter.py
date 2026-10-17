@@ -28,11 +28,12 @@ _STREAM_CONFIG_ERRORS = (
     (r'requested format.*not available', '要求的音訊格式無法使用', True),
     # yt-dlp reports "HTTP Error 403: Forbidden". ffmpeg's "HTTP error 404 Not
     # Found" / "Server returned 403" can be a live playlist that is not ready
-    # yet, so it must repeat before the stream is given up.
+    # yet, so it must repeat before the stream is given up; it sits below the
+    # definite rules so a login or cookies message in the same tail wins.
     (r'http error\s*(?:403|404):', _HTTP_DENIED, True),
-    (r'(?:http(?: error)?|server returned)\s*(?:403|404)\b', _HTTP_DENIED, False),
     (r'this video is private|private video|members.only|sign in to confirm', '來源需要登入或會員權限', True),
     (r'cookies?.*(?:no such file|not found)', 'Cookies 檔案不存在', True),
+    (r'(?:http(?: error)?|server returned)\s*(?:403|404)\b', _HTTP_DENIED, False),
     (r'unable to extract|invalid data found when processing input', '無法解析來源音訊', False),
 )
 

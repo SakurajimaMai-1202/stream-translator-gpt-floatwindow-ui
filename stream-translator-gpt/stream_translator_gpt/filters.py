@@ -7,10 +7,12 @@ def emoji_filter(text: str):
 
 def symbol_filter(text: str):
     """
-    Filter used for SimulStreaming context to prevent hallucinations.
-    It removes symbols like ♪ and applies standard emoji filtering.
+    Filter used for ASR context to prevent hallucinations.
+    It removes symbols like ♪ and CJK quotes/brackets, and applies standard
+    emoji filtering. Quotes fed back as context make Whisper repeat them.
     """
     text = emoji_filter(text)
+    text = re.sub(r'[「」『』【】〈〉《》｢｣]', '', text)
 
     # Remove music notes which often trigger singing hallucinations
     # Also remove Miscellaneous Symbols (2600-26FF), Dingbats (2700-27BF),

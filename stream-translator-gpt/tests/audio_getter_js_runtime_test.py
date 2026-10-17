@@ -71,6 +71,8 @@ def test_ytdlp_command_enables_runtime_and_ejs(monkeypatch):
     assert command[command.index("--remote-components") + 1] == "ejs:github"
     assert command[command.index("--fragment-retries") + 1] == "infinite"
     assert command[command.index("--retry-sleep") + 1] == "fragment:1"
+    # ffmpeg errors must stay visible despite -q (upstream 17017d2).
+    assert command[command.index("--downloader-args") + 1] == "ffmpeg:-loglevel error"
 
 
 def test_resolve_js_runtime_finds_node_bundled_beside_runtime(monkeypatch, tmp_path):

@@ -121,3 +121,35 @@ def test_gemini_timeout_records_failure_releases_slot_and_retries(monkeypatch, r
         assert options["timeout"] == int(request_timeout * 1000)
         assert options["client_args"] == {"proxy": "http://proxy.invalid"}
         assert options["base_url"] == "https://gemini.invalid"
+
+
+def test_context_fed_back_to_asr_drops_quotes_but_transcript_keeps_them():
+    from stream_translator_gpt.filters import symbol_filter
+    assert symbol_filter("「今日」『は』【晴れ】〈だ〉《ね》｢よ｣♪") == "今日は晴れだねよ"
+    prompts = []
+
+    class FakeTranscriber(audio_transcriber.AudioTranscriber):
+        def transcribe(self, audio, initial_prompt=None):
+            prompts.append(initial_prompt)
+            return "彼は「行く」と言った", None
+
+    incoming, outgoing = queue.SimpleQueue(), queue.SimpleQueue()
+    tasks = [TranslationTask(np.zeros(0, dtype=np.float32), (0, 1)) for _ in range(2)]
+    for task in tasks:
+        incoming.put(task)
+    incoming.put(None)
+    FakeTranscriber().loop(incoming, outgoing)
+    assert prompts[1] == "彼は行くと言った"
+    assert tasks[1].transcript == "彼は「行く」と言った"
+
+
+@pytest.mark.parametrize("model, budget", [
+    ("gemini-2.5-flash", 0), ("gemini-2.5-flash-lite", 0), ("gemini-2.5-flash-preview-09-2025", 0),
+    ("models/gemini-2.5-flash", 0), ("Gemini-2.5-Flash-Lite", 0),
+    ("gemini-2.5-pro", None), ("gemini-3-flash-preview", None), ("gemini-2.0-flash", None),
+])
+def test_gemini_thinking_is_off_only_where_a_zero_budget_is_allowed(model, budget):
+    types = SimpleNamespace(ThinkingConfig=lambda **kwargs: SimpleNamespace(**kwargs))
+    config = llm_translator._gemini_thinking_config(types, model)
+    assert getattr(config, "thinking_budget", None) == budget
+    assert config.include_thoughts is False

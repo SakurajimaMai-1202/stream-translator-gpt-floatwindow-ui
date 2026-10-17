@@ -672,7 +672,7 @@ class LLMClient():
             max_output_tokens=self.max_output_tokens,
             stop_sequences=None if prepared.output_format == "json" else ['\n'],
             system_instruction=prepared.system_instruction,
-            thinking_config=types.ThinkingConfig(include_thoughts=False),
+            thinking_config=_gemini_thinking_config(types, self.model),
             response_mime_type='application/json' if prepared.output_format == "json" else 'text/plain',
             safety_settings=[
                 types.SafetySetting(category='HARM_CATEGORY_HARASSMENT', threshold='BLOCK_NONE'),
@@ -745,6 +745,13 @@ class LLMClient():
                 except Exception as audit_error:
                     print(f'[WARNING] Translation glossary audit failed: {audit_error}', flush=True)
             translation_task._translation_inflight = False
+
+
+def _gemini_thinking_config(types, model):
+    if str(model).lower().removeprefix("models/").startswith("gemini-2.5-flash"):
+        # A zero budget disables thinking for Gemini 2.5 Flash.
+        return types.ThinkingConfig(thinking_budget=0, include_thoughts=False)
+    return types.ThinkingConfig(include_thoughts=False)
 
 
 class ParallelTranslator(LoopWorkerBase):

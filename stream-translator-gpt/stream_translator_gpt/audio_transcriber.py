@@ -29,6 +29,10 @@ from .asr_postprocessor import (
 )
 from .qwen3_asr_postprocess import normalize_chinese_script, strip_qwen3_asr_markers
 
+# Upstream fe27308. Set to "0" (or false/off/no) to compare against the unfiltered context.
+FILTER_CONTEXT_SYMBOLS = os.environ.get("STREAM_TRANSLATOR_CONTEXT_SYMBOL_FILTER", "1").strip().lower() not in {
+    "0", "false", "off", "no"}
+
 
 def compression_ratio(text: str) -> float:
     encoded = text.encode('utf-8')
@@ -176,6 +180,8 @@ class AudioTranscriber(LoopWorkerBase):
                 )
 
             dynamic_context = previous_text if not self.disable_transcription_context else ""
+            if FILTER_CONTEXT_SYMBOLS:
+                dynamic_context = filters.symbol_filter(dynamic_context)
 
             if self.constant_prompt:
                 limit = 500 - len(self.constant_prompt) - 1

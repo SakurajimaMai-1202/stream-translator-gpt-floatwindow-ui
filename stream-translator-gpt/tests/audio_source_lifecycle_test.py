@@ -256,3 +256,14 @@ def test_eof_gap_precedes_cleanup_and_metadata(monkeypatch):
     getter.loop(output)
     assert output.get_nowait() is None
     assert output.empty()
+
+
+@pytest.mark.parametrize('message', ['[https @ 000001] HTTP error 404 Not Found', 'Server returned 403 Forbidden'])
+def test_ffmpeg_403_404_must_repeat_before_giving_up(message):
+    # A live playlist can 404 briefly before it is ready; only yt-dlp's own
+    # "HTTP Error 403:" line is definite.
+    getter = audio_getter.StreamAudioGetter('https://example.com/live', 'ba', '', '')
+    for _ in range(4):
+        getter._check_stream_error(message)
+    with pytest.raises(RuntimeError, match='串流設定錯誤'):
+        getter._check_stream_error(message)

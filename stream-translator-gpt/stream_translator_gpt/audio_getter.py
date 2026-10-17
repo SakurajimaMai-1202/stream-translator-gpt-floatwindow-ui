@@ -25,7 +25,11 @@ _STREAM_CONFIG_ERRORS = (
     (r'unsupported url|invalid url|not a valid url', '網址無效或不受支援', True),
     (r'no module named [\'"]?yt_dlp|ffmpeg.*(?:not found|not installed)', '缺少 yt-dlp 或 ffmpeg', True),
     (r'requested format.*not available', '要求的音訊格式無法使用', True),
-    (r'(?:http(?: error)?|server returned)\s*(?:403|404)\b', '來源拒絕存取或不存在（403／404）', True),
+    # yt-dlp reports "HTTP Error 403: Forbidden". ffmpeg's "HTTP error 404 Not
+    # Found" / "Server returned 403" can be a live playlist that is not ready
+    # yet, so it must repeat before the stream is given up.
+    (r'http error\s*(?:403|404):', '來源拒絕存取或不存在（403／404）', True),
+    (r'(?:http(?: error)?|server returned)\s*(?:403|404)\b', '來源拒絕存取或不存在（403／404）', False),
     (r'this video is private|private video|members.only|sign in to confirm', '來源需要登入或會員權限', True),
     (r'cookies?.*(?:no such file|not found)', 'Cookies 檔案不存在', True),
     (r'unable to extract|invalid data found when processing input', '無法解析來源音訊', False),
@@ -127,7 +131,7 @@ def _build_ytdlp_command(url: str,
                          ffmpeg_dir: str | None = None,
                          js_runtime_arg: str | None = None) -> list[str]:
     """建構 yt-dlp 命令列，方便重用與測試。"""
-    cmd = _resolve_ytdlp_command() + [url, '-f', format, '-o', '-', '-q']
+    cmd = _resolve_ytdlp_command() + [url, '-f', format, '-o', '-', '-q', '--downloader-args', 'ffmpeg:-loglevel error']
     _append_site_specific_ytdlp_args(cmd, url)
 
     if ffmpeg_dir:

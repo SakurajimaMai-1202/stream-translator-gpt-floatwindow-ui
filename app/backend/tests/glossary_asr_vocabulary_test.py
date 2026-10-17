@@ -12,9 +12,10 @@ def _config(manager, backend, **terminology):
              "use_sensevoice_asr": "sensevoice", "use_nemo_asr": "parakeet-ctc-ja"}
     config["transcription"].update({flag: name == backend for flag, name in flags.items()})
     config["transcription"].update({"backend": backend, "transcription_initial_prompt": "手打ち",
-                                    "asr_correction_rules": [{"canonical": "すいちゃん", "aliases": ["スイちゃん", "らスイちゃ"]}]})
-    config["translation"]["translation_glossary_scope"] = "cosplay"
+                                    "asr_correction_rules": []})
+    config["terminology"]["active_categories"] = ["general_chat", "cosplay"]
     config["terminology"].update({"use_terminology_glossary": True, "glossary_to_asr_prompt": True, "glossary_list": [
+        {"original": "すいちゃん", "translated": "", "aliases": ["スイちゃん", "らスイちゃ"], "scope": "all"},
         {"original": "リハさん", "translated": "Riha桑", "aliases": ["ツイハさん", "リハーサルさん"], "scope": "cosplay"},
         {"original": "らスイちゃ", "translated": "Sui醬", "scope": "all"},
         {"original": "別情境", "translated": "x", "aliases": ["別情况"], "scope": "hololive_vtuber"},
@@ -22,11 +23,11 @@ def _config(manager, backend, **terminology):
     return config
 
 
-def test_glossary_aliases_become_asr_corrections_after_manual_rules(tmp_path):
+def test_glossary_aliases_become_safe_asr_corrections(tmp_path):
     manager = ConfigManager(tmp_path / "config.yaml")
     # Corrections work for every engine, including ones without a prompt.
     rules = json.loads(manager.to_main_args(_config(manager, "qwen3-asr"))["asr_correction_rules"])
-    assert rules[0] == {"canonical": "すいちゃん", "aliases": ["スイちゃん", "らスイちゃ"]}
+    assert rules[0] == {"canonical": "すいちゃん", "aliases": ["スイちゃん"]}
     assert {"canonical": "リハさん", "aliases": ["ツイハさん", "リハーサルさん"]} in rules
     assert {"canonical": "マシュマロ", "aliases": ["マシュモロ", "マシモロ"]} in rules
     # Other scopes' rows stay out of this session.
@@ -52,13 +53,12 @@ def test_glossary_originals_reach_only_prompt_capable_asr(tmp_path, backend, pro
         assert prompt == "手打ち"
 
 
-def test_vocabulary_switches_turn_each_feed_off(tmp_path):
+def test_prompt_switch_does_not_disable_asr_rules(tmp_path):
     manager = ConfigManager(tmp_path / "config.yaml")
     manager._coerce_transcription_backend = lambda requested, capabilities: requested
     assert manager.to_main_args(_config(manager, "faster-whisper"))["transcription_initial_prompt"] != "手打ち"
-    args = manager.to_main_args(_config(manager, "faster-whisper", glossary_to_asr_corrections=False,
-                                        glossary_to_asr_prompt=False))
-    assert json.loads(args["asr_correction_rules"]) == [{"canonical": "すいちゃん", "aliases": ["スイちゃん", "らスイちゃ"]}]
+    args = manager.to_main_args(_config(manager, "faster-whisper", glossary_to_asr_prompt=False))
+    assert args["asr_correction_rules"] == manager.to_main_args(_config(manager, "faster-whisper"))["asr_correction_rules"]
     assert args["transcription_initial_prompt"] == "手打ち"
     config = _config(manager, "faster-whisper", use_terminology_glossary=False)
     assert manager.to_main_args(config)["transcription_initial_prompt"] == "手打ち"
@@ -74,10 +74,13 @@ def test_hotwords_stay_within_budget():
 
 def test_aliases_cannot_expand_correct_originals():
     terminology = {"glossary_list": [
-        {"original": "桜島麻衣", "aliases": ["麻衣", "桜島麻衣", "マイ", "別名"]},
-        {"original": "マイ", "scope": "cosplay"}, {"original": "別名", "scope": "other"},
+        {"original": "桜島麻衣", "translated": "櫻島麻衣", "aliases": ["麻衣", "桜島麻衣", "マイ", "別名", "ナナ", "メイ"]},
+        {"original": "マイ", "translated": "Mai", "scope": "cosplay"}, {"original": "別名", "scope": "other"},
+        # Same meaning or no translation of its own: rewriting it changes nothing.
+        {"original": "ナナ", "translated": "櫻島麻衣"}, {"original": "メイ"},
     ]}
-    assert glossary_asr_rules(terminology, "cosplay")[0] == {"canonical": "桜島麻衣", "aliases": ["別名"]}
+    assert glossary_asr_rules(terminology, "cosplay")[0] == {
+        "canonical": "桜島麻衣", "aliases": ["別名", "ナナ", "メイ"]}
 
 
 def test_all_scope_does_not_duplicate_global_rows():
@@ -100,7 +103,7 @@ def test_prompt_strips_trailing_separators(tmp_path, typed):
     manager._coerce_transcription_backend = lambda requested, capabilities: requested
     config = _config(manager, "faster-whisper")
     config["transcription"]["transcription_initial_prompt"] = typed
-    assert manager.to_main_args(config)["transcription_initial_prompt"] == "手打ち, リハさん"
+    assert manager.to_main_args(config)["transcription_initial_prompt"] == "手打ち, リハさん, すいちゃん"
 
 
 @pytest.mark.parametrize('length, expected_words', [(294, True), (295, False), (300, False), (301, False)])
@@ -115,12 +118,13 @@ def test_combined_prompt_budget(tmp_path, length, expected_words):
     assert len(prompt) <= max(300, length)
 
 
-def test_legacy_glossary_keys_follow_scoped_rows(tmp_path):
+def test_migrated_legacy_glossary_keys_follow_scoped_rows(tmp_path):
     manager = ConfigManager(tmp_path / "config.yaml")
     manager._coerce_transcription_backend = lambda requested, capabilities: requested
     config = _config(manager, "faster-whisper", terminology_glossary={"旧辞書": "舊字典", "リハさん": "Riha"})
-    config["terminology"]["glossary_list"].append({"original": "非使用全域", "scope": "all"})
-    assert manager.to_main_args(config)["transcription_initial_prompt"] == "手打ち, リハさん, 旧辞書"
+    config["terminology"].pop("schema_version")
+    config, _ = manager._migrate_legacy_config(config)
+    assert manager.to_main_args(config)["transcription_initial_prompt"] == "手打ち, リハさん, すいちゃん, 旧辞書"
 
 
 def test_asr_prompt_feed_is_opt_in(tmp_path):
@@ -146,10 +150,12 @@ def test_alias_inside_another_original_is_not_a_correction():
 def test_builtin_asr_variants_apply_without_user_glossary(tmp_path):
     manager = ConfigManager(tmp_path / "config.yaml")
     config = _config(manager, "qwen3-asr", use_terminology_glossary=False)
-    config["translation"]["translation_glossary_scope"] = "general_chat"
+    config["terminology"]["active_categories"] = ["general_chat"]
     rules = json.loads(manager.to_main_args(config)["asr_correction_rules"])
     assert {"canonical": "ノンデリ", "aliases": ["のんでり"]} in rules
-    # The user's own aliases stay off with 我的詞條.
+    # 我的詞條 only gates translation: active user rows still correct ASR,
+    # rows in an inactive category (リハさん is under cosplay) do not.
+    assert {"canonical": "すいちゃん", "aliases": ["スイちゃん", "らスイちゃ"]} in rules
     assert all(rule["canonical"] != "リハさん" for rule in rules)
 
 
@@ -160,7 +166,7 @@ def test_new_installs_ship_general_livestream_terms(tmp_path):
     shutil.copy(example, tmp_path / "config.yaml")
     manager = ConfigManager(tmp_path / "config.yaml")
     config = manager.get_config()
-    assert config["translation"]["translation_glossary_scope"] == "general_chat"
+    assert config["terminology"]["active_categories"] == ["general_chat"]
     assert config["transcription"]["asr_corrections_enabled"] is True
     args = manager.to_main_args(config)
     rules = json.loads(args["asr_correction_rules"])

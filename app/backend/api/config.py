@@ -42,8 +42,12 @@ def _read_config(method="get_config"):
 @router.get("/hy-mt2-glossary-presets")
 async def get_hy_mt2_glossary_presets():
     """Expose built-in profiles so the editor previews the runtime source of truth."""
-    from backend.core.hy_mt2_glossary_presets import PRESETS
-    return {name: dict(terms) for name, terms in PRESETS.items()}
+    from backend.core.hy_mt2_glossary_presets import PRESETS, CATEGORY_LABELS, PRESET_ASR_VARIANTS
+    return {"categories": [
+        {"id": name, "label": CATEGORY_LABELS[name], "terms": dict(terms),
+         "asr_variants": {source: list(aliases) for source, aliases in PRESET_ASR_VARIANTS[name].items()}}
+        for name, terms in PRESETS.items()
+    ]}
 
 
 @router.post("/hy-mt2-health")

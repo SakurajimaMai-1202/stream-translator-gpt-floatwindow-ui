@@ -46,12 +46,12 @@ def test_index_shared_scope_and_relative_folder(tmp_path):
     config['translation'].update({'index_translate_optimizer_enabled': True,
         'translation_model_family': 'index_translate', 'translation_glossary_scope': 'game',
         'index_translate_glossary_folder': 'glossary'})
-    config['terminology'].update({'use_terminology_glossary': True, 'glossary_list': [
+    config['terminology'].update({'active_categories': ['game'], 'use_terminology_glossary': True, 'glossary_list': [
         {'original': 'すいちゃん', 'translated': '小彗', 'scope': 'game', 'aliases': ['すい']},
         {'original': '包丁', 'translated': '菜刀', 'scope': 'cooking'}]})
     args = manager.to_main_args(config)
-    assert json.loads(args['translation_glossary']) == {'すいちゃん': '小彗'}
-    assert json.loads(args['index_translate_aliases']) == {'すい': '小彗'}
+    assert json.loads(args['translation_glossary']) == {'すいちゃん': '小彗', 'すい': '小彗'}
+    assert json.loads(args['index_translate_aliases']) == {'すいちゃん': '小彗', 'すい': '小彗'}
     assert args['index_translate_glossary_folder'] == str(tmp_path / 'glossary')
 
 
@@ -104,7 +104,7 @@ def test_family_auth_header_is_isolated_and_preview_off_switch_has_alias_data(tm
         'use_terminology_glossary': True, 'glossary_list': [
         {'original': 'すいちゃん', 'translated': '小彗', 'aliases': ['すい']} ]}})
     args = api._resolve_preview_args(request)
-    assert json.loads(args['index_translate_aliases']) == {'すい': '小彗'}
+    assert json.loads(args['index_translate_aliases']) == {'すいちゃん': '小彗', 'すい': '小彗'}
     assert args['openai_api_key'] == 'test-local-secret'
     original_openai = openai.OpenAI
     headers = []

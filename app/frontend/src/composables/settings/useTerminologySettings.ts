@@ -1,284 +1,166 @@
 import { ref, computed, watch, nextTick, toRaw, type Ref } from 'vue';
 import type { useTranslationStore } from '../../stores/translation';
 
+type Term = { original: string; translated: string; aliases: string[]; scope: string };
+type Category = { id: string; label: string; terms: Record<string, string>; asr_variants: Record<string, string[]> };
+export function normalizeTermAliases(value: unknown): string[] {
+  return [...new Set((Array.isArray(value) ? value : String(value || '').split(/[,，、\n]/)).map(value => String(value).trim()).filter(Boolean))];
+}
 export function useTerminologySettings(localConfig: Ref<any>, store: ReturnType<typeof useTranslationStore>, saveBulkImport: (section: 'terminology' | 'transcription', applyImport: () => void) => Promise<void>) {
+  const presetCategories = ref<Category[]>([]);
+  const presetLoadError = ref(false);
   const glossaryImporting = ref(false);
-  const asrCorrectionsImporting = ref(false);
   const newTermOriginal = ref('');
   const newTermTranslated = ref('');
   const newTermAliases = ref('');
   const newTermScope = ref('all');
-  const glossaryEntryForm = ref<HTMLElement | null>(null);
-  const glossaryUserList = ref<HTMLElement | null>(null);
-  const termSearchQuery = ref('');
-  const terminologySubTab = ref<'translation' | 'asr'>('translation');
-  const expandedGlossaryTerm = ref<any | null>(null);
-  const selectedGlossaryTerms = ref<any[]>([]);
-  const bulkGlossaryScope = ref('hololive_vtuber');
-  const removedGlossaryTerm = ref<{ term: any; index: number } | null>(null);
-  const glossaryListMode = ref<'active' | 'all' | 'global'>('active');
-  const presetGlossaries = ref<Record<string, Record<string, string>>>({});
-  const builtinGlossaryScopeOptions = [
-    { value: 'all', label: '所有直播' },
-    { value: 'general_chat', label: '日文雜談' },
-    { value: 'hololive_vtuber', label: 'Hololive／VTuber 雜談' },
-    { value: 'cosplay', label: 'Cosplay 雜談' },
-  ];
-  const customGlossaryScopes = computed<{ value: string; label: string }[]>(() =>
-    Array.isArray(localConfig.value.terminology?.custom_glossary_scopes)
-      ? localConfig.value.terminology.custom_glossary_scopes.filter((scope: any) =>
-        typeof scope?.value === 'string' && scope.value.startsWith('custom_') && typeof scope?.label === 'string')
-      : []);
-  const glossaryScopeOptions = computed(() => [...builtinGlossaryScopeOptions, ...customGlossaryScopes.value]);
   const newGlossaryScopeName = ref('');
+  const termSearchQuery = ref('');
+  const glossaryListMode = ref('all');
   const editingGlossaryScope = ref('');
   const editingGlossaryScopeName = ref('');
-  const selectedGlossaryPreset = computed(() => String(localConfig.value.translation?.translation_glossary_scope ?? localConfig.value.translation?.hy_mt2_glossary_preset ?? ''));
-  const selectedGlossaryPresetLabel = computed(() => glossaryScopeOptions.value.find(option => option.value === selectedGlossaryPreset.value)?.label || '不加情境詞表');
-  const activeUserGlossaryRows = computed<any[]>(() => {
-    const rows: any[] = localConfig.value.terminology?.glossary_list || [];
-    const globalRows = rows.filter(row => String(row?.scope || 'all') === 'all');
-    const scopedRows = rows.filter(row => selectedGlossaryPreset.value && row?.scope === selectedGlossaryPreset.value);
-    return [...globalRows, ...scopedRows];
-  });
-  const userGlossaryBySource = computed(() => {
-    const values = new Map<string, string>();
-    if (!localConfig.value.terminology?.use_terminology_glossary) return values;
-    const legacy = localConfig.value.terminology?.terminology_glossary || {};
-    if (Object.keys(legacy).length > 0) {
-      for (const [source, target] of Object.entries(legacy)) values.set(source, String(target));
-    } else {
-      for (const row of activeUserGlossaryRows.value) {
-        if (row.original?.trim() && row.translated?.trim()) values.set(row.original.trim(), row.translated.trim());
-      }
-    }
-    return values;
-  });
-  const selectedPresetPreview = computed(() => Object.entries(presetGlossaries.value[selectedGlossaryPreset.value] || {}).map(([source, target]) => ({
-    source, target, override: userGlossaryBySource.value.get(source),
-  })));
-  const activeGlossaryRows = computed<any[]>(() => {
-    const legacy = localConfig.value.terminology?.terminology_glossary || {};
-    const userRows = !localConfig.value.terminology?.use_terminology_glossary ? []
-      : Object.keys(legacy).length
-        ? Object.entries(legacy).map(([original, translated]) => ({ original, translated: String(translated), legacy: true }))
-        : [...new Map(activeUserGlossaryRows.value.map(row => [row.original?.trim(), row])).values()];
-    const userSources = new Set(userRows.map(row => row.original?.trim()));
-    const builtinRows = selectedPresetPreview.value
-      .filter(term => !userSources.has(term.source))
-      .map(term => ({ original: term.source, translated: term.target, scope: selectedGlossaryPreset.value, builtin: true }));
-    return [...userRows, ...builtinRows];
-  });
+  const deletingScope = ref('');
+  const highlightedTerm = ref<Term | null>(null);
+  const removedGlossaryTerm = ref<{ term: Term; index: number } | null>(null);
+  const expandedGroups = ref<Record<string, boolean>>({});
+  const groupLimits = ref<Record<string, number>>({});
+  const rowElements = new WeakMap<Term, HTMLElement>();
+  const rows = computed<Term[]>(() => localConfig.value.terminology.glossary_list || []);
+  const customGlossaryScopes = computed<{ value: string; label: string }[]>(() => localConfig.value.terminology.custom_glossary_scopes || []);
+  const glossaryScopeOptions = computed(() => [{ value: 'all', label: '一般' }, ...presetCategories.value.map(c => ({ value: c.id, label: c.label })), ...customGlossaryScopes.value]);
+  const activeCategories = computed<string[]>(() => ['all', ...(localConfig.value.terminology.active_categories || [])]);
+  const activeCategoryLabels = computed(() => glossaryScopeOptions.value.filter(c => activeCategories.value.includes(c.value)).map(c => c.label).join('、'));
+  const isActive = (id: string) => activeCategories.value.includes(id);
+  const isBuiltinEnabled = (category: string, source: string) => !(localConfig.value.terminology.builtin_disabled || []).some((entry: any) => entry.category === category && entry.source === source);
   const effectiveGlossaryCount = computed(() => {
-    const sources = new Set(userGlossaryBySource.value.keys());
-    for (const term of selectedPresetPreview.value) sources.add(term.source);
+    const sources = new Set<string>();
+    for (const c of presetCategories.value.filter(c => isActive(c.id))) {
+      for (const source of Object.keys(c.terms)) if (isBuiltinEnabled(c.id, source)) sources.add(source);
+    }
+    if (localConfig.value.terminology.use_terminology_glossary) {
+      for (const row of rows.value) if (isActive(row.scope || 'all') && row.original.trim() && row.translated.trim()) sources.add(row.original.trim());
+    }
     return sources.size;
   });
-  const newAsrCanonical = ref('');
-  const newAsrAliases = ref('');
-  const asrCorrectionSearchQuery = ref('');
-  const LARGE_LIST_BATCH_SIZE = 100;
-  const GLOSSARY_PAGE_SIZE = 20;
-  const glossaryRenderLimit = ref(GLOSSARY_PAGE_SIZE);
-  const asrCorrectionRenderLimit = ref(LARGE_LIST_BATCH_SIZE);
-
-  // 過濾後的術語表
-  const filteredGlossary = computed(() => {
-    const allRows = localConfig.value.terminology?.glossary_list || [];
-    const list = glossaryListMode.value === 'active' ? activeGlossaryRows.value
-      : glossaryListMode.value === 'global' ? allRows.filter((row: any) => String(row?.scope || 'all') === 'all')
-      : allRows;
-    if (!termSearchQuery.value.trim()) return list;
-    const query = termSearchQuery.value.toLowerCase();
-    return list.filter((item: any) => 
-      item.original?.toLowerCase().includes(query) ||
-      item.translated?.toLowerCase().includes(query)
-    );
+  const groups = computed(() => glossaryScopeOptions.value.map(category => {
+    const preset = presetCategories.value.find(c => c.id === category.value);
+    const users = rows.value.filter(row => (row.scope || 'all') === category.value);
+    const builtins = preset ? [...new Set([...Object.keys(preset.terms), ...Object.keys(preset.asr_variants || {})])].filter(original => !users.some(row => row.original.trim() === original)).map(original => ({ original, translated: preset.terms[original] || '', aliases: preset.asr_variants?.[original] || [], scope: category.value })) : [];
+    const query = termSearchQuery.value.trim().toLocaleLowerCase();
+    const matches = (row: Term) => [row.original, row.translated, ...normalizeTermAliases(row.aliases)].some(value => value.toLocaleLowerCase().includes(query));
+    const entries = [...users.map(term => ({ term, builtin: false })), ...(glossaryListMode.value === 'mine' ? [] : builtins.map(term => ({ term, builtin: true })))].filter(entry => matches(entry.term));
+    return { ...category, count: entries.length, applicableCount: entries.filter(entry => entry.builtin ? isBuiltinEnabled(category.value, entry.term.original) : localConfig.value.terminology.use_terminology_glossary).length, entries, visible: entries.slice(0, groupLimits.value[category.value] || 50) };
+  }).filter(group => (glossaryListMode.value !== 'active' || isActive(group.value)) && (!termSearchQuery.value.trim() || group.entries.length)));
+  // Chip counts ignore the list's search and filter: a chip must show what the
+  // category holds even while its group is hidden from the list.
+  const categoryCounts = computed(() => Object.fromEntries(glossaryScopeOptions.value.map(category => {
+    const preset = presetCategories.value.find(c => c.id === category.value);
+    const users = rows.value.filter(row => (row.scope || 'all') === category.value && row.original.trim());
+    const overridden = new Set(users.map(row => row.original.trim()));
+    const builtins = preset ? [...new Set([...Object.keys(preset.terms), ...Object.keys(preset.asr_variants || {})])]
+      .filter(original => !overridden.has(original) && isBuiltinEnabled(category.value, original)) : [];
+    return [category.value, { mine: users.length, applicable: builtins.length + (localConfig.value.terminology.use_terminology_glossary ? users.length : 0) }];
+  })) as Record<string, { mine: number; applicable: number }>);
+  watch(activeCategories, active => {
+    newTermScope.value = active.find(id => customGlossaryScopes.value.some(c => c.value === id)) || 'all';
+    for (const id of active) expandedGroups.value[id] = true;
+  }, { immediate: true });
+  watch([termSearchQuery, glossaryListMode], () => {
+    groupLimits.value = {};
+    if (termSearchQuery.value.trim()) for (const c of glossaryScopeOptions.value) expandedGroups.value[c.value] = true;
   });
-
-  const filteredAsrCorrections = computed(() => {
-    const rules = localConfig.value.transcription?.asr_correction_rules || [];
-    const query = asrCorrectionSearchQuery.value.trim().toLowerCase();
-    if (!query) return rules;
-    return rules.filter((rule: any) =>
-      rule.canonical?.toLowerCase().includes(query) ||
-      (rule.aliases || []).some((alias: string) => alias.toLowerCase().includes(query))
-    );
-  });
-
-  const visibleGlossary = computed(() => filteredGlossary.value.slice(0, glossaryRenderLimit.value));
-  const visibleAsrCorrections = computed(() => filteredAsrCorrections.value.slice(0, asrCorrectionRenderLimit.value));
-
-  watch(termSearchQuery, () => {
-    glossaryRenderLimit.value = GLOSSARY_PAGE_SIZE;
-  });
-  watch(selectedGlossaryPreset, (preset) => {
-    newTermScope.value = preset || 'all';
-    glossaryRenderLimit.value = GLOSSARY_PAGE_SIZE;
-  });
-  watch(glossaryListMode, () => {
-    glossaryRenderLimit.value = GLOSSARY_PAGE_SIZE;
-  });
-  watch(asrCorrectionSearchQuery, () => {
-    asrCorrectionRenderLimit.value = LARGE_LIST_BATCH_SIZE;
-  });
+  function toggleCategory(id: string, enabled: boolean) {
+    if (id === 'all') return;
+    localConfig.value.terminology.active_categories = [...new Set(activeCategories.value.filter(value => value !== 'all' && value !== id).concat(enabled ? [id] : []))];
+  }
+  function toggleBuiltin(category: string, source: string, enabled: boolean) {
+    const entries = (localConfig.value.terminology.builtin_disabled || []).filter((entry: any) => entry.category !== category || entry.source !== source);
+    localConfig.value.terminology.builtin_disabled = enabled ? entries : [...entries, { category, source }];
+  }
   function addGlossaryScope() {
     const label = newGlossaryScopeName.value.trim();
     if (!label) return;
-    if (glossaryScopeOptions.value.some(scope => scope.label.toLocaleLowerCase() === label.toLocaleLowerCase())) {
-      store.statusMessage = '已有同名情境，請換一個名稱';
-      return;
-    }
-    const value = `custom_${crypto.randomUUID()}`;
-    if (!Array.isArray(localConfig.value.terminology.custom_glossary_scopes)) {
-      localConfig.value.terminology.custom_glossary_scopes = [];
-    }
-    localConfig.value.terminology.custom_glossary_scopes.push({ value, label });
-    localConfig.value.translation.translation_glossary_scope = value;
+    if (glossaryScopeOptions.value.some(c => c.label.toLocaleLowerCase() === label.toLocaleLowerCase())) { store.statusMessage = '已有同名分類'; return; }
+    const value = `custom_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    localConfig.value.terminology.custom_glossary_scopes = [...customGlossaryScopes.value, { value, label }];
+    toggleCategory(value, true);
     newGlossaryScopeName.value = '';
-    store.statusMessage = `已建立「${label}」，儲存設定後可在翻譯時使用`;
   }
-
-  function renameGlossaryScope(scope: { value: string; label: string }) {
+  function renameGlossaryScope(id: string) {
     const label = editingGlossaryScopeName.value.trim();
     if (!label) return;
-    if (glossaryScopeOptions.value.some(other => other.value !== scope.value && other.label.toLocaleLowerCase() === label.toLocaleLowerCase())) {
-      store.statusMessage = '已有同名情境，請換一個名稱';
-      return;
-    }
-    scope.label = label;
+    if (glossaryScopeOptions.value.some(c => c.value !== id && c.label.toLocaleLowerCase() === label.toLocaleLowerCase())) { store.statusMessage = '已有同名分類'; return; }
+    const scope = customGlossaryScopes.value.find(c => c.value === id);
+    if (scope) scope.label = label;
     editingGlossaryScope.value = '';
   }
-
-  function removeGlossaryScope(scope: { value: string; label: string }) {
-    const count = (localConfig.value.terminology.glossary_list || []).filter((term: any) => term.scope === scope.value).length;
-    if (count) {
-      store.statusMessage = `「${scope.label}」還有 ${count} 筆詞條，請先將詞條移到其他情境`;
-      glossaryListMode.value = 'all';
-      return;
+  function removeGlossaryScope(id: string, move: boolean) {
+    const remaining = rows.value.filter(row => row.scope !== id);
+    if (move) for (const row of rows.value.filter(row => row.scope === id)) {
+      const existing = remaining.find(other => other.original === row.original && (other.scope || 'all') === 'all');
+      if (existing) { existing.aliases = normalizeTermAliases([...normalizeTermAliases(existing.aliases), ...normalizeTermAliases(row.aliases)]); if (!existing.translated) existing.translated = row.translated; }
+      else remaining.push({ ...row, scope: 'all' });
     }
-    localConfig.value.terminology.custom_glossary_scopes = customGlossaryScopes.value.filter(item => item.value !== scope.value);
-    if (selectedGlossaryPreset.value === scope.value) localConfig.value.translation.translation_glossary_scope = '';
-    if (newTermScope.value === scope.value) newTermScope.value = 'all';
-    if (bulkGlossaryScope.value === scope.value) bulkGlossaryScope.value = 'all';
-    editingGlossaryScope.value = '';
+    localConfig.value.terminology.glossary_list = remaining;
+    localConfig.value.terminology.custom_glossary_scopes = customGlossaryScopes.value.filter(c => c.value !== id);
+    toggleCategory(id, false);
+    removedGlossaryTerm.value = null;
+    deletingScope.value = '';
   }
-
+  async function focusTerm(term: Term) {
+    glossaryListMode.value = 'all';
+    termSearchQuery.value = '';
+    expandedGroups.value[term.scope || 'all'] = true;
+    groupLimits.value[term.scope || 'all'] = Math.max(50, rows.value.filter(row => row.scope === term.scope).indexOf(term) + 1);
+    highlightedTerm.value = term;
+    await nextTick();
+    const element = rowElements.get(term);
+    element?.scrollIntoView({ block: 'center' });
+    element?.querySelector('input')?.focus();
+  }
   function addTerm() {
-    if (!newTermOriginal.value.trim() || !newTermTranslated.value.trim()) return;
-    if (!localConfig.value.terminology.glossary_list) {
-      localConfig.value.terminology.glossary_list = [];
-    }
     const original = newTermOriginal.value.trim();
-    if (localConfig.value.terminology.glossary_list.some((term: any) =>
-      term.original?.trim() === original && String(term.scope || 'all') === newTermScope.value)) {
-      store.statusMessage = `「${original}」已在此情境存在；請直接編輯下方詞條`;
-      glossaryListMode.value = 'all';
-      termSearchQuery.value = original;
-      return;
-    }
-    const created = {
-      original,
-      translated: newTermTranslated.value.trim(),
-      aliases: newTermAliases.value.split(',').map(s => s.trim()).filter(Boolean),
-      scope: newTermScope.value,
-    };
-    localConfig.value.terminology.glossary_list.push(created);
-    expandedGlossaryTerm.value = created;
-    termSearchQuery.value = original;
-    if (newTermScope.value !== 'all' && newTermScope.value !== selectedGlossaryPreset.value) glossaryListMode.value = 'all';
-    newTermOriginal.value = '';
-    newTermTranslated.value = '';
-    newTermAliases.value = '';
+    if (!original) return;
+    const existing = rows.value.find(row => row.original === original && (row.scope || 'all') === newTermScope.value);
+    if (existing) { void focusTerm(existing); store.statusMessage = '已有同名詞條，請直接修改。'; return; }
+    localConfig.value.terminology.glossary_list = [...rows.value, { original, translated: newTermTranslated.value.trim(), aliases: normalizeTermAliases(newTermAliases.value), scope: newTermScope.value }];
+    void focusTerm(rows.value[rows.value.length - 1]!);
+    newTermOriginal.value = ''; newTermTranslated.value = ''; newTermAliases.value = '';
   }
-
-  function removeTerm(index: number) {
-    localConfig.value.terminology.glossary_list.splice(index, 1);
+  function setTermIdentity(term: Term, original: string, scope: string) {
+    original = original.trim();
+    const existing = rows.value.find(row => row !== term && row.original === original && (row.scope || 'all') === scope);
+    if (!original || existing) { store.statusMessage = existing ? '已有同名詞條，請直接修改。' : '資料不完整，請檢查寫法與分類'; if (existing) void focusTerm(existing); return; }
+    term.original = original; term.scope = scope;
   }
-
-  function removeTermEntry(term: any) {
-    const list = localConfig.value.terminology.glossary_list || [];
-    const index = list.indexOf(term);
+  function setTermOriginal(term: Term, event: Event) {
+    const input = event.target as HTMLInputElement;
+    setTermIdentity(term, input.value, term.scope || 'all'); input.value = term.original;
+  }
+  function setTermScope(term: Term, value: string | number | null) { setTermIdentity(term, term.original, String(value || 'all')); }
+  function setTermAliases(term: Term, event: Event) { term.aliases = normalizeTermAliases((event.target as HTMLInputElement).value); }
+  function registerTermRow(term: Term, element: unknown) { if (element instanceof HTMLElement) rowElements.set(term, element); }
+  function customizePresetTerm(term: Term) {
+    const existing = rows.value.find(row => row.original === term.original && row.scope === term.scope);
+    if (existing) { void focusTerm(existing); return; }
+    localConfig.value.terminology.glossary_list = [...rows.value, { ...term, aliases: [...term.aliases] }];
+    void focusTerm(rows.value[rows.value.length - 1]!);
+  }
+  function removeTermEntry(term: Term) {
+    const index = rows.value.indexOf(term);
     if (index < 0) return;
     removedGlossaryTerm.value = { term: structuredClone(toRaw(term)), index };
-    removeTerm(index);
-    selectedGlossaryTerms.value = selectedGlossaryTerms.value.filter(item => item !== term);
-    if (expandedGlossaryTerm.value === term) expandedGlossaryTerm.value = null;
+    rows.value.splice(index, 1);
   }
-
   function undoRemovedGlossaryTerm() {
     const removed = removedGlossaryTerm.value;
     if (!removed) return;
-    localConfig.value.terminology.glossary_list.splice(removed.index, 0, removed.term);
+    const existing = rows.value.find(row => row.original === removed.term.original && row.scope === removed.term.scope);
+    if (existing) { void focusTerm(existing); store.statusMessage = '已有同名詞條，請直接修改。'; return; }
+    rows.value.splice(removed.index, 0, removed.term);
     removedGlossaryTerm.value = null;
+    void focusTerm(rows.value[removed.index]!);
   }
-
-  function toggleGlossarySelection(term: any, checked: boolean) {
-    selectedGlossaryTerms.value = checked
-      ? [...selectedGlossaryTerms.value.filter(item => item !== term), term]
-      : selectedGlossaryTerms.value.filter(item => item !== term);
-  }
-
-  function selectVisibleGlossaryTerms() {
-    selectedGlossaryTerms.value = [...new Set([...selectedGlossaryTerms.value, ...visibleGlossary.value.filter((term: any) => !term.builtin && !term.legacy)])];
-  }
-
-  function applySelectedGlossaryScope() {
-    const rows = localConfig.value.terminology.glossary_list || [];
-    let changed = 0;
-    let conflicts = 0;
-    for (const term of selectedGlossaryTerms.value) {
-      if (!rows.includes(term) || String(term.scope || 'all') === bulkGlossaryScope.value) continue;
-      const duplicate = rows.some((other: any) => other !== term
-        && other.original?.trim() === term.original?.trim()
-        && String(other.scope || 'all') === bulkGlossaryScope.value);
-      if (duplicate) { conflicts += 1; continue; }
-      term.scope = bulkGlossaryScope.value;
-      changed += 1;
-    }
-    selectedGlossaryTerms.value = [];
-    store.statusMessage = `已調整 ${changed} 筆詞條${conflicts ? `；${conflicts} 筆因同情境已有相同原詞而略過` : ''}`;
-  }
-
-  function setTermScope(term: any, value: string | number | null) {
-    const scope = String(value || 'all');
-    const duplicate = (localConfig.value.terminology.glossary_list || []).some((other: any) =>
-      other !== term && other.original?.trim() === term.original?.trim() && String(other.scope || 'all') === scope);
-    if (duplicate) {
-      store.statusMessage = `「${term.original}」在此情境已有譯法；請先處理重複詞條`;
-      return;
-    }
-    term.scope = scope;
-  }
-
-  function setTermAliases(term: any, event: Event) {
-    term.aliases = (event.target as HTMLInputElement).value.split(/[,，]/).map(value => value.trim()).filter(Boolean);
-  }
-
-  function customizePresetTerm(source: string, target: string, hasOverride: boolean) {
-    if (hasOverride) {
-      glossaryListMode.value = 'active';
-      termSearchQuery.value = source;
-      expandedGlossaryTerm.value = Object.keys(localConfig.value.terminology?.terminology_glossary || {}).length
-        ? null : activeUserGlossaryRows.value.find(row => row.original?.trim() === source) || null;
-      void nextTick(() => glossaryUserList.value?.scrollIntoView({ behavior: 'smooth', block: 'center' }));
-      return;
-    }
-    newTermOriginal.value = source;
-    newTermTranslated.value = target;
-    newTermAliases.value = '';
-    newTermScope.value = selectedGlossaryPreset.value || 'all';
-    void nextTick(() => glossaryEntryForm.value?.scrollIntoView({ behavior: 'smooth', block: 'center' }));
-  }
-
-  /**
-   * Parse the two-column files accepted by the settings page.
-   *
-   * The old implementation used `split(',')`, which made an exported glossary
-   * unusable as soon as a term contained a comma, a quote, or a line break.  A
-   * small RFC-4180 compatible parser keeps this dependency-free and also accepts
-   * tab-separated text exported by spreadsheet applications.
-   */
   function parseDelimitedRows(text: string): string[][] {
     const source = text.replace(/^\uFEFF/, '');
     const firstLine = source.split(/\r?\n/, 1)[0] || '';
@@ -345,99 +227,10 @@ export function useTerminologySettings(localConfig: Ref<any>, store: ReturnType<
     return rows;
   }
 
-  function isGlossaryHeader(row: string[]): boolean {
-    const original = (row[0] || '').trim().toLowerCase();
-    const translated = (row[1] || '').trim().toLowerCase();
-    return ['original', 'source', '原文', '來源'].includes(original)
-      && ['translated', 'translation', 'target', '翻譯', '譯文'].includes(translated);
-  }
-
-  function isAsrCorrectionHeader(row: string[]): boolean {
-    const canonical = (row[0] || '').trim().toLowerCase();
-    return ['canonical', 'standard', 'name', '標準', '標準名稱', '正確名稱'].includes(canonical);
-  }
-
   function csvField(value: unknown): string {
     const text = String(value ?? '');
     return /[",\r\n\t]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
   }
-
-  function glossaryExportRows(): string[][] {
-    const terminology = localConfig.value.terminology || {};
-    const rows: string[][] = [];
-    const seen = new Set<string>();
-    const add = (original: unknown, translated: unknown, scope: unknown = 'all', aliases: unknown = []) => {
-      const source = String(original ?? '').trim();
-      const target = String(translated ?? '').trim();
-      const termScope = String(scope || 'all');
-      if (!source || !target) return;
-      const key = `${source}\u0000${termScope}`;
-      if (seen.has(key)) return;
-      seen.add(key);
-      const aliasList = Array.isArray(aliases) ? aliases : String(aliases || '').split(/[,，]/);
-      rows.push([source, target, termScope, aliasList.map(value => String(value).trim()).filter(Boolean).join(', ')]);
-    };
-
-    if (terminology.terminology_glossary && typeof terminology.terminology_glossary === 'object') {
-      for (const [original, translated] of Object.entries(terminology.terminology_glossary)) {
-        add(original, translated);
-      }
-    }
-    if (Array.isArray(terminology.glossary_list)) {
-      for (const term of terminology.glossary_list) add(term?.original, term?.translated, term?.scope, term?.aliases);
-    }
-    // Older configurations used `glossary` as either a JSON object or a small
-    // delimited text block. Include it as well so export always means *all*.
-    if (typeof terminology.glossary === 'string' && terminology.glossary.trim()) {
-      const legacy = terminology.glossary.trim();
-      try {
-        const parsed = JSON.parse(legacy);
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          for (const [original, translated] of Object.entries(parsed)) add(original, translated);
-        }
-      } catch {
-        for (const row of parseDelimitedRows(legacy)) {
-          if (row.length >= 2 && !isGlossaryHeader(row)) add(row[0], row[1]);
-        }
-      }
-    }
-    const scopeRows = customGlossaryScopes.value.map(scope => ['#context', scope.value, scope.label, '']);
-    return rows.length || scopeRows.length ? [...scopeRows, ['original', 'translated', 'scope', 'aliases'], ...rows] : [];
-  }
-
-  function asrCorrectionExportRows(): string[][] {
-    const rawRules = localConfig.value.transcription?.asr_correction_rules;
-    let rules: any[] = Array.isArray(rawRules) ? rawRules : [];
-    if (typeof rawRules === 'string' && rawRules.trim()) {
-      try {
-        const parsed = JSON.parse(rawRules);
-        if (Array.isArray(parsed)) rules = parsed;
-        else if (parsed && typeof parsed === 'object') {
-          rules = Object.entries(parsed).map(([canonical, aliases]) => ({ canonical, aliases }));
-        }
-      } catch {
-        rules = parseDelimitedRows(rawRules).map(row => ({ canonical: row[0], aliases: row.slice(1) }));
-      }
-    }
-
-    const rows: string[][] = [];
-    const seen = new Set<string>();
-    for (const rule of rules) {
-      const canonical = String(rule?.canonical ?? rule?.original ?? '').trim();
-      const aliases = Array.isArray(rule?.aliases)
-        ? rule.aliases
-        : String(rule?.aliases ?? '').split(/[,，\t\r\n]/);
-      const values = [canonical, ...aliases.map((value: unknown) => String(value ?? '').trim())]
-        .filter((value, index, all) => value && (index === 0 || value !== canonical) && all.indexOf(value) === index);
-      if (values.length < 2) continue;
-      const key = values.join('\u0000');
-      if (seen.has(key)) continue;
-      seen.add(key);
-      rows.push(values);
-    }
-    return rows;
-  }
-
   async function downloadCsv(filename: string, rows: string[][], label: string): Promise<boolean> {
     if (rows.length === 0) {
       store.statusMessage = `沒有可匯出的${label}`;
@@ -490,218 +283,61 @@ export function useTerminologySettings(localConfig: Ref<any>, store: ReturnType<
   function importGlossary() {
     if (glossaryImporting.value) return;
     const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.txt,.csv';
-    input.onchange = async (e: any) => {
-      const file = e.target.files[0];
+    input.type = 'file'; input.accept = '.csv,.txt';
+    input.onchange = async () => {
+      const file = input.files?.[0];
       if (!file) return;
       glossaryImporting.value = true;
       try {
-        const rows = parseDelimitedRows(await file.text());
-        const importedScopes = rows.filter(row => row[0]?.trim() === '#context').map(row => ({
-          value: row[1]?.trim() || '', label: row[2]?.trim() || '',
-        }));
-        const existingScopeIds = new Set(glossaryScopeOptions.value.map(option => option.value));
-        const importedIds = new Set<string>();
-        const importedNames = new Set<string>();
-        for (const scope of importedScopes) {
-          const normalizedName = scope.label.toLocaleLowerCase();
-          if (!/^custom_[0-9a-f-]{36}$/i.test(scope.value) || !scope.label || scope.label.length > 40 || importedIds.has(scope.value) || importedNames.has(normalizedName)) {
-            throw new Error('CSV 中的自訂情境資料無效或重複');
-          }
-          const existing = glossaryScopeOptions.value.find(item => item.value === scope.value);
-          if (existing && existing.label !== scope.label) throw new Error(`情境 ID 衝突：${scope.value}`);
-          if (!existing && glossaryScopeOptions.value.some(item => item.label.toLocaleLowerCase() === normalizedName)) {
-            throw new Error(`已有同名情境：${scope.label}`);
-          }
-          importedIds.add(scope.value);
-          importedNames.add(normalizedName);
+        const data = parseDelimitedRows(await file.text());
+        const scopes = customGlossaryScopes.value.map(scope => ({ ...scope }));
+        for (const row of data.filter(row => row[0]?.trim().toLowerCase() === '#context')) {
+          const value = row[1] || ''; const label = row[2] || '';
+          if (!value.startsWith('custom_') || !label) throw new Error('資料不完整，請檢查寫法與分類');
+          if (!scopes.some(c => c.value === value)) scopes.push({ value, label });
         }
-        const allowedScopes = new Set([...existingScopeIds, ...importedIds]);
-        const newTerms: any[] = rows
-          .filter(row => row.length >= 2 && row[0]?.trim() !== '#context' && !isGlossaryHeader(row))
-          .map(row => {
-            const scope = (row[2] || 'all').trim();
-            if (!allowedScopes.has(scope)) throw new Error(`未知適用情境：${scope}`);
-            return {
-              original: row[0].trim(), translated: row[1].trim(), scope,
-              ...(row.length >= 4 ? { aliases: row[3].split(/[,，]/).map(value => value.trim()).filter(Boolean) } : {}),
-            };
-          })
-          .filter(term => term.original && term.translated);
-        let mergedCount = localConfig.value.terminology.glossary_list?.length || 0;
+        const options = [...glossaryScopeOptions.value, ...scopes];
+        const header = data.find(row => row[0]?.trim().toLowerCase() !== '#context');
+        const cells = header?.map(cell => cell.trim().toLowerCase()) || [];
+        const newFormat = ['正確寫法,譯法,常見誤辨,分類', 'original,translated,aliases,category'].includes(cells.join(','));
+        const legacy = ['original', 'source', '原文', '來源'].includes(cells[0] || '')
+          && ['translated', 'translation', 'target', '翻譯', '譯文'].includes(cells[1] || '')
+          && (cells.length === 2 || (cells[2] === 'scope' && (cells.length === 3 || (cells.length === 4 && cells[3] === 'aliases'))));
+        const asr = ['canonical', 'standard', 'name', '標準', '標準名稱', '正確名稱'].includes(cells[0] || '')
+          && cells.length >= 2 && cells.slice(1).every(cell => /^aliases?(?:[ _]?\d+)?$/.test(cell));
+        if (!newFormat && !legacy && !asr) throw new Error('無法辨識 CSV 表頭，請使用術語表或舊版匯出格式');
+        const imported: Term[] = [];
+        for (const row of data) {
+          if (row[0]?.trim().toLowerCase() === '#context' || row === header) continue;
+          const original = (row[0] || '').trim();
+          if (!original) continue;
+          const category = asr ? 'all' : row[legacy ? 2 : 3]?.trim() || 'all';
+          let scope = options.find(c => c.value === category || c.label === category);
+          if (!scope) {
+            scope = { value: category.startsWith('custom_') ? category : `custom_${Date.now()}_${scopes.length}`, label: category };
+            scopes.push(scope); options.push(scope);
+          }
+          imported.push({ original, translated: asr ? '' : (row[1] || '').trim(), aliases: normalizeTermAliases(asr ? row.slice(1).flatMap(value => normalizeTermAliases(value)) : row[legacy ? 3 : 2]), scope: scope.value });
+        }
         await saveBulkImport('terminology', () => {
-          const currentScopes = Array.isArray(localConfig.value.terminology.custom_glossary_scopes)
-            ? localConfig.value.terminology.custom_glossary_scopes : [];
-          localConfig.value.terminology.custom_glossary_scopes = [
-            ...currentScopes, ...importedScopes.filter(scope => !existingScopeIds.has(scope.value)),
-          ];
-          const merged = mergeGlossaryTerms(localConfig.value.terminology.glossary_list || [], newTerms);
-          mergedCount = merged.length;
-          localConfig.value.terminology.glossary_list = merged;
+          const merged = new Map<string, Term>();
+          for (const term of [...rows.value, ...imported]) {
+            const original = term.original.trim();
+            const key = `${original}\0${term.scope || 'all'}`;
+            const existing = merged.get(key);
+            merged.set(key, { ...term, original, translated: term.translated.trim() || existing?.translated || '', aliases: normalizeTermAliases([...normalizeTermAliases(existing?.aliases), ...normalizeTermAliases(term.aliases)]) });
+          }
+          localConfig.value.terminology.custom_glossary_scopes = scopes;
+          localConfig.value.terminology.glossary_list = [...merged.values()];
         });
-        store.statusMessage = `詞語表匯入完成：讀取 ${newTerms.length} 筆，合併後共 ${mergedCount} 筆`;
-      } catch (error: any) {
-        store.errorMessage = `詞語表匯入失敗：${error?.message || '未知錯誤'}`;
-      } finally {
-        glossaryImporting.value = false;
-      }
+        store.statusMessage = `已匯入並儲存 ${imported.length} 個詞條`;
+      } catch (error: any) { store.errorMessage = `匯入失敗：${error?.message || '請檢查 CSV 格式'}`; }
+      finally { glossaryImporting.value = false; }
     };
     input.click();
   }
-
   function exportGlossary() {
-    void downloadCsv('glossary.csv', glossaryExportRows(), '術語');
+    void downloadCsv('glossary.csv', [['正確寫法', '譯法', '常見誤辨', '分類'], ...rows.value.map(term => [term.original, term.translated, normalizeTermAliases(term.aliases).join('、'), glossaryScopeOptions.value.find(c => c.value === (term.scope || 'all'))?.label || term.scope])], '術語表');
   }
-
-  function mergeGlossaryTerms(existing: any[], imported: any[]): any[] {
-    const merged = new Map<string, any>();
-    for (const term of [...existing, ...imported]) {
-      const original = String(term?.original || '').trim();
-      const translated = String(term?.translated || '').trim();
-      const scope = String(term?.scope || 'all');
-      if (original && translated) {
-        const key = `${original}\u0000${scope}`;
-        merged.set(key, { ...(merged.get(key) || {}), ...term, original, translated, scope });
-      }
-    }
-    return [...merged.values()];
-  }
-
-  function mergeAsrCorrectionRules(existing: any[], imported: any[]): any[] {
-    const merged = new Map<string, Set<string>>();
-    for (const rule of [...existing, ...imported]) {
-      const canonical = String(rule?.canonical || '').trim();
-      if (!canonical) continue;
-      const aliases = merged.get(canonical) || new Set<string>();
-      for (const value of rule?.aliases || []) {
-        const alias = String(value || '').trim();
-        if (alias && alias !== canonical) aliases.add(alias);
-      }
-      if (aliases.size > 0) merged.set(canonical, aliases);
-    }
-    return [...merged.entries()].map(([canonical, aliases]) => ({ canonical, aliases: [...aliases] }));
-  }
-
-  function addAsrCorrection() {
-    const canonical = newAsrCanonical.value.trim();
-    const aliases = newAsrAliases.value
-      .split(/[,，\n]/)
-      .map(value => value.trim())
-      .filter((value, index, values) => value && value !== canonical && values.indexOf(value) === index);
-    if (!canonical || aliases.length === 0) return;
-    if (!localConfig.value.transcription.asr_correction_rules) {
-      localConfig.value.transcription.asr_correction_rules = [];
-    }
-    localConfig.value.transcription.asr_correction_rules.push({ canonical, aliases });
-    newAsrCanonical.value = '';
-    newAsrAliases.value = '';
-  }
-
-  function removeAsrCorrection(rule: any) {
-    const rules = localConfig.value.transcription.asr_correction_rules || [];
-    const index = rules.indexOf(rule);
-    if (index >= 0) rules.splice(index, 1);
-  }
-
-  function importAsrCorrections() {
-    if (asrCorrectionsImporting.value) return;
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.txt,.csv';
-    input.onchange = async (event: any) => {
-      const file = event.target.files[0];
-      if (!file) return;
-      asrCorrectionsImporting.value = true;
-      try {
-        const imported = parseDelimitedRows(await file.text())
-          .filter(row => row.length >= 2 && !isAsrCorrectionHeader(row))
-          .map(row => {
-            const canonical = row[0].trim();
-            const aliases = row.slice(1)
-              .map(value => value.trim())
-              .filter((value, index, values) => value && value !== canonical && values.indexOf(value) === index);
-            return { canonical, aliases };
-          })
-          .filter(rule => rule.canonical && rule.aliases.length > 0);
-        let mergedCount = localConfig.value.transcription.asr_correction_rules?.length || 0;
-        await saveBulkImport('transcription', () => {
-          const merged = mergeAsrCorrectionRules(
-            localConfig.value.transcription.asr_correction_rules || [],
-            imported,
-          );
-          mergedCount = merged.length;
-          localConfig.value.transcription.asr_correction_rules = merged;
-        });
-        store.statusMessage = `ASR 校正表匯入完成：讀取 ${imported.length} 筆，合併後共 ${mergedCount} 筆`;
-      } catch (error: any) {
-        store.errorMessage = `ASR 校正表匯入失敗：${error?.message || '未知錯誤'}`;
-      } finally {
-        asrCorrectionsImporting.value = false;
-      }
-    };
-    input.click();
-  }
-
-  function exportAsrCorrections() {
-    void downloadCsv('asr-name-corrections.csv', asrCorrectionExportRows(), 'ASR 修正規則');
-  }
-
-
-  return {
-    glossaryImporting,
-    asrCorrectionsImporting,
-    newTermOriginal,
-    newTermTranslated,
-    newTermAliases,
-    newTermScope,
-    glossaryEntryForm,
-    glossaryUserList,
-    termSearchQuery,
-    terminologySubTab,
-    expandedGlossaryTerm,
-    selectedGlossaryTerms,
-    bulkGlossaryScope,
-    removedGlossaryTerm,
-    glossaryListMode,
-    presetGlossaries,
-    customGlossaryScopes,
-    glossaryScopeOptions,
-    newGlossaryScopeName,
-    editingGlossaryScope,
-    editingGlossaryScopeName,
-    selectedGlossaryPresetLabel,
-    userGlossaryBySource,
-    selectedPresetPreview,
-    effectiveGlossaryCount,
-    newAsrCanonical,
-    newAsrAliases,
-    asrCorrectionSearchQuery,
-    LARGE_LIST_BATCH_SIZE,
-    GLOSSARY_PAGE_SIZE,
-    glossaryRenderLimit,
-    asrCorrectionRenderLimit,
-    filteredGlossary,
-    filteredAsrCorrections,
-    visibleGlossary,
-    visibleAsrCorrections,
-    addGlossaryScope,
-    renameGlossaryScope,
-    removeGlossaryScope,
-    addTerm,
-    removeTermEntry,
-    undoRemovedGlossaryTerm,
-    toggleGlossarySelection,
-    selectVisibleGlossaryTerms,
-    applySelectedGlossaryScope,
-    setTermScope,
-    setTermAliases,
-    customizePresetTerm,
-    importGlossary,
-    exportGlossary,
-    addAsrCorrection,
-    removeAsrCorrection,
-    importAsrCorrections,
-    exportAsrCorrections,
-  };
+  return { presetCategories, presetLoadError, glossaryImporting, newTermOriginal, newTermTranslated, newTermAliases, newTermScope, newGlossaryScopeName, termSearchQuery, glossaryListMode, editingGlossaryScope, editingGlossaryScopeName, deletingScope, highlightedTerm, removedGlossaryTerm, expandedGroups, groupLimits, glossaryScopeOptions, activeCategoryLabels, effectiveGlossaryCount, groups, categoryCounts, isActive, isBuiltinEnabled, toggleCategory, toggleBuiltin, addGlossaryScope, renameGlossaryScope, removeGlossaryScope, addTerm, setTermOriginal, setTermScope, setTermAliases, registerTermRow, customizePresetTerm, removeTermEntry, undoRemovedGlossaryTerm, importGlossary, exportGlossary, normalizeTermAliases };
 }

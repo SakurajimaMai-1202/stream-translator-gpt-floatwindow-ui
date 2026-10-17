@@ -223,13 +223,15 @@ class ConfigManager:
             ]
         },
         'terminology': {
-            'use_terminology_glossary': False,
+            'use_terminology_glossary': True,
+            'active_categories': [],
+            'builtin_disabled': [],
+            'schema_version': 2,
             'translation_glossary_audit_enabled': False,
             'terminology_glossary': {},
             'glossary': '',
             'glossary_list': [],
             'custom_glossary_scopes': [],
-            'glossary_to_asr_corrections': True,
             'glossary_to_asr_prompt': False,
         },
         'output': {
@@ -425,7 +427,15 @@ class ConfigManager:
             return result
         
         self._validate_structure(config)
-        return merge(self.DEFAULT_CONFIG, config)
+        merged = merge(self.DEFAULT_CONFIG, config)
+        # Preserve absent migration inputs until the old file is migrated.
+        terminology = config.get('terminology', {})
+        for key in ('schema_version', 'active_categories'):
+            if key not in terminology:
+                merged['terminology'].pop(key, None)
+        if 'use_terminology_glossary' not in terminology:
+            merged['terminology']['use_terminology_glossary'] = False
+        return merged
 
     def _deep_merge(self, base: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
         """Recursively merge dictionaries while preserving unknown/new settings."""
@@ -456,6 +466,52 @@ class ConfigManager:
         transcription = config.get('transcription', {})
         general = config.get('general', {})
         backend = str(translation.get('backend', '') or '').strip().lower()
+        terminology = config.setdefault('terminology', {})
+        before = self._deep_copy((terminology, transcription))
+        from backend.core.hy_mt2_glossary_presets import _term_aliases
+        rows = terminology.get('glossary_list')
+        if not isinstance(rows, list):
+            rows = terminology['glossary_list'] = []
+        for row in rows:
+            if isinstance(row, dict):
+                row['aliases'] = _term_aliases(row)
+        if terminology.get('schema_version', 0) < 2:
+            if 'active_categories' not in terminology:
+                category = translation.get('translation_glossary_scope')
+                if category is None:
+                    category = translation.get('hy_mt2_glossary_preset')
+                category = category.strip() if isinstance(category, str) else ''
+                if category in ('hololive_vtuber', 'cosplay'):
+                    terminology['active_categories'] = ['general_chat', category]
+                else:
+                    terminology['active_categories'] = [category] if category and category != 'all' else []
+            for rule in transcription.get('asr_correction_rules', []) or []:
+                if not isinstance(rule, dict):
+                    continue
+                canonical = rule.get('canonical')
+                if not isinstance(canonical, str) or not canonical.strip():
+                    continue
+                # Manual rules applied to every session, so they only merge into
+                # a 一般 row; a row in another category would switch them off
+                # whenever that category is not selected.
+                row = next((row for row in rows if isinstance(row, dict) and row.get('original') == canonical
+                            and (row.get('scope') or 'all') == 'all'), None)
+                if row is None:
+                    row = {'original': canonical, 'translated': '', 'aliases': [], 'scope': 'all'}
+                    rows.append(row)
+                row['aliases'] = list(dict.fromkeys([*_term_aliases(row), *_term_aliases(rule)]))
+            transcription['asr_correction_rules'] = []
+            for source, target in (terminology.get('terminology_glossary') or {}).items():
+                row = next((row for row in rows if isinstance(row, dict) and row.get('original') == source
+                            and (row.get('scope') or 'all') == 'all'), None)
+                if row is None:
+                    rows.append({'original': source, 'translated': target, 'aliases': [], 'scope': 'all'})
+                else:
+                    row['translated'] = target
+            terminology['terminology_glossary'] = {}
+            terminology.setdefault('builtin_disabled', [])
+            terminology['schema_version'] = 2
+        changed = before != (terminology, transcription)
 
         # Move the former global/provider-shared keys into their owning
         # feature sections so ASR, OpenAI translation, and Gemini translation
@@ -1016,38 +1072,25 @@ class ConfigManager:
             'asr_correction_log_enabled': config['transcription'].get('asr_correction_log_enabled', False),
             'asr_correction_learning_enabled': config['transcription'].get('asr_correction_learning_enabled', False),
             'asr_corrections_case_sensitive': config['transcription'].get('asr_corrections_case_sensitive', False),
-            'asr_correction_rules': json.dumps(
-                config['transcription'].get('asr_correction_rules', []),
-                ensure_ascii=False,
-                separators=(',', ':'),
-            ),
         }
 
-        # Glossary rows double as the ASR vocabulary: aliases become corrections
-        # for every engine, originals become prompt words where the engine has one.
-        # Built-in variants follow the scope even when 我的詞條 is off, like the
-        # built-in translation terms do.
+        # Resolve once so every engine feed shares the same session vocabulary.
+        from backend.core.hy_mt2_glossary_presets import ASR_PROMPT_BACKENDS, session_vocabulary
+        vocabulary = session_vocabulary(config)
         terminology_config = config.get('terminology', {})
-        use_user_terms = bool(terminology_config.get('use_terminology_glossary', False))
-        from backend.core.hy_mt2_glossary_presets import (
-            ASR_PROMPT_BACKENDS, glossary_asr_rules, glossary_hotwords)
-        translation_section = config.get('translation', {})
-        scope = translation_section.get('translation_glossary_scope')
-        if scope is None:
-            scope = translation_section.get('hy_mt2_glossary_preset', '')
-        manual_rules = config['transcription'].get('asr_correction_rules', []) or []
-        derived_rules = glossary_asr_rules(terminology_config if use_user_terms else {}, str(scope))
-        if terminology_config.get('glossary_to_asr_corrections', True) and derived_rules:
-            # Manual rules come first so they win when both claim an alias.
-            args['asr_correction_rules'] = json.dumps(
-                list(manual_rules) + derived_rules, ensure_ascii=False, separators=(',', ':'))
-        if (use_user_terms and terminology_config.get('glossary_to_asr_prompt', False)
+        args['asr_correction_rules'] = json.dumps(
+            vocabulary['asr_rules'],
+            ensure_ascii=False, separators=(',', ':'))
+        if (terminology_config.get('use_terminology_glossary', True)
+                and terminology_config.get('glossary_to_asr_prompt', False)
                 and transcription_backend in ASR_PROMPT_BACKENDS):
-            misheard = {str(alias).strip() for rule in list(manual_rules) + derived_rules
-                        if isinstance(rule, dict) for alias in (rule.get('aliases') or [])}
             typed = str(args.get('transcription_initial_prompt') or '').strip().rstrip(',，、 ')
-            words = glossary_hotwords(terminology_config, str(scope), misheard,
-                max_chars=max(0, 300 - len(typed)))
+            words, used = [], len(typed)
+            for word in vocabulary['hotwords']:
+                if used + len(word) + 2 > 300:
+                    break
+                words.append(word)
+                used += len(word) + 2
             args['transcription_initial_prompt'] = ', '.join(([typed] if typed else []) + words)
 
         # Qwen3-ASR 語言格式轉換：短碼 → 完整名稱
@@ -1127,30 +1170,14 @@ class ConfigManager:
                 
                 args['translation_prompt'] = base_prompt
                 
-                use_glossary = config.get('terminology', {}).get('use_terminology_glossary', False)
-                terminology_config = config.get('terminology', {})
-                from backend.core.hy_mt2_glossary_presets import effective_user_glossary
-                glossary = effective_user_glossary(
-                    terminology_config, str(translation_config.get('translation_glossary_scope') if translation_config.get('translation_glossary_scope') is not None else translation_config.get('hy_mt2_glossary_preset', '')))
-                
-                if use_glossary and glossary:
-                    import json as _json
-                    args['translation_glossary'] = _json.dumps(glossary, ensure_ascii=False)
-                else:
-                    args['translation_glossary'] = None
+                glossary = vocabulary['translation_terms']
+                args['translation_glossary'] = json.dumps(glossary, ensure_ascii=False) if glossary else None
             else:
                 # 使用自訂提示詞
                 args['translation_prompt'] = config['translation'].get('translation_prompt', '')
 
-                # A custom prompt replaces only the prompt text; an enabled glossary still applies.
-                terminology_config = config.get('terminology', {})
-                from backend.core.hy_mt2_glossary_presets import effective_user_glossary
-                glossary = effective_user_glossary(
-                    terminology_config, str(translation_config.get('translation_glossary_scope') if translation_config.get('translation_glossary_scope') is not None else translation_config.get('hy_mt2_glossary_preset', '')))
-                if terminology_config.get('use_terminology_glossary', False) and glossary:
-                    args['translation_glossary'] = json.dumps(glossary, ensure_ascii=False)
-                else:
-                    args['translation_glossary'] = None
+                glossary = vocabulary['translation_terms']
+                args['translation_glossary'] = json.dumps(glossary, ensure_ascii=False) if glossary else None
         else:
             args['translation_prompt'] = ''
             args['translation_glossary'] = None
@@ -1302,27 +1329,7 @@ class ConfigManager:
         for _family, _enabled in (('hy_mt2', hy_enabled), ('index_translate', index_enabled)):
             if not _enabled:
                 continue
-            aliases = {}
-            if args.get('translation_glossary'):
-                from backend.core.hy_mt2_glossary_presets import active_user_terms
-                scope = translation_config.get('translation_glossary_scope')
-                if scope is None:
-                    scope = translation_config.get('hy_mt2_glossary_preset', '')
-                for item in active_user_terms(config.get('terminology', {}), str(scope)):
-                    target = item.get('translated')
-                    names = item.get('aliases', [])
-                    if isinstance(names, str):
-                        names = names.split(',')
-                    if target and isinstance(names, list):
-                        for name in names:
-                            if isinstance(name, str) and name.strip():
-                                aliases[name.strip()] = target
-            from backend.core.hy_mt2_glossary_presets import get_preset_terms
-            scope = translation_config.get('translation_glossary_scope')
-            if scope is None:
-                scope = translation_config.get('hy_mt2_glossary_preset', '')
-            for source, target in get_preset_terms(str(scope)).items():
-                aliases.setdefault(source, target)
+            aliases = vocabulary['translation_terms']
             if aliases:
                 args[f'{_family}_aliases'] = json.dumps(aliases, ensure_ascii=False)
             folder = str(translation_config.get(f'{_family}_glossary_folder', '') or '').strip()
@@ -1468,6 +1475,10 @@ class ConfigManager:
 
     def _persist_locked(self, config):
         updated = self._enforce_packaged_runtime(config)
+        from backend.core.hy_mt2_glossary_presets import _term_aliases
+        for row in updated.get('terminology', {}).get('glossary_list', []):
+            if isinstance(row, dict):
+                row['aliases'] = _term_aliases(row)
         self._save(updated)
         self.config = updated
         self._file_signature = self._get_file_signature()

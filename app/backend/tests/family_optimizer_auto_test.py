@@ -39,7 +39,7 @@ def test_auto_on_backend_none_disables_optimizers(tmp_path):
     assert args['index_translate_optimizer_enabled'] is False
 
 
-def test_scope_none_uses_hy_preset_for_index_aliases(tmp_path):
+def test_active_category_supplies_index_aliases(tmp_path):
     manager = ConfigManager(tmp_path / 'config.yaml')
     config = manager.get_config()
     config['translation'].update({
@@ -48,6 +48,7 @@ def test_scope_none_uses_hy_preset_for_index_aliases(tmp_path):
         'translation_glossary_scope': None,
         'hy_mt2_glossary_preset': 'hololive_vtuber',
     })
+    config['terminology']['active_categories'] = ['hololive_vtuber']
     args = manager.to_main_args(config)
     aliases = json.loads(args['index_translate_aliases'])
     assert aliases['ホロライブ'] == 'Hololive'
@@ -72,6 +73,7 @@ def test_auto_on_local_index_model_enables_index_with_aliases(tmp_path, monkeypa
         'translation_glossary_scope': 'hololive_vtuber',
     })
     config['llama']['model_path'] = r'D:\models\Index-Translate-9B.i1-IQ4_XS.gguf'
+    config['terminology']['active_categories'] = ['hololive_vtuber']
     args = manager.to_main_args(config)
     assert args['translation_model_family'] == 'index_translate'
     assert args['index_translate_optimizer_enabled'] is True

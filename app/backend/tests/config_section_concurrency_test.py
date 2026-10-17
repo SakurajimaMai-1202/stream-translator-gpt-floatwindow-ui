@@ -42,9 +42,11 @@ def test_terminology_save_waits_for_another_writer(tmp_path, monkeypatch, existi
             holder._save(current)
         result = pending.result(timeout=10)
 
+    # Saved rows are normalized to the v2 shape (aliases always a list).
+    expected = [{"original": "すいちゃん", "translated": "星街", "aliases": []}]
     assert result["success"] is True
-    assert result["data"]["glossary_list"] == terminology["glossary_list"]
+    assert result["data"]["glossary_list"] == expected
     reloaded = ConfigManager(path).get_config()
     assert reloaded["terminology"]["use_terminology_glossary"] is True
-    assert reloaded["terminology"]["glossary_list"] == terminology["glossary_list"]
+    assert reloaded["terminology"]["glossary_list"] == expected
     assert reloaded["general"]["log_level"] == "DEBUG"

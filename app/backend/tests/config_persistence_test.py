@@ -589,3 +589,23 @@ def test_desktop_backend_extracts_legacy_latency_log_without_polluting_translati
         "translation_queue_latency_ms": 35.0,
         "total_latency_ms": 2080.0,
     }
+
+
+def test_terminology_v2_defaults_and_alias_persistence(tmp_path):
+    manager = ConfigManager(tmp_path / "config.yaml")
+    defaults = manager.get_config()["terminology"]
+    assert defaults["schema_version"] == 2
+    assert defaults["active_categories"] == []
+    assert defaults["builtin_disabled"] == []
+    assert defaults["use_terminology_glossary"] is True
+    manager.update_section("terminology", {"glossary_list": [
+        {"original": "Term", "translated": "Target", "aliases": " alias, alias, other "},
+    ]})
+    saved = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+    assert saved["terminology"]["glossary_list"][0]["aliases"] == ["alias", "other"]
+
+
+def test_existing_config_without_user_switch_stays_off(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("terminology: {}", encoding="utf-8")
+    assert ConfigManager(path).get_config()["terminology"]["use_terminology_glossary"] is False

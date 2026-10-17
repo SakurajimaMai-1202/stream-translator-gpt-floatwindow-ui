@@ -4,7 +4,7 @@ import axios from 'axios';
 import UiSelect from '../UiSelect.vue';
 import { useSettingsTabBindings } from '../../composables/settings/settingsContext';
 const {
-  glossaryScopeOptions, activeTab, activeTranslationFamily, familyDetecting, servedModels, scheduleFamilyDetection, checkHyMt2Backend, deleteCustomModel, effectiveGlossaryCount, familyLabel, familySettings, hyMt2EffectiveBackend, hyMt2HealthChecking, hyMt2HealthResult, localConfig, openCustomModelDialog, previewBusy, previewContext, previewError, previewLatencyLabel, previewResult, previewText, previewValidationStatus, runTranslationPreview, selectedGlossaryPresetLabel, targetLanguageOptions, testConnection, testingGemini, testingGpt, translationBackendOptions, translationModelFamilyOptions, translationOutputFormatOptions
+  activeCategoryLabels, activeTab, activeTranslationFamily, familyDetecting, servedModels, scheduleFamilyDetection, checkHyMt2Backend, deleteCustomModel, effectiveGlossaryCount, familyLabel, familySettings, hyMt2EffectiveBackend, hyMt2HealthChecking, hyMt2HealthResult, localConfig, openCustomModelDialog, previewBusy, previewContext, previewError, previewLatencyLabel, previewResult, previewText, previewValidationStatus, runTranslationPreview, targetLanguageOptions, testConnection, testingGemini, testingGpt, translationBackendOptions, translationModelFamilyOptions, translationOutputFormatOptions
 } = useSettingsTabBindings();
 type CloudBackend = 'gpt' | 'gemini';
 const cloudModels = reactive<Record<CloudBackend, { ids: string[]; busy: boolean; status: string }>>({
@@ -177,11 +177,8 @@ onMounted(scheduleFamilyDetection);
               </div>
               <p v-if="hyMt2HealthResult" class="mt-2 text-sm text-white/75" role="status">{{ hyMt2HealthResult }}</p>
               <div class="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-blue-400/20 bg-blue-400/5 px-3 py-2 text-sm text-white/70">
-                <span>術語情境：{{ selectedGlossaryPresetLabel }}</span>
-                <UiSelect v-model="localConfig.translation.translation_glossary_scope" :options="[{ value: '', label: '全域術語' }, ...glossaryScopeOptions]" />
-                <span class="text-white/35">·</span>
-                <span>約 {{ effectiveGlossaryCount }} 個原詞</span>
-                <button type="button" class="text-blue-300 underline" @click="activeTab = 'terminology'">管理術語</button>
+                <span>使用中的術語分類：{{ activeCategoryLabels }}（{{ effectiveGlossaryCount }} 個詞）</span>
+                <button type="button" class="text-blue-300 underline" @click="activeTab = 'terminology'">術語表</button>
               </div>
               <details class="mt-4 border-t border-white/10 pt-4 space-y-3">
                 <summary class="cursor-pointer font-semibold text-blue-200">試譯與策略比較</summary>

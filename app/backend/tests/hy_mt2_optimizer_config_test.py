@@ -21,8 +21,8 @@ def test_optimizer_aliases_and_options_reach_translator(tmp_path):
     args = manager.to_main_args(config)
     assert args["hy_mt2_optimizer_enabled"] is True
     assert args["hy_mt2_context_window"] == 2
-    assert json.loads(args["translation_glossary"]) == {"星街すいせい": "Suisei"}
-    assert json.loads(args["hy_mt2_aliases"]) == {"すいちゃん": "Suisei"}
+    assert json.loads(args["translation_glossary"]) == {"星街すいせい": "Suisei", "すいちゃん": "Suisei"}
+    assert json.loads(args["hy_mt2_aliases"]) == {"星街すいせい": "Suisei", "すいちゃん": "Suisei"}
 
 
 def test_local_provider_switch_preserves_prompt_configuration(tmp_path):
@@ -78,15 +78,15 @@ def test_opt_in_glossary_preset_switches_without_replacing_user_terms(tmp_path):
         "use_terminology_glossary": True,
         "glossary_list": [{"original": "ホロメン", "translated": "我的譯法", "aliases": []}],
     })
-    assert "hy_mt2_aliases" not in manager.to_main_args(config)
+    assert json.loads(manager.to_main_args(config)["hy_mt2_aliases"]) == {"ホロメン": "我的譯法"}
 
-    config["translation"]["hy_mt2_glossary_preset"] = "hololive_vtuber"
+    config["terminology"]["active_categories"] = ["hololive_vtuber"]
     hololive = json.loads(manager.to_main_args(config)["hy_mt2_aliases"])
-    assert hololive["ホロメン"] == "Hololive 成員"
+    assert hololive["ホロメン"] == "我的譯法"
     assert "星街すいせい" in hololive
     assert "ウィッグ" not in hololive
 
-    config["translation"]["hy_mt2_glossary_preset"] = "cosplay"
+    config["terminology"]["active_categories"] = ["cosplay"]
     cosplay = json.loads(manager.to_main_args(config)["hy_mt2_aliases"])
     assert "ウィッグ" in cosplay
     assert "星街すいせい" not in cosplay
@@ -106,15 +106,15 @@ def test_glossary_scope_keeps_legacy_global_and_prefers_current_profile(tmp_path
         ],
     })
     default = manager.to_main_args(config)
-    assert json.loads(default["translation_glossary"]) == {"ホロメン": "原有全域譯法"}
+    assert json.loads(default["translation_glossary"]) == {"ホロメン": "原有全域譯法", "ホロのメンバー": "原有全域譯法"}
     assert "ウィッグ" not in json.loads(default["translation_glossary"])
 
-    config["translation"]["hy_mt2_glossary_preset"] = "hololive_vtuber"
+    config["terminology"]["active_categories"] = ["hololive_vtuber"]
     hololive = manager.to_main_args(config)
     assert json.loads(hololive["translation_glossary"])["ホロメン"] == "情境譯法"
     assert json.loads(hololive["hy_mt2_aliases"])["ホロのメンバー"] == "情境譯法"
 
-    config["translation"]["hy_mt2_glossary_preset"] = "cosplay"
+    config["terminology"]["active_categories"] = ["cosplay"]
     cosplay = manager.to_main_args(config)
     assert json.loads(cosplay["translation_glossary"])["ホロメン"] == "原有全域譯法"
     assert json.loads(cosplay["translation_glossary"])["ウィッグ"] == "我的假髮譯法"
@@ -128,6 +128,7 @@ def test_custom_glossary_scope_persists_and_only_activates_selected_terms(tmp_pa
                                   "hy_mt2_glossary_preset": scope})
     config["terminology"].update({
         "use_terminology_glossary": True,
+        "active_categories": [scope],
         "custom_glossary_scopes": [{"value": scope, "label": "星街雜談"}],
         "glossary_list": [
             {"original": "共通", "translated": "全域"},
@@ -139,7 +140,7 @@ def test_custom_glossary_scope_persists_and_only_activates_selected_terms(tmp_pa
     restored = ConfigManager(tmp_path / "config.yaml").get_config()
     assert restored["terminology"]["custom_glossary_scopes"] == [{"value": scope, "label": "星街雜談"}]
     selected = manager.to_main_args(restored)
-    assert json.loads(selected["translation_glossary"]) == {"共通": "全域", "專有": "自訂"}
-    assert json.loads(selected["hy_mt2_aliases"]) == {"別名": "自訂"}
-    restored["translation"]["hy_mt2_glossary_preset"] = ""
+    assert json.loads(selected["translation_glossary"]) == {"共通": "全域", "專有": "自訂", "別名": "自訂"}
+    assert json.loads(selected["hy_mt2_aliases"]) == {"共通": "全域", "專有": "自訂", "別名": "自訂"}
+    restored["terminology"]["active_categories"] = []
     assert json.loads(manager.to_main_args(restored)["translation_glossary"]) == {"共通": "全域"}

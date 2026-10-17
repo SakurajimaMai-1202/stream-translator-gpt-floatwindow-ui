@@ -159,12 +159,15 @@ translation:
   use_smart_prompt: true
   smart_prompt_enabled: true
 terminology:
-  use_terminology_glossary: false
+  use_terminology_glossary: true
+  active_categories: [general_chat]
+  builtin_disabled: []
+  schema_version: 2
+  custom_glossary_scopes: []
   translation_glossary_audit_enabled: false
   terminology_glossary: {}
   glossary: ''
   glossary_list: []
-  glossary_to_asr_corrections: true
   glossary_to_asr_prompt: false
 output:
   output_file: ''

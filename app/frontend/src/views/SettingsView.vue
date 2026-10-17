@@ -11,7 +11,7 @@ import TranslationSettingsTab from '../components/settings/TranslationSettingsTa
 import TerminologySettingsTab from '../components/settings/TerminologySettingsTab.vue';
 import { provideSettingsContext, provideSettingsTabBindings } from '../composables/settings/settingsContext';
 import { useTranscriptionSettings } from '../composables/settings/useTranscriptionSettings';
-import { useTerminologySettings } from '../composables/settings/useTerminologySettings';
+import { useTerminologySettings, normalizeTermAliases } from '../composables/settings/useTerminologySettings';
 import { useTranslationSettings } from '../composables/settings/useTranslationSettings';
 import { useAsrModelManagement } from '../composables/settings/useAsrModelManagement';
 import { useRoute } from 'vue-router';
@@ -223,7 +223,6 @@ const localConfig = ref<any>({
     index_translate_llama_cpp_api_key: '',
     index_translate_glossary_folder: '',
     index_translate_glossary_preset: '',
-    translation_glossary_scope: null,
     paired_subtitle_mode: true,
     deduplicate_asr_overlap: true,
     subtitle_assembler_enabled: true,
@@ -236,12 +235,14 @@ const localConfig = ref<any>({
     custom_models: []
   },
   terminology: {
-    use_terminology_glossary: false,  // 🔧 新增: 術語表啟用開關
+    use_terminology_glossary: true,
     translation_glossary_audit_enabled: false,
     glossary: '',
     glossary_list: [],
     custom_glossary_scopes: [],
-    glossary_to_asr_corrections: true,
+    active_categories: [],
+    builtin_disabled: [],
+    schema_version: 2,
     glossary_to_asr_prompt: false
   },
   output: {
@@ -310,7 +311,7 @@ const terminologySettings = useTerminologySettings(localConfig, store, saveBulkI
 const translationSettings = useTranslationSettings(localConfig, sectionSaveTimers, saveSectionNow);
 const asrModelManagement = useAsrModelManagement(localConfig, store, modelDownloadStore, transcriptionSettings);
 const { runtimeCapabilities, selectedSettingsAsrModelId, coerceAsrSettingsForRuntime } = transcriptionSettings;
-const { presetGlossaries } = terminologySettings;
+const { presetCategories, presetLoadError } = terminologySettings;
 const { stopCpuAsrSidecarPolling, refreshCpuAsrSidecarStatus } = asrModelManagement;
 
 
@@ -326,6 +327,9 @@ async function saveSectionNow(section: string): Promise<void> {
   const existing = sectionSaveInFlight.get(section);
   if (existing) await existing.catch(() => undefined);
   const sectionSnapshot = structuredClone(toRaw(localConfig.value[section] ?? {}));
+  if (section === 'terminology') {
+    for (const term of sectionSnapshot.glossary_list || []) term.aliases = normalizeTermAliases(term.aliases);
+  }
   const runtimeChanged = section === 'runtime'
     && !configsEqual(store.config.runtime, sectionSnapshot);
   const asrComputeChanged = section === 'transcription'
@@ -508,6 +512,11 @@ async function applyStoreConfigToLocalConfig(config?: any, syncLlama = false) {
       }
     }
 
+    for (const term of localConfig.value.terminology.glossary_list || []) {
+      term.aliases = normalizeTermAliases(term.aliases);
+      term.scope = term.scope || 'all';
+      term.translated = String(term.translated || '');
+    }
     coerceAsrSettingsForRuntime();
 
     if (syncLlama) {
@@ -580,8 +589,10 @@ onMounted(async () => {
 
   const runtimeStatusPromise = store.loadRuntimeStatus();
   void axios.get('/api/config/hy-mt2-glossary-presets').then((response) => {
-    presetGlossaries.value = response.data || {};
-  }).catch(() => { presetGlossaries.value = {}; });
+    if (!Array.isArray(response.data?.categories)) throw new Error('Invalid glossary categories');
+    presetCategories.value = response.data.categories;
+    presetLoadError.value = false;
+  }).catch(() => { presetCategories.value = []; presetLoadError.value = true; });
   void serverApi.getInfo().then((serverInfo) => {
     if (serverInfo?.lan_addresses) sharingLanAddresses.value = serverInfo.lan_addresses;
   }).catch(() => null);

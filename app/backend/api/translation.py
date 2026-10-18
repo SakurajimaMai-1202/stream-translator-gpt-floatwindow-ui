@@ -189,6 +189,7 @@ def _resolve_preview_args(request: FamilyPreviewRequest):
     try:
         args = manager.to_main_args(config)
     except (ValueError, TypeError) as exc:
+        logger.warning("Translation settings could not be converted for a model test", exc_info=True)
         raise HTTPException(status_code=400, detail="請檢查端點、模型 ID 與翻譯設定") from exc
     if args.get('translation_provider') not in {'openai', 'openai_compatible', 'lm_studio', 'llama_cpp'}:
         raise HTTPException(status_code=400, detail="試譯需要 OpenAI 相容 API 端點")

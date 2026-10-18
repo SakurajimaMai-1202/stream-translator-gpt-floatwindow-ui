@@ -6,7 +6,7 @@
 
 - [完整操作指南](../USER_GUIDE.md)：安裝、首次設定、音訊來源、模型、翻譯、字幕分享與匯出。
 - [專案首頁](../README.md)：產品介紹、下載與版本選擇。
-- [更新說明](docs/RELEASE_NOTES_v1.5.0_zh-TW.md)：目前版本的功能與更新方式。
+- [更新說明](docs/RELEASE_NOTES_v1.6.0_zh-TW.md)：目前版本的功能與更新方式。
 - [文件索引](docs/README.md)：其他使用及開發參考文件，含[環境變數清單](docs/README.md#環境變數)。
 
 ## 目錄說明

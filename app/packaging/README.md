@@ -26,8 +26,8 @@ executed from the packaged ASR runtime rather than the user's PATH.
 Build all three profiles from one shared frontend/PyInstaller GUI artifact:
 
 ```powershell
-.\build_all_profiles.ps1 -Version 1.5.0 -Mode Quick -ReuseRuntimeCache
-.\build_all_profiles.ps1 -Version 1.5.0 -Mode Final -ReuseRuntimeCache -CompressionLevel 7 -SplitSizeMiB 1900
+.\build_all_profiles.ps1 -Version 1.6.0 -Mode Quick -ReuseRuntimeCache
+.\build_all_profiles.ps1 -Version 1.6.0 -Mode Final -ReuseRuntimeCache -CompressionLevel 7 -SplitSizeMiB 1900
 ```
 
 After a packaging-stage failure, rerun the build with the validated runtime
@@ -35,7 +35,7 @@ caches. Vite/PyInstaller always rebuilds the shared GUI; `-ReuseSharedGui` is
 disabled:
 
 ```powershell
-.\build_all_profiles.ps1 -Version 1.5.0 -Mode Quick -ReuseRuntimeCache
+.\build_all_profiles.ps1 -Version 1.6.0 -Mode Quick -ReuseRuntimeCache
 ```
 
 If all three profile folders and App Update archives already passed their
@@ -43,7 +43,7 @@ individual builds, reuse those artifacts for validation and asset collection.
 The shared GUI is still rebuilt:
 
 ```powershell
-.\build_all_profiles.ps1 -Version 1.5.0 -Mode Quick -ReuseRuntimeCache -ReuseProfileArtifacts
+.\build_all_profiles.ps1 -Version 1.6.0 -Mode Quick -ReuseRuntimeCache -ReuseProfileArtifacts
 ```
 
 `Quick` builds the shared GUI once, validates and assembles all three profile
@@ -168,7 +168,7 @@ default, so users can switch between the packaged GPU runtime and sherpa-onnx
 CPU ASR without another install. Build all profiles with:
 
 ```powershell
-.\build_all_profiles.ps1 -Version 1.5.0 -Mode Final
+.\build_all_profiles.ps1 -Version 1.6.0 -Mode Final
 ```
 
 For a deliberately smaller GPU-only artifact, opt out explicitly with

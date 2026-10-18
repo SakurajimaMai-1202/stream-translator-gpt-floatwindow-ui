@@ -89,7 +89,7 @@ transcription:
 translation:
   openai_api_key: ''
   google_api_key: ''
-  backend: custom:localllm
+  backend: llama
   model: localllm
   translation_prompt: 翻譯成繁體中文
   target_language: Traditional Chinese

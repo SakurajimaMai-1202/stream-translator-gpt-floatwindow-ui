@@ -64,11 +64,13 @@ onMounted(scheduleFamilyDetection);
                   <div>
                     <label class="block text-white/70 font-semibold mb-2">GPT 模型</label>
                     <div class="flex gap-2">
-                    <input v-model="localConfig.translation.gpt_model" type="text" list="gpt-available-models" placeholder="gpt-4o-mini"
+                    <input v-model="localConfig.translation.gpt_model" type="text" placeholder="gpt-4o-mini"
                       class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-green-400" />
                       <button type="button" @click="loadCloudModels('gpt')" :disabled="cloudModels.gpt.busy" class="shrink-0 px-3 py-2 rounded-lg bg-blue-600/20 text-blue-300 text-xs disabled:opacity-50">載入可用模型</button>
                     </div>
-                    <datalist id="gpt-available-models"><option v-for="id in cloudModels.gpt.ids" :key="id" :value="id" /></datalist>
+                    <!-- Not a <datalist>: its native popup ignores the dark theme in WebView2. -->
+                    <UiSelect v-if="cloudModels.gpt.ids.length" class="mt-2" aria-label="已載入的模型" searchable placeholder="從已載入的模型中選擇…"
+                      v-model="localConfig.translation.gpt_model" :options="cloudModels.gpt.ids.map(id => ({ value: id, label: id }))" />
                     <p role="status" aria-live="polite" class="text-white/60 text-xs mt-1">{{ cloudModels.gpt.status }}</p>
                     <p class="text-white/40 text-xs mt-1">可直接輸入模型名稱，或按「載入可用模型」從帳號讀取。</p>
                   </div>
@@ -105,11 +107,13 @@ onMounted(scheduleFamilyDetection);
                   <div>
                     <label class="block text-white/70 font-semibold mb-2">Gemini 模型</label>
                     <div class="flex gap-2">
-                    <input v-model="localConfig.translation.gemini_model" type="text" list="gemini-available-models" placeholder="gemini-2.5-flash-lite"
+                    <input v-model="localConfig.translation.gemini_model" type="text" placeholder="gemini-2.5-flash-lite"
                       class="w-full px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-blue-400" />
                       <button type="button" @click="loadCloudModels('gemini')" :disabled="cloudModels.gemini.busy" class="shrink-0 px-3 py-2 rounded-lg bg-blue-600/20 text-blue-300 text-xs disabled:opacity-50">載入可用模型</button>
                     </div>
-                    <datalist id="gemini-available-models"><option v-for="id in cloudModels.gemini.ids" :key="id" :value="id" /></datalist>
+                    <!-- Not a <datalist>: its native popup ignores the dark theme in WebView2. -->
+                    <UiSelect v-if="cloudModels.gemini.ids.length" class="mt-2" aria-label="已載入的模型" searchable placeholder="從已載入的模型中選擇…"
+                      v-model="localConfig.translation.gemini_model" :options="cloudModels.gemini.ids.map(id => ({ value: id, label: id }))" />
                     <p role="status" aria-live="polite" class="text-white/60 text-xs mt-1">{{ cloudModels.gemini.status }}</p>
                     <p class="text-white/40 text-xs mt-1">可直接輸入模型名稱，或按「載入可用模型」從帳號讀取。</p>
                   </div>

@@ -170,14 +170,15 @@ def test_config_to_inprocess_client_retains_endpoint_credentials(tmp_path):
         client.close()
 
 
+@pytest.mark.parametrize('backend', ['llama', 'custom:localllm'])
 @pytest.mark.parametrize('provider', ['llama_cpp', 'lm_studio'])
-def test_builtin_model_ignores_half_filled_external_server(tmp_path, provider):
+def test_builtin_model_ignores_half_filled_external_server(tmp_path, provider, backend):
     # Picking 外部 llama-server by mistake leaves the model ID empty; the built-in
     # model must still be used instead of failing the model test.
     manager = ConfigManager(tmp_path / 'settings.yaml')
     config = manager.get_config()
     config['translation'].update({
-        'backend': 'llama', 'translation_model_family': 'index_translate',
+        'backend': backend, 'translation_model_family': 'index_translate',
         'index_translate_provider': provider, f'index_translate_{provider}_model': '',
     })
     args = manager.to_main_args(config)

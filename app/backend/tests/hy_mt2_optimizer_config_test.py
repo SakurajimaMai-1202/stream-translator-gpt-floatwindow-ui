@@ -51,7 +51,7 @@ def test_local_provider_switch_preserves_prompt_configuration(tmp_path):
 def test_local_provider_requires_model_id(tmp_path):
     manager = ConfigManager(tmp_path / "config.yaml")
     config = manager.get_config()
-    config["translation"].update({"enabled": True, "family_optimizer_auto": False, "hy_mt2_optimizer_enabled": True,
+    config["translation"].update({"backend": "gpt", "enabled": True, "family_optimizer_auto": False, "hy_mt2_optimizer_enabled": True,
                                   "hy_mt2_provider": "lm_studio", "hy_mt2_lm_studio_model": ""})
     try:
         manager.to_main_args(config)

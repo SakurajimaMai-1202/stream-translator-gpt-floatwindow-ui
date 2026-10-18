@@ -150,7 +150,7 @@ class ConfigManager:
         'translation': {
             'openai_api_key': '',
             'google_api_key': '',
-            'backend': 'custom:localllm',
+            'backend': 'llama',
             'model': 'localllm',
             'translation_prompt': '翻譯成繁體中文',
             'target_language': 'Traditional Chinese',
@@ -1308,9 +1308,10 @@ class ConfigManager:
             endpoint = str(translation_config.get(f'{prefix}_url', '') or '').strip()
             model_id = str(translation_config.get(f'{prefix}_model', '') or '').strip()
             if (local_provider in {'lm_studio', 'llama_cpp'} and (not endpoint or not model_id)
-                    and backend in {'llama', 'localllm'}):
-                # The built-in model is already a server; a half-filled external
-                # override (picked by mistake, no model ID) must not break it.
+                    and (backend in {'llama', 'localllm'} or backend.startswith('custom:'))):
+                # The built-in model and custom models (e.g. the pre-1.6 default custom:localllm)
+                # already name a server; a half-filled external override (picked by
+                # mistake, no model ID) must not break them.
                 local_provider = 'existing'
             if local_provider in {'lm_studio', 'llama_cpp'}:
                 if not endpoint or not model_id:

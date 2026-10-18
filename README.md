@@ -4,9 +4,9 @@
 
 將直播、影片、遊戲或麥克風音訊轉為原文與翻譯字幕，透過桌面浮動視窗或區網字幕頁呈現。可依硬體與使用需求，選擇本機模型、雲端服務，或兩者搭配的處理方式。
 
-[下載最新版](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest) · [更新說明](app/docs/RELEASE_NOTES_v1.5.0_zh-TW.md) · [操作指南](USER_GUIDE.md) · [觀看示範](https://youtu.be/p1O2Ecu4js0) · [回報問題](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/issues)
+[下載最新版](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest) · [更新說明](app/docs/RELEASE_NOTES_v1.6.0_zh-TW.md) · [操作指南](USER_GUIDE.md) · [觀看示範](https://youtu.be/p1O2Ecu4js0) · [回報問題](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/issues)
 
-![Version](https://img.shields.io/badge/version-v1.5.0-blue)
+![Version](https://img.shields.io/badge/version-v1.6.0-blue)
 ![Windows](https://img.shields.io/badge/platform-Windows-lightgrey)
 ![CPU](https://img.shields.io/badge/ASR-CPU-blueviolet)
 ![CUDA](https://img.shields.io/badge/ASR-NVIDIA%20CUDA-green)
@@ -21,22 +21,22 @@
 | 桌面浮動字幕 | 置頂顯示原文與譯文，可自訂字型、顏色、透明度、位置與顯示行數。 |
 | 區網字幕分享 | 透過瀏覽器，讓同一網路內的手機、平板或其他電腦同步觀看字幕。 |
 | 字幕匯出 | 保存辨識與翻譯結果，支援 SRT、TXT、ASS 等格式。 |
-| 術語與辨識修正 | 分別管理 ASR 修正規則與翻譯術語表，處理人名、作品名及固定譯名。 |
-| 模型管理 | 在介面內下載、匯入及切換語音辨識模型、GGUF 翻譯模型與 llama.cpp 執行環境。 |
+| 術語表 | 一份清單同時管理固定譯名與 ASR 常見誤辨，分類可多選，並能從辨識結果建議疑似聽錯的詞。 |
+| 模型管理 | 在介面內下載、匯入及切換語音辨識模型；「本地翻譯」頁可直接下載推薦的 GGUF 翻譯模型並啟動。 |
 | 更新管理 | 提供新版通知、檔案完整性檢查、同類型套件更新、備份及失敗回復。 |
 
 適合直播字幕、遊戲與影音翻譯、麥克風轉錄，以及需要跨裝置觀看字幕的使用情境。完成模型與執行環境準備後，可使用本機音源搭配本機辨識及翻譯；使用雲端服務時則需要網路與對應 API 金鑰。
 
-## v1.5.0 更新亮點
+## v1.6.0 更新亮點
 
-- **介面更新：** 統一深色視覺與設定層級，集中常用操作，改善模型管理與窄視窗使用體驗。
-- **桌面操作流暢度：** 改善首頁下拉選單與設定保存反應；Windows 控制介面預設採用 GPU 合成搭配 CPU 光柵化，捲動與選單維持流暢並避開常見的顯卡繪製問題；ASR／LLM 的 GPU 加速不受影響。若介面仍出現破圖或殘影，可改用軟體渲染（見[使用指南](USER_GUIDE.md#常見問題)）。
-- **應用程式收音：** 選擇指定程式作為音訊來源，提供收音測試與目標關閉提示。
-- **翻譯顯卡選擇：** 支援手動指定本機翻譯使用的顯卡，顯示模型的 GPU 載入狀態。
-- **模型與字幕改善：** 新增 Index-Translate 2B／9B GGUF 推薦，改善翻譯設定保存、繁體中文輸出與字幕銜接。
-- **安裝與更新改善：** 優化首次設定、來源檢查及手動更新，支援 ZIP 與分割更新包。
+- **術語表重新設計：** 翻譯詞條與 ASR 修正合併為一份清單，一筆詞條可同時填譯法與常見誤辨；分類可多選，內建「一般直播」常用詞。
+- **建議的常見誤辨：** 從辨識結果找出疑似聽錯的詞，一鍵加入；可選用讀音字典比對同音誤字。
+- **本地翻譯更容易上手：** 單一「本地翻譯」頁面，推薦模型可在程式內下載並啟動；新安裝預設使用本機模型翻譯。
+- **顯卡與 Vulkan：** 偵測到獨立顯卡時預設將翻譯模型載入顯卡，CPU 版也能透過 Vulkan 使用顯卡；修正 Vulkan 版 llama.cpp 被覆蓋層軟體弄到閃退的問題。
+- **字幕品質：** 大幅減少中文字幕殘留的日文假名，敬稱與繁體中文轉換更準確。
+- **安全性與穩定性：** 管理 API 只接受本機連線並需要權杖；直播重連、更新回復、設定檔保護等多項修正。
 
-完整內容請參閱 [v1.5.0 更新說明](app/docs/RELEASE_NOTES_v1.5.0_zh-TW.md)。
+升級前請先備份 `config.yaml`，第一次啟動會自動轉換舊的術語表。完整內容請參閱 [v1.6.0 更新說明](app/docs/RELEASE_NOTES_v1.6.0_zh-TW.md)。
 
 ## 下載與安裝
 
@@ -57,7 +57,7 @@
 ### 安裝步驟
 
 1. **下載完整包。** CPU／ROCm 下載對應 ZIP；CUDA 請下載全部 3 個分卷及 `merge-full-package.bat`，放在同一資料夾後執行合併。
-2. **確認檔案完整性。** 使用發布頁提供的 `SHA256SUMS-v1.5.0.txt` 核對下載檔案。
+2. **確認檔案完整性。** 使用發布頁提供的 `SHA256SUMS-v1.6.0.txt` 核對下載檔案。
 3. **解壓並啟動。** 解壓到可寫入的資料夾，例如 `D:\Apps\StreamTranslator`，執行 `Stream Translator.exe`。
 4. **完成首次設定。** 選擇音訊來源與辨識語言，依提示準備模型；需要翻譯時，再設定翻譯服務或本機模型。
 
@@ -78,17 +78,17 @@ CUDA 完整包須先合併為 ZIP 再解壓。請下載上述 Full 完整包；G
 1. 備份 `config.yaml`、Cookies、術語與自訂規則，停止正在執行的辨識與翻譯任務。
 2. 下載對應更新包與 SHA-256 清單。CUDA 更新包需下載全部 2 個分卷並放在同一資料夾。
 3. 使用程式提供的更新功能；手動更新器可直接選擇 ZIP 或 `.zip.part01`，依提示完成更新。
-4. 更新後確認版本為 **v1.5.0**，再啟動原本使用的音源、辨識模型與翻譯服務。
+4. 更新後確認版本為 **v1.6.0**，再啟動原本使用的音源、辨識模型與翻譯服務。
 
 更新包包含對應執行環境，並保留既有模型、設定與輸出檔案。切換 CPU／CUDA／ROCm 類型，或無法識別的舊版安裝，請使用完整包；v1.3.11 以下版本亦建議使用完整包。
 
-CUDA／ROCm 使用者若要改用 CPU 語音辨識，可匯入 `StreamTranslator-CPU-ASR-Sidecar-v1.5.0.zip`，再於模型管理頁準備對應的 CPU 模型。
+CUDA／ROCm 使用者若要改用 CPU 語音辨識，可匯入 `StreamTranslator-CPU-ASR-Sidecar-v1.6.0.zip`，再於模型管理頁準備對應的 CPU 模型。
 
 ## 開始使用
 
 1. **選擇音訊來源：** 貼上直播網址，或選擇本機影音、系統音訊、麥克風及指定應用程式。
 2. **準備辨識模型：** 在「ASR 模型管理」下載模型，再於「轉錄選項」選擇相同引擎、模型與輸入語言。
-3. **設定翻譯：** 選擇翻譯後端及目標語言，填入 API 金鑰或啟動本機模型，使用測試功能確認回應。
+3. **設定翻譯：** 本機翻譯到「本地翻譯」頁下載並啟動模型；雲端翻譯在「翻譯選項」填入 API 金鑰。用「測試模型連線」或試譯確認回應。
 4. **啟動轉譯：** 在首頁開始辨識，依需要開啟浮動字幕、字幕分享或檔案輸出。只需要原文字幕時，可關閉翻譯。
 
 指定應用程式收音需要 Windows build 20348 以上。瀏覽器可能共用程序，因此無法保證只擷取單一分頁或視窗的音訊。
@@ -115,7 +115,7 @@ CUDA／ROCm 使用者若要改用 CPU 語音辨識，可匯入 `StreamTranslator
 | --- | --- |
 | **OpenAI** | 設定 API 金鑰與可用模型，適合使用雲端文字翻譯。 |
 | **Google Gemini** | 使用 Gemini API 金鑰，模型與配額依帳戶服務而定。 |
-| **llama.cpp** | 透過程式管理 GGUF 模型與執行環境，在本機執行翻譯。 |
+| **本機模型（llama.cpp）** | 新安裝的預設。在「本地翻譯」頁下載 GGUF 模型並啟動，在本機執行翻譯。 |
 | **OpenAI-compatible API** | 連接 LM Studio 或其他相容服務，設定對應 Base URL 與模型名稱。 |
 
 雲端語音辨識會將音訊傳送至服務商；雲端文字翻譯會將辨識文字傳送至服務商。API 費用與配額依各服務規定。
@@ -131,14 +131,14 @@ CUDA／ROCm 使用者若要改用 CPU 語音辨識，可匯入 `StreamTranslator
 
 模型大小與顯存需求為選型參考。實際占用還會受上下文長度、量化格式與同時執行的語音辨識影響。
 
-本機翻譯可在「Llama 執行設定」選擇顯卡：NVIDIA 優先使用 CUDA，AMD／Intel Arc 獨顯建議使用 Vulkan。程式管理的 llama.cpp 預設翻譯端點為 `http://127.0.0.1:8081/v1`；LM Studio 常見端點為 `http://127.0.0.1:1234/v1`，請以實際服務設定為準。
+本機翻譯可在「本地翻譯」頁選擇顯卡：NVIDIA 優先使用 CUDA，AMD／Intel Arc 獨顯建議使用 Vulkan。偵測到獨立顯卡時，預設將模型完整載入顯卡；CPU 版也能透過 Vulkan 使用顯卡。程式管理的 llama.cpp 預設翻譯端點為 `http://127.0.0.1:8081/v1`；LM Studio 常見端點為 `http://127.0.0.1:1234/v1`，請以實際服務設定為準。
 
 ## 字幕與資料管理
 
 - **字幕外觀：** 自訂字型、配色、透明度、位置與行數，搭配桌面浮動視窗或瀏覽器字幕頁。
 - **字幕分享：** 使用介面顯示的區網網址，讓同一網路內的裝置觀看；需要允許 Windows 防火牆連線。
-- **辨識修正：** ASR 修正規則在翻譯前處理固定誤辨，格式為 `正確詞,誤辨詞1,誤辨詞2`。
-- **翻譯術語：** 術語表固定譯名，格式為 `原文,譯文`，可與辨識修正分別管理。
+- **術語表：** 每筆詞條包含「正確寫法」、「譯法」、「常見誤辨」與分類。填譯法可固定譯名；譯法留空只修正辨識；常見誤辨會在翻譯前改回正確寫法。支援 CSV 匯入匯出。
+- **建議的常見誤辨：** 開啟「收集未命中詞」後，程式會列出疑似聽錯的詞，可一鍵加入或忽略。
 - **設定與模型：** 設定保存在可寫入位置的 `config.yaml`；模型路徑可於模型管理頁查看，輸出位置由首頁指定。
 
 字幕分享預設供區網使用。需要跨網路存取時，請使用具驗證的 HTTPS 或 VPN 配置。
@@ -155,11 +155,11 @@ CUDA／ROCm 使用者若要改用 CPU 語音辨識，可匯入 `StreamTranslator
 
 ### 翻譯沒有回應？
 
-使用設定頁的測試功能，確認 API 金鑰、Base URL 與模型名稱。本機翻譯請先確認模型伺服器已啟動；OpenAI 語音辨識、OpenAI 翻譯與 Gemini 使用各自的金鑰設定。
+使用設定頁的測試功能，確認 API 金鑰、Base URL 與模型名稱。本機翻譯請先在「本地翻譯」頁啟動模型，「模型伺服器」保持「沿用目前翻譯服務」；OpenAI 語音辨識、OpenAI 翻譯與 Gemini 使用各自的金鑰設定。
 
 ### 字幕錯字或譯名不一致，應如何調整？
 
-原文辨識錯誤時，先確認音源、語言與 ASR 模型，再使用辨識修正規則；原文正確但譯名不一致時，使用翻譯術語表或調整翻譯設定。
+原文辨識錯誤時，先確認音源、語言與 ASR 模型，再到「術語表」替該詞加上常見誤辨；原文正確但譯名不一致時，替詞條填寫譯法或調整翻譯設定。
 
 ### 切換 CPU 辨識後找不到模型？
 
@@ -168,7 +168,7 @@ CPU 模式使用對應的 sherpa-onnx 模型，無法直接沿用 GPU 權重。�
 ## 文件與專案資訊
 
 - [操作與設定指南](USER_GUIDE.md)
-- [版本更新說明](app/docs/RELEASE_NOTES_v1.5.0_zh-TW.md)
+- [版本更新說明](app/docs/RELEASE_NOTES_v1.6.0_zh-TW.md)
 - [手動更新指南](app/docs/MANUAL_UPDATE_zh-TW.md)
 - [開發與打包文件](app/packaging/README.md)
 - [文件索引](app/docs/README.md)（含[環境變數清單](app/docs/README.md#環境變數)）
@@ -183,6 +183,7 @@ $env:PYTHONUTF8 = "1"
 python -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
 Get-Content app/constraints/runtime-cuda.txt | Where-Object { $_ -notmatch "^(torch==|torchaudio==|torchvision==|nvidia-|triton)" } | Set-Content (Join-Path $env:TEMP "runtime-ci.txt") -Encoding utf8
 python -m pip install -r app/requirements.txt pytest -c (Join-Path $env:TEMP "runtime-ci.txt")
+$env:PYTHONPATH = Join-Path (Get-Location).Path "stream-translator-gpt"
 Push-Location app; python -m pytest backend/tests -q; Pop-Location
 $env:PYTHONPATH = Join-Path (Get-Location).Path "app"
 Push-Location stream-translator-gpt; python -m pytest -q; Pop-Location

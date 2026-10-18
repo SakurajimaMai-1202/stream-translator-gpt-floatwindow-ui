@@ -21,6 +21,7 @@
 
 ## 歷史版本更新說明
 
+- [v1.5.0](RELEASE_NOTES_v1.5.0_zh-TW.md)
 - [v1.4.10](RELEASE_NOTES_v1.4.10_zh-TW.md)
 - [v1.4.9](RELEASE_NOTES_v1.4.9_zh-TW.md)
 - [v1.4.8](RELEASE_NOTES_v1.4.8_zh-TW.md)

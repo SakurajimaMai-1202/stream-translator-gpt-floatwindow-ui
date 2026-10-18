@@ -4,6 +4,7 @@ server:
   public_port: 8765
   enable_subtitle_sharing: true
   allow_lan_admin: false
+  lan_admin_password: ''
 runtime:
   profile: cuda
   device_policy: auto_discrete

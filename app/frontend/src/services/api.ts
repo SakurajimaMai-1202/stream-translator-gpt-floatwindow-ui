@@ -34,6 +34,15 @@ axios.interceptors.request.use((config) => {
   return config;
 });
 
+// A LAN / reverse-proxy session can expire or be signed out; send the page back to the login form.
+const LOCAL_HOSTS = ['localhost', '127.0.0.1', '::1', '[::1]'];
+axios.interceptors.response.use(undefined, (error) => {
+  if (error?.response?.status === 401 && !LOCAL_HOSTS.includes(window.location.hostname)) {
+    window.location.replace('/login');
+  }
+  return Promise.reject(error);
+});
+
 export interface Config {
   [key: string]: any;
 }
@@ -80,6 +89,7 @@ export interface ServerInfo {
   allow_lan_admin?: boolean;
   lan_admin_active?: boolean;
   lan_admin_urls?: string[];
+  lan_admin_password_set?: boolean;
 }
 
 export interface FfmpegCheckResult {

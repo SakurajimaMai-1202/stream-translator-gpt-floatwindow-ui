@@ -1,7 +1,6 @@
 import ipaddress
 import logging
 import socket
-from urllib.parse import quote
 
 from fastapi import FastAPI, Request
 from . import config
@@ -14,7 +13,6 @@ from . import cookies
 from . import readiness
 from backend.api.config import get_config_manager
 from backend.core import admin_host
-from backend.core.admin_auth import get_admin_token
 from backend.core.system_check import check_ffmpeg
 
 logger = logging.getLogger(__name__)
@@ -34,12 +32,14 @@ def register_routes(app: FastAPI):
     async def server_info(request: Request):
         """回傳伺服器公開端口資訊，供前端組合分享連結"""
         allow_lan_admin = False
+        lan_admin_password_set = False
         try:
             cfg = get_config_manager().get_config()
             server_cfg = cfg.get("server", {}) if isinstance(cfg, dict) else {}
             public_port = server_cfg.get("public_port", 8765)
             sharing_enabled = server_cfg.get("enable_subtitle_sharing", True)
             allow_lan_admin = server_cfg.get("allow_lan_admin") is True
+            lan_admin_password_set = bool(server_cfg.get("lan_admin_password"))
         except Exception:
             logger.debug("讀取伺服器分享設定失敗", exc_info=True)
             public_port = 8765
@@ -54,13 +54,9 @@ def register_routes(app: FastAPI):
         except OSError:
             pass
         lan_admin_active = not admin_host.is_loopback_host(admin_host.bound_host)
-        token = get_admin_token()
         lan_admin_urls = []
         if lan_admin_active and request.url.port:
-            # This endpoint already requires the token, so handing it back is safe;
-            # /api/auth/session turns it into the session cookie on the other device.
-            suffix = f"/api/auth/session?token={quote(token)}" if token else "/"
-            lan_admin_urls = [f"http://{ip}:{request.url.port}{suffix}" for ip in sorted(lan_addresses)]
+            lan_admin_urls = [f"http://{ip}:{request.url.port}/" for ip in sorted(lan_addresses)]
         return {
             "public_port": public_port,
             "enable_subtitle_sharing": sharing_enabled,
@@ -68,6 +64,7 @@ def register_routes(app: FastAPI):
             "allow_lan_admin": allow_lan_admin,
             "lan_admin_active": lan_admin_active,
             "lan_admin_urls": lan_admin_urls,
+            "lan_admin_password_set": lan_admin_password_set,
         }
 
     @app.get("/api/system/check")

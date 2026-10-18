@@ -57,6 +57,8 @@ class ConfigManager:
             'enable_subtitle_sharing': True,
             # Control panel (admin API) for other LAN devices; applies on restart.
             'allow_lan_admin': False,
+            # Required from LAN / reverse-proxy clients only; the desktop app never asks.
+            'lan_admin_password': '',
         },
         'runtime': {
             'profile': 'cuda',

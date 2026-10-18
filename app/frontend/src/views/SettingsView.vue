@@ -93,7 +93,8 @@ const localConfig = ref<any>({
   server: {
     public_port: 8765,
     enable_subtitle_sharing: true,
-    allow_lan_admin: false
+    allow_lan_admin: false,
+    lan_admin_password: ''
   },
   runtime: {
     profile: 'cuda',

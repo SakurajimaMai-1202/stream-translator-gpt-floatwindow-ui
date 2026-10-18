@@ -32,4 +32,4 @@ def test_lan_admin_urls_only_when_bound_to_lan(monkeypatch, client):
     monkeypatch.setattr(admin_host, "bound_host", "0.0.0.0")
     data = client.get("/api/server/info").json()
     assert data["lan_admin_active"] is True
-    assert data["lan_admin_urls"] == ["http://192.168.1.20:8010/api/auth/session?token=tok/en%2B1"]
+    assert data["lan_admin_urls"] == ["http://192.168.1.20:8010/"]

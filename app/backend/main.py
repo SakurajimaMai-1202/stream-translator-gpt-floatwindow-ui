@@ -77,7 +77,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-register_admin_auth(app, settings.API_PREFIX)
+def _lan_admin_password() -> str:
+    """區網連線開啟時才有密碼；關閉時區網／代理連線一律無法登入。"""
+    from backend.api.config import get_config_manager
+    try:
+        server = get_config_manager().get_config().get("server") or {}
+    except Exception:
+        logger.debug("讀取區網登入設定失敗", exc_info=True)
+        return ""
+    password = server.get("lan_admin_password")
+    return password if server.get("allow_lan_admin") is True and isinstance(password, str) else ""
+
+
+register_admin_auth(app, settings.API_PREFIX, lan_password=_lan_admin_password)
 
 # 註冊路由
 routes.register_routes(app)

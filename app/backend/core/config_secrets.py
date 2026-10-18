@@ -8,6 +8,7 @@ SECRET_KEYS = frozenset({
     "telegram_bot_token", "cookies", "cookies_by_site", "discord_webhook_url",
     "hy_mt2_lm_studio_api_key", "hy_mt2_llama_cpp_api_key",
     "index_translate_lm_studio_api_key", "index_translate_llama_cpp_api_key",
+    "lan_admin_password",
 })
 
 

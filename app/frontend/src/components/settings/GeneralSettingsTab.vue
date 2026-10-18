@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import UiSelect, { type UiSelectOption } from '../UiSelect.vue';
+import axios from 'axios';
 import { serverApi } from '../../services/api';
 import { useSettingsContext } from '../../composables/settings/settingsContext';
 
@@ -43,6 +44,11 @@ onMounted(() => {
     lanAdminUrls.value = info.lan_admin_urls || [];
   }).catch(() => null);
 });
+// Opened from another device (LAN or reverse proxy): offer to sign out of it.
+const isRemoteSession = !['localhost', '127.0.0.1', '::1', '[::1]'].includes(window.location.hostname);
+async function logoutRemote() {
+  try { await axios.post('/api/auth/logout'); } finally { window.location.replace('/login'); }
+}
 
 const logLevelOptions: UiSelectOption[] = [
   { value: 'DEBUG', label: 'DEBUG' },
@@ -188,17 +194,25 @@ const logLevelOptions: UiSelectOption[] = [
                         {{ lanAdminActive ? '區網可連線' : '僅限本機' }}
                       </span>
                     </div>
-                    <p class="text-white/55 text-sm mt-2 leading-6">讓同一個區域網路中的其他電腦或手機，用瀏覽器操作這個控制介面（可變更所有設定）。重新啟動程式後生效。</p>
+                    <p class="text-white/55 text-sm mt-2 leading-6">讓區網中的其他電腦、手機，或 NAS 上的反向代理，用瀏覽器操作這個控制介面（可變更所有設定）。從其他裝置連線時需要輸入下方密碼；這台電腦的程式不需要。重新啟動程式後生效。</p>
                   </div>
                   <input v-model="localConfig.server.allow_lan_admin" type="checkbox" class="w-5 h-5 accent-emerald-500 mt-1 shrink-0" />
                 </label>
+
+                <div v-if="localConfig.server.allow_lan_admin">
+                  <label class="block text-white/70 font-semibold mb-2" for="lan-admin-password">控制介面密碼</label>
+                  <input id="lan-admin-password" v-model="localConfig.server.lan_admin_password" type="password" autocomplete="new-password" placeholder="建議至少 12 個字元"
+                    class="w-full md:w-96 px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white placeholder-white/30 focus:outline-none focus:border-emerald-400" />
+                  <p v-if="!localConfig.server.lan_admin_password" class="text-sm text-red-300 mt-1">尚未設定密碼，其他裝置會無法登入。</p>
+                  <p v-else class="text-white/40 text-xs mt-1">修改密碼後，已登入的其他裝置需要重新登入。</p>
+                </div>
 
                 <p v-if="!!localConfig.server.allow_lan_admin !== lanAdminActive" class="text-sm text-amber-200">
                   {{ localConfig.server.allow_lan_admin ? '已開啟，請重新啟動程式後再從其他裝置連線。' : '已關閉，重新啟動程式後才會停止區網連線。' }}
                 </p>
 
                 <div v-if="lanAdminActive && lanAdminUrls.length" class="space-y-2">
-                  <p class="text-white/55 text-xs">在其他裝置開啟下列網址（含本次啟動的登入權杖，每次重新啟動都會更換）：</p>
+                  <p class="text-white/55 text-xs">在其他裝置開啟下列網址，輸入密碼登入；反向代理的目標也填這個網址：</p>
                   <div v-for="url in lanAdminUrls" :key="url" class="flex items-center gap-2">
                     <code class="min-w-0 flex-1 truncate text-xs text-cyan-300 bg-black/20 rounded px-3 py-2">{{ url }}</code>
                     <button type="button" @click="copySharingUrl(url)" class="px-3 py-2 rounded-lg bg-blue-600/25 hover:bg-blue-600/40 text-blue-200 text-xs border border-blue-500/25">
@@ -209,8 +223,9 @@ const logLevelOptions: UiSelectOption[] = [
 
                 <div class="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs text-white/55 leading-5">
                   <span class="text-amber-300 font-semibold">注意：</span>
-                  網址中的權杖等同密碼，請勿分享給他人或貼到公開場合。連線未加密，只建議在自家可信任的網路使用；首次開啟時請允許 Windows 防火牆存取。
+                  區網連線未加密；要從外網使用時，請透過有 HTTPS 的反向代理，並使用不容易猜到的密碼。連續輸入錯誤 5 次會暫停登入 5 分鐘。首次開啟時請允許 Windows 防火牆存取。
                 </div>
+                <button v-if="isRemoteSession" type="button" @click="logoutRemote" class="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-sm">登出這台裝置</button>
               </div>
             </div>
           </div>

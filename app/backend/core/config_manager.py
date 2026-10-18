@@ -55,6 +55,8 @@ class ConfigManager:
         'server': {
             'public_port': 8765,
             'enable_subtitle_sharing': True,
+            # Control panel (admin API) for other LAN devices; applies on restart.
+            'allow_lan_admin': False,
         },
         'runtime': {
             'profile': 'cuda',

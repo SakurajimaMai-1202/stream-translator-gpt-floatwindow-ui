@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import UiSelect, { type UiSelectOption } from '../UiSelect.vue';
+import { serverApi } from '../../services/api';
 import { useSettingsContext } from '../../composables/settings/settingsContext';
 
 const { localConfig, sharingLanAddresses, copiedSharingUrl, appUpdateStatus, appUpdateBusy, checkAppUpdate, downloadAppUpdate, cancelAppUpdate, applyAppUpdate, testingGpt, testingGemini, testConnection } = useSettingsContext();
@@ -32,6 +33,16 @@ async function copySharingUrl(url: string) {
     if (copiedSharingUrl.value === url) copiedSharingUrl.value = '';
   }, 1800);
 }
+
+// The listen address is fixed at startup, so the toggle only takes effect after a restart.
+const lanAdminActive = ref(false);
+const lanAdminUrls = ref<string[]>([]);
+onMounted(() => {
+  void serverApi.getInfo().then((info) => {
+    lanAdminActive.value = !!info.lan_admin_active;
+    lanAdminUrls.value = info.lan_admin_urls || [];
+  }).catch(() => null);
+});
 
 const logLevelOptions: UiSelectOption[] = [
   { value: 'DEBUG', label: 'DEBUG' },
@@ -166,6 +177,40 @@ const logLevelOptions: UiSelectOption[] = [
                 </div>
 
                 <p v-else class="text-white/40 text-sm">分享頁面與公開字幕 API 已停用，區域網路中的其他裝置無法讀取字幕。</p>
+              </div>
+
+              <div class="md:col-span-2 rounded-xl p-5 border border-white/10 bg-white/5 space-y-4">
+                <label class="flex items-start justify-between gap-5 cursor-pointer">
+                  <div>
+                    <div class="flex items-center gap-2">
+                      <span class="text-white font-semibold">允許區網裝置開啟控制介面</span>
+                      <span :class="['px-2 py-0.5 rounded-full text-xs border', lanAdminActive ? 'text-emerald-300 bg-emerald-500/10 border-emerald-500/25' : 'text-white/45 bg-white/5 border-white/10']">
+                        {{ lanAdminActive ? '區網可連線' : '僅限本機' }}
+                      </span>
+                    </div>
+                    <p class="text-white/55 text-sm mt-2 leading-6">讓同一個區域網路中的其他電腦或手機，用瀏覽器操作這個控制介面（可變更所有設定）。重新啟動程式後生效。</p>
+                  </div>
+                  <input v-model="localConfig.server.allow_lan_admin" type="checkbox" class="w-5 h-5 accent-emerald-500 mt-1 shrink-0" />
+                </label>
+
+                <p v-if="!!localConfig.server.allow_lan_admin !== lanAdminActive" class="text-sm text-amber-200">
+                  {{ localConfig.server.allow_lan_admin ? '已開啟，請重新啟動程式後再從其他裝置連線。' : '已關閉，重新啟動程式後才會停止區網連線。' }}
+                </p>
+
+                <div v-if="lanAdminActive && lanAdminUrls.length" class="space-y-2">
+                  <p class="text-white/55 text-xs">在其他裝置開啟下列網址（含本次啟動的登入權杖，每次重新啟動都會更換）：</p>
+                  <div v-for="url in lanAdminUrls" :key="url" class="flex items-center gap-2">
+                    <code class="min-w-0 flex-1 truncate text-xs text-cyan-300 bg-black/20 rounded px-3 py-2">{{ url }}</code>
+                    <button type="button" @click="copySharingUrl(url)" class="px-3 py-2 rounded-lg bg-blue-600/25 hover:bg-blue-600/40 text-blue-200 text-xs border border-blue-500/25">
+                      {{ copiedSharingUrl === url ? '已複製' : '複製' }}
+                    </button>
+                  </div>
+                </div>
+
+                <div class="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs text-white/55 leading-5">
+                  <span class="text-amber-300 font-semibold">注意：</span>
+                  網址中的權杖等同密碼，請勿分享給他人或貼到公開場合。連線未加密，只建議在自家可信任的網路使用；首次開啟時請允許 Windows 防火牆存取。
+                </div>
               </div>
             </div>
           </div>

@@ -77,6 +77,9 @@ export interface ServerInfo {
   public_port: number;
   enable_subtitle_sharing: boolean;
   lan_addresses: string[];
+  allow_lan_admin?: boolean;
+  lan_admin_active?: boolean;
+  lan_admin_urls?: string[];
 }
 
 export interface FfmpegCheckResult {

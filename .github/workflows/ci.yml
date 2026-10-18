@@ -39,6 +39,9 @@ jobs:
         run: python -m pip install -r app/requirements.txt pytest -c (Join-Path $env:RUNNER_TEMP "runtime-ci.txt")
       - name: Backend tests
         working-directory: app
+        env:
+          # The engine is an editable install locally; CI only installs its deps.
+          PYTHONPATH: '${{ github.workspace }}\stream-translator-gpt'
         run: python -m pytest backend/tests -q
       - name: Engine tests
         working-directory: stream-translator-gpt

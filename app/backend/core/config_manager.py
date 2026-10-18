@@ -1304,10 +1304,15 @@ class ConfigManager:
             family = 'hy_mt2'
         if family in {'hy_mt2', 'index_translate'} and backend != 'none':
             local_provider = translation_config.get(f'{family}_provider', 'existing')
+            prefix = f'{family}_{local_provider}'
+            endpoint = str(translation_config.get(f'{prefix}_url', '') or '').strip()
+            model_id = str(translation_config.get(f'{prefix}_model', '') or '').strip()
+            if (local_provider in {'lm_studio', 'llama_cpp'} and (not endpoint or not model_id)
+                    and backend in {'llama', 'localllm'}):
+                # The built-in model is already a server; a half-filled external
+                # override (picked by mistake, no model ID) must not break it.
+                local_provider = 'existing'
             if local_provider in {'lm_studio', 'llama_cpp'}:
-                prefix = f'{family}_{local_provider}'
-                endpoint = str(translation_config.get(f'{prefix}_url', '') or '').strip()
-                model_id = str(translation_config.get(f'{prefix}_model', '') or '').strip()
                 if not endpoint or not model_id:
                     raise ValueError(f'{local_provider} requires a server URL and model ID')
                 args['translation_provider'] = local_provider

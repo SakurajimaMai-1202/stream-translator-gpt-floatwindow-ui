@@ -223,10 +223,13 @@ onMounted(scheduleFamilyDetection);
               <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
                 <div class="md:col-span-2">
                   <label class="block text-white/70 mb-1">模型伺服器</label>
+                  <p v-if="['llama', 'localllm'].includes(localConfig.translation.backend)" class="mb-2 text-xs text-white/60">
+                    使用「本地翻譯」頁啟動的模型時，請選「沿用目前翻譯服務」；外部伺服器的網址或模型名稱沒填完整時，也會自動沿用本地模型。
+                  </p>
                   <UiSelect v-model="localConfig.translation[familySettings + '_provider']" :options="[
                     { value: 'existing', label: '沿用目前翻譯服務' },
                     { value: 'lm_studio', label: 'LM Studio' },
-                    { value: 'llama_cpp', label: '本機 llama.cpp 伺服器' }
+                    { value: 'llama_cpp', label: '外部 llama-server（自行啟動）' }
                   ]" />
                 </div>
                 <template v-if="localConfig.translation[familySettings + '_provider'] === 'lm_studio'">

@@ -168,3 +168,30 @@ def test_config_to_inprocess_client_retains_endpoint_credentials(tmp_path):
         assert client.request_timeout == 7
     finally:
         client.close()
+
+
+@pytest.mark.parametrize('provider', ['llama_cpp', 'lm_studio'])
+def test_builtin_model_ignores_half_filled_external_server(tmp_path, provider):
+    # Picking 外部 llama-server by mistake leaves the model ID empty; the built-in
+    # model must still be used instead of failing the model test.
+    manager = ConfigManager(tmp_path / 'settings.yaml')
+    config = manager.get_config()
+    config['translation'].update({
+        'backend': 'llama', 'translation_model_family': 'index_translate',
+        'index_translate_provider': provider, f'index_translate_{provider}_model': '',
+    })
+    args = manager.to_main_args(config)
+    assert args['translation_provider'] == 'openai_compatible'
+    assert args['gpt_model'] == 'localllm'
+    assert args['translation_model_family'] == 'index_translate'
+
+
+def test_cloud_backend_still_requires_model_id_for_external_server(tmp_path):
+    manager = ConfigManager(tmp_path / 'settings.yaml')
+    config = manager.get_config()
+    config['translation'].update({
+        'backend': 'gpt', 'translation_model_family': 'index_translate',
+        'index_translate_provider': 'llama_cpp', 'index_translate_llama_cpp_model': '',
+    })
+    with pytest.raises(ValueError, match='model ID'):
+        manager.to_main_args(config)

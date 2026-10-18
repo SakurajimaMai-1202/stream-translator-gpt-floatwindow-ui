@@ -311,7 +311,6 @@ class LLMClient():
             client.close()
 
     def translate_preview(self, text: str, context=None, diagnostic_glossary=None):
-        import numpy as np
         import re
         from dataclasses import replace
         context = context or []
@@ -328,7 +327,8 @@ class LLMClient():
                 if self.history_size or self.family_optimizer_enabled:
                     with self._history_lock:
                         self.history_pairs.append((source, ""))
-        task = TranslationTask(np.zeros(0, dtype=np.float32), (0, 0))
+        # No audio: the packaged GUI backend runs previews without numpy.
+        task = TranslationTask(None, (0, 0))
         task.transcript = text
         task._translation_attempts = 1
         task.start_time = datetime.now(timezone.utc)

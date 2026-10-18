@@ -227,6 +227,7 @@ async def preview_translation(request: FamilyPreviewRequest):
         return {'family': client.model_family, 'model': args.get('gpt_model'),
                 'provider': args.get('translation_provider'), **results}
     except Exception as exc:
+        logger.warning("Translation preview failed", exc_info=True)
         raise HTTPException(status_code=502, detail="試譯失敗；請檢查服務連線、模型 ID 與 API 相容性") from exc
 
 
@@ -246,6 +247,7 @@ async def test_translation_family(request: FamilyPreviewRequest):
                 'family': client.model_family, 'model': args.get('gpt_model'),
                 'sample': result['translation'][:120], 'latency_ms': result['latency_ms']}
     except Exception as exc:
+        logger.warning("Translation model health check failed", exc_info=True)
         raise HTTPException(status_code=502, detail="模型連線測試失敗；請檢查服務與模型 ID") from exc
 
 

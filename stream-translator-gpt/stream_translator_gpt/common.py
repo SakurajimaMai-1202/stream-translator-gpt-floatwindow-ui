@@ -9,9 +9,13 @@ import queue
 from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-import numpy as np
+if TYPE_CHECKING:
+    # Annotation only: the packaged GUI backend imports this module for test
+    # translations and does not bundle numpy.
+    import numpy as np
 
 SAMPLE_RATE = 16000
 SAMPLES_PER_FRAME = 512  # Requested by silero-vad >= v5
@@ -173,7 +177,7 @@ class TranslationTask:
     _segment_counter = itertools.count(1)
     _segment_counter_lock = threading.Lock()
 
-    def __init__(self, audio: np.array, time_range: tuple[float, float], latency_trace: LatencyTrace | None = None):
+    def __init__(self, audio: 'np.ndarray', time_range: tuple[float, float], latency_trace: LatencyTrace | None = None):
         with self._segment_counter_lock:
             self.segment_id = next(self._segment_counter)
         self.audio = audio

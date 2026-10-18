@@ -7,6 +7,7 @@ import re
 import unicodedata
 from datetime import datetime, timezone
 import tempfile
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -103,7 +104,16 @@ async def delete_alias_suggestions():
             json.dump({"version": 2, "cleared_at": now, "updated_at": now,
                        "records": [], "pending_records": []}, output)
         try:
-            os.replace(temporary, path)
+            # The engine reads this file on every unmatched sentence; on Windows
+            # an open reader makes the replace fail for a moment.
+            for attempt in range(10):
+                try:
+                    os.replace(temporary, path)
+                    break
+                except PermissionError:
+                    if attempt == 9:
+                        raise HTTPException(status_code=409, detail="建議檔案正被使用中，請稍後再試")
+                    time.sleep(0.1)
         finally:
             temporary.unlink(missing_ok=True)
     await asyncio.to_thread(clear)

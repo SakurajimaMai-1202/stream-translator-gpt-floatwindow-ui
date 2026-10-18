@@ -177,3 +177,24 @@ def test_malformed_suggestions_are_tolerated(monkeypatch, tmp_path):
     result = terminology.read_suggestions()["suggestions"]
     assert len(result) == 2
     assert all(row["examples"] == [] for row in result)
+
+
+def test_clear_retries_while_the_engine_holds_the_file(tmp_path, monkeypatch):
+    import asyncio
+    import os
+    from backend.api import terminology
+    monkeypatch.setattr(terminology, "suggestions_path", lambda: tmp_path / "asr_correction_suggestions.json")
+    monkeypatch.setattr(terminology.time, "sleep", lambda _seconds: None)
+    real_replace, failures = os.replace, []
+
+    def flaky_replace(source, target):
+        if len(failures) < 3:
+            failures.append(target)
+            raise PermissionError("in use")
+        return real_replace(source, target)
+
+    monkeypatch.setattr(terminology.os, "replace", flaky_replace)
+    assert asyncio.run(terminology.delete_alias_suggestions()) == {"success": True}
+    assert len(failures) == 3
+    assert (tmp_path / "asr_correction_suggestions.json").exists()
+    assert not list(tmp_path.glob(".suggestions-clear-*"))

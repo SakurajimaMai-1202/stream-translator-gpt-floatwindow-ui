@@ -599,7 +599,14 @@ class ASRTermCorrector:
         addon = os.environ.get("STREAM_TRANSLATOR_READING_ADDON", "").strip()
         if not addon:
             return None
-        root = Path(addon).resolve()
+        # The first load compiles Janome's dictionary (~2.5 s measured), which
+        # would stall subtitles on the ASR thread; load it in the background
+        # and keep using surface matching until it is ready.
+        threading.Thread(target=self._load_reading_tokenizer, args=(Path(addon).resolve(),),
+                         daemon=True, name="reading-tokenizer").start()
+        return None
+
+    def _load_reading_tokenizer(self, root: Path) -> None:
         try:
             sys.path.insert(0, str(root))
             import janome
@@ -612,7 +619,6 @@ class ASRTermCorrector:
         finally:
             if str(root) in sys.path:
                 sys.path.remove(str(root))
-        return self._reading_tokenizer
 
     def _suggest_readings(self, text, tokenizer, minimum_score):
         def normalize(value):

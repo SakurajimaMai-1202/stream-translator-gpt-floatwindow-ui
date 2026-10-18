@@ -101,3 +101,38 @@ def test_short_present_anchor_does_not_suppress_reading_suggestion():
     engine = asr.ASRTermCorrector([{"canonical": "水星", "aliases": ["星"]}])
     engine._reading_tokenizer = FakeTokenizer()
     assert engine.suggest_aliases("彗星")[0]["canonical"] == "水星"
+
+
+def test_reading_tokenizer_loads_off_the_asr_thread(tmp_path, monkeypatch):
+    import sys
+    import threading
+    # A stand-in add-on: the real Janome takes ~2.5 s on its first load.
+    package = tmp_path / "janome"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "tokenizer.py").write_text(
+        "import threading\nstarted = threading.Event()\nrelease = threading.Event()\n"
+        "class Tokenizer:\n    def __init__(self):\n        started.set()\n        release.wait(5)\n",
+        encoding="utf-8")
+    monkeypatch.setenv("STREAM_TRANSLATOR_READING_ADDON", str(tmp_path))
+    for name in [name for name in sys.modules if name == "janome" or name.startswith("janome.")]:
+        monkeypatch.delitem(sys.modules, name)
+    asr.configure_asr_correction_learning(True, tmp_path / "candidates.log", tmp_path / "summary.json")
+    try:
+        engine = asr.ASRTermCorrector([{"canonical": "彗星", "aliases": []}])
+        # The first call returns at once and keeps surface matching meanwhile.
+        assert engine._get_reading_tokenizer() is None
+        loader = next(t for t in threading.enumerate() if t.name == "reading-tokenizer")
+        import time
+        deadline = time.monotonic() + 5
+        while "janome.tokenizer" not in sys.modules and time.monotonic() < deadline:
+            time.sleep(0.01)
+        stub = sys.modules["janome.tokenizer"]
+        assert stub.started.wait(5)
+        assert engine._get_reading_tokenizer() is None
+        stub.release.set()
+        loader.join(5)
+        assert engine._get_reading_tokenizer() is not None
+        assert str(tmp_path) not in sys.path
+    finally:
+        asr.configure_asr_correction_learning(False)

@@ -32,7 +32,7 @@ function createStore() {
     exports,
     require(name) {
       if (name === 'pinia') return { defineStore: (_name, setup) => setup };
-      if (name === 'vue') return { ref: value => ({ value }), computed: get => ({ get value() { return get(); } }) };
+      if (name === 'vue') return { ref: value => ({ value }), computed: get => ({ get value() { return get(); } }), watch: () => () => {} };
       if (name === '../services/api') return { translationApi: { createEventSource() {
         const source = new MockEventSource(); sources.push(source); return source;
       } } };

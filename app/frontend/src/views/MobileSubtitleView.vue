@@ -206,6 +206,12 @@ onUnmounted(() => {
               class="typing-cursor"
             >|</span></div>
           <div
+            v-if="showTranslated && !sub.translated && sub.translation_status"
+            class="sub-translated translation-status"
+            :style="{ fontSize: fontSize + 'px' }">
+            {{ sub.translation_status === 'timeout' ? '翻譯逾時' : '翻譯失敗' }}
+          </div>
+          <div
             v-if="showLatency && latencyLabel(sub)"
             class="latency-line"
           >{{ latencyLabel(sub) }}</div>
@@ -494,6 +500,12 @@ onUnmounted(() => {
   text-shadow: var(--sub-shadow);
   word-break: break-word;
   margin-top: 4px;
+}
+
+.translation-status {
+  opacity: 0.6;
+  font-style: italic;
+  font-weight: 400;
 }
 
 .latency-line {

@@ -114,6 +114,18 @@ function harness(overrides = {}) {
   floating.stream.dispose();
   assert.equal(channel.closed, true);
 
+  for (const broadcast of [false, true]) {
+    const statusLines = [];
+    const identity = broadcast ? { backend_timestamp: 'status' } : { timestamp: 'status' };
+    for (const status of ['failed', 'timeout']) {
+      h.logic.updateLine(statusLines, { ...identity, original: 'x', translation_status: status }, broadcast, true);
+      assert.equal(statusLines.length, 1);
+      assert.equal(statusLines[0].translation_status, status);
+    }
+    h.logic.updateLine(statusLines, { ...identity, original: 'x' }, broadcast, true);
+    assert.equal(statusLines[0].translation_status, null);
+  }
+
   const lines = [];
   for (let i = 0; i < 5; i++) h.logic.updateLine(lines, { original: 'x' }, false, true);
   h.logic.trimLines(lines, 2, false, () => {});

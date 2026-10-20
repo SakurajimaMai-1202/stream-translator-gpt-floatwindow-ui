@@ -143,7 +143,7 @@ def test_kana_repair_hint_only_when_requested(family):
     ('のんでりだと思う。', ('これは日本語です。', 'それは日本語です。'), 'それは日本語です。', True),
     ('のんでりだと思う。', ('我觉得是「に」。', '我猜是「のんでり」。'), '我覺得是。', True),
     ('のんでりだと思う。', ('我覺得是「のんでり」。', '【源文】我猜是這樣。'), '', False),
-    ('のんでりだと思う。', ('【源文】我覺得是這樣。', '我猜是「のんでり」。'), '', False),
+    ('のんでりだと思う。', ('【源文】我覺得是這樣。', '我猜是「のんでり」。'), '我猜是「のんでり」。', True),
     ('なんか普通に喜ぶだから。', ('普通に開心的話完全沒問題啊。', '普通開心的話完全沒問題啊。'), '普通開心的話完全沒問題啊。', False),
 ])
 def test_kana_repair_http_live_and_preview(monkeypatch, tmp_path, capsys, family, preview, source, outputs, expected, fallback):
@@ -187,7 +187,7 @@ def test_kana_repair_http_live_and_preview(monkeypatch, tmp_path, capsys, family
             assert task.translation_result.translation_kana_fallback is fallback
             assert task.translation_result.translation == expected
             if fallback:
-                assert set(task.translation_validation_reasons) <= {'residual_kana', 'target_language_mismatch'}
+                assert set(task.translation_validation_reasons).intersection({'residual_kana', 'target_language_mismatch'})
                 from stream_translator_gpt.result_exporter import ResultExporter
                 exporter = ResultExporter(cqhttp_url=None, cqhttp_token=None, discord_webhook_url=None,
                     telegram_token=None, telegram_chat_id=None, output_file_path=str(tmp_path / 'captions.srt'),
@@ -234,8 +234,42 @@ def test_kana_fallback_blocked_by_other_attempt_failure(failure):
     client._prepare_prompt(task)
     task.translation = '我猜是「のんでり」。'
     client._validate_hy_mt2_output(task)
-    assert task.translation == '' and task.translation_failed
-    assert not task.translation_kana_fallback
+    if failure == 'stale':
+        assert task.translation == '' and task.translation_failed
+        assert not task.translation_kana_fallback
+    else:
+        assert task.translation
+        assert task.translation_kana_fallback
+        assert not task.translation_failed
+    client.close()
+
+
+@pytest.mark.parametrize('family', ['index_translate', 'hy_mt2'])
+def test_multiline_then_kana_fallback(family):
+    import re
+    from stream_translator_gpt.common import TranslationTask
+    client = _preview_client(model_family=family, index_translate_optimizer_enabled=True,
+        hy_mt2_optimizer_enabled=True, translation_target_language='Traditional Chinese')
+    task = TranslationTask(None, (0, 1))
+    task.transcript = 'モちゃんお疲れ、パンスちゃんお疲れさんです。ありがとう見てくれて、パシモンお疲れ、セイちゃんお疲れ。'
+    try:
+        task._family_request, _ = client.prepare_translation_request(
+            task.transcript, task.segment_id, previous_sources=('今日はありがとう。',))
+        task._translation_attempts = 1
+        task.translation = '今天謝謝你。\n莫醬辛苦了，潘絲醬也辛苦了。'
+        client._validate_hy_mt2_output(task)
+        assert 'unexpected_multiline_output' in task.translation_validation_reasons
+        assert not getattr(task, '_family_kana_candidates', ())
+        task._translation_attempts = 2
+        task.translation = '莫ちゃん辛苦了，潘絲ちゃん也辛苦了。謝謝大家的觀看，帕西蒙辛苦了，賽伊ちゃん也辛苦了。'
+        client._validate_hy_mt2_output(task)
+        assert task.translation == '莫醬辛苦了，潘絲醬也辛苦了。謝謝大家的觀看，帕西蒙辛苦了，賽伊醬也辛苦了。'
+        assert not re.search(r'[\u3041-\u3096]', task.translation)
+        assert task.translation_kana_fallback and not task.translation_failed
+        assert 'unexpected_multiline_output' in task.translation_validation_reasons
+        assert 'residual_kana' in task.translation_validation_reasons
+    finally:
+        client.close()
 
 
 def test_kana_only_final_attempt_without_retry_is_shown():

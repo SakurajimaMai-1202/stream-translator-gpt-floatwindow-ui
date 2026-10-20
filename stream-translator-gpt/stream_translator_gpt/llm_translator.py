@@ -450,10 +450,12 @@ class LLMClient():
         else:
             task._family_residual_kana = ()
         candidates = getattr(task, "_family_kana_candidates", ())
-        task._family_kana_candidates = candidates + (task.translation,)
+        if set(reasons) <= kana_reasons:
+            task._family_kana_candidates = candidates + (task.translation,)
         final_attempt = (getattr(task, "_translation_attempts", 0) >= 2
                          or getattr(task, "_family_final_attempt", False))
-        if final_attempt and set(task._family_failure_reasons) <= kana_reasons:
+        if (final_attempt and set(reasons) <= kana_reasons
+                and "stale_result" not in task._family_failure_reasons):
             # Reverse iteration makes equal counts prefer the later attempt.
             candidate = min(reversed(task._family_kana_candidates),
                             key=lambda text: len(re.findall(r"[\u3041-\u3096]", text)))

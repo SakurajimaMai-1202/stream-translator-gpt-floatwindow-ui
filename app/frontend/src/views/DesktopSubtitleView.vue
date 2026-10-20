@@ -234,6 +234,12 @@ function latencyLabel(sub: DesktopSubtitle): string {
                 class="typing-cursor">|</span>
             </div>
             <div
+              v-if="showTranslated && !sub.translated && sub.translation_status"
+              class="sub-line translated translation-status"
+              :style="{ '--subtitle-font-size': fontSize + 'px' }">
+              {{ sub.translation_status === 'timeout' ? '翻譯逾時' : '翻譯失敗' }}
+            </div>
+            <div
               v-if="showLatency && latencyLabel(sub)"
               class="latency-line"
               :style="{ color: latencyColor }"
@@ -616,6 +622,12 @@ function latencyLabel(sub: DesktopSubtitle): string {
   font-weight: 700;
   margin-top: 6px;
   text-shadow: var(--sub-shadow);
+}
+
+.sub-line.translation-status {
+  opacity: 0.6;
+  font-style: italic;
+  font-weight: 400;
 }
 
 .latency-line {

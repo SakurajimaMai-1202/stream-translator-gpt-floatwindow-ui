@@ -330,6 +330,11 @@ class ResultExporter(LoopWorkerBase):
                 "latency_trace": latency_trace,
                 "latency_window": self.latency_window.snapshot(),
             }
+            if not task.translation:
+                if getattr(task, "_translation_expired", False):
+                    subtitle_event_data["translation_status"] = "timeout"
+                elif task.translation_failed:
+                    subtitle_event_data["translation_status"] = "failed"
             if self.emit_json_events:
                 print(
                     SUBTITLE_EVENT_PREFIX + json.dumps(

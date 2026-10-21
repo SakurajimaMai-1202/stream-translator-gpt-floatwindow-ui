@@ -850,3 +850,16 @@ def test_short_line_fallback_empty_glossary_name_stays_blank():
 def test_short_line_fallback_nicknames_are_not_table_words(source, expected):
     from stream_translator_gpt.translation_policy import short_line_fallback
     assert short_line_fallback(TranslationRequest(1, source)) == expected
+
+
+@pytest.mark.parametrize('source, expected', [
+    ('ミナさーん', None),
+    ('ミナさんっ', None),
+    ('タクさーん', None),
+    ('ワンちゃん', '狗狗'),
+    ('クマさん', '熊熊'),
+    ('みなさーん', '大家'),
+])
+def test_short_line_fallback_stretched_honorifics_and_katakana_animals(source, expected):
+    from stream_translator_gpt.translation_policy import short_line_fallback
+    assert short_line_fallback(TranslationRequest(1, source)) == expected

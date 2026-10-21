@@ -328,7 +328,8 @@ def short_line_fallback(request: TranslationRequest) -> str | None:
             localized = token
         elif (kana and _short_line_word(token)
               and not (re.search(r"[\u30a1-\u30fa]", token)
-                       and token.endswith(tuple(h for h, _ in _HONORIFIC_ZH)))):
+                       and re.sub(r"[ーっぁぃぅぇぉ]", "", token).endswith(
+                           tuple(h for h, _ in _HONORIFIC_ZH)))):
             # ミナさん is a name, not みなさん.
             localized = _short_line_word(token)
         elif re.fullmatch(r"[\u30a1-\u30faー]+", token):
@@ -343,8 +344,8 @@ def short_line_fallback(request: TranslationRequest) -> str | None:
                 if name in glossary:
                     localized = glossary[name] + chinese if glossary[name] else None
                     break
-                if name in _ANIMAL_STEMS:
-                    localized = _ANIMAL_STEMS[name]
+                if _to_hiragana(name) in _ANIMAL_STEMS:
+                    localized = _ANIMAL_STEMS[_to_hiragana(name)]
                     break
                 base = re.sub(r"[ーっぁぃぅぇぉ]", "", _to_hiragana(name))
                 # Nicknames are short; longer stems or お〜 are usually words (おきゃくさん).

@@ -21,6 +21,7 @@ from .translation_policy import (
     residual_kana_runs,
     residual_kana_share,
     localize_residual_kana,
+    short_line_fallback,
     _matching_glossary,
 )
 from .translation_glossary_auditor import TranslationGlossaryAuditor
@@ -454,6 +455,21 @@ class LLMClient():
             task._family_kana_candidates = candidates + (task.translation,)
         final_attempt = (getattr(task, "_translation_attempts", 0) >= 2
                          or getattr(task, "_family_final_attempt", False))
+        if (final_attempt and "untranslated_source" in reasons
+                and set(reasons) <= kana_reasons | {"untranslated_source"}
+                and "stale_result" not in task._family_failure_reasons):
+            fallback = short_line_fallback(normalized_request)
+            if fallback is not None:
+                task.translation = fallback
+                task.translation_failed = False
+                task.translation_validation_rejected = False
+                task.translation_error = None
+                task.translation_validation_reasons = tuple(dict.fromkeys(task._family_failure_reasons))
+                task.translation_kana_fallback = True
+                task._family_repair = False
+                if self.hy_mt2_debug:
+                    print(f'[DEBUG] [FAMILY OPTIMIZER] KANA_FALLBACK={task.translation}', file=sys.stderr, flush=True)
+                return reasons[0]
         if (final_attempt and set(reasons) <= kana_reasons
                 and "stale_result" not in task._family_failure_reasons):
             # Reverse iteration makes equal counts prefer the later attempt.

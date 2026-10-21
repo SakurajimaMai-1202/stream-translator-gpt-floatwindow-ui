@@ -1,5 +1,5 @@
 from stream_translator_gpt.translation_policy import (
-    TranslationRequest, create_prompt_strategy, validate_translation, resolve_model_family,
+    TranslationRequest, create_prompt_strategy, validate_translation, resolve_model_family, short_line_fallback,
 )
 from stream_translator_gpt.hy_mt2_optimizer import OptimizerSettings
 import pytest
@@ -268,6 +268,108 @@ def test_multiline_then_kana_fallback(family):
         assert task.translation_kana_fallback and not task.translation_failed
         assert 'unexpected_multiline_output' in task.translation_validation_reasons
         assert 'residual_kana' in task.translation_validation_reasons
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize('source, expected', [
+    ('まだまだ。', '還早呢。'),
+    ('どんどん。', '不斷。'),
+    ('さいちゃん、さいちゃん。', 'Sai醬，Sai醬。'),
+    ('にとしめ。', None),
+    ('あ' * 20, None),
+    ('スイちゃん！', 'スイ醬！'),
+    ('スイ！', None),
+    ('うん、スイ！', '嗯，スイ！'),
+    ('まだまだ、にとしめ。', None),
+    ('は。', None),
+    ('まだまだ、みなさん。', '還早呢，大家。'),
+    (' まだまだ!\tどんどん… ', '還早呢！不斷…'),
+    ('たくさん。', '很多。'),
+    ('とうさん。', '爸爸。'),
+    ('にいちゃん、にいちゃん。', '哥哥，哥哥。'),
+    ('うん、ダメ！', '嗯，不行！'),
+    ('すごーい！', '好厲害！'),
+    ('「まだまだ」', '「還早呢」'),
+    ('ちーちゃん！', 'Chi醬！'),
+    ('ちょっと。', None),
+    ('ええ。', None),
+    ('まあ。', None),
+    ('あちゃん。', None),
+    ('まだまだちゃん。', None),
+    ('まだまだー。', '還早呢。'),
+    ('すごいっ！', '好厲害！'),
+    ('うん,ヤバイ!', '嗯，不妙！'),
+    ('うん、ウソ・スゴイ！', '嗯，騙人・好厲害！'),
+])
+def test_short_line_fallback(source, expected):
+    assert short_line_fallback(TranslationRequest(1, source)) == expected
+
+
+@pytest.mark.parametrize('kwargs, expected', [
+    ({'glossary': {'さい': '小彩'}}, '還早呢，小彩。'),
+    ({'preserve_elements': ('さい',)}, '還早呢，さい。'),
+    ({'glossary': {'さい': ''}}, None),
+    ({'glossary': {'さい': 'さい'}}, '還早呢，さい。'),
+])
+def test_short_line_fallback_exact_glossary_and_preservation(kwargs, expected):
+    assert short_line_fallback(TranslationRequest(1, 'まだまだ、さい。', **kwargs)) == expected
+    assert short_line_fallback(TranslationRequest(
+        1, 'まだまだ、LIVE。', preserve_elements=('LIVE',))) == '還早呢，LIVE。'
+    assert short_line_fallback(TranslationRequest(1, 'さい。', glossary={'さい': '「」'})) is None
+
+
+@pytest.mark.parametrize('family', ['index_translate', 'hy_mt2'])
+@pytest.mark.parametrize('source, expected', [('まだまだ。', '還早呢。'), ('にとしめ。', '')])
+def test_copied_short_line_fallback(family, source, expected):
+    from stream_translator_gpt.common import TranslationTask
+    client = _preview_client(model_family=family, index_translate_optimizer_enabled=True,
+        hy_mt2_optimizer_enabled=True, translation_target_language='Traditional Chinese')
+    task = TranslationTask(None, (0, 1))
+    task.transcript = source
+    try:
+        task._family_request, _ = client.prepare_translation_request(source, task.segment_id)
+        task._translation_attempts = 1
+        task.translation = source
+        client._validate_hy_mt2_output(task)
+        assert task.translation == '' and task.translation_failed
+        assert 'untranslated_source' in task.translation_validation_reasons
+        task._translation_attempts = 2
+        task.translation = source
+        client._validate_hy_mt2_output(task)
+        assert task.translation == expected
+        assert task.translation_failed is (not bool(expected))
+        assert task.translation_kana_fallback is bool(expected)
+        assert 'untranslated_source' in task.translation_validation_reasons
+        if expected:
+            assert not task.translation_validation_rejected
+            assert task.translation_error is None
+            assert not task._family_repair
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize('family', ['index_translate', 'hy_mt2'])
+def test_short_line_fallback_blocked_by_stale_attempt(family):
+    from stream_translator_gpt.common import TranslationTask
+    client = _preview_client(model_family=family, index_translate_optimizer_enabled=True,
+        hy_mt2_optimizer_enabled=True, translation_target_language='Traditional Chinese')
+    task = TranslationTask(None, (0, 1))
+    task.transcript = 'まだまだ。'
+    try:
+        task._translation_attempts = 1
+        client._prepare_prompt(task)
+        client.reset_context()
+        task.translation = task.transcript
+        client._validate_hy_mt2_output(task)
+        assert task.translation_validation_reasons == ('stale_result',)
+        task._translation_attempts = 2
+        client._prepare_prompt(task)
+        task.translation = task.transcript
+        client._validate_hy_mt2_output(task)
+        assert 'untranslated_source' in task.translation_validation_reasons
+        assert task.translation == '' and task.translation_failed
+        assert not task.translation_kana_fallback
     finally:
         client.close()
 
@@ -651,3 +753,48 @@ def test_builtin_nested_terms_only_require_the_longest_match():
     assert _matching_glossary("リツイートありがとう", glossary) == {"リツイート": "轉推"}
     assert _matching_glossary("鯛の塩釜焼きを作った", glossary) == {"鯛の塩釜焼き": "鹽釜烤鯛魚"}
     assert _matching_glossary("ツイートした", glossary) == {"ツイート": "推文"}
+
+
+def test_short_line_fallback_preserved_hiragana():
+    assert short_line_fallback(TranslationRequest(
+        1, 'まだまだ、あおい。', preserve_elements=('あおい',))) == '還早呢，あおい。'
+
+
+@pytest.mark.parametrize('family', ['index_translate', 'hy_mt2'])
+def test_short_line_fallback_retry_disabled(family):
+    from stream_translator_gpt.common import TranslationTask
+    client = _preview_client(model_family=family, index_translate_optimizer_enabled=True,
+        hy_mt2_optimizer_enabled=True, translation_target_language='Traditional Chinese')
+    task = TranslationTask(None, (0, 1))
+    task.transcript = 'まだまだ。'
+    try:
+        task._family_request, _ = client.prepare_translation_request(task.transcript, task.segment_id)
+        task._translation_attempts = 1
+        task._family_final_attempt = True
+        task.translation = task.transcript
+        client._validate_hy_mt2_output(task)
+        assert task.translation == '還早呢。'
+        assert task.translation_kana_fallback and not task.translation_failed
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize('source, expected', [
+    ('あーちゃん！', None),
+    ('あっちゃん！', None),
+    ('ーーちゃん。', None),
+    ('すごーいちゃん。', None),
+    ('ダメちゃん。', None),
+    ('おきゃくさん。', None),
+    ('おまわりさん。', None),
+    ('ちーちゃん！', 'Chi醬！'),
+    ('すいちゃん♪', 'Sui醬♪'),
+])
+def test_short_line_fallback_rejects_non_names(source, expected):
+    from stream_translator_gpt.translation_policy import short_line_fallback
+    assert short_line_fallback(TranslationRequest(1, source)) == expected
+
+
+def test_short_line_fallback_needs_a_letter():
+    from stream_translator_gpt.translation_policy import short_line_fallback
+    assert short_line_fallback(TranslationRequest(1, 'さい♪', glossary={'さい': '「」'})) is None

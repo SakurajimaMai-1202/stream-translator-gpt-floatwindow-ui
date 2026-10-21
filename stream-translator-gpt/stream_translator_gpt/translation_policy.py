@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
@@ -180,6 +181,51 @@ _KANA_WORDS.update({
     "おにいさん": "哥哥", "おにいちゃん": "哥哥", "おねえさん": "姊姊", "おねえちゃん": "姊姊",
     "おかあさん": "媽媽", "おとうさん": "爸爸", "あかちゃん": "寶寶", "お": "", "ご": "",
 })
+# Standalone meanings only; do not use these to patch longer sentences.
+_SHORT_LINE_WORDS = {
+    "まだまだ": "還早呢", "どんどん": "不斷", "もっと": "再多一點",
+    "もっともっと": "再多一點", "すごい": "好厲害", "すごいすごい": "好厲害",
+    "やばい": "不妙", "ほんと": "真的", "ほんとに": "真的", "よし": "好", "じゃあ": "那麼",
+    "ねえ": "欸", "うそ": "騙人", "はやく": "快點", "がんばって": "加油",
+    "がんばれ": "加油", "おはよう": "早安", "おやすみ": "晚安", "こんばんは": "晚上好",
+    "こんにちは": "你好", "ありがとう": "謝謝", "ありがとうございます": "謝謝", "うん": "嗯",
+    "ああ": "啊", "おお": "喔", "わあ": "哇", "そうそう": "對對",
+    "だめ": "不行", "まって": "等一下", "かわいい": "好可愛", "きれい": "好漂亮",
+    "いいね": "不錯耶", "いくよ": "要上囉", "みんな": "大家", "ただいま": "我回來了",
+    "おかえり": "歡迎回來", "よろしく": "請多指教", "おつかれ": "辛苦了", "おつかれさま": "辛苦了",
+    "ごめん": "抱歉",
+    "ごめんね": "抱歉",
+    "もちろん": "當然",
+    "たぶん": "大概",
+    "はい": "好",
+    "みなさん": "大家",
+    "みんなさん": "大家",
+    "たくさん": "很多",
+    "おじさん": "大叔",
+    "おばさん": "阿姨",
+    "あかちゃん": "寶寶",
+    "おくさん": "太太",
+    "とうさん": "爸爸",
+    "おとうさん": "爸爸",
+    "かあさん": "媽媽",
+    "おかあさん": "媽媽",
+    "にいさん": "哥哥",
+    "おにいさん": "哥哥",
+    "にいちゃん": "哥哥",
+    "おにいちゃん": "哥哥",
+    "ねえさん": "姊姊",
+    "おねえさん": "姊姊",
+    "ねえちゃん": "姊姊",
+    "おねえちゃん": "姊姊",
+    "じいさん": "爺爺",
+    "おじいさん": "爺爺",
+    "じいちゃん": "爺爺",
+    "おじいちゃん": "爺爺",
+    "ばあさん": "奶奶",
+    "おばあさん": "奶奶",
+    "ばあちゃん": "奶奶",
+    "おばあちゃん": "奶奶",
+}
 _KANA_PHRASES = {
     "皆さん": "大家", "お父さん": "爸爸", "お母さん": "媽媽", "お兄さん": "哥哥",
     "お兄ちゃん": "哥哥", "兄ちゃん": "哥哥", "お姉さん": "姊姊", "お姉ちゃん": "姊姊",
@@ -215,6 +261,61 @@ def _romanize_hiragana(run: str) -> str:
         out.append(syllable)
     text = "".join(out)
     return text[:1].upper() + text[1:]
+
+
+def short_line_fallback(request: TranslationRequest) -> str | None:
+    source = request.source_text.strip()
+    if len(source) > 16 or not re.search(r"[\u3041-\u3096]", source):
+        return None
+    separators = r"[、。，！？!?…～〜・,.「」『』（）()［］\[\]♪♡☆★ｗ\s\u3000]+"
+    parts = re.split(f"({separators})", source)
+    glossary = request.glossary or {}
+    for index in range(0, len(parts), 2):
+        token = parts[index]
+        if not token:
+            continue
+        lookup = token
+        if re.fullmatch(r"[\u30a1-\u30f6ー]+", lookup):
+            lookup = "".join(chr(ord(char) - 0x60) if 'ァ' <= char <= 'ヶ' else char
+                             for char in lookup)
+        if re.fullmatch(r"[\u3041-\u3096ー]+", lookup):
+            lookup = lookup.replace("ー", "").removesuffix("っ")
+        if token in glossary:
+            localized = glossary[token]
+        elif token in request.preserve_elements:
+            localized = token
+        elif lookup in _SHORT_LINE_WORDS:
+            localized = _SHORT_LINE_WORDS[lookup]
+        elif re.fullmatch(r"[\u30a1-\u30faー]+", token):
+            localized = token
+        else:
+            localized = None
+            for honorific, chinese in _HONORIFIC_ZH:
+                if not token.endswith(honorific):
+                    continue
+                name = token[:-len(honorific)]
+                base = "".join(chr(ord(char) - 0x60) if 'ァ' <= char <= 'ヶ' else char for char in name)
+                base = base.replace("ー", "").replace("っ", "")
+                # Nicknames are short; longer stems or お〜 are usually words (おきゃくさん).
+                # ちーちゃん is a nickname; あーちゃん is a drawn-out vowel.
+                stretched = len(base) == 1 and name.endswith("ー") and base not in "あいうえおん"
+                if (len(base) < 2 and not stretched) or base in _SHORT_LINE_WORDS:
+                    break
+                if re.fullmatch(r"[\u3041-\u3096ー]+", name):
+                    if len(base) <= 3 and not name.startswith("お"):
+                        localized = _romanize_hiragana(name.replace("ー", "")) + chinese
+                elif re.fullmatch(r"[\u30a1-\u30faー]+", name):
+                    localized = name + chinese
+                break
+        if not localized:
+            return None
+        parts[index] = localized
+    result = re.sub(r"\s+", "", "".join(parts)).translate(str.maketrans({"、": "，", ",": "，", "!": "！", "?": "？"}))
+    remainder = "".join(_residual_kana_parts(request, result)[::2])
+    if (re.search(r"[\u3041-\u3096]", remainder)
+            or not any(unicodedata.category(char)[0] in "LN" for char in result)):
+        return None
+    return result
 
 
 def _localize_kana_run(run: str) -> str:

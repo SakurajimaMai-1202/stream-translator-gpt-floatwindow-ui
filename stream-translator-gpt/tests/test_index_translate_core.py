@@ -798,3 +798,22 @@ def test_short_line_fallback_rejects_non_names(source, expected):
 def test_short_line_fallback_needs_a_letter():
     from stream_translator_gpt.translation_policy import short_line_fallback
     assert short_line_fallback(TranslationRequest(1, 'さい♪', glossary={'さい': '「」'})) is None
+
+
+@pytest.mark.parametrize('source, expected', [
+    ('にーちゃん！', '哥哥！'),
+    ('ねーちゃん。', '姊姊。'),
+    ('とーさん', '爸爸'),
+    ('かあちゃん', '媽媽'),
+    ('わんちゃん！', '狗狗！'),
+    ('まだまだ どんどん', '還早呢，不斷'),
+    ('うん、ー', None),
+])
+def test_short_line_fallback_long_vowels_and_spacing(source, expected):
+    from stream_translator_gpt.translation_policy import short_line_fallback
+    assert short_line_fallback(TranslationRequest(1, source)) == expected
+
+
+def test_short_line_fallback_glossary_name_with_honorific():
+    from stream_translator_gpt.translation_policy import short_line_fallback
+    assert short_line_fallback(TranslationRequest(1, 'さいちゃん！', glossary={'さい': '小彩'})) == '小彩醬！'

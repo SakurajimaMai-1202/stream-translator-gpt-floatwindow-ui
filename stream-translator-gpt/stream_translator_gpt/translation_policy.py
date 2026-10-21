@@ -225,6 +225,14 @@ _SHORT_LINE_WORDS = {
     "おばあさん": "奶奶",
     "ばあちゃん": "奶奶",
     "おばあちゃん": "奶奶",
+    "かあちゃん": "媽媽",
+    "とうちゃん": "爸爸",
+    "わんちゃん": "狗狗",
+    "ねこちゃん": "貓咪",
+    "くまさん": "熊熊",
+    "うさぎさん": "兔兔",
+    "いしゃさん": "醫生",
+    "おいしゃさん": "醫生",
 }
 _KANA_PHRASES = {
     "皆さん": "大家", "お父さん": "爸爸", "お母さん": "媽媽", "お兄さん": "哥哥",
@@ -263,6 +271,33 @@ def _romanize_hiragana(run: str) -> str:
     return text[:1].upper() + text[1:]
 
 
+_LONG_VOWEL = {"a": "あ", "i": "い", "u": "う", "e": "えい", "o": "うお"}
+
+
+def _to_hiragana(text: str) -> str:
+    return "".join(chr(ord(char) - 0x60) if 'ァ' <= char <= 'ヶ' else char for char in text)
+
+
+def _short_line_word(token: str) -> str | None:
+    # ー stands for the previous vowel: にーちゃん is にいちゃん, とーさん is とうさん.
+    variants = {""}
+    previous = ""
+    for char in _to_hiragana(token):
+        if char == "ー":
+            vowel = (_ROMAJI.get(previous) or _YOUON.get(previous, ""))[-1:]
+            variants = {v + o for v in variants for o in (*_LONG_VOWEL.get(vowel, ""), "")}
+        else:
+            variants = {v + char for v in variants}
+            previous = char
+        if len(variants) > 32:
+            return None
+    for variant in sorted(variants, key=len, reverse=True):
+        for candidate in (variant, variant.removesuffix("っ")):
+            if candidate in _SHORT_LINE_WORDS:
+                return _SHORT_LINE_WORDS[candidate]
+    return None
+
+
 def short_line_fallback(request: TranslationRequest) -> str | None:
     source = request.source_text.strip()
     if len(source) > 16 or not re.search(r"[\u3041-\u3096]", source):
@@ -274,32 +309,30 @@ def short_line_fallback(request: TranslationRequest) -> str | None:
         token = parts[index]
         if not token:
             continue
-        lookup = token
-        if re.fullmatch(r"[\u30a1-\u30f6ー]+", lookup):
-            lookup = "".join(chr(ord(char) - 0x60) if 'ァ' <= char <= 'ヶ' else char
-                             for char in lookup)
-        if re.fullmatch(r"[\u3041-\u3096ー]+", lookup):
-            lookup = lookup.replace("ー", "").removesuffix("っ")
+        kana = re.fullmatch(r"[\u3041-\u3096\u30a1-\u30faー]+", token)
         if token in glossary:
             localized = glossary[token]
         elif token in request.preserve_elements:
             localized = token
-        elif lookup in _SHORT_LINE_WORDS:
-            localized = _SHORT_LINE_WORDS[lookup]
+        elif kana and _short_line_word(token):
+            localized = _short_line_word(token)
         elif re.fullmatch(r"[\u30a1-\u30faー]+", token):
-            localized = token
+            # A katakana name; a lone ー or ッ is not one.
+            localized = token if re.search(r"[\u30a1-\u30f9\u30fa]", token.replace("ッ", "")) else None
         else:
             localized = None
             for honorific, chinese in _HONORIFIC_ZH:
                 if not token.endswith(honorific):
                     continue
                 name = token[:-len(honorific)]
-                base = "".join(chr(ord(char) - 0x60) if 'ァ' <= char <= 'ヶ' else char for char in name)
-                base = base.replace("ー", "").replace("っ", "")
+                if glossary.get(name):
+                    localized = glossary[name] + chinese
+                    break
+                base = _to_hiragana(name).replace("ー", "").replace("っ", "")
                 # Nicknames are short; longer stems or お〜 are usually words (おきゃくさん).
                 # ちーちゃん is a nickname; あーちゃん is a drawn-out vowel.
                 stretched = len(base) == 1 and name.endswith("ー") and base not in "あいうえおん"
-                if (len(base) < 2 and not stretched) or base in _SHORT_LINE_WORDS:
+                if (len(base) < 2 and not stretched) or _short_line_word(name):
                     break
                 if re.fullmatch(r"[\u3041-\u3096ー]+", name):
                     if len(base) <= 3 and not name.startswith("お"):
@@ -310,7 +343,11 @@ def short_line_fallback(request: TranslationRequest) -> str | None:
         if not localized:
             return None
         parts[index] = localized
-    result = re.sub(r"\s+", "", "".join(parts)).translate(str.maketrans({"、": "，", ",": "，", "!": "！", "?": "？"}))
+    for index in range(1, len(parts), 2):
+        # A bare space between two words reads as a pause.
+        parts[index] = "，" if not parts[index].strip() else re.sub(r"\s+", "", parts[index])
+    result = "".join(parts).strip("，").translate(
+        str.maketrans({"、": "，", ",": "，", "!": "！", "?": "？"}))
     remainder = "".join(_residual_kana_parts(request, result)[::2])
     if (re.search(r"[\u3041-\u3096]", remainder)
             or not any(unicodedata.category(char)[0] in "LN" for char in result)):

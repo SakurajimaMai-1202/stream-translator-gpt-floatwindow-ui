@@ -328,7 +328,7 @@ def short_line_fallback(request: TranslationRequest) -> str | None:
             localized = token
         elif (kana and _short_line_word(token)
               and not (re.search(r"[\u30a1-\u30fa]", token)
-                       and re.sub(r"[ーっぁぃぅぇぉ]", "", token).endswith(
+                       and re.sub(r"[ーっッぁぃぅぇぉァィゥェォ]", "", token).endswith(
                            tuple(h for h, _ in _HONORIFIC_ZH)))):
             # ミナさん is a name, not みなさん.
             localized = _short_line_word(token)

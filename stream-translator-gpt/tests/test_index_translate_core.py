@@ -855,6 +855,8 @@ def test_short_line_fallback_nicknames_are_not_table_words(source, expected):
 @pytest.mark.parametrize('source, expected', [
     ('ミナさーん', None),
     ('ミナさんっ', None),
+    ('ミナさんッ', None),
+    ('ミナさァん', None),
     ('タクさーん', None),
     ('ワンちゃん', '狗狗'),
     ('クマさん', '熊熊'),

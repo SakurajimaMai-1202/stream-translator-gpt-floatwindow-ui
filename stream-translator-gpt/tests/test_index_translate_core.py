@@ -835,3 +835,18 @@ def test_short_line_fallback_small_vowels_and_stem_words(source, expected):
 def test_short_line_fallback_empty_glossary_name_stays_blank():
     from stream_translator_gpt.translation_policy import short_line_fallback
     assert short_line_fallback(TranslationRequest(1, 'さいちゃん！', glossary={'さい': ''})) is None
+
+
+@pytest.mark.parametrize('source, expected', [
+    ('みなちゃん', 'Mina醬'),
+    ('ミナちゃん', 'ミナ醬'),
+    ('ミナさん', 'ミナ桑'),
+    ('たくちゃん', 'Taku醬'),
+    ('タクさん', 'タク桑'),
+    ('ありちゃん', 'Ari醬'),
+    ('みなさん！', '大家！'),
+    ('おばちゃん', '阿姨'),
+])
+def test_short_line_fallback_nicknames_are_not_table_words(source, expected):
+    from stream_translator_gpt.translation_policy import short_line_fallback
+    assert short_line_fallback(TranslationRequest(1, source)) == expected

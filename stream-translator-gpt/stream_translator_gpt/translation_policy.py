@@ -236,7 +236,13 @@ _SHORT_LINE_WORDS = {
     "ぞうさん": "大象",
     "いぬちゃん": "狗狗",
     "ありさん": "螞蟻",
+    "おじちゃん": "叔叔",
+    "おばちゃん": "阿姨",
 }
+# Animal stems take any honorific (くまちゃん, ねこさん); other table words
+# ending in さん (みなさん, たくさん) are not stem + honorific.
+_ANIMAL_STEMS = {"くま": "熊熊", "ねこ": "貓咪", "いぬ": "狗狗", "わん": "狗狗",
+                 "うさぎ": "兔兔", "ぞう": "大象"}
 _KANA_PHRASES = {
     "皆さん": "大家", "お父さん": "爸爸", "お母さん": "媽媽", "お兄さん": "哥哥",
     "お兄ちゃん": "哥哥", "兄ちゃん": "哥哥", "お姉さん": "姊姊", "お姉ちゃん": "姊姊",
@@ -320,7 +326,10 @@ def short_line_fallback(request: TranslationRequest) -> str | None:
             localized = glossary[token]
         elif token in request.preserve_elements:
             localized = token
-        elif kana and _short_line_word(token):
+        elif (kana and _short_line_word(token)
+              and not (re.search(r"[\u30a1-\u30fa]", token)
+                       and token.endswith(tuple(h for h, _ in _HONORIFIC_ZH)))):
+            # ミナさん is a name, not みなさん.
             localized = _short_line_word(token)
         elif re.fullmatch(r"[\u30a1-\u30faー]+", token):
             # A katakana name; a lone ー or ッ is not one.
@@ -334,10 +343,8 @@ def short_line_fallback(request: TranslationRequest) -> str | None:
                 if name in glossary:
                     localized = glossary[name] + chinese if glossary[name] else None
                     break
-                # くまちゃん is the くまさん of the table, not a name.
-                word = next(filter(None, (_short_line_word(name + h) for h, _ in _HONORIFIC_ZH)), None)
-                if word:
-                    localized = word
+                if name in _ANIMAL_STEMS:
+                    localized = _ANIMAL_STEMS[name]
                     break
                 base = re.sub(r"[ーっぁぃぅぇぉ]", "", _to_hiragana(name))
                 # Nicknames are short; longer stems or お〜 are usually words (おきゃくさん).

@@ -233,6 +233,9 @@ _SHORT_LINE_WORDS = {
     "うさぎさん": "兔兔",
     "いしゃさん": "醫生",
     "おいしゃさん": "醫生",
+    "ぞうさん": "大象",
+    "いぬちゃん": "狗狗",
+    "ありさん": "螞蟻",
 }
 _KANA_PHRASES = {
     "皆さん": "大家", "お父さん": "爸爸", "お母さん": "媽媽", "お兄さん": "哥哥",
@@ -272,6 +275,7 @@ def _romanize_hiragana(run: str) -> str:
 
 
 _LONG_VOWEL = {"a": "あ", "i": "い", "u": "う", "e": "えい", "o": "うお"}
+_SMALL_VOWEL = dict(zip("ぁぃぅぇぉ", "あいうえお"))
 
 
 def _to_hiragana(text: str) -> str:
@@ -279,13 +283,15 @@ def _to_hiragana(text: str) -> str:
 
 
 def _short_line_word(token: str) -> str | None:
-    # ー stands for the previous vowel: にーちゃん is にいちゃん, とーさん is とうさん.
+    # ー and small vowels stretch the previous vowel: にーちゃん and ねぇちゃん
+    # are にいちゃん and ねえちゃん, とーさん is とうさん.
     variants = {""}
     previous = ""
-    for char in _to_hiragana(token):
-        if char == "ー":
+    for char in re.sub(r"ー+", "ー", _to_hiragana(token)):
+        if char == "ー" or char in _SMALL_VOWEL:
             vowel = (_ROMAJI.get(previous) or _YOUON.get(previous, ""))[-1:]
-            variants = {v + o for v in variants for o in (*_LONG_VOWEL.get(vowel, ""), "")}
+            options = {*_LONG_VOWEL.get(vowel, ""), _SMALL_VOWEL.get(char, ""), ""}
+            variants = {v + o for v in variants for o in options}
         else:
             variants = {v + char for v in variants}
             previous = char
@@ -318,17 +324,22 @@ def short_line_fallback(request: TranslationRequest) -> str | None:
             localized = _short_line_word(token)
         elif re.fullmatch(r"[\u30a1-\u30faー]+", token):
             # A katakana name; a lone ー or ッ is not one.
-            localized = token if re.search(r"[\u30a1-\u30f9\u30fa]", token.replace("ッ", "")) else None
+            localized = token if re.search(r"[\u30a1-\u30fa]", token.replace("ッ", "")) else None
         else:
             localized = None
             for honorific, chinese in _HONORIFIC_ZH:
                 if not token.endswith(honorific):
                     continue
                 name = token[:-len(honorific)]
-                if glossary.get(name):
-                    localized = glossary[name] + chinese
+                if name in glossary:
+                    localized = glossary[name] + chinese if glossary[name] else None
                     break
-                base = _to_hiragana(name).replace("ー", "").replace("っ", "")
+                # くまちゃん is the くまさん of the table, not a name.
+                word = next(filter(None, (_short_line_word(name + h) for h, _ in _HONORIFIC_ZH)), None)
+                if word:
+                    localized = word
+                    break
+                base = re.sub(r"[ーっぁぃぅぇぉ]", "", _to_hiragana(name))
                 # Nicknames are short; longer stems or お〜 are usually words (おきゃくさん).
                 # ちーちゃん is a nickname; あーちゃん is a drawn-out vowel.
                 stretched = len(base) == 1 and name.endswith("ー") and base not in "あいうえおん"
@@ -336,7 +347,7 @@ def short_line_fallback(request: TranslationRequest) -> str | None:
                     break
                 if re.fullmatch(r"[\u3041-\u3096ー]+", name):
                     if len(base) <= 3 and not name.startswith("お"):
-                        localized = _romanize_hiragana(name.replace("ー", "")) + chinese
+                        localized = _romanize_hiragana(re.sub(r"ー+", "", name)) + chinese
                 elif re.fullmatch(r"[\u30a1-\u30faー]+", name):
                     localized = name + chinese
                 break

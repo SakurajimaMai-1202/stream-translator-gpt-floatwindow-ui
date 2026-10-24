@@ -336,6 +336,15 @@ class NativeSubtitleWindow(QWidget):
             self._flow_timer.stop()
         self.update()
 
+    def clear_subtitles(self) -> None:
+        self._task_id = None
+        self._typing_timer.stop()
+        self._flow_timer.stop()
+        self._flow_active = False
+        self._lines.clear()
+        self._history_offset = 0
+        self.update()
+
     def begin_task(self, task_id: str) -> None:
         """Clear history only when translation switches to a genuinely new task."""
         task_id = str(task_id)
@@ -617,30 +626,41 @@ class NativeSubtitleWindow(QWidget):
         control_font = QFont("Segoe UI Symbol")
         control_font.setPixelSize(18)
         painter.setFont(control_font)
-        controls = (
-            (self._settings_rect(), "⚙"),
-            (self._stop_rect(), "■"),
-            (self._clear_rect(), "⌫"),
-            (self._close_rect(), "×"),
-        )
-        for rect, symbol in controls:
+        for name, symbol in self._visible_controls():
+            rect = self._named_control_rect(name)
             painter.setBrush(QColor(0, 0, 0, 105))
             painter.setPen(Qt.PenStyle.NoPen)
             painter.drawEllipse(rect)
             painter.setPen(QColor(255, 255, 255, 205))
             painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, symbol)
 
+    def _visible_controls(self):
+        has_stop = self.on_stop_translation is not None
+        if getattr(self, "_controls_have_stop", None) != has_stop:
+            self._controls_have_stop = has_stop
+            self._control_items = [("settings", "\u2699")]
+            if has_stop:
+                self._control_items.append(("stop", "\u25a0"))
+            self._control_items.extend([("clear", "\u232b"), ("close", "\u00d7")])
+        return self._control_items
+
+    def _named_control_rect(self, name: str) -> QRect:
+        for index, (control, _) in enumerate(self._visible_controls(), start=1):
+            if control == name:
+                return self._control_rect(index)
+        return QRect()
+
     def _settings_rect(self) -> QRect:
-        return self._control_rect(1)
+        return self._named_control_rect("settings")
 
     def _close_rect(self) -> QRect:
-        return self._control_rect(4)
+        return self._named_control_rect("close")
 
     def _stop_rect(self) -> QRect:
-        return self._control_rect(2)
+        return self._named_control_rect("stop")
 
     def _clear_rect(self) -> QRect:
-        return self._control_rect(3)
+        return self._named_control_rect("clear")
 
     def _control_rect(self, index: int) -> QRect:
         return QRect(self.width() - CONTROL_X_INSET,
@@ -670,7 +690,7 @@ class NativeSubtitleWindow(QWidget):
                 self.close()
                 event.accept()
                 return
-            if self._controls_visible and self._stop_rect().contains(local_pos):
+            if self.on_stop_translation is not None and self._controls_visible and self._stop_rect().contains(local_pos):
                 if callable(self.on_stop_translation):
                     self.on_stop_translation()
                 event.accept()

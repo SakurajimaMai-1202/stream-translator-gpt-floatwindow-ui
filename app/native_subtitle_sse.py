@@ -9,8 +9,10 @@ from typing import Any
 from PyQt6.QtCore import QObject, QTimer, QUrl, pyqtSignal
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 
-from backend.core.admin_auth import TOKEN_HEADER, get_admin_token
 from sse_parser import SseEventParser
+
+# Must match backend.core.admin_auth.TOKEN_HEADER; remote clients never import backend.
+TOKEN_HEADER = "X-FloatWindow-Token"
 
 
 logger = logging.getLogger(__name__)
@@ -27,7 +29,12 @@ class NativeSubtitleSseClient(QObject):
     def __init__(self, base_url: str, parent: QObject | None = None, *, token: str | None = None) -> None:
         super().__init__(parent)
         self.base_url = base_url.rstrip("/")
-        self._token = get_admin_token() if token is None else token
+        self._token_header = TOKEN_HEADER
+        if token is None:
+            from backend.core.admin_auth import TOKEN_HEADER as admin_token_header, get_admin_token
+            self._token_header = admin_token_header
+            token = get_admin_token()
+        self._token = token
         self._manager = QNetworkAccessManager(self)
         self._poll_timer = QTimer(self)
         self._poll_timer.setSingleShot(True)
@@ -77,7 +84,7 @@ class NativeSubtitleSseClient(QObject):
         request.setRawHeader(b"Accept", b"application/json, text/event-stream")
         request.setRawHeader(b"Cache-Control", b"no-cache")
         if self._token:
-            request.setRawHeader(TOKEN_HEADER.encode("ascii"), self._token.encode("utf-8"))
+            request.setRawHeader(self._token_header.encode("ascii"), self._token.encode("utf-8"))
         return request
 
     def _request_active_task(self) -> None:
@@ -107,6 +114,8 @@ class NativeSubtitleSseClient(QObject):
 
         try:
             data: dict[str, Any] = json.loads(payload.decode("utf-8"))
+            if not isinstance(data, dict):
+                raise TypeError("Expected an active-task object")
         except (UnicodeDecodeError, json.JSONDecodeError, TypeError):
             logger.warning("原生字幕收到無效的 active task 回應")
             self._schedule_reconnect()
@@ -206,10 +215,10 @@ class NativeSubtitleSseClient(QObject):
             QNetworkReply.NetworkError.OperationCanceledError,
         ):
             logger.warning("原生字幕 SSE 中斷: %s", error.name)
-        self.connectionStateChanged.emit("reconnecting")
         self._schedule_reconnect()
 
     def _schedule_reconnect(self) -> None:
+        self.connectionStateChanged.emit("reconnecting")
         delays = (1000, 2000, 5000, 10000)
         delay = delays[min(self._reconnect_attempt, len(delays) - 1)]
         self._reconnect_attempt += 1

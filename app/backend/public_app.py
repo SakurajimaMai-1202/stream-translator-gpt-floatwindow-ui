@@ -92,6 +92,20 @@ async def public_get_translation_status():
     }
 
 
+@public_app.get("/api/translation/status/{task_id}")
+async def public_get_task_status(task_id: str):
+    """公開字幕就緒狀態；不傳回來源網址或其他管理資訊。"""
+    context = get_task(task_id)
+    if not context:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return {
+        "success": True,
+        "task_id": task_id,
+        "is_running": context.running,
+        "asr_ready": context.running and context.asr_ready,
+    }
+
+
 @public_app.get("/api/translation/stream/{task_id}")
 async def public_stream_subtitles(task_id: str):
     """SSE 端點：實時推送字幕"""

@@ -31,6 +31,8 @@ from remote_subtitle_app import SettingsStore, normalize_server_url
     ("https://example.com/subs/mobile", "https://example.com/subs"),
     ("http://host:8765?query=1", "http://host:8765"),
     ("stream.example.com", "http://stream.example.com"),
+    ("192.168.1.5:8765?x=1", "http://192.168.1.5:8765"),
+    ("host:8765#a", "http://host:8765"),
 ])
 def test_normalize_server_url(value, expected):
     assert normalize_server_url(value) == expected

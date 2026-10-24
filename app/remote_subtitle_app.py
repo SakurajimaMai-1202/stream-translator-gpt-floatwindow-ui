@@ -56,7 +56,7 @@ def normalize_server_url(value: str) -> str:
         return ""
     if "://" not in value:
         # host:port 不是 URL scheme；其餘顯式 scheme 一律拒絕。
-        if re.match(r"^[a-zA-Z][\w+.-]*:", value) and not re.match(r"^[^/:]+:\d+(?:/|$)", value):
+        if re.match(r"^[a-zA-Z][\w+.-]*:", value) and not re.match(r"^[^/:?#]+:\d+(?:[/?#]|$)", value):
             raise ValueError("主機位址僅支援 http 或 https")
         value = "http://" + value
     try:

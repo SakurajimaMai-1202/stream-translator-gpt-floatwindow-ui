@@ -389,21 +389,21 @@ def main(argv=None):
     try:
         store.path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as error:
-        QMessageBox.critical(None, APP_NAME, f"\u7121\u6cd5\u5efa\u7acb\u8a2d\u5b9a\u8cc7\u6599\u593e\uff1a{error}")
+        QMessageBox.critical(None, APP_NAME, f"無法建立設定資料夾：{error}")
         return 1
-    setup_file_logging(store.path.parent)
     lock = QLockFile(str(store.path.parent / "remote-subtitle.lock"))
     if not lock.tryLock(0):
-        QMessageBox.information(None, APP_NAME, "\u9060\u7aef\u5b57\u5e55\u5df2\u5728\u57f7\u884c")
+        QMessageBox.information(None, APP_NAME, "遠端字幕已在執行")
         return 0
+    setup_file_logging(store.path.parent)
     server = store.get_config()["server_url"]
     invalid_server = False
-    # \u7a7a\u5b57\u4e32\u8996\u540c\u672a\u6307\u5b9a\uff0c\u4e0d\u8986\u84cb\u5df2\u5b58\u7684\u4e3b\u6a5f\u4f4d\u5740\u3002
+    # 空字串視同未指定，不覆蓋已存的主機位址。
     if args.server:
         try:
             server = normalize_server_url(args.server)
         except ValueError as error:
-            QMessageBox.warning(None, "\u4e3b\u6a5f\u4f4d\u5740\u7121\u6548", str(error))
+            QMessageBox.warning(None, "主機位址無效", str(error))
             invalid_server = True
     controller = RemoteSubtitleApp(app, store, server)
     if invalid_server and server:

@@ -24,6 +24,13 @@ from remote_subtitle_app import SettingsStore, normalize_server_url
     (" localhost:8765 ", "http://localhost:8765"),
     ("https://example.com/subtitles///", "https://example.com/subtitles"),
     ("http://[::1]:8765/", "http://[::1]:8765"), ("", ""),
+    # 直接貼上的分享連結與網域
+    ("http://192.168.100.181:8765/desktop", "http://192.168.100.181:8765"),
+    ("192.168.100.181:8765/mobile/", "http://192.168.100.181:8765"),
+    ("HTTPS://stream.example.com/Desktop?x=1#top", "https://stream.example.com"),
+    ("https://example.com/subs/mobile", "https://example.com/subs"),
+    ("http://host:8765?query=1", "http://host:8765"),
+    ("stream.example.com", "http://stream.example.com"),
 ])
 def test_normalize_server_url(value, expected):
     assert normalize_server_url(value) == expected
@@ -31,7 +38,7 @@ def test_normalize_server_url(value, expected):
 
 @pytest.mark.parametrize("value", [
     "ftp://host", "file:///tmp", "javascript:alert(1)", "https://",
-    "http://host:bad", "http://host:99999", "http://a b", "http://host?query=1",
+    "http://host:bad", "http://host:99999", "http://a b", "http://user:pw@host",
 ])
 def test_reject_server_url(value):
     with pytest.raises(ValueError):

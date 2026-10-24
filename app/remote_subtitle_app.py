@@ -47,6 +47,9 @@ COLORS = {
 }
 
 
+SHARE_PAGES = ("desktop", "mobile", "subtitle")
+
+
 def normalize_server_url(value: str) -> str:
     value = value.strip().rstrip("/")
     if not value:
@@ -61,12 +64,16 @@ def normalize_server_url(value: str) -> str:
         _ = parts.port  # 驗證連接埠範圍與格式。
         if (parts.scheme.lower() not in ("http", "https") or not parts.hostname
                 or parts.username is not None or parts.password is not None
-                or parts.query or parts.fragment
                 or any(c.isspace() or ord(c) < 32 for c in value)):
             raise ValueError
     except ValueError:
-        raise ValueError("請輸入有效的 http 或 https 主機位址") from None
-    return value
+        raise ValueError("請輸入有效的 http 或 https 網址") from None
+    # 接受直接貼上的分享連結（…/desktop、…/mobile?x=1）；只保留網址前綴。
+    path = parts.path.rstrip("/")
+    page = path.rsplit("/", 1)[-1].lower()
+    if page in SHARE_PAGES:
+        path = path[: -len(page)].rstrip("/")
+    return f"{parts.scheme.lower()}://{parts.netloc}{path}"
 
 
 class SettingsStore:
@@ -169,7 +176,13 @@ class SettingsDialog(QDialog):
         form = QFormLayout(self)
         self.server = QLineEdit()
         self.server.setPlaceholderText("http://192.168.100.181:8765")
-        form.addRow("主機位址", self.server)
+        self.server.setClearButtonEnabled(True)
+        form.addRow("主機網址", self.server)
+        hint = QLabel("可填區網 IP:8765、反向代理網域（https://…），"
+                      "或直接貼上主程式的電腦端／行動端字幕連結。")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: gray;")
+        form.addRow("", hint)
         self.fields = {}
         for key, (label, low, high, _) in NUMBERS.items():
             widget = QSpinBox()

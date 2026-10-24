@@ -291,6 +291,9 @@ class NativeSubtitleWindow(QWidget):
         except (TypeError, json.JSONDecodeError):
             logger.warning("原生字幕收到無效 JSON")
             return
+        if not isinstance(data, dict):
+            logger.warning("原生字幕收到非物件 JSON")
+            return
         index = find_subtitle_index(self._lines, data)
         if index >= 0:
             previous = self._lines[index]

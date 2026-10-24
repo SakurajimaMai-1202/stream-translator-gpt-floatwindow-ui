@@ -338,6 +338,72 @@ def test_reconnect_reports_state():
     assert states == ["reconnecting"]
 
 
+def test_non_object_payloads_are_ignored():
+    from PyQt6.QtNetwork import QNetworkReply
+    from sse_parser import SseEventParser
+    QApplication.instance() or QApplication([])
+    client = NativeSubtitleSseClient("http://host", token="")
+    subtitles, ready = [], []
+    client.subtitleReceived.connect(subtitles.append)
+    client.asrReadyChanged.connect(ready.append)
+    client._running = True
+    client._current_task_id = "t"
+    stream = Mock()
+    stream.readAll.return_value = (b"event: subtitle\ndata: []\n\nevent: subtitle\ndata: 1\n\n"
+                                   b"event: status\ndata: [1]\n\nevent: status\ndata: \"x\"\n\n"
+                                   b"event: subtitle\ndata: {\"original\": \"ok\"}\n\n")
+    client._stream_reply = stream
+    client._parser = SseEventParser()
+    client._stream_ready_read(stream)
+    assert subtitles == ['{"original": "ok"}']
+    assert ready == []
+    readiness = Mock()
+    readiness.readAll.return_value = b"[]"
+    readiness.error.return_value = QNetworkReply.NetworkError.NoError
+    client._readiness_reply = readiness
+    client._readiness_finished(readiness, "t")
+    assert ready == []
+    window = NativeSubtitleWindow()
+    try:
+        for payload in ("[]", "1", '"x"', "null"):
+            window.update_subtitle_json(payload)
+        assert window._lines == []
+    finally:
+        window.close()
+
+
+def test_crash_guard_logs_instead_of_aborting(monkeypatch, caplog):
+    import remote_subtitle_app as remote
+    monkeypatch.setattr(sys, "excepthook", sys.excepthook)
+    remote.install_crash_guard()
+    try:
+        raise AttributeError("boom")
+    except AttributeError:
+        sys.excepthook(*sys.exc_info())
+    assert "Unhandled exception" in caplog.text
+
+
+def test_file_logging_writes_to_settings_folder(tmp_path):
+    import logging
+    import remote_subtitle_app as remote
+    root = logging.getLogger()
+    before = list(root.handlers)
+    level = root.level
+    try:
+        remote.setup_file_logging(tmp_path)
+        added = [handler for handler in root.handlers if handler not in before]
+        assert len(added) == 1
+        logging.getLogger("remote_subtitle_app").warning("寫入測試")
+        added[0].flush()
+        assert "寫入測試" in (tmp_path / "remote-subtitle.log").read_text(encoding="utf-8")
+    finally:
+        for handler in root.handlers[:]:
+            if handler not in before:
+                root.removeHandler(handler)
+                handler.close()
+        root.setLevel(level)
+
+
 def test_main_invalid_server_falls_back(tmp_path, monkeypatch):
     import remote_subtitle_app as remote
     QApplication.instance() or QApplication([])
@@ -354,6 +420,8 @@ def test_main_invalid_server_falls_back(tmp_path, monkeypatch):
     monkeypatch.setattr(remote, "RemoteSubtitleApp", factory)
     monkeypatch.setattr(remote, "QMessageBox", message_box)
     monkeypatch.setattr(remote, "QTimer", SimpleNamespace(singleShot=lambda delay, callback: callback()))
+    monkeypatch.setattr(remote, "setup_file_logging", lambda directory: None)
+    monkeypatch.setattr(sys, "excepthook", sys.excepthook)
     assert remote.main(["--server", "ftp://invalid"]) == 0
     message_box.warning.assert_called_once()
     assert factory.call_args.args[2] == "http://saved"

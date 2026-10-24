@@ -153,7 +153,7 @@ class NativeSubtitleSseClient(QObject):
             status = json.loads(payload.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError, TypeError):
             return
-        if status.get("success"):
+        if isinstance(status, dict) and status.get("success"):
             self.asrReadyChanged.emit(bool(status.get("is_running") and status.get("asr_ready")))
 
     def _open_stream(self, task_id: str) -> None:
@@ -182,8 +182,10 @@ class NativeSubtitleSseClient(QObject):
         for event_type, payload in self._parser.feed(chunk):
             if event_type == "subtitle":
                 try:
-                    json.loads(payload)
+                    subtitle = json.loads(payload)
                 except json.JSONDecodeError:
+                    subtitle = None
+                if not isinstance(subtitle, dict):
                     logger.warning("原生字幕 SSE 收到無效 JSON")
                     continue
                 self.subtitleReceived.emit(payload)
@@ -191,6 +193,8 @@ class NativeSubtitleSseClient(QObject):
                 try:
                     status = json.loads(payload)
                 except json.JSONDecodeError:
+                    continue
+                if not isinstance(status, dict):
                     continue
                 if "asr_ready" in status:
                     self.asrReadyChanged.emit(bool(status["asr_ready"]))

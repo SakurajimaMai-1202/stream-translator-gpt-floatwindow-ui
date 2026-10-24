@@ -6,6 +6,7 @@ import copy
 import ctypes
 import json
 import logging
+from logging.handlers import RotatingFileHandler
 import os
 from pathlib import Path
 import re
@@ -161,6 +162,8 @@ class SettingsDialog(QDialog):
     def __init__(self, controller):
         super().__init__()
         self.controller = controller
+        # 字幕視窗永遠置頂；設定視窗也置頂，避免被字幕蓋住。
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
         self.setWindowTitle("遠端字幕設定")
         self.setMinimumWidth(440)
         form = QFormLayout(self)
@@ -332,10 +335,33 @@ class RemoteSubtitleApp(QObject):
         self.tray.hide()
 
 
+def setup_file_logging(directory: Path) -> None:
+    """視窗版 exe 沒有主控台；警告寫到設定資料夾的輪替檔案。"""
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        handler = RotatingFileHandler(directory / "remote-subtitle.log", maxBytes=1_000_000,
+                                      backupCount=1, encoding="utf-8")
+    except OSError:
+        return
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    root = logging.getLogger()
+    root.addHandler(handler)
+    if root.level > logging.INFO or root.level == logging.NOTSET:
+        root.setLevel(logging.INFO)
+
+
+def install_crash_guard() -> None:
+    """PyQt6 遇到 slot 內未處理的例外會中止程序；改成只記錄。"""
+    def hook(exc_type, exc, tb):
+        logger.error("Unhandled exception", exc_info=(exc_type, exc, tb))
+    sys.excepthook = hook
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="遠端原生浮動字幕")
     parser.add_argument("--server", type=str, default=None)
     args = parser.parse_args(argv)
+    install_crash_guard()
     if sys.platform == "win32":
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
     # Qt 6 預設啟用高 DPI，不需 Qt 5 的 AA_EnableHighDpiScaling。
@@ -352,6 +378,7 @@ def main(argv=None):
     except OSError as error:
         QMessageBox.critical(None, APP_NAME, f"\u7121\u6cd5\u5efa\u7acb\u8a2d\u5b9a\u8cc7\u6599\u593e\uff1a{error}")
         return 1
+    setup_file_logging(store.path.parent)
     lock = QLockFile(str(store.path.parent / "remote-subtitle.lock"))
     if not lock.tryLock(0):
         QMessageBox.information(None, APP_NAME, "\u9060\u7aef\u5b57\u5e55\u5df2\u5728\u57f7\u884c")

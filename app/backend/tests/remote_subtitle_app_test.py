@@ -287,20 +287,26 @@ def test_close_saves_geometry_and_shutdown_is_safe(tmp_path, monkeypatch):
     controller = remote.RemoteSubtitleApp(app, SettingsStore(tmp_path / "settings.json"), "http://host")
     requested = Mock()
     controller.app = SimpleNamespace(quit=requested)
+    window, client = controller.window, controller.client
     try:
-        assert controller.client.parent() is controller
-        controller.window.setGeometry(20, 30, 800, 400)
-        controller.window.close()
+        assert client.parent() is controller
+        window.setGeometry(20, 30, 800, 400)
+        window.close()
         requested.assert_called_once()
         app.processEvents()
         controller.shutdown()
         assert controller.store.get_config()["ui"]["windows"]["floating_subtitle"]["width"] == 800
-        monkeypatch.setattr(controller.client, "stop", Mock(side_effect=RuntimeError("deleted")))
-        monkeypatch.setattr(controller.window, "_save_geometry", Mock(side_effect=RuntimeError("deleted")))
+        # 以替身模擬已被 Qt 刪除的物件；不在 sip 包裝物件上 monkeypatch，以免收尾時崩潰。
+        controller.client = SimpleNamespace(stop=Mock(side_effect=RuntimeError("deleted")))
+        controller.window = SimpleNamespace(_save_geometry=Mock(side_effect=RuntimeError("deleted")))
         controller.shutdown()
     finally:
+        controller.client, controller.window = client, window
+        controller.shutdown()
+        window.removeEventFilter(controller)
+        window.close()
         controller.dialog.close()
-        controller.deleteLater()
+        app.processEvents()
 
 
 def test_tray_passthrough_sync(tmp_path, monkeypatch):
@@ -334,19 +340,21 @@ def test_reconnect_reports_state():
 
 def test_main_invalid_server_falls_back(tmp_path, monkeypatch):
     import remote_subtitle_app as remote
-    app = QApplication.instance() or QApplication([])
+    QApplication.instance() or QApplication([])
     store = SettingsStore(tmp_path / "settings.json")
     store.data["server_url"] = "http://saved"
     controller = Mock()
     factory = Mock(return_value=controller)
-    monkeypatch.setattr(remote, "QApplication", lambda args: app)
-    monkeypatch.setattr(app, "exec", lambda: 0)
+    # 只替換模組內的名稱；改寫 PyQt 類別屬性在還原時會讓直譯器崩潰。
+    fake_app = Mock()
+    fake_app.exec.return_value = 0
+    message_box = Mock()
+    monkeypatch.setattr(remote, "QApplication", lambda args: fake_app)
     monkeypatch.setattr(remote, "SettingsStore", lambda: store)
     monkeypatch.setattr(remote, "RemoteSubtitleApp", factory)
-    warning = Mock()
-    monkeypatch.setattr(remote.QMessageBox, "warning", warning)
-    monkeypatch.setattr(remote.QTimer, "singleShot", lambda delay, callback: callback())
+    monkeypatch.setattr(remote, "QMessageBox", message_box)
+    monkeypatch.setattr(remote, "QTimer", SimpleNamespace(singleShot=lambda delay, callback: callback()))
     assert remote.main(["--server", "ftp://invalid"]) == 0
-    warning.assert_called_once()
+    message_box.warning.assert_called_once()
     assert factory.call_args.args[2] == "http://saved"
     controller.open_settings.assert_called_once()

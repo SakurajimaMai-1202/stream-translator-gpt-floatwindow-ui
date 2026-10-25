@@ -164,7 +164,6 @@ export function useTerminologySettings(localConfig: Ref<any>, store: ReturnType<
   })) as Record<string, { mine: number; applicable: number }>);
   watch(activeCategories, active => {
     newTermScope.value = active.find(id => customGlossaryScopes.value.some(c => c.value === id)) || 'all';
-    for (const id of active) expandedGroups.value[id] = true;
   }, { immediate: true });
   watch([termSearchQuery, glossaryListMode], () => {
     groupLimits.value = {};

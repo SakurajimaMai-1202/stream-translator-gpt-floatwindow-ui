@@ -1,7 +1,11 @@
 import numpy as np
 import pytest
 
-from stream_translator_gpt.qwen3_asr_postprocess import is_traditional_chinese_target, normalize_chinese_script
+from stream_translator_gpt.qwen3_asr_postprocess import (
+    is_traditional_chinese_target,
+    normalize_chinese_script,
+    normalize_translation_script,
+)
 from stream_translator_gpt.common import TranslationTask
 from stream_translator_gpt.llm_translator import LLMClient, normalize_translation_output
 
@@ -34,7 +38,7 @@ def test_all_providers_normalize_before_publishing(provider, model, target, prom
     client.provider_adapter = Provider()
     task = TranslationTask(np.zeros(512, dtype=np.float32), (0.0, 1.0))
     client.translate(task)
-    assert task.translation == "這個軟體裡面有簡體中文，後臺正在執行。"
+    assert task.translation == "這個軟件裡面有簡體中文，後台正在運行。"
     assert task.translation_result.translation == task.translation
     assert not task.translation_failed
 
@@ -52,7 +56,7 @@ def test_conversion_failure_does_not_publish_raw_text(monkeypatch):
     client.provider_adapter = Provider()
     def fail(*args):
         raise RuntimeError("OpenCC unavailable")
-    monkeypatch.setattr("stream_translator_gpt.llm_translator.normalize_chinese_script", fail)
+    monkeypatch.setattr("stream_translator_gpt.llm_translator.normalize_translation_script", fail)
     task = TranslationTask(np.zeros(512, dtype=np.float32), (0.0, 1.0))
     client.translate(task)
     assert task.translation == task.translation_result.translation == ""
@@ -69,7 +73,7 @@ def test_backend_async_translation_uses_opencc(engine):
     async def response(*args):
         return "这个软件"
     setattr(translator, "_translate_with_" + engine, response)
-    assert asyncio.run(translator.translate("source")) == "這個軟體"
+    assert asyncio.run(translator.translate("source")) == "這個軟件"
 
 
 def test_config_passes_target_even_with_custom_prompt(tmp_path):
@@ -95,6 +99,34 @@ def test_traditional_target_helper_and_asr_conversion(target):
     assert normalize_chinese_script("软件", target) == "軟體"
 
 
+@pytest.mark.parametrize("text,expected", [
+    ("溢出來", "溢出來"),
+    ("數據化", "數據化"),
+    ("類型", "類型"),
+    ("要是只限定一段時間", "要是只限定一段時間"),
+    ("就只有", "就只有"),
+    ("舞台", "舞台"),
+    ("一只猫", "一隻貓"),
+    ("这只猫", "這隻貓"),
+    ("两只手", "兩隻手"),
+    ("只限定", "只限定"),
+    ("头发", "頭髮"),
+    ("后来", "後來"),
+])
+def test_translation_script_preserves_vocabulary(text, expected):
+    assert normalize_translation_script(text, "zh-TW") == expected
+
+
+def test_translation_script_skips_restoration_when_length_changes(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        "stream_translator_gpt.qwen3_asr_postprocess._opencc",
+        lambda config: SimpleNamespace(convert=lambda text: "臺隻額外"),
+    )
+    assert normalize_translation_script("台只", "zh-TW") == "臺隻額外"
+
+
 @pytest.mark.parametrize("target", [
     "zh-CN", "zh-Hans", "zh-Hans-CN", "zh-SG", "zh", "Chinese",
     "Simplified Chinese", "简体中文", "簡體中文", None, "",
@@ -113,7 +145,7 @@ def test_unknown_prompt_does_not_default_to_traditional():
 @pytest.mark.parametrize("output,reason", [
     ("\u3010\u7ea6\u675f\u8981\u6c42\u3011\u8f6f\u4ef6", "prompt_leakage"),
     ("\u8f6f\u4ef6", None),
-    ("\u8edf\u9ad4", None),
+    ("\u8edf\u4ef6", None),
     ("missing", "fixed_term_missing"),
 ])
 def test_optimizer_checks_raw_leaks_and_converted_glossary(output, reason):
@@ -133,7 +165,7 @@ def test_optimizer_checks_raw_leaks_and_converted_glossary(output, reason):
         assert reason in task.translation_validation_reasons
         assert task.translation == ""
     else:
-        assert task.translation == "\u8edf\u9ad4"
+        assert task.translation == "\u8edf\u4ef6"
         assert not task.translation_failed
 
 
@@ -144,7 +176,7 @@ def test_auditor_converts_glossary_targets(tmp_path):
         audit_log_path=tmp_path / "audit.log", issues_path=tmp_path / "issues.json",
         normalize_output=lambda text: normalize_translation_output(text, "zh-Hant-HK"))
     try:
-        result = auditor.audit(SimpleNamespace(transcript="software", translation="\u8edf\u9ad4"))
+        result = auditor.audit(SimpleNamespace(transcript="software", translation="\u8edf\u4ef6"))
         assert result[0]["compliant"]
         assert not auditor._records
     finally:

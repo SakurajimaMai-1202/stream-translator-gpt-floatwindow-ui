@@ -25,14 +25,14 @@ from .translation_policy import (
     _matching_glossary,
 )
 from .translation_glossary_auditor import TranslationGlossaryAuditor
-from .qwen3_asr_postprocess import normalize_chinese_script, is_traditional_chinese_target, strip_unknown_token
+from .qwen3_asr_postprocess import normalize_translation_script, is_traditional_chinese_target, strip_unknown_token
 from .translation_output import TranslationOutputConversionError
 from .translation_output import normalize_translation_output as _normalize_translation_output
 
 
 def normalize_translation_output(text: str, target_language: str | None) -> str:
-    # Resolve the converter here so tests can patch this module's normalize_chinese_script.
-    return _normalize_translation_output(text, target_language, converter=normalize_chinese_script)
+    # Resolve the converter here so tests can patch this module's normalize_translation_script.
+    return _normalize_translation_output(text, target_language, converter=normalize_translation_script)
 
 
 def _is_task_timeout(task: TranslationTask, timeout: float) -> bool:

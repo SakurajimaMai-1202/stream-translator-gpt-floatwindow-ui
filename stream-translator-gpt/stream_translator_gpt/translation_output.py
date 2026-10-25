@@ -2,7 +2,7 @@ import re
 
 from .qwen3_asr_postprocess import (
     is_traditional_chinese_target,
-    normalize_chinese_script,
+    normalize_translation_script,
     strip_unknown_token,
 )
 
@@ -21,8 +21,8 @@ class TranslationOutputConversionError(RuntimeError):
 
 
 def normalize_translation_output(text: str, target_language: str | None, converter=None) -> str:
-    """Normalize model output to the target script; converter defaults to normalize_chinese_script."""
-    convert = converter or normalize_chinese_script
+    """Normalize model output to the target script; converter defaults to normalize_translation_script."""
+    convert = converter or normalize_translation_script
     text = strip_unknown_token(text)
     language = str(target_language or "").strip().lower().replace("_", "-")
     if "chinese" in language or language.startswith("zh") or "中文" in language:

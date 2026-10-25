@@ -588,8 +588,8 @@ def validate_translation(request: TranslationRequest, translation: str,
            for marker in ("【源文】", "【约束要求】", "【硬性要求】", "〖背景資訊", "<think>")):
         issues.append(ValidationIssue("prompt_leakage"))
     if normalize_output is None:
-        from .qwen3_asr_postprocess import is_traditional_chinese_target, normalize_chinese_script
-        normalize_output = lambda text: (normalize_chinese_script(text, "zh-tw")
+        from .qwen3_asr_postprocess import is_traditional_chinese_target, normalize_translation_script
+        normalize_output = lambda text: (normalize_translation_script(text, "zh-tw")
             if is_traditional_chinese_target(request.target_language) else text)
     translation = normalize_output(translation)
     if not str(translation or "").strip():

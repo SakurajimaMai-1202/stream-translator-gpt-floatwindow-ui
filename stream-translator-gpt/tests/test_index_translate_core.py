@@ -640,7 +640,7 @@ def test_missing_opencc_after_successful_http_never_reports_validation_pass(monk
     def missing_opencc(*args):
         raise RuntimeError("Traditional/Simplified Chinese Qwen3-ASR output requires OpenCC. Install opencc-python-reimplemented.")
     monkeypatch.setattr(httpx, "Client", FixtureClient)
-    monkeypatch.setattr(module, "normalize_chinese_script", missing_opencc)
+    monkeypatch.setattr(module, "normalize_translation_script", missing_opencc)
     for enabled in (False, True):
         client = _preview_client(api_key="fixture", base_url="http://127.0.0.1:8080/v1",
                                  translation_target_language="Traditional Chinese",

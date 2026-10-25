@@ -40,7 +40,7 @@ if "--update-health-check" in sys.argv:
     from opencc import OpenCC
 
     # Verify the dictionary/config resources, not only the Python module.
-    if OpenCC("s2twp").convert("软件") != "軟體":
+    if OpenCC("s2twp").convert("软件") != "軟體" or OpenCC("s2tw").convert("软件") != "軟件":
         raise RuntimeError("Packaged OpenCC Traditional Chinese conversion failed")
 
     # Exercise the packaged API's configuration path without audio, model

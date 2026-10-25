@@ -40,7 +40,7 @@ def is_traditional_chinese_target(language: str | None) -> bool:
     )
 
 
-@lru_cache(maxsize=2)
+@lru_cache(maxsize=4)
 def _opencc(config: str) -> Any:
     try:
         from opencc import OpenCC
@@ -72,6 +72,28 @@ def normalize_chinese_script(text: object, output_language: str | None) -> str:
     language = str(output_language or "").strip().lower().replace("_", "-")
     if is_traditional_chinese_target(language):
         return _opencc("s2twp").convert(normalized)
+    if language in _SIMPLIFIED_CHINESE:
+        return _opencc("t2s").convert(normalized)
+    return normalized
+
+
+def normalize_translation_script(text: object, output_language: str | None) -> str:
+    """Enforce Chinese script without localizing translation vocabulary."""
+    normalized = str(text or "").strip()
+    language = str(output_language or "").strip().lower().replace("_", "-")
+    if is_traditional_chinese_target(language):
+        converted = _opencc("s2tw").convert(normalized)
+        if len(converted) != len(normalized):
+            return converted
+        measure_prefixes = "一二兩两三四五六七八九十百千幾几每這这那哪半單单多數数好0123456789"
+        characters = list(converted)
+        for index, (original, output) in enumerate(zip(normalized, converted)):
+            if original == "台" and output == "臺":
+                characters[index] = original
+            elif original == "只" and output == "隻":
+                if index == 0 or normalized[index - 1] not in measure_prefixes:
+                    characters[index] = original
+        return "".join(characters)
     if language in _SIMPLIFIED_CHINESE:
         return _opencc("t2s").convert(normalized)
     return normalized

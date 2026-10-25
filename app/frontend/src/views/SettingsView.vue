@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, watch, nextTick, toRaw } from 'vue';
+import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue';
 import GeneralSettingsTab from '../components/settings/GeneralSettingsTab.vue';
 import DiagnosticsSettingsTab from '../components/settings/DiagnosticsSettingsTab.vue';
 import InputSettingsTab from '../components/settings/InputSettingsTab.vue';
@@ -329,16 +329,19 @@ function markAutoSaveCompleted() {
 async function saveSectionNow(section: string): Promise<void> {
   const existing = sectionSaveInFlight.get(section);
   if (existing) await existing.catch(() => undefined);
-  const sectionSnapshot = structuredClone(toRaw(localConfig.value[section] ?? {}));
-  if (section === 'terminology') {
-    for (const term of sectionSnapshot.glossary_list || []) term.aliases = normalizeTermAliases(term.aliases);
-  }
-  const runtimeChanged = section === 'runtime'
-    && !configsEqual(store.config.runtime, sectionSnapshot);
-  const asrComputeChanged = section === 'transcription'
-    && store.config.transcription?.asr_compute_backend !== sectionSnapshot.asr_compute_backend;
   const request = (async () => {
     try {
+      // Config is plain JSON. A JSON round trip also unwraps reactive proxies
+      // nested in replaced arrays (e.g. a new glossary_list), which
+      // structuredClone(toRaw()) rejects with DataCloneError.
+      const sectionSnapshot = JSON.parse(JSON.stringify(localConfig.value[section] ?? {}));
+      if (section === 'terminology') {
+        for (const term of sectionSnapshot.glossary_list || []) term.aliases = normalizeTermAliases(term.aliases);
+      }
+      const runtimeChanged = section === 'runtime'
+        && !configsEqual(store.config.runtime, sectionSnapshot);
+      const asrComputeChanged = section === 'transcription'
+        && store.config.transcription?.asr_compute_backend !== sectionSnapshot.asr_compute_backend;
       await store.saveConfigSection(section, sectionSnapshot);
       if (runtimeChanged || asrComputeChanged) await store.loadRuntimeStatus();
       markAutoSaveCompleted();

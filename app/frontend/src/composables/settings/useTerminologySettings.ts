@@ -1,4 +1,4 @@
-import { ref, computed, watch, nextTick, toRaw, onScopeDispose, type Ref } from 'vue';
+import { ref, computed, watch, nextTick, onScopeDispose, type Ref } from 'vue';
 import type { useTranslationStore } from '../../stores/translation';
 
 import { terminologyApi, type AliasSuggestion, type ReadingAddonStatus } from '../../services/api';
@@ -250,7 +250,7 @@ export function useTerminologySettings(localConfig: Ref<any>, store: ReturnType<
   function removeTermEntry(term: Term) {
     const index = rows.value.indexOf(term);
     if (index < 0) return;
-    removedGlossaryTerm.value = { term: structuredClone(toRaw(term)), index };
+    removedGlossaryTerm.value = { term: JSON.parse(JSON.stringify(term)), index };
     rows.value.splice(index, 1);
   }
   function undoRemovedGlossaryTerm() {

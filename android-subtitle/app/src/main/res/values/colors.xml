@@ -1,0 +1,10 @@
+<resources>
+    <color name="surface">#11151C</color>
+    <color name="surface_card">#202630</color>
+    <color name="accent">#88DAD6</color>
+    <color name="on_surface">#E2E8EF</color>
+    <color name="state_connected">#99DEAC</color>
+    <color name="state_waiting">#FFDD88</color>
+    <color name="state_stopped">#B8C2CE</color>
+    <color name="ic_launcher_background">#0E1A2E</color>
+</resources>

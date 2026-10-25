@@ -1,0 +1,15 @@
+<resources>
+    <style name="TextButtonTheme">
+        <item name="materialButtonStyle">@style/Widget.Material3.Button.TextButton</item>
+    </style>
+    <style name="AppTheme" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowBackground">@color/surface</item>
+        <item name="colorSurface">@color/surface_card</item>
+        <item name="colorOnSurface">@color/on_surface</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="colorPrimary">@color/accent</item>
+        <item name="colorSecondary">@color/accent</item>
+    </style>
+</resources>

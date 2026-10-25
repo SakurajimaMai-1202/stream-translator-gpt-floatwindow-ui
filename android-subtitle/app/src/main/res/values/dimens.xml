@@ -1,0 +1,4 @@
+<resources>
+    <dimen name="screen_gutter">16dp</dimen>
+    <dimen name="card_radius">20dp</dimen>
+</resources>

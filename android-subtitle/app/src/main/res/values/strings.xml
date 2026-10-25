@@ -1,0 +1,34 @@
+<resources>
+    <string name="app_name">字幕顯示</string>
+    <string name="main_title">字幕顯示</string>
+    <string name="overlay_locked">字幕已鎖定，可從通知解除</string>
+    <string name="overlay_active_note">懸浮字幕顯示中</string>
+    <string name="server_hint">主機位址，例如 192.168.1.10:8765</string>
+    <string name="connect">連線</string>
+    <string name="disconnect">中斷連線</string>
+    <string name="waiting">等待主機翻譯</string>
+    <string name="connecting">連線中</string>
+    <string name="connected">已連線</string>
+    <string name="reconnecting">重新連線中</string>
+    <string name="unconfigured">尚未設定主機</string>
+    <string name="stopped">已中斷連線</string>
+    <string name="sharing_disabled">字幕分享未開啟</string>
+    <string name="task_ended">翻譯已結束，等待下一場</string>
+    <string name="service_not_found">找不到字幕分享服務，請檢查網址</string>
+    <string name="connected_ready">已連線・辨識中</string>
+    <string name="connected_waiting">已連線・等待語音辨識</string>
+    <string name="notification_locked">已鎖定，展開通知可解除</string>
+    <string name="notification_unlocked">長按字幕可鎖定</string>
+    <string name="invalid_server">請輸入有效的 http 或 https 主機位址</string>
+    <string name="overlay">懸浮字幕</string>
+    <string name="close_overlay">關閉懸浮字幕</string>
+    <string name="settings">設定</string>
+    <string name="passthrough_on">解除鎖定</string>
+    <string name="passthrough_off">鎖定</string>
+    <string name="stop">停止</string>
+    <string name="notification_channel">懸浮字幕連線</string>
+    <string name="overlay_permission">請允許顯示在其他應用程式上層，再返回此畫面。</string>
+    <string name="overlay_failed">無法顯示懸浮字幕，請確認上層顯示權限。</string>
+    <string name="notification_needed">觸控穿透需要通知權限，才能從通知關閉穿透。請在系統設定允許通知。</string>
+    <string name="latency_value">延遲 %1$s 毫秒</string>
+</resources>

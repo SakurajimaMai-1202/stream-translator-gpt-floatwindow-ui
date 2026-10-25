@@ -194,4 +194,16 @@ class ProtocolTest {
         assertEquals(92, settings.overlayWidth)
         assertEquals(5, settings.maxDisplayCount)
     }
+    @Test fun overlayWidthScalesInLandscapeAndCapsAtUsableWidth() {
+        assertEquals(594, overlayWidthPx(1264, 2600, 47))
+        assertEquals(846, overlayWidthPx(2600, 1200, 47))
+        assertEquals(1656, overlayWidthPx(2600, 1200, 92))
+        assertEquals(1400, overlayWidthPx(1400, 1200, 92))
+        assertEquals(1800, overlayWidthPx(2600, 1200, 100))
+        assertEquals(1500, overlayWidthPx(1500, 1200, 100))
+        assertEquals(1, overlayWidthPx(0, 0, 47))
+        // CPH2659 landscape: usable 2780x1100 after bars, physical short side 1264 -> 1.5x the 594 px portrait width.
+        assertEquals(891, overlayWidthPx(2780, 1100, 47, 1264))
+        assertEquals(594, overlayWidthPx(1264, 2600, 47, 1264))
+    }
 }

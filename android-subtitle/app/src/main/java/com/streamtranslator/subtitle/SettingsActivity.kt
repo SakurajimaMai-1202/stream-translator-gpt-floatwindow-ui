@@ -251,7 +251,12 @@ class SettingsActivity : AppCompatActivity() {
         slider(colors, "全螢幕背景不透明度", 0, 100, { it.backgroundOpacity }, "%") { v -> change { it.copy(backgroundOpacity = v) } }
         slider(colors, "懸浮字幕背景不透明度", 0, 100, { it.overlayBackgroundOpacity }, "%") { v -> change { it.copy(overlayBackgroundOpacity = v) } }
         val overlay = section("懸浮字幕")
-        slider(overlay, "寬度", 30, 100, { it.overlayWidth }, "%") { v -> change { it.copy(overlayWidth = v) } }
+        slider(overlay, "寬度（直屏）", 30, 100, { it.overlayWidth }, "%") { v -> change { it.copy(overlayWidth = v) } }
+        overlay.addView(TextView(this).apply {
+            this.text = "橫屏時寬度自動調為直屏的 1.5 倍，不超過螢幕"
+            setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodySmall)
+            setPadding(0, 0, 0, dp(4))
+        })
         toggle(overlay, "預設鎖定", "鎖定後可從通知解除，讓觸控穿透字幕", { it.mousePassthrough }) { v -> change { it.copy(mousePassthrough = v) } }
         overlay.addView(MaterialButton(android.view.ContextThemeWrapper(this, R.style.TextButtonTheme)).apply {
             this.text = "重設位置"; setOnClickListener { Preferences.resetPosition() }

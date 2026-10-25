@@ -34,6 +34,13 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
+// shortSide is the physical screen short side (system bars included), so landscape is exactly 1.5x the portrait width.
+internal fun overlayWidthPx(usableWidth: Int, usableHeight: Int, percent: Int, shortSide: Int = minOf(usableWidth, usableHeight)): Int {
+    val base = shortSide * percent / 100
+    val width = minOf(usableWidth, if (usableWidth <= usableHeight) base else base * 3 / 2)
+    return width.coerceAtLeast(1)
+}
+
 class OverlayService : LifecycleService() {
     private lateinit var overlayContext: Context
     private lateinit var manager: WindowManager
@@ -41,7 +48,8 @@ class OverlayService : LifecycleService() {
     private lateinit var params: WindowManager.LayoutParams
     private lateinit var subtitles: SubtitleView
     @VisibleForTesting internal val overlayView: SubtitleView? get() = if (added) box else null
-    private val landscape get() = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+    // Same source as the width rule, so the saved position and the width always agree on orientation.
+    private val landscape: Boolean get() = usableBounds().let { it.width() > it.height() }
     private var added = false
     private var stopConnection = false
     private var touchThrough = false
@@ -235,7 +243,8 @@ class OverlayService : LifecycleService() {
     }
     private fun usableBounds(): Rect {
         if (Build.VERSION.SDK_INT >= 30) {
-            val metrics = manager.currentWindowMetrics
+            val wm = overlayContext.getSystemService(WindowManager::class.java) ?: manager
+            val metrics = wm.currentWindowMetrics
             val bars = metrics.windowInsets.getInsetsIgnoringVisibility(WindowInsets.Type.systemBars())
             return Rect(metrics.bounds.left + bars.left, metrics.bounds.top + bars.top,
                 metrics.bounds.right - bars.right, metrics.bounds.bottom - bars.bottom)
@@ -243,7 +252,19 @@ class OverlayService : LifecycleService() {
         val metrics = overlayContext.resources.displayMetrics
         return Rect(0, 0, metrics.widthPixels, metrics.heightPixels)
     }
-    private fun overlayWidth() = usableBounds().width() * Preferences.settings.value.overlayWidth / 100
+    private fun screenShortSide(): Int {
+        if (Build.VERSION.SDK_INT >= 30) {
+            val wm = overlayContext.getSystemService(WindowManager::class.java) ?: manager
+            val bounds = wm.currentWindowMetrics.bounds
+            return minOf(bounds.width(), bounds.height())
+        }
+        val metrics = overlayContext.resources.displayMetrics
+        return minOf(metrics.widthPixels, metrics.heightPixels)
+    }
+    private fun overlayWidth(): Int {
+        val bounds = usableBounds()
+        return overlayWidthPx(bounds.width(), bounds.height(), Preferences.settings.value.overlayWidth, screenShortSide())
+    }
     private fun clampPosition() {
         val screen = usableBounds()
         if (params.x == Int.MIN_VALUE) params.x = (screen.width() - params.width) / 2

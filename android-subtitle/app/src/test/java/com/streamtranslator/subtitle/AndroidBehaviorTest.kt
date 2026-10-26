@@ -326,6 +326,25 @@ class AndroidBehaviorTest {
         assertEquals(View.LAYER_TYPE_SOFTWARE, SubtitleView(context).layerType)
     }
 
+    @Test fun tallTextDoesNotRatchetOverlayDown() {
+        Preferences.savePosition(false, 0, 100_000, false)
+        ShadowSettings.setCanDrawOverlays(true)
+        val controller = Robolectric.buildService(OverlayService::class.java).create()
+        val service = controller.get()
+        service.onStartCommand(Intent(context, OverlayService::class.java).setAction(OverlayService.ACTION_START), 0, 1)
+        shadowOf(Looper.getMainLooper()).idle()
+        val box = checkNotNull(service.overlayView)
+        val params = box.layoutParams as WindowManager.LayoutParams
+        box.layout(0, 0, box.width, 1)
+        val top = params.y
+        assertTrue(top > 0)
+        box.layout(0, 0, box.width, 401)
+        assertEquals(top - 400, params.y)
+        box.layout(0, 0, box.width, 1)
+        assertEquals(top, params.y)
+        controller.destroy()
+    }
+
     @Test fun overlaySlopDragDoubleTapAndLockedAlpha() {
         Preferences.resetPosition()
         ShadowSettings.setCanDrawOverlays(true)

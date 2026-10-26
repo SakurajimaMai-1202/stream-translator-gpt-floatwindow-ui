@@ -51,6 +51,9 @@ class OverlayService : LifecycleService() {
     // Same source as the width rule, so the saved position and the width always agree on orientation.
     private val landscape: Boolean get() = usableBounds().let { it.width() > it.height() }
     private var added = false
+    // Bottom offset the user chose. params.y is this clamped to the current text height,
+    // so a long line moves the window only while it is shown instead of ratcheting it down.
+    private var wantedY = Int.MIN_VALUE
     private var stopConnection = false
     private var touchThrough = false
     private var positionRevision = -1
@@ -82,7 +85,8 @@ class OverlayService : LifecycleService() {
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 (if (SubtitleRepository.state.value.status == ConnectionStatus.CONNECTED) WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON else 0),
             PixelFormat.TRANSLUCENT
-        ).apply { gravity = Gravity.BOTTOM or Gravity.LEFT; x = Preferences.overlayX(landscape); y = Preferences.overlayY(landscape) }
+        ).apply { gravity = Gravity.BOTTOM or Gravity.LEFT; x = Preferences.overlayX(landscape) }
+        wantedY = Preferences.overlayY(landscape)
         clampPosition()
         var downX = 0f
         var downY = 0f
@@ -147,8 +151,8 @@ class OverlayService : LifecycleService() {
                 }
                 horizontal = horizontal || abs(dx) > slop
                 if (horizontal) params.x = originX + dx.toInt()
-                params.y = originY - dy.toInt()
-                clampPosition(); updateWindow()
+                wantedY = originY - dy.toInt()
+                clampPosition(); wantedY = params.y; updateWindow()
             }
             pinch.onTouchEvent(event)
             if (!dragging && !scaled) gestures.onTouchEvent(event)
@@ -208,7 +212,7 @@ class OverlayService : LifecycleService() {
                     if (positionRevision != settings.positionRevision || params.width != overlayWidth()) {
                         params.width = overlayWidth()
                         params.x = Preferences.overlayX(landscape)
-                        params.y = Preferences.overlayY(landscape)
+                        wantedY = Preferences.overlayY(landscape)
                         positionRevision = settings.positionRevision
                     }
                     clampPosition()
@@ -268,9 +272,9 @@ class OverlayService : LifecycleService() {
     private fun clampPosition() {
         val screen = usableBounds()
         if (params.x == Int.MIN_VALUE) params.x = (screen.width() - params.width) / 2
-        if (params.y == Int.MIN_VALUE) params.y = dp(48)
+        if (wantedY == Int.MIN_VALUE) wantedY = dp(48)
         params.x = params.x.coerceIn(0, (screen.width() - params.width).coerceAtLeast(0))
-        params.y = params.y.coerceIn(0, (screen.height() - box.height).coerceAtLeast(0))
+        params.y = wantedY.coerceIn(0, (screen.height() - box.height).coerceAtLeast(0))
     }
     private fun updateWindow() {
         if (!added) return
@@ -279,7 +283,7 @@ class OverlayService : LifecycleService() {
     private fun recomputeBoundsAndPosition() {
         if (!added) return
         params.width = overlayWidth(); params.height = WindowManager.LayoutParams.WRAP_CONTENT
-        params.x = Preferences.overlayX(landscape); params.y = Preferences.overlayY(landscape)
+        params.x = Preferences.overlayX(landscape); wantedY = Preferences.overlayY(landscape)
         clampPosition(); updateWindow()
     }
     override fun onConfigurationChanged(newConfig: Configuration) {

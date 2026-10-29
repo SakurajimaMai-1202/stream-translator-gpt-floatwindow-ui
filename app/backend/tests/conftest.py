@@ -6,7 +6,10 @@ except Exception:
     pass
 
 
+import os
 import pytest
+
+os.environ["FLOATWINDOW_SKIP_RUNTIME_WARMUP"] = "1"
 
 
 @pytest.fixture(scope="session", autouse=True)

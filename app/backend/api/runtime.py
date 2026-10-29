@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException
 import asyncio
 import io
 import json
@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from backend.api.config import get_config_manager
 from backend.core.runtime_status import build_runtime_status
+from backend.core.hardware_detector import detect_gpus
 from backend.core.cpu_asr_sidecar_manager import cpu_asr_sidecar_manager
 from backend.core.app_update_manager import app_update_manager
 
@@ -155,13 +156,18 @@ class CpuAsrSidecarImportRequest(BaseModel):
 
 
 @router.get("/status")
-async def get_runtime_status():
+async def get_runtime_status(refresh: bool = False):
     try:
         config = get_config_manager().get_config()
         # Importing Torch and probing the GPU can take 10-20 seconds on a cold
         # packaged runtime.  Keep that work off the FastAPI event loop so a
         # concurrent /config request remains responsive.
-        data = await asyncio.to_thread(build_runtime_status, config)
+        def build_status():
+            if refresh:
+                return build_runtime_status(config, detect_gpus(force_refresh=True))
+            return build_runtime_status(config)
+
+        data = await asyncio.to_thread(build_status)
         return {"success": True, "data": data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -22,7 +22,7 @@ const {
                 </div>
                 <button type="button"
                   class="px-3 py-2 bg-white/10 hover:bg-white/15 border border-white/10 rounded-lg text-white text-sm transition"
-                  @click="store.loadRuntimeStatus()">
+                  @click="store.loadRuntimeStatus(true)">
                   Refresh
                 </button>
               </div>

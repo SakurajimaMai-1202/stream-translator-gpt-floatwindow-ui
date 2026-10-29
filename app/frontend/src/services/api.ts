@@ -288,8 +288,8 @@ export const systemApi = {
 };
 
 export const runtimeApi = {
-  async getStatus(): Promise<RuntimeStatus> {
-    const response = await axios.get(`${API_BASE}/runtime/status`);
+  async getStatus(refresh = false): Promise<RuntimeStatus> {
+    const response = await axios.get(`${API_BASE}/runtime/status${refresh ? '?refresh=true' : ''}`);
     return response.data.data || response.data;
   },
   async getCpuAsrSidecarStatus(): Promise<CpuAsrSidecarInstallStatus> {

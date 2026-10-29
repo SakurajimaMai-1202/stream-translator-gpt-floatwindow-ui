@@ -7,6 +7,7 @@ from pathlib import Path
 import asyncio
 import logging
 import mimetypes
+import os
 import threading
 
 from backend.api import routes
@@ -33,6 +34,7 @@ async def lifespan(app: FastAPI):
 
     # 2) 啟動公開字幕子伺服器（在背景執行緒）
     _start_public_server()
+    _start_runtime_warmup()
 
     try:
         yield  # 應用程式執行中
@@ -53,6 +55,23 @@ async def lifespan(app: FastAPI):
                 if isinstance(result, Exception):
                     logger.warning("停止翻譯任務時發生錯誤: %s", result)
             active_translations.clear()
+
+
+def _start_runtime_warmup():
+    if os.environ.get("FLOATWINDOW_SKIP_RUNTIME_WARMUP") == "1":
+        return
+
+    def warmup():
+        try:
+            from backend.core.hardware_detector import detect_gpus
+            detect_gpus()
+        except Exception:
+            logger.debug("Runtime GPU warm-up failed", exc_info=True)
+
+    try:
+        threading.Thread(target=warmup, daemon=True, name="RuntimeGpuWarmup").start()
+    except Exception:
+        logger.debug("Unable to start runtime GPU warm-up", exc_info=True)
 
 
 app = FastAPI(

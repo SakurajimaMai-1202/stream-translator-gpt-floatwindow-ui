@@ -174,9 +174,9 @@ export const useTranslationStore = defineStore('translation', () => {
     if (await refreshSessionServerConfig()) appliedSessionSnapshot.value = sessionFingerprint.value;
   }
 
-  async function loadRuntimeStatus() {
+  async function loadRuntimeStatus(refresh = false) {
     try {
-      runtimeStatus.value = await runtimeApi.getStatus();
+      runtimeStatus.value = await runtimeApi.getStatus(refresh);
       runtimeStatusError.value = '';
     } catch (error: any) {
       runtimeStatusError.value = error?.message || 'Failed to load runtime status';

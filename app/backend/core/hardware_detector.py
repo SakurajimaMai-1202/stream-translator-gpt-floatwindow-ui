@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass, field
+from concurrent.futures import Future
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable, Literal
@@ -45,7 +46,9 @@ DISCRETE_NAME_MARKERS = (
 
 _GPU_CACHE_LOCK = threading.Lock()
 _GPU_CACHE: tuple[float, tuple["GpuDevice", ...]] | None = None
+_GPU_PROBE: Future | None = None
 GPU_CACHE_TTL_SECONDS = 60.0
+GPU_CACHE_MAX_STALE_SECONDS = 600.0
 
 
 def vram_tier(memory_mb: int | None) -> tuple[str, str]:
@@ -400,12 +403,52 @@ def default_llama_gpu_layers() -> int:
 
 
 def detect_gpus(include_windows_fallback: bool = True, *, force_refresh: bool = False) -> list[GpuDevice]:
-    global _GPU_CACHE
-    now = time.monotonic()
-    if include_windows_fallback and not force_refresh:
+    global _GPU_PROBE
+    if not include_windows_fallback:
+        return _probe_gpus(False)
+    with _GPU_CACHE_LOCK:
+        if (
+            _GPU_CACHE is not None and not force_refresh
+            and time.monotonic() - _GPU_CACHE[0] <= GPU_CACHE_MAX_STALE_SECONDS
+        ):
+            cached = list(_GPU_CACHE[1])
+            if time.monotonic() - _GPU_CACHE[0] >= GPU_CACHE_TTL_SECONDS and _GPU_PROBE is None:
+                probe = Future()
+                _GPU_PROBE = probe
+                try:
+                    threading.Thread(target=_refresh_gpu_cache, args=(probe,), daemon=True,
+                                     name="GpuCacheRefresh").start()
+                except Exception:
+                    _GPU_PROBE = None
+                    logger.debug("Unable to start GPU cache refresh", exc_info=True)
+            return cached
+        probe = _GPU_PROBE
+        owner = probe is None
+        if owner:
+            probe = Future()
+            _GPU_PROBE = probe
+    if owner:
+        _refresh_gpu_cache(probe)
+    return list(probe.result())
+
+
+def _refresh_gpu_cache(probe: Future) -> None:
+    global _GPU_CACHE, _GPU_PROBE
+    try:
+        devices = tuple(_probe_gpus(True))
+    except BaseException as exc:
         with _GPU_CACHE_LOCK:
-            if _GPU_CACHE is not None and now - _GPU_CACHE[0] < GPU_CACHE_TTL_SECONDS:
-                return list(_GPU_CACHE[1])
+            _GPU_PROBE = None
+            probe.set_exception(exc)
+        logger.debug("GPU cache refresh failed", exc_info=True)
+    else:
+        with _GPU_CACHE_LOCK:
+            _GPU_CACHE = (time.monotonic(), devices)
+            _GPU_PROBE = None
+            probe.set_result(devices)
+
+
+def _probe_gpus(include_windows_fallback: bool) -> list[GpuDevice]:
     runtime_devices = detect_runtime_python_gpus()
     if runtime_devices:
         devices = runtime_devices
@@ -417,9 +460,6 @@ def detect_gpus(include_windows_fallback: bool = True, *, force_refresh: bool = 
             devices = _merge_gpu_detections(
                 detect_windows_dxgi_adapters(), detect_nvidia_smi_gpus(), detect_windows_video_controllers()
             )
-    if include_windows_fallback:
-        with _GPU_CACHE_LOCK:
-            _GPU_CACHE = (time.monotonic(), tuple(devices))
     return list(devices)
 
 

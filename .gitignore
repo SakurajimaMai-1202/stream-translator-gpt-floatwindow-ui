@@ -52,6 +52,8 @@ htmlcov/
 
 # ── Node.js ───────────────────────────────────────────────────
 node_modules/
+app/frontend/test-results/
+app/frontend/playwright-report/
 .npm
 .eslintcache
 .pnpm-store/

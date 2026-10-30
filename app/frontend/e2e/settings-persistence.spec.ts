@@ -44,6 +44,8 @@ test('逐鍵輸入無效音訊長度後切換分頁不會儲存中途值', async
   await page.getByRole('button', { name: '轉錄選項', exact: true }).click();
   await page.getByRole('button', { name: '音訊切片/VAD', exact: true }).click();
   await expect(minimumAudio(page)).toHaveValue('0.9');
+  // Outlast the 1 s autosave debounce, so a stray save of 5 would have landed.
+  await page.waitForTimeout(1500);
   await expect.poll(readConfig).toMatch(/min_audio_length: 0\.9\s/);
   await expect.poll(readConfig).not.toMatch(/min_audio_length: 50?\s/);
 });

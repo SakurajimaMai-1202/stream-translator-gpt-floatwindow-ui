@@ -33,3 +33,17 @@ test('超過上限的最小音訊長度不會寫入設定', async ({ page }) => 
   await expect.poll(readConfig).toMatch(/min_audio_length: 0\.9\s/);
   await expect.poll(readConfig).not.toMatch(/min_audio_length: 99/);
 });
+
+test('逐鍵輸入無效音訊長度後切換分頁不會儲存中途值', async ({ page }) => {
+  await saveMinimumAudio(page);
+  const input = minimumAudio(page);
+  await input.focus();
+  await page.keyboard.press('ControlOrMeta+A');
+  await page.keyboard.type('50', { delay: 50 });
+  await expect(page.getByRole('alert').filter({ hasText: '不可大於' })).toBeVisible();
+  await page.getByRole('button', { name: '轉錄選項', exact: true }).click();
+  await page.getByRole('button', { name: '音訊切片/VAD', exact: true }).click();
+  await expect(minimumAudio(page)).toHaveValue('0.9');
+  await expect.poll(readConfig).toMatch(/min_audio_length: 0\.9\s/);
+  await expect.poll(readConfig).not.toMatch(/min_audio_length: 50?\s/);
+});

@@ -85,3 +85,49 @@ jobs:
             node $_.FullName
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
+
+  e2e:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: |
+            app/requirements.txt
+            app/constraints/*.txt
+            stream-translator-gpt/requirements.txt
+      - name: Install CPU PyTorch
+        run: python -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+      - name: Prepare CPU-compatible runtime constraints
+        shell: pwsh
+        run: |
+          Get-Content app/constraints/runtime-cuda.txt |
+            Where-Object { $_ -notmatch "^(torch==|torchaudio==|torchvision==|nvidia-|triton)" } |
+            Set-Content (Join-Path $env:RUNNER_TEMP "runtime-ci.txt") -Encoding utf8
+      - name: Install backend dependencies
+        run: python -m pip install -r app/requirements.txt pytest -c (Join-Path $env:RUNNER_TEMP "runtime-ci.txt")
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: app/frontend/package-lock.json
+      - run: npm ci
+        working-directory: app/frontend
+      - run: npx playwright install chromium
+        working-directory: app/frontend
+      - run: npm run test:e2e
+        working-directory: app/frontend
+        env:
+          E2E_PYTHON: python
+          PYTHONPATH: '${{ github.workspace }}\stream-translator-gpt'
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-test-results
+          path: app/frontend/test-results
+          if-no-files-found: ignore

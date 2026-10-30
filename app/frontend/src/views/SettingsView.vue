@@ -328,6 +328,7 @@ const localEdits = new Set<string>();
 const replacementEdits = new Map<string, any>();
 const handedOffSections = new Set<string>();
 const healthySaveFailures = new Map<string, number>();
+let lastValidAudio: Record<string, unknown> | null = null;
 const audioServerValidationMessage = ref('');
 const audioValidationMessage = computed(() => audioServerValidationMessage.value
   || validateAudioSlicing(localConfig.value.audio_slicing_vad));
@@ -387,7 +388,7 @@ async function saveSectionNow(section: string): Promise<void> {
     return saveSectionNow(section);
   }
   if (disposed) return;
-  if (section === 'audio_slicing_vad' && audioValidationMessage.value) {
+  if (section === 'audio_slicing_vad' && audioValidationMessage.value && !lastValidAudio) {
     pendingRetrySections.value.delete(section);
     saveStatus.value = 'idle';
     scheduleRetry();
@@ -401,7 +402,8 @@ async function saveSectionNow(section: string): Promise<void> {
       // Config is plain JSON. A JSON round trip also unwraps reactive proxies
       // nested in replaced arrays (e.g. a new glossary_list), which
       // structuredClone(toRaw()) rejects with DataCloneError.
-      sectionSnapshot = JSON.parse(JSON.stringify(localConfig.value[section] ?? {}));
+      sectionSnapshot = JSON.parse(JSON.stringify(section === 'audio_slicing_vad' && audioValidationMessage.value
+        ? lastValidAudio : localConfig.value[section] ?? {}));
       if (section === 'terminology') {
         for (const term of sectionSnapshot.glossary_list || []) term.aliases = normalizeTermAliases(term.aliases);
       }
@@ -409,8 +411,14 @@ async function saveSectionNow(section: string): Promise<void> {
         && !configsEqual(store.config.runtime, sectionSnapshot);
       const asrComputeChanged = section === 'transcription'
         && store.config.transcription?.asr_compute_backend !== sectionSnapshot.asr_compute_backend;
+      if (section === 'audio_slicing_vad' && !audioValidationMessage.value) {
+        lastValidAudio = sectionSnapshot;
+      }
       await store.saveConfigSection(section, sectionSnapshot);
       saved = true;
+      if (section === 'audio_slicing_vad' && lastValidAudio && sameEntries(lastValidAudio, sectionSnapshot)) {
+        lastValidAudio = null;
+      }
       if (configsEqual(localConfig.value[section], sectionSnapshot)) localEdits.delete(section);
       failedSections.value.delete(section);
       healthySaveFailures.delete(section);
@@ -425,7 +433,8 @@ async function saveSectionNow(section: string): Promise<void> {
       if (!e?.response || status >= 500) {
         try {
           const health = await axios.get('/api/health', { timeout: 3000 });
-          if (health.data?.status === 'ok' && configsEqual(localConfig.value[section], sectionSnapshot)) {
+          if (health.data?.status === 'ok' && configsEqual(
+            section === 'audio_slicing_vad' && audioValidationMessage.value ? lastValidAudio : localConfig.value[section], sectionSnapshot)) {
             const failures = (healthySaveFailures.get(section) || 0) + 1;
             healthySaveFailures.set(section, failures);
             retryLimitReached = failures >= 3;
@@ -437,6 +446,7 @@ async function saveSectionNow(section: string): Promise<void> {
         console.warn(`[SettingsView] ${section} 自動保存失敗: ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`);
       }
       if (status === 422 && section === 'audio_slicing_vad') {
+        if (lastValidAudio && sameEntries(lastValidAudio, sectionSnapshot)) lastValidAudio = null;
         if (configsEqual(localConfig.value[section], sectionSnapshot)) {
           audioServerValidationMessage.value = String(detail);
         }
@@ -447,6 +457,9 @@ async function saveSectionNow(section: string): Promise<void> {
         else {
           pendingRetrySections.value.delete(section);
           failedSections.value.add(section);
+          if (section === 'audio_slicing_vad' && lastValidAudio && sameEntries(lastValidAudio, sectionSnapshot)) {
+            lastValidAudio = null;
+          }
         }
       }
       if (disposed && !handedOffSections.has(section) && pendingRetrySections.value.has(section)) {
@@ -483,16 +496,17 @@ function debouncedAutoSaveSection(section: string) {
     replacementEdits.set(section, JSON.parse(JSON.stringify(localConfig.value[section])));
     return;
   }
+  if (section === 'audio_slicing_vad' && audioValidationMessage.value) {
+    const pendingTimer = sectionSaveTimers.get(section);
+    if (pendingTimer) clearTimeout(pendingTimer);
+    sectionSaveTimers.delete(section);
+    if (!sectionSaveInFlight.has(section) && !pendingRetrySections.value.has(section)) saveStatus.value = 'idle';
+    return;
+  }
   if (autoSaveStatusTimeout) clearTimeout(autoSaveStatusTimeout);
   const currentTimer = sectionSaveTimers.get(section);
   if (currentTimer) clearTimeout(currentTimer);
   sectionSaveTimers.delete(section);
-  if (section === 'audio_slicing_vad' && audioValidationMessage.value) {
-    pendingRetrySections.value.delete(section);
-    saveStatus.value = 'idle';
-    scheduleRetry();
-    return;
-  }
   saveStatus.value = 'saving';
   sectionSaveTimers.set(section, setTimeout(() => {
     sectionSaveTimers.delete(section);
@@ -719,14 +733,13 @@ watch(() => route.query.tab, (newTab) => {
 
 watch(activeTab, async (tab, previousTab) => {
   if (previousTab === 'audio_vad' && audioInvalidChanges.value) {
-    const timer = sectionSaveTimers.get('audio_slicing_vad');
-    if (timer) clearTimeout(timer);
-    sectionSaveTimers.delete('audio_slicing_vad');
-    pendingRetrySections.value.delete('audio_slicing_vad');
-    localEdits.delete('audio_slicing_vad');
-    saveStatus.value = 'idle';
+    if (sectionSaveInFlight.has('audio_slicing_vad')) deferredSections.add('audio_slicing_vad');
+    if (!lastValidAudio) localEdits.delete('audio_slicing_vad');
+    if (!sectionSaveInFlight.has('audio_slicing_vad') && !pendingRetrySections.value.has('audio_slicing_vad')) {
+      saveStatus.value = 'idle';
+    }
     suspendedAutoSaveSections.add('audio_slicing_vad');
-    localConfig.value.audio_slicing_vad = JSON.parse(JSON.stringify(store.config.audio_slicing_vad));
+    localConfig.value.audio_slicing_vad = JSON.parse(JSON.stringify(lastValidAudio ?? store.config.audio_slicing_vad));
     audioServerValidationMessage.value = '';
     await nextTick();
     suspendedAutoSaveSections.delete('audio_slicing_vad');
@@ -759,6 +772,7 @@ onMounted(async () => {
         continue;
       }
       localConfig.value[section] = entry.snapshot;
+      if (section === 'audio_slicing_vad') lastValidAudio = JSON.parse(JSON.stringify(entry.snapshot));
       localEdits.add(section);
       pendingRetrySections.value.add(section);
       healthySaveFailures.set(section, entry.failures);
@@ -842,9 +856,11 @@ onMounted(async () => {
 });
 
 function handoffSection(section: string, immediate = false) {
-  if (section === 'audio_slicing_vad' && audioValidationMessage.value) return;
+  const snapshot = section === 'audio_slicing_vad' && audioValidationMessage.value
+    ? lastValidAudio : localConfig.value[section];
+  if (!snapshot) return;
   handedOffSections.add(section);
-  queuePendingSave(section, localConfig.value[section], healthySaveFailures.get(section) || 0, immediate, sectionSaveInFlight.get(section));
+  queuePendingSave(section, snapshot, healthySaveFailures.get(section) || 0, immediate, sectionSaveInFlight.get(section));
 }
 
 onUnmounted(() => {
@@ -882,6 +898,7 @@ async function replaceSettings(apply: () => Promise<void>) {
     healthySaveFailures.clear();
     failedSections.value.clear();
     deferredSections.clear();
+    lastValidAudio = null;
     audioServerValidationMessage.value = '';
     if (autoSaveStatusTimeout) clearTimeout(autoSaveStatusTimeout);
     saveStatus.value = 'idle';

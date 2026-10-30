@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Request
 from typing import Dict, Any, List
-from backend.core.config_manager import ConfigManager
+from backend.core.config_manager import ConfigManager, ConfigValidationError
 from fastapi.responses import Response
 from pydantic import BaseModel
 import asyncio
@@ -133,6 +133,8 @@ async def update_full_config(data: Dict[str, Any], request: Request):
             "source_client_id": request.headers.get("X-Client-Id", ""),
         })
         return {"success": True, "data": mask_secrets(updated_config)}
+    except ConfigValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail="Invalid configuration structure") from e
     except Exception as e:
@@ -157,6 +159,8 @@ async def update_section(section: str, data: Dict[str, Any], request: Request):
             "source_client_id": request.headers.get("X-Client-Id", ""),
         })
         return {"success": True, "data": mask_secrets(full_config.get(section))}
+    except ConfigValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail="Invalid configuration structure") from e
     except Exception as e:

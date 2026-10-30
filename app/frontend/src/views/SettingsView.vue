@@ -17,6 +17,8 @@ import { useAsrModelManagement } from '../composables/settings/useAsrModelManage
 import { useRoute } from 'vue-router';
 
 import axios from 'axios';
+import { queuePendingSave, takePendingSaves } from '../composables/settings/pendingSaves';
+import { validateAudioSlicing } from '../composables/settings/audioSlicingValidation';
 import { useTranslationStore } from '../stores/translation';
 import { useModelDownloadStore } from '../stores/modelDownload';
 import { useLlamaStore } from '../stores/llama';
@@ -30,7 +32,7 @@ import { coerceLanguageForModel,  } from '../utils/asrCapabilities';
 const testingGpt = ref(false);
 const testingGemini = ref(false);
 
-const autoSaveStatus = ref<'idle' | 'saving' | 'saved' | 'error'>('idle');
+const saveStatus = ref<'idle' | 'saving' | 'saved'>('idle');
 const settingsReady = ref(false);
 const sharingLanAddresses = ref<string[]>([]);
 const copiedSharingUrl = ref('');
@@ -318,23 +320,88 @@ const { presetCategories, presetLoadError } = terminologySettings;
 const { stopCpuAsrSidecarPolling, refreshCpuAsrSidecarStatus } = asrModelManagement;
 
 
+const pendingRetrySections = ref(new Set<string>());
+const failedSections = ref(new Set<string>());
+const deferredSections = new Set<string>();
+let replacingConfig = 0;
+const localEdits = new Set<string>();
+const replacementEdits = new Map<string, any>();
+const handedOffSections = new Set<string>();
+const healthySaveFailures = new Map<string, number>();
+const audioServerValidationMessage = ref('');
+const audioValidationMessage = computed(() => audioServerValidationMessage.value
+  || validateAudioSlicing(localConfig.value.audio_slicing_vad));
+const audioInvalidChanges = computed(() => audioServerValidationMessage.value
+  || (audioValidationMessage.value
+    && !sameEntries(localConfig.value.audio_slicing_vad, store.config.audio_slicing_vad)));
+const autoSaveStatus = computed(() => audioInvalidChanges.value ? 'invalid'
+  : pendingRetrySections.value.size ? 'retry'
+  : failedSections.value.size ? 'error' : saveStatus.value);
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+let retryPolling = false;
+let disposed = false;
+
+function scheduleRetry() {
+  if (!pendingRetrySections.value.size || disposed || replacingConfig) {
+    if (retryTimer) clearTimeout(retryTimer);
+    retryTimer = null;
+    return;
+  }
+  if (retryTimer || retryPolling) return;
+  retryTimer = setTimeout(async () => {
+    retryTimer = null;
+    retryPolling = true;
+    try {
+      const health = await axios.get('/api/health', { timeout: 3000 });
+      if (health.data?.status !== 'ok') return;
+      for (const section of [...pendingRetrySections.value]) {
+        if (disposed || replacingConfig) break;
+        if (pendingRetrySections.value.has(section)) await saveSectionNow(section).catch(() => undefined);
+      }
+    } catch {
+      // Keep pending sections until the backend is reachable again.
+    } finally {
+      retryPolling = false;
+      scheduleRetry();
+    }
+  }, 3000);
+}
+
+watch(() => localConfig.value.audio_slicing_vad, () => {
+  audioServerValidationMessage.value = '';
+}, { deep: true, flush: 'sync' });
+
 function markAutoSaveCompleted() {
-  autoSaveStatus.value = 'saved';
+  saveStatus.value = 'saved';
   if (autoSaveStatusTimeout) clearTimeout(autoSaveStatusTimeout);
   autoSaveStatusTimeout = setTimeout(() => {
-    autoSaveStatus.value = 'idle';
+    saveStatus.value = 'idle';
   }, 3000);
 }
 
 async function saveSectionNow(section: string): Promise<void> {
+  if (replacingConfig) throw new Error('Configuration replacement in progress');
   const existing = sectionSaveInFlight.get(section);
-  if (existing) await existing.catch(() => undefined);
+  if (existing) {
+    await existing.catch(() => undefined);
+    return saveSectionNow(section);
+  }
+  if (disposed) return;
+  if (section === 'audio_slicing_vad' && audioValidationMessage.value) {
+    pendingRetrySections.value.delete(section);
+    saveStatus.value = 'idle';
+    scheduleRetry();
+    throw new Error(audioValidationMessage.value);
+  }
+  saveStatus.value = 'saving';
+  let saved = false;
+  let sectionSnapshot: any;
   const request = (async () => {
     try {
       // Config is plain JSON. A JSON round trip also unwraps reactive proxies
       // nested in replaced arrays (e.g. a new glossary_list), which
       // structuredClone(toRaw()) rejects with DataCloneError.
-      const sectionSnapshot = JSON.parse(JSON.stringify(localConfig.value[section] ?? {}));
+      sectionSnapshot = JSON.parse(JSON.stringify(localConfig.value[section] ?? {}));
       if (section === 'terminology') {
         for (const term of sectionSnapshot.glossary_list || []) term.aliases = normalizeTermAliases(term.aliases);
       }
@@ -343,15 +410,65 @@ async function saveSectionNow(section: string): Promise<void> {
       const asrComputeChanged = section === 'transcription'
         && store.config.transcription?.asr_compute_backend !== sectionSnapshot.asr_compute_backend;
       await store.saveConfigSection(section, sectionSnapshot);
+      saved = true;
+      if (configsEqual(localConfig.value[section], sectionSnapshot)) localEdits.delete(section);
+      failedSections.value.delete(section);
+      healthySaveFailures.delete(section);
+      pendingRetrySections.value.delete(section);
+      scheduleRetry();
       if (runtimeChanged || asrComputeChanged) await store.loadRuntimeStatus();
-      markAutoSaveCompleted();
+      if (!disposed) markAutoSaveCompleted();
     } catch (e: any) {
       const detail = e?.response?.data?.detail ?? e?.message ?? String(e);
-      console.warn(`[SettingsView] ${section} 自動保存失敗: ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`);
-      autoSaveStatus.value = 'error';
+      const status = e?.response?.status;
+      let retryLimitReached = false;
+      if (!e?.response || status >= 500) {
+        try {
+          const health = await axios.get('/api/health', { timeout: 3000 });
+          if (health.data?.status === 'ok' && configsEqual(localConfig.value[section], sectionSnapshot)) {
+            const failures = (healthySaveFailures.get(section) || 0) + 1;
+            healthySaveFailures.set(section, failures);
+            retryLimitReached = failures >= 3;
+            if (failures === 3) console.warn(`[SettingsView] ${section} 自動保存連續失敗 3 次，停止重試`);
+          }
+        } catch { /* An unreachable backend does not count toward the limit. */ }
+      } else if (e?.response) {
+        healthySaveFailures.delete(section);
+        console.warn(`[SettingsView] ${section} 自動保存失敗: ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`);
+      }
+      if (status === 422 && section === 'audio_slicing_vad') {
+        if (configsEqual(localConfig.value[section], sectionSnapshot)) {
+          audioServerValidationMessage.value = String(detail);
+        }
+        pendingRetrySections.value.delete(section);
+        store.clearError();
+      } else {
+        if ((!e?.response || status >= 500) && !retryLimitReached) pendingRetrySections.value.add(section);
+        else {
+          pendingRetrySections.value.delete(section);
+          failedSections.value.add(section);
+        }
+      }
+      if (disposed && !handedOffSections.has(section) && pendingRetrySections.value.has(section)) {
+        handoffSection(section);
+      }
+      scheduleRetry();
       throw e;
     } finally {
       sectionSaveInFlight.delete(section);
+      if (saved && !disposed && !replacingConfig && deferredSections.has(section)
+        && !pendingRetrySections.value.has(section) && !sectionSaveTimers.has(section)) {
+        suspendedAutoSaveSections.add(section);
+        const wasApplyingRemoteConfig = isApplyingRemoteConfig.value;
+        isApplyingRemoteConfig.value = true;
+        try {
+          applyConfigSection(section, store.config[section]);
+          await nextTick();
+        } finally {
+          isApplyingRemoteConfig.value = wasApplyingRemoteConfig;
+          suspendedAutoSaveSections.delete(section);
+        }
+      }
     }
   })();
   sectionSaveInFlight.set(section, request);
@@ -359,10 +476,24 @@ async function saveSectionNow(section: string): Promise<void> {
 }
 
 function debouncedAutoSaveSection(section: string) {
+  healthySaveFailures.delete(section);
   if (suspendedAutoSaveSections.has(section)) return;
-  autoSaveStatus.value = 'saving';
+  localEdits.add(section);
+  if (replacingConfig) {
+    replacementEdits.set(section, JSON.parse(JSON.stringify(localConfig.value[section])));
+    return;
+  }
+  if (autoSaveStatusTimeout) clearTimeout(autoSaveStatusTimeout);
   const currentTimer = sectionSaveTimers.get(section);
   if (currentTimer) clearTimeout(currentTimer);
+  sectionSaveTimers.delete(section);
+  if (section === 'audio_slicing_vad' && audioValidationMessage.value) {
+    pendingRetrySections.value.delete(section);
+    saveStatus.value = 'idle';
+    scheduleRetry();
+    return;
+  }
+  saveStatus.value = 'saving';
   sectionSaveTimers.set(section, setTimeout(() => {
     sectionSaveTimers.delete(section);
     // saveSectionNow reports the error; background timers have no caller
@@ -467,6 +598,12 @@ function mergeConfig(defaults: any, loaded: any) {
   return result;
 }
 
+// Local sections are merged over defaults, so their key order differs from the server's.
+function sameEntries(left: Record<string, unknown> = {}, right: Record<string, unknown> = {}): boolean {
+  const sorted = (section: Record<string, unknown>) => JSON.stringify(Object.keys(section).sort().map(key => [key, section[key]]));
+  return sorted(left) === sorted(right);
+}
+
 function configsEqual(left: any, right: any): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
@@ -479,6 +616,18 @@ function replaceObjectContents(target: Record<string, any>, source: Record<strin
 }
 
 function applyConfigSection(section: string, loadedSection: any) {
+  if (!replacingConfig && (pendingRetrySections.value.has(section) || sectionSaveTimers.has(section)
+    || sectionSaveInFlight.has(section))) {
+    deferredSections.add(section);
+    return;
+  }
+  if (!replacingConfig && settingsReady.value && section === 'audio_slicing_vad'
+    && localEdits.has(section) && audioInvalidChanges.value) {
+    deferredSections.add(section);
+    return;
+  }
+  localEdits.delete(section);
+  deferredSections.delete(section);
   if (!loadedSection || typeof loadedSection !== 'object') return;
   const currentSection = localConfig.value[section] || {};
   const mergedSection = mergeConfig(currentSection, loadedSection);
@@ -508,11 +657,11 @@ async function applyStoreConfigToLocalConfig(config?: any, syncLlama = false) {
     }
     localConfig.value.transcription.language = normalizeInputLanguage(localConfig.value.transcription.language);
 
-    if (loadedConfig.translation?.custom_models) {
+    if (!deferredSections.has('translation') && loadedConfig.translation?.custom_models) {
       if (!configsEqual(localConfig.value.translation.custom_models, loadedConfig.translation.custom_models)) {
         localConfig.value.translation.custom_models = loadedConfig.translation.custom_models;
       }
-    } else if (loadedConfig.custom_models) {
+    } else if (!deferredSections.has('translation') && loadedConfig.custom_models) {
       if (!configsEqual(localConfig.value.translation.custom_models, loadedConfig.custom_models)) {
         localConfig.value.translation.custom_models = loadedConfig.custom_models;
       }
@@ -525,13 +674,13 @@ async function applyStoreConfigToLocalConfig(config?: any, syncLlama = false) {
     }
     coerceAsrSettingsForRuntime();
 
-    if (syncLlama) {
-      await llamaStore.loadConfig();
-      await llamaStore.refreshServerStatus();
-    }
   } finally {
     await nextTick();
     isApplyingRemoteConfig.value = false;
+  }
+  if (syncLlama) {
+    await llamaStore.loadConfig();
+    await llamaStore.refreshServerStatus();
   }
 }
 
@@ -544,18 +693,18 @@ useAppSyncEvents({
     }
     await applyStoreConfigToLocalConfig(store.config, payload.section === '*' || payload.section === 'llama');
   },
-  onConfigReset: async (payload) => {
+  onConfigReset: async (payload) => replaceSettings(async () => {
     if (payload.config) store.applyConfigSnapshot(payload.config);
     else await store.loadConfig(true);
     await store.loadRuntimeStatus();
     await applyStoreConfigToLocalConfig(store.config, true);
-  },
-  onConfigImported: async (payload) => {
+  }),
+  onConfigImported: async (payload) => replaceSettings(async () => {
     if (payload.config) store.applyConfigSnapshot(payload.config);
     else await store.loadConfig(true);
     await store.loadRuntimeStatus();
     await applyStoreConfigToLocalConfig(store.config, true);
-  },
+  }),
   onTranslationStarted: async () => {
     await store.syncRunningState();
   },
@@ -568,7 +717,21 @@ watch(() => route.query.tab, (newTab) => {
   syncActiveTabFromRoute(newTab);
 }, { immediate: true });
 
-watch(activeTab, async (tab) => {
+watch(activeTab, async (tab, previousTab) => {
+  if (previousTab === 'audio_vad' && audioInvalidChanges.value) {
+    const timer = sectionSaveTimers.get('audio_slicing_vad');
+    if (timer) clearTimeout(timer);
+    sectionSaveTimers.delete('audio_slicing_vad');
+    pendingRetrySections.value.delete('audio_slicing_vad');
+    localEdits.delete('audio_slicing_vad');
+    saveStatus.value = 'idle';
+    suspendedAutoSaveSections.add('audio_slicing_vad');
+    localConfig.value.audio_slicing_vad = JSON.parse(JSON.stringify(store.config.audio_slicing_vad));
+    audioServerValidationMessage.value = '';
+    await nextTick();
+    suspendedAutoSaveSections.delete('audio_slicing_vad');
+    scheduleRetry();
+  }
   if (tab !== 'model_management') {
     modelDownloadStore.stopPolling();
     stopCpuAsrSidecarPolling();
@@ -583,16 +746,29 @@ watch(activeTab, async (tab) => {
 
 onMounted(async () => {
   settingsReady.value = false;
+  const queued = await takePendingSaves();
   try {
     // Config is a fast, cached YAML read.  Do not keep the whole settings UI
     // behind cold Torch/GPU or llama.cpp probes, which can take many seconds.
     await store.loadConfig();
     await applyStoreConfigToLocalConfig(store.config, false);
   } finally {
+    for (const [section, entry] of queued) {
+      if (disposed) {
+        queuePendingSave(section, entry.snapshot, entry.failures);
+        continue;
+      }
+      localConfig.value[section] = entry.snapshot;
+      localEdits.add(section);
+      pendingRetrySections.value.add(section);
+      healthySaveFailures.set(section, entry.failures);
+    }
+    scheduleRetry();
     await nextTick();
     settingsReady.value = true;
   }
 
+  if (disposed) return;
   const runtimeStatusPromise = store.loadRuntimeStatus();
   void axios.get('/api/config/hy-mt2-glossary-presets').then((response) => {
     if (!Array.isArray(response.data?.categories)) throw new Error('Invalid glossary categories');
@@ -665,17 +841,95 @@ onMounted(async () => {
   );
 });
 
+function handoffSection(section: string, immediate = false) {
+  if (section === 'audio_slicing_vad' && audioValidationMessage.value) return;
+  handedOffSections.add(section);
+  queuePendingSave(section, localConfig.value[section], healthySaveFailures.get(section) || 0, immediate, sectionSaveInFlight.get(section));
+}
+
 onUnmounted(() => {
+  disposed = true;
+  if (!replacingConfig) {
+    for (const section of new Set([...sectionSaveTimers.keys(), ...sectionSaveInFlight.keys()])) handoffSection(section, true);
+    for (const section of pendingRetrySections.value) {
+      if (!handedOffSections.has(section)) handoffSection(section);
+    }
+  }
+  if (retryTimer) clearTimeout(retryTimer);
+  if (autoSaveStatusTimeout) clearTimeout(autoSaveStatusTimeout);
   for (const timer of sectionSaveTimers.values()) clearTimeout(timer);
   sectionSaveTimers.clear();
   modelDownloadStore.stopPolling();
   stopCpuAsrSidecarPolling();
 });
 
+async function replaceSettings(apply: () => Promise<void>) {
+  replacingConfig++;
+  const timerSections = new Set(sectionSaveTimers.keys());
+  const pendingSections = new Set(pendingRetrySections.value);
+  const failed = new Set(failedSections.value);
+  const deferred = new Set(deferredSections);
+  const edited = new Set(localEdits);
+  const snapshots = new Map<string, any>(Object.keys(localConfig.value)
+    .map(section => [section, JSON.parse(JSON.stringify(localConfig.value[section]))]));
+  for (const timer of sectionSaveTimers.values()) clearTimeout(timer);
+  scheduleRetry();
+  const queued = await takePendingSaves();
+  const clearPending = () => {
+    for (const timer of sectionSaveTimers.values()) clearTimeout(timer);
+    sectionSaveTimers.clear();
+    pendingRetrySections.value.clear();
+    healthySaveFailures.clear();
+    failedSections.value.clear();
+    deferredSections.clear();
+    audioServerValidationMessage.value = '';
+    if (autoSaveStatusTimeout) clearTimeout(autoSaveStatusTimeout);
+    saveStatus.value = 'idle';
+    scheduleRetry();
+  };
+  try {
+    await Promise.allSettled([...sectionSaveInFlight.values()]);
+    await apply();
+    await applyStoreConfigToLocalConfig(store.config);
+    clearPending();
+    replacementEdits.clear();
+  } catch (error) {
+    for (const [section, snapshot] of replacementEdits) snapshots.set(section, snapshot);
+    isApplyingRemoteConfig.value = true;
+    for (const [section, snapshot] of snapshots) localConfig.value[section] = snapshot;
+    sectionSaveTimers.clear();
+    for (const section of [...timerSections, ...pendingSections, ...replacementEdits.keys()]) {
+      pendingRetrySections.value.add(section);
+      localEdits.add(section);
+    }
+    for (const section of edited) localEdits.add(section);
+    for (const section of failed) failedSections.value.add(section);
+    for (const section of deferred) deferredSections.add(section);
+    for (const [section, entry] of queued) {
+      if (!edited.has(section) && !replacementEdits.has(section)) localConfig.value[section] = entry.snapshot;
+      pendingRetrySections.value.add(section);
+      localEdits.add(section);
+      healthySaveFailures.set(section, entry.failures);
+    }
+    await nextTick();
+    isApplyingRemoteConfig.value = false;
+    replacementEdits.clear();
+    throw error;
+  } finally {
+    replacingConfig--;
+    if (disposed) {
+      for (const section of pendingRetrySections.value) handoffSection(section);
+    }
+    scheduleRetry();
+  }
+}
+
 async function resetToDefault() {
   if (confirm('確定要重置為後端預設值嗎？此操作無法復原。')) {
-    await store.resetConfig();
-    await applyStoreConfigToLocalConfig(store.config, true);
+    await replaceSettings(async () => {
+      await store.resetConfig();
+      await applyStoreConfigToLocalConfig(store.config, true);
+    });
   }
 }
 
@@ -686,6 +940,7 @@ async function saveBulkImport(section: 'terminology' | 'transcription', applyImp
   sectionSaveTimers.delete(section);
   suspendedAutoSaveSections.add(section);
   try {
+    healthySaveFailures.delete(section);
     applyImport();
     // Deep watchers use flush: 'post'. Keep the section suspended until those
     // callbacks have observed the single bulk replacement.
@@ -773,10 +1028,11 @@ async function handleFileChange(event: Event) {
 
   const file = input.files[0];
   try {
-    await store.importConfig(file);
-    // 重新載入頁面配置以反映更改
-    await store.loadRuntimeStatus();
-    await applyStoreConfigToLocalConfig(store.config, true);
+    await replaceSettings(async () => {
+      await store.importConfig(file);
+      await store.loadRuntimeStatus();
+      await applyStoreConfigToLocalConfig(store.config, true);
+    });
   } catch (error) {
     console.error('匯入失敗:', error);
   }
@@ -784,7 +1040,7 @@ async function handleFileChange(event: Event) {
   // 清空輸入框以允許再次選擇同一檔案
   input.value = '';
 }
-provideSettingsContext({ localConfig, sharingLanAddresses, copiedSharingUrl, appUpdateStatus, appUpdateBusy, checkAppUpdate, downloadAppUpdate, cancelAppUpdate, applyAppUpdate, testingGpt, testingGemini, testConnection, diagnosticsBusy, cookiePlatform, cookieBrowser, cookieBrowserProfile, cookieImporting, cookieFileInput, cookieImportResult });
+provideSettingsContext({ localConfig, audioValidationMessage, sharingLanAddresses, copiedSharingUrl, appUpdateStatus, appUpdateBusy, checkAppUpdate, downloadAppUpdate, cancelAppUpdate, applyAppUpdate, testingGpt, testingGemini, testConnection, diagnosticsBusy, cookiePlatform, cookieBrowser, cookieBrowserProfile, cookieImporting, cookieFileInput, cookieImportResult });
 provideSettingsTabBindings({ ...transcriptionSettings, ...terminologySettings, ...translationSettings, ...asrModelManagement, activeTab, deleteCustomModel, localConfig, modelDownloadStore, openCustomModelDialog, store, testConnection, testOpenAiAsrConnection, testingGemini, testingGpt });
 </script>
 
@@ -797,7 +1053,9 @@ provideSettingsTabBindings({ ...transcriptionSettings, ...terminologySettings, .
           <h1 class="text-base font-bold text-white tracking-wide">系統設定</h1>
           <!-- Auto-save Status Badge -->
           <div class="flex items-center gap-2 transition-all duration-300 bg-white/5 border border-white/10 px-2.5 py-0.5 rounded-full">
-            <span v-if="autoSaveStatus === 'saving'" class="text-blue-300 flex items-center gap-1 text-[10px] font-semibold">
+            <span v-if="autoSaveStatus === 'invalid'" class="text-rose-400 font-semibold text-[10px]">⚠️ 未儲存</span>
+            <span v-else-if="autoSaveStatus === 'retry'" class="text-rose-400 font-semibold text-[10px]">⚠️ 儲存失敗，連線恢復後會自動重試</span>
+            <span v-else-if="autoSaveStatus === 'saving'" class="text-blue-300 flex items-center gap-1 text-[10px] font-semibold">
               <span class="inline-block w-2.5 h-2.5 border-2 border-blue-300 border-t-transparent rounded-full animate-spin"></span>
               儲存中...
             </span>

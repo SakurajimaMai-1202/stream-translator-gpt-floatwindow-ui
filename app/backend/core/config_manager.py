@@ -6,6 +6,7 @@
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 import logging
+import math
 import yaml
 import copy
 import json
@@ -44,6 +45,10 @@ def normalize_transcription_engine_flags(transcription: Dict[str, Any]) -> None:
         'use_fun_asr': selected_engine == 'fun-asr-nano',
         'use_nemo_asr': selected_engine == 'parakeet-ctc-ja',
     })
+
+class ConfigValidationError(ValueError):
+    """A user-editable configuration value failed validation."""
+
 
 class ConfigManager:
     """配置管理器 - 處理所有配置相關操作"""
@@ -1432,7 +1437,41 @@ class ConfigManager:
             self._validate_structure(updates)
             updates = restore_masked_secrets(updates, secret_source or current)
             updated = self._enforce_packaged_runtime(self._deep_merge(current, updates))
+            incoming_audio = updates.get('audio_slicing_vad', {})
+            stored_audio = current.get('audio_slicing_vad', {})
+            if any(key not in stored_audio or value != stored_audio[key]
+                   or isinstance(value, bool) != isinstance(stored_audio[key], bool)
+                   for key, value in incoming_audio.items()):
+                self._validate_audio_lengths(updated['audio_slicing_vad'])
             return self._persist_locked(updated)
+
+    @staticmethod
+    def _validate_audio_lengths(audio):
+        labels = {
+            'min_audio_length': '最小音訊長度',
+            'target_audio_length': '目標音訊長度',
+            'max_audio_length': '最大音訊長度',
+            'omnivad_max_audio_length': '原生模式最大音訊長度',
+        }
+        native = audio.get('slicing_mode') == 'omnivad_native'
+        fields = ('min_audio_length', 'omnivad_max_audio_length') if native else (
+            'min_audio_length', 'target_audio_length', 'max_audio_length')
+        for key in fields:
+            label = labels[key]
+            value = audio.get(key)
+            if (isinstance(value, bool) or not isinstance(value, (int, float))
+                    or not math.isfinite(value) or value <= 0):
+                raise ConfigValidationError(f"{label}必須是大於 0 的數字")
+        maximum = 'omnivad_max_audio_length' if native else 'max_audio_length'
+        if audio['min_audio_length'] > audio[maximum]:
+            raise ConfigValidationError(
+                f"最小音訊長度（{audio['min_audio_length']:g} 秒）不可大於"
+                f"{labels[maximum]}（{audio[maximum]:g} 秒）")
+        if not native and not audio['min_audio_length'] <= audio['target_audio_length'] <= audio['max_audio_length']:
+            raise ConfigValidationError(
+                f"目標音訊長度（{audio['target_audio_length']:g} 秒）必須介於"
+                f"最小音訊長度（{audio['min_audio_length']:g} 秒）與"
+                f"最大音訊長度（{audio['max_audio_length']:g} 秒）之間")
 
     def update_section(self, section: str, data: Dict[str, Any]):
         """更新配置區段，保留 UI 沒送回來的既有設定。"""

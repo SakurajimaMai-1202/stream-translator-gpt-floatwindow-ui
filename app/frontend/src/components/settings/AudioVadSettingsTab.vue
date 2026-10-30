@@ -1,8 +1,15 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { useSettingsContext } from '../../composables/settings/settingsContext';
+import { useSettingsContext, useSettingsTabBindings } from '../../composables/settings/settingsContext';
 import UiSelect, { type UiSelectOption } from '../UiSelect.vue';
-const { localConfig } = useSettingsContext();
+const { localConfig, audioValidationMessage } = useSettingsContext();
+const { store } = useSettingsTabBindings();
+function restoreEmptyNumber(field: string) {
+  const value = localConfig.value.audio_slicing_vad[field];
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    localConfig.value.audio_slicing_vad[field] = store.config.audio_slicing_vad[field];
+  }
+}
 const vadLockedByNativeMode = computed(() => localConfig.value?.audio_slicing_vad?.slicing_mode === 'omnivad_native');
 const vadBackendOptions: UiSelectOption[] = [
   { value: 'silero', label: 'Silero VAD' },
@@ -24,36 +31,37 @@ const slicingModeOptions: UiSelectOption[] = [
               <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 <div>
                   <label class="block text-white/70 text-sm mb-1">最小音訊長度 (秒)</label>
-                  <input v-model.number="localConfig.audio_slicing_vad.min_audio_length" type="number" step="0.1" min="0.1" max="30"
+                  <input v-model.number="localConfig.audio_slicing_vad.min_audio_length" type="number" @blur="restoreEmptyNumber('min_audio_length')" step="0.1" min="0.1" max="30"
                     class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
                 </div>
                 <div v-if="localConfig.audio_slicing_vad.slicing_mode === 'legacy'">
                   <label class="block text-white/70 text-sm mb-1">目標音訊長度 (秒)</label>
-                  <input v-model.number="localConfig.audio_slicing_vad.target_audio_length" type="number" step="0.1" min="0.1" max="60"
+                  <input v-model.number="localConfig.audio_slicing_vad.target_audio_length" type="number" @blur="restoreEmptyNumber('target_audio_length')" step="0.1" min="0.1" max="60"
                     class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
                   <p class="text-xs text-white/40 mt-1">動態句尾判斷會盡量在接近此長度時完成片段。</p>
                 </div>
                 <div v-if="localConfig.audio_slicing_vad.slicing_mode === 'legacy'">
                   <label class="block text-white/70 text-sm mb-1">最大音訊長度 (秒)</label>
-                  <input v-model.number="localConfig.audio_slicing_vad.max_audio_length" type="number" step="0.1" min="0.1" max="120"
+                  <input v-model.number="localConfig.audio_slicing_vad.max_audio_length" type="number" @blur="restoreEmptyNumber('max_audio_length')" step="0.1" min="0.1" max="120"
                     class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
                 </div>
                 <div v-else>
                   <label class="block text-white/70 text-sm mb-1">原生模式最大音訊長度 (秒)</label>
-                  <input v-model.number="localConfig.audio_slicing_vad.omnivad_max_audio_length" type="number" step="0.1" min="0.1" max="120"
+                  <input v-model.number="localConfig.audio_slicing_vad.omnivad_max_audio_length" type="number" @blur="restoreEmptyNumber('omnivad_max_audio_length')" step="0.1" min="0.1" max="120"
                     class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
                   <p class="text-xs text-white/40 mt-1">正式回歸使用 6 秒；長語音達上限後會延續原生 SPEECH 狀態。</p>
                 </div>
+                <p v-if="audioValidationMessage" role="alert" class="text-sm text-rose-400 md:col-span-2 lg:col-span-3">{{ audioValidationMessage }}</p>
                 <div v-if="localConfig.audio_slicing_vad.slicing_mode === 'legacy'">
                   <label class="block text-white/70 text-sm mb-1">句尾連續靜音 (秒)</label>
-                  <input v-model.number="localConfig.audio_slicing_vad.continuous_no_speech_threshold" type="number"
+                  <input v-model.number="localConfig.audio_slicing_vad.continuous_no_speech_threshold" type="number" @blur="restoreEmptyNumber('continuous_no_speech_threshold')"
                     step="0.05" min="0.1" max="5"
                     class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
                   <p class="text-xs text-white/40 mt-1">偵測到連續靜音後結束片段；直播建議 0.4 到 0.7 秒。</p>
                 </div>
                 <div>
                   <label class="block text-white/70 text-sm mb-1">前綴重疊長度 (秒)</label>
-                  <input v-model.number="localConfig.audio_slicing_vad.prefix_retention_length" type="number"
+                  <input v-model.number="localConfig.audio_slicing_vad.prefix_retention_length" type="number" @blur="restoreEmptyNumber('prefix_retention_length')"
                     step="0.05" min="0" max="5"
                     class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
                   <p class="text-xs text-white/40 mt-1">將上一片段結尾接到下一片段開頭；設為 0 可完全停用。</p>
@@ -115,12 +123,12 @@ const slicingModeOptions: UiSelectOption[] = [
                       </span>
                     </span>
                   </label>
-                  <input v-model.number="localConfig.audio_slicing_vad.vad_threshold" type="number" step="0.05" min="0" max="1"
+                  <input v-model.number="localConfig.audio_slicing_vad.vad_threshold" type="number" @blur="restoreEmptyNumber('vad_threshold')" step="0.05" min="0" max="1"
                     class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
                 </div>
                 <div v-else>
                   <label class="block text-white/70 text-sm mb-1">OmniStreamVAD 語音閾值</label>
-                  <input v-model.number="localConfig.audio_slicing_vad.omnivad_threshold" type="number" step="0.05" min="0" max="1"
+                  <input v-model.number="localConfig.audio_slicing_vad.omnivad_threshold" type="number" @blur="restoreEmptyNumber('omnivad_threshold')" step="0.05" min="0" max="1"
                     class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
                   <p class="text-xs text-white/40 mt-1">本程式預設為 0.35；FireRed 官方原生預設為 0.5。</p>
                 </div>
@@ -135,7 +143,7 @@ const slicingModeOptions: UiSelectOption[] = [
                 </label>
                 <div v-if="localConfig.audio_slicing_vad.slicing_mode === 'legacy'">
                   <label class="block text-white/70 text-sm mb-1">VAD 計算頻率</label>
-                  <input v-model.number="localConfig.audio_slicing_vad.vad_every_n_frames" type="number"
+                  <input v-model.number="localConfig.audio_slicing_vad.vad_every_n_frames" type="number" @blur="restoreEmptyNumber('vad_every_n_frames')"
                     min="1" max="10" step="1"
                     class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
                   <p class="text-xs text-white/40 mt-1">1 為每個 32 ms frame 計算；提高可降低 CPU，但會增加判斷延遲。</p>
@@ -143,31 +151,31 @@ const slicingModeOptions: UiSelectOption[] = [
                 <template v-if="localConfig.audio_slicing_vad.slicing_mode === 'omnivad_native'">
                   <div>
                     <label class="block text-white/70 text-sm mb-1">平滑視窗（10 ms frame）</label>
-                    <input v-model.number="localConfig.audio_slicing_vad.omnivad_smooth_window_size" type="number" min="1" max="100" step="1"
+                    <input v-model.number="localConfig.audio_slicing_vad.omnivad_smooth_window_size" type="number" @blur="restoreEmptyNumber('omnivad_smooth_window_size')" min="1" max="100" step="1"
                       class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
                     <p class="text-xs text-white/40 mt-1">預設 5，相當於 50 ms。</p>
                   </div>
                   <div>
                     <label class="block text-white/70 text-sm mb-1">起音回溯 frame</label>
-                    <input v-model.number="localConfig.audio_slicing_vad.omnivad_pad_start_frame" type="number" min="0" max="100" step="1"
+                    <input v-model.number="localConfig.audio_slicing_vad.omnivad_pad_start_frame" type="number" @blur="restoreEmptyNumber('omnivad_pad_start_frame')" min="0" max="100" step="1"
                       class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
                     <p class="text-xs text-white/40 mt-1">預設 5，保留起音前 50 ms。</p>
                   </div>
                   <div>
                     <label class="block text-white/70 text-sm mb-1">最短語音 frame</label>
-                    <input v-model.number="localConfig.audio_slicing_vad.omnivad_min_speech_frame" type="number" min="1" max="1000" step="1"
+                    <input v-model.number="localConfig.audio_slicing_vad.omnivad_min_speech_frame" type="number" @blur="restoreEmptyNumber('omnivad_min_speech_frame')" min="1" max="1000" step="1"
                       class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
                     <p class="text-xs text-white/40 mt-1">預設 8，相當於 80 ms。</p>
                   </div>
                   <div>
                     <label class="block text-white/70 text-sm mb-1">最長語音 frame</label>
-                    <input v-model.number="localConfig.audio_slicing_vad.omnivad_max_speech_frame" type="number" min="1" max="10000" step="1"
+                    <input v-model.number="localConfig.audio_slicing_vad.omnivad_max_speech_frame" type="number" @blur="restoreEmptyNumber('omnivad_max_speech_frame')" min="1" max="10000" step="1"
                       class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
                     <p class="text-xs text-white/40 mt-1">預設 2000，相當於 20 秒；應用層仍以 6 秒安全切片。</p>
                   </div>
                   <div>
                     <label class="block text-white/70 text-sm mb-1">句尾靜音 frame</label>
-                    <input v-model.number="localConfig.audio_slicing_vad.omnivad_min_silence_frame" type="number" min="1" max="1000" step="1"
+                    <input v-model.number="localConfig.audio_slicing_vad.omnivad_min_silence_frame" type="number" @blur="restoreEmptyNumber('omnivad_min_silence_frame')" min="1" max="1000" step="1"
                       class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
                     <p class="text-xs text-white/40 mt-1">預設 20，相當於 200 ms。</p>
                   </div>

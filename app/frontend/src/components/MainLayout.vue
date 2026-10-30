@@ -152,7 +152,12 @@ watch(() => route.fullPath, () => {
 <template>
   <div v-if="!interfaceMode.loaded || !interfaceMode.mode || interfaceMode.pendingMode" class="fw-onboarding flex h-screen overflow-y-auto bg-slate-950 p-6 text-white">
     <!-- body has overflow hidden; m-auto centres the card when it fits and lets it scroll when it does not. -->
-    <section class="m-auto w-full max-w-2xl space-y-6" aria-labelledby="interface-mode-title">
+    <section v-if="!interfaceMode.loaded" class="m-auto w-full max-w-2xl space-y-6 text-center">
+      <p v-if="!interfaceMode.error" role="status">正在讀取設定…</p>
+      <p v-if="interfaceMode.error" role="alert" class="text-red-300">{{ interfaceMode.error }}</p>
+      <button v-if="interfaceMode.error && !interfaceMode.busy" class="rounded-lg border px-4 py-2" @click="interfaceMode.load()">重新讀取</button>
+    </section>
+    <section v-else class="m-auto w-full max-w-2xl space-y-6" aria-labelledby="interface-mode-title">
       <template v-if="interfaceMode.onboardingStep === 'mode'">
       <h1 id="interface-mode-title" class="text-2xl font-bold">第一次使用，選擇操作方式</h1>
       <p class="text-sm text-slate-300">簡單模式會自動準備語音辨識與翻譯；選擇會記住，之後可在側欄切換。</p>
@@ -310,7 +315,7 @@ watch(() => route.fullPath, () => {
           <p class="text-xs text-slate-400">{{ Math.round(interfaceMode.localModelInstallStatus.progress * 100) }}%</p>
         </div>
       </template>
-      <p v-if="interfaceMode.busy" role="status">{{ interfaceMode.setupMessage || (interfaceMode.loaded ? '正在儲存選擇…' : '正在讀取設定…') }}</p>
+      <p v-if="interfaceMode.busy" role="status">{{ interfaceMode.setupMessage || '正在儲存選擇…' }}</p>
       <div v-if="interfaceMode.sidecarStatus" class="space-y-2" aria-label="CPU 語音辨識環境安裝進度">
         <progress class="w-full" :value="interfaceMode.sidecarStatus.progress" :max="1" />
         <p class="text-sm text-slate-300">{{ Math.round(interfaceMode.sidecarStatus.progress * 100) }}% · {{ interfaceMode.sidecarStatus.message }}</p>
@@ -329,7 +334,6 @@ watch(() => route.fullPath, () => {
         <button class="rounded-lg border px-4 py-2" @click="interfaceMode.openExistingResources()">使用本機已有檔案</button>
         <button class="rounded-lg border px-4 py-2" @click="interfaceMode.skipSetup()">稍後設定</button>
       </div>
-      <button v-if="!interfaceMode.loaded && !interfaceMode.busy" class="rounded-lg border px-4 py-2" @click="interfaceMode.load()">重新讀取</button>
     </section>
   </div>
   <div v-else class="commercial-shell flex h-screen w-screen flex-col overflow-hidden bg-slate-950 text-white font-sans md:flex-row">

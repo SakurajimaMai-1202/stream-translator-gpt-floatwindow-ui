@@ -294,6 +294,7 @@ export const useTranslationStore = defineStore('translation', () => {
     try {
       const updatedSection = await configApi.updateSection(section, sectionConfig);
       config.value[section] = updatedSection;
+      if (errorMessage.value.startsWith(`儲存 ${section} 設定失敗:`)) errorMessage.value = '';
       return updatedSection;
     } catch (error: any) {
       errorMessage.value = `儲存 ${section} 設定失敗: ${error.message}`;

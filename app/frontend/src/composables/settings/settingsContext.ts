@@ -9,6 +9,7 @@ import type { AppUpdateStatus } from '../../services/api';
 
 export interface SettingsContext {
   localConfig: Ref<any>;
+  audioValidationMessage: ComputedRef<string>;
   sharingLanAddresses: Ref<string[]>;
   copiedSharingUrl: Ref<string>;
   appUpdateStatus: Ref<AppUpdateStatus | null>;

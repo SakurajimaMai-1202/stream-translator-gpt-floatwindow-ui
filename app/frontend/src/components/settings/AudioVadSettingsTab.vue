@@ -49,7 +49,7 @@ const slicingModeOptions: UiSelectOption[] = [
                   <label class="block text-white/70 text-sm mb-1">原生模式最大音訊長度 (秒)</label>
                   <input v-model.number="localConfig.audio_slicing_vad.omnivad_max_audio_length" type="number" @blur="restoreEmptyNumber('omnivad_max_audio_length')" step="0.1" min="0.1" max="120"
                     class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
-                  <p class="text-xs text-white/40 mt-1">正式回歸使用 6 秒；長語音達上限後會延續原生 SPEECH 狀態。</p>
+                  <p class="text-xs text-white/40 mt-1">預設 6 秒；調高可提升長句辨識率，但長句的字幕會較晚出現。達上限後會先切段，並延續原生 SPEECH 狀態。</p>
                 </div>
                 <p v-if="audioValidationMessage" role="alert" class="text-sm text-rose-400 md:col-span-2 lg:col-span-3">{{ audioValidationMessage }}</p>
                 <div v-if="localConfig.audio_slicing_vad.slicing_mode === 'legacy'">
@@ -171,7 +171,7 @@ const slicingModeOptions: UiSelectOption[] = [
                     <label class="block text-white/70 text-sm mb-1">最長語音 frame</label>
                     <input v-model.number="localConfig.audio_slicing_vad.omnivad_max_speech_frame" type="number" @blur="restoreEmptyNumber('omnivad_max_speech_frame')" min="1" max="10000" step="1"
                       class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
-                    <p class="text-xs text-white/40 mt-1">預設 2000，相當於 20 秒；應用層仍以 6 秒安全切片。</p>
+                    <p class="text-xs text-white/40 mt-1">預設 2000，相當於 20 秒；實際切段仍受「原生模式最大音訊長度」限制。</p>
                   </div>
                   <div>
                     <label class="block text-white/70 text-sm mb-1">句尾靜音 frame</label>

@@ -1,6 +1,10 @@
 import type { AsrModelCapability } from '../services/api';
 import type { UiSelectOption } from '../components/UiSelect.vue';
 
+// Quantized Haas-ja runs only through the CPU sherpa-onnx sidecar; GPU
+// runtimes deliberately exclude it from their capability lists.
+export const HAAS_MODEL_ID = 'oboroge0/Haas-ja-v1.0-onnx-quantized';
+
 export const ASR_LANGUAGE_OPTIONS: UiSelectOption[] = [
   { value: 'auto', label: '自動偵測' },
   { value: 'zh-tw', label: '中文（繁體）' },

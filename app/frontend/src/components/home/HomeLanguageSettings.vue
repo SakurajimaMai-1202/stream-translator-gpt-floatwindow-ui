@@ -3,7 +3,7 @@ import { ref, computed, watch } from 'vue';
 import { configApi, translationApi } from '../../services/api';
 import UiSelect, { type UiSelectOption } from '../UiSelect.vue';
 import { simpleAsrModel, simpleAsrLanguages } from '../../utils/simpleAsr';
-import { isModelLanguageCompatible, languageOptionsForModel } from '../../utils/asrCapabilities';
+import { HAAS_MODEL_ID, isModelLanguageCompatible, languageOptionsForModel } from '../../utils/asrCapabilities';
 import { useHomeContext } from '../../composables/home/homeContext';
 const {
   router, interfaceMode, store, whisperModels, qwen3AsrModels, parakeetModels, allFunAsrModelOptions, selectedAsrModelId, selectedAsrCapability, selectedTranscriptionEngine, selectedAsrComputeBackend, selectedWhisperModel, selectedQwen3AsrModel, selectedSenseVoiceModel, selectedFunAsrModel, selectedParakeetModel, selectedOpenAiTranscriptionModel, selectedInputLanguage, selectedOutputLanguage, selectedBackend, translationEnabled, sameLanguageSelected, runtimeCapabilities, allowedTranscriptionEngines, allowedFasterWhisperModels, allowedQwen3AsrModels, allowedParakeetModels
@@ -145,20 +145,32 @@ const funAsrModelOptions = computed<UiSelectOption[]>(() =>
   }))
 );
 
-const parakeetModelOptions = computed<UiSelectOption[]>(() =>
-  parakeetModels
-    .filter((model) => allowedParakeetModels.value.includes(model.value))
-    .map((model) => ({
-      value: model.value,
-      label: model.label,
-      disabled: selectedAsrCapability.value?.language_mode !== 'fixed'
-        && !isModelLanguageCompatible(
-          runtimeCapabilities.value?.asr_model_capabilities,
-          model.value,
-          selectedInputLanguage.value,
-        ),
-    }))
-);
+const parakeetModelOptions = computed<UiSelectOption[]>(() => {
+  // Haas only runs on the CPU sidecar.  When the runtime is on the GPU path the
+  // backend list omits it, which used to hide the model with no explanation.
+  // Keep it visible but disabled so the reason is discoverable.
+  const allowed = allowedParakeetModels.value;
+  const showHaasDisabled = allowed.length > 0
+    && !allowed.includes(HAAS_MODEL_ID)
+    && allowedTranscriptionEngines.value.includes('parakeet-ctc-ja');
+  return parakeetModels
+    .filter((model) => allowed.includes(model.value)
+      || (showHaasDisabled && model.value === HAAS_MODEL_ID))
+    .map((model) => {
+      const needsCpuBackend = showHaasDisabled && model.value === HAAS_MODEL_ID;
+      return {
+        value: model.value,
+        label: needsCpuBackend ? `${model.label} · 需先切換 ASR 後端為 CPU` : model.label,
+        disabled: needsCpuBackend
+          || (selectedAsrCapability.value?.language_mode !== 'fixed'
+            && !isModelLanguageCompatible(
+              runtimeCapabilities.value?.asr_model_capabilities,
+              model.value,
+              selectedInputLanguage.value,
+            )),
+      };
+    });
+});
 
 const inputLanguageOptions = computed<UiSelectOption[]>(() =>
   interfaceMode.isSimple ? simpleAsrLanguages : languageOptionsForModel(

@@ -1,7 +1,7 @@
 import { computed, type Ref } from 'vue';
 import type { useTranslationStore } from '../../stores/translation';
 import type { UiSelectOption } from '../../components/UiSelect.vue';
-import { ASR_LANGUAGE_OPTIONS, isModelLanguageCompatible, languageOptionsForModel } from '../../utils/asrCapabilities';
+import { ASR_LANGUAGE_OPTIONS, HAAS_MODEL_ID, isModelLanguageCompatible, languageOptionsForModel } from '../../utils/asrCapabilities';
 
 export function useTranscriptionSettings(localConfig: Ref<any>, store: ReturnType<typeof useTranslationStore>) {
   const allQwenModels = ['Qwen/Qwen3-ASR-0.6B', 'Qwen/Qwen3-ASR-1.7B', 'jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame'];
@@ -55,12 +55,19 @@ export function useTranscriptionSettings(localConfig: Ref<any>, store: ReturnTyp
           ),
       }))
   );
-  const parakeetModelOptions = computed<UiSelectOption[]>(() =>
-    allParakeetModels
-      .filter(model => allowedParakeetModels.value.includes(model))
-      .map(model => ({
-        value: model,
-        label: model === 'oboroge0/Haas-ja-v1.0-onnx-quantized'
+  const parakeetModelOptions = computed<UiSelectOption[]>(() => {
+    // Haas is CPU-sidecar only, so a GPU runtime leaves it out of the backend
+    // capability list.  Show it disabled with the reason instead of hiding it.
+    const allowed = allowedParakeetModels.value;
+    const showHaasDisabled = allowed.length > 0
+      && !allowed.includes(HAAS_MODEL_ID)
+      && allowedLocalAsrEngines.value.includes('parakeet-ctc-ja');
+    return allParakeetModels
+      .filter(model => allowed.includes(model)
+        || (showHaasDisabled && model === HAAS_MODEL_ID))
+      .map(model => {
+        const needsCpuBackend = showHaasDisabled && model === HAAS_MODEL_ID;
+        const baseLabel = model === HAAS_MODEL_ID
           ? 'Haas ja v1.0 量化版（CPU・日文）'
           : model === 'nvidia/parakeet-tdt-0.6b-v3'
           ? 'NVIDIA Parakeet TDT 0.6B v3（25 種語言）'
@@ -68,9 +75,14 @@ export function useTranscriptionSettings(localConfig: Ref<any>, store: ReturnTyp
           ? 'NVIDIA Parakeet 0.6B（日文）'
           : model === 'nvidia/parakeet-tdt_ctc-1.1b'
             ? 'NVIDIA Parakeet 1.1B（英文）'
-            : 'parakeet-ctc-1.1b-ja（日文）',
-      }))
-  );
+            : 'parakeet-ctc-1.1b-ja（日文）';
+        return {
+          value: model,
+          label: needsCpuBackend ? `${baseLabel} · 需先切換 ASR 後端為 CPU` : baseLabel,
+          disabled: needsCpuBackend,
+        };
+      });
+  });
   const parakeetDecodingOptions: UiSelectOption[] = [
     { value: 'tdt', label: 'TDT（建議）' },
     { value: 'ctc', label: 'CTC' },

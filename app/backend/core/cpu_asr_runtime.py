@@ -46,3 +46,18 @@ def resolve_profile_python(runtime_profile: str | None, asr_compute_backend: str
             return str(candidate)
     return None
 
+
+def cpu_asr_start_update_message(cli_args: dict) -> str | None:
+    """Return the required runtime update message before starting packaged Haas."""
+    if (not getattr(sys, 'frozen', False)
+            or str(cli_args.get('asr_compute_backend') or 'auto').lower() != 'cpu'
+            or not cli_args.get('use_nemo_asr')
+            or cli_args.get('nemo_asr_model') != HAAS_MODEL_ID):
+        return None
+    profile_python = resolve_profile_python(
+        str(cli_args.get('runtime_profile') or ''),
+        str(cli_args.get('asr_compute_backend') or 'auto'),
+    )
+    if profile_python and not runtime_contains_model(Path(profile_python).parent, HAAS_MODEL_ID):
+        return haas_runtime_update_message(cli_args.get('runtime_profile'))
+    return None

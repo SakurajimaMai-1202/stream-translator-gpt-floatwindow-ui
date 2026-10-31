@@ -1,4 +1,4 @@
-﻿import os
+import os
 import sys
 import tempfile
 import time
@@ -84,6 +84,21 @@ def range_server(mode="ranges"):
 
 
 class CpuAsrSidecarManagerTest(unittest.TestCase):
+    def test_asset_url_uses_app_version_despite_older_runtime_manifest(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "_runtime").mkdir()
+            (root / "_runtime/runtime-version.json").write_text(
+                '{"app_version":"1.0.0"}', encoding="utf-8")
+            with mock.patch.object(sidecar_module, "get_app_root", return_value=root), \
+                 mock.patch.object(sidecar_module.settings, "APP_VERSION", "2.0.0"), \
+                 mock.patch.dict(os.environ, {"STREAM_TRANSLATOR_CPU_ASR_SIDECAR_URL": ""}):
+                manager = sidecar_module.CpuAsrSidecarManager()
+                self.assertEqual(manager._version(), "2.0.0")
+                self.assertEqual(manager._default_asset_url(),
+                    f"https://github.com/{sidecar_module.REPOSITORY}/releases/download/v2.0.0/"
+                    "StreamTranslator-CPU-ASR-Sidecar-v2.0.0.zip")
+
     def test_constructor_does_not_validate_existing_backup(self):
         with tempfile.TemporaryDirectory() as temporary:
             target = Path(temporary) / "target"

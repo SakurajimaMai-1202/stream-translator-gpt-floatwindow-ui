@@ -6,6 +6,7 @@ import copy
 import logging
 from backend.models.translation import StartTranslationRequest, TranslationTaskResponse, DeviceListResponse, AudioDevice
 from backend.core.translator import active_translations, create_task, get_task, remove_task
+from backend.core.cpu_asr_runtime import cpu_asr_start_update_message
 from backend.core.runtime_profiles import get_asr_capabilities
 from backend.core.config_manager import ConfigManager, normalize_transcription_engine_flags
 from backend.core.app_sync import publish_app_event
@@ -385,6 +386,9 @@ async def start_translation(request: StartTranslationRequest, http_request: Requ
             current_config['transcription'].pop('nemo_asr_dtype', None)
 
         cli_args = await asyncio.to_thread(get_config_manager().to_main_args, current_config)
+        update_message = await asyncio.to_thread(cpu_asr_start_update_message, cli_args)
+        if update_message:
+            raise HTTPException(status_code=400, detail=update_message)
         process_source = cli_args.get('url') == 'process_audio'
         if process_source:
             target = current_config['input']

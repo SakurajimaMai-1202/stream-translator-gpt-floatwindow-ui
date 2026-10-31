@@ -19,7 +19,7 @@ from typing import Dict, Any, AsyncGenerator, Optional, List, FrozenSet
 from pathlib import Path
 from backend.config import settings
 from backend.core.cpu_asr_runtime import (
-    HAAS_MODEL_ID, runtime_contains_model, haas_runtime_update_message,
+    cpu_asr_start_update_message,
     resolve_profile_python as _resolve_profile_python,
 )
 from backend.core.external_process import popen_external
@@ -375,9 +375,9 @@ class TranslationContext:
         if profile_python:
             logger.info(f"Using runtime profile Python: {profile_python}")
             if is_frozen and str(self.config.get('asr_compute_backend') or 'auto').lower() == 'cpu':
-                if (self.config.get('use_nemo_asr') and self.config.get('nemo_asr_model') == HAAS_MODEL_ID
-                        and not runtime_contains_model(Path(profile_python).parent, HAAS_MODEL_ID)):
-                    raise RuntimeError(haas_runtime_update_message(self.config.get('runtime_profile')))
+                update_message = cpu_asr_start_update_message(self.config)
+                if update_message:
+                    raise RuntimeError(update_message)
                 _validate_cpu_asr_runtime(profile_python)
             cmd = _build_source_python_command(profile_python, cwd)
         elif is_frozen:

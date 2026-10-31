@@ -1,4 +1,4 @@
-﻿"""Download and safely install the optional sherpa-onnx CPU ASR runtime."""
+"""Download and safely install the optional sherpa-onnx CPU ASR runtime."""
 
 from __future__ import annotations
 
@@ -157,12 +157,7 @@ class CpuAsrSidecarManager(HttpDownloader):
         self._events.publish(lambda: {"success": True, "data": self.status()}, state=self._state.status, force=force)
 
     def _version(self) -> str:
-        manifest = get_app_root() / "_runtime" / "runtime-version.json"
-        try:
-            version = str(json.loads(manifest.read_text(encoding="utf-8")).get("app_version") or "")
-        except (OSError, ValueError, TypeError):
-            version = ""
-        return version or settings.APP_VERSION
+        return settings.APP_VERSION
 
     def _asset_name(self) -> str:
         return ASSET_TEMPLATE.format(version=self._version())

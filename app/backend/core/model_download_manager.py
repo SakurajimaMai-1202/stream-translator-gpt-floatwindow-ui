@@ -20,6 +20,9 @@ from threading import Lock
 from threading import Event
 from typing import Dict, List, Literal, Optional
 
+from backend.core.cpu_asr_runtime import (
+    HAAS_MODEL_ID, runtime_contains_model, haas_runtime_update_message, resolve_profile_python,
+)
 from backend.core.http_downloader import HttpDownloader
 from backend.core.logging_setup import configure_dedicated_file_logger
 from backend.core.hf_parallel_download import prefetch_large_files
@@ -27,6 +30,7 @@ from backend.models.model_download import ModelDownloadTask, DownloadedModelInfo
 from backend.core.portable_paths import (
     ensure_model_storage,
     get_app_root,
+    get_packaged_runtime_profile,
     get_huggingface_hub_cache,
     get_modelscope_cache,
     get_model_storage_root,
@@ -59,7 +63,6 @@ SHERPA_CPU_ENGINES = {
     "nvidia/parakeet-tdt_ctc-0.6b-ja": "parakeet-ctc-ja",
 }
 
-HAAS_MODEL_ID = "oboroge0/Haas-ja-v1.0-onnx-quantized"
 HAAS_REVISION = "7f5ab0a4b1bf39db78afd6691eeecbc4f9d42e39"
 # filename, byte size, SHA-256 at HAAS_REVISION (including attribution files).
 HAAS_PINNED_FILES = (
@@ -282,6 +285,12 @@ class ModelDownloadManager:
     async def start_download(self, engine: str, model_id: str, compute_backend: ModelComputeBackend = "gpu") -> str:
         """建立下載任務並背景執行"""
         normalized_model_id = self._validate_model_id(engine, model_id, compute_backend)
+        if (getattr(sys, "frozen", False) and compute_backend == "cpu"
+                and normalized_model_id == HAAS_MODEL_ID):
+            profile = get_packaged_runtime_profile()
+            python = resolve_profile_python(profile, "cpu")
+            if python and not runtime_contains_model(Path(python).parent, HAAS_MODEL_ID):
+                raise ValueError(haas_runtime_update_message(profile))
         task_id = str(uuid.uuid4())
         now = self._now()
 
@@ -457,6 +466,10 @@ class ModelDownloadManager:
     def _download_haas_files(self, task_id: str, target: Path,
                              required_paths: tuple[str, ...], cancel_event: Event) -> None:
         self._check_cancelled(cancel_event)
+        # Bundle-specific tombstones are safe to retry without touching other models.
+        # This worker owns the bundle; filesystem cleanup must stay outside the lock.
+        for stale in target.parent.glob(f".deleted-{target.name}-*"):
+            self._cleanup_haas_tombstone(stale)
         if self._has_required_paths(target, required_paths):
             return
         # A stable revision-specific sibling preserves contiguous prefixes on retry.
@@ -496,7 +509,7 @@ class ModelDownloadManager:
         with self._lock:
             self._check_cancelled(cancel_event)
             if target.exists():
-                tombstone = target.with_name(f".deleted-{uuid.uuid4().hex}")
+                tombstone = target.with_name(f".deleted-{target.name}-{uuid.uuid4().hex}")
                 target.rename(tombstone)
             try:
                 staging.rename(target)
@@ -506,7 +519,14 @@ class ModelDownloadManager:
                 raise
         # Never restore a tombstone after cleanup starts: it may be incomplete.
         if tombstone is not None:
+            self._cleanup_haas_tombstone(tombstone)
+
+    @staticmethod
+    def _cleanup_haas_tombstone(tombstone: Path) -> None:
+        try:
             shutil.rmtree(tombstone)
+        except OSError:
+            logger.warning("無法清除 Haas 舊模型資料夾：%s", tombstone, exc_info=True)
 
     async def _download_from_hf(self, task_id: str, repo_id: str, cancel_event: Event) -> None:
         """Download a Hugging Face model with byte-based progress."""

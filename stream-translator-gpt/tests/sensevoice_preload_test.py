@@ -270,3 +270,13 @@ def test_fun_asr_hotwords_are_the_configured_prompt_not_the_previous_line():
     transcriber.transcription_initial_prompt = " マシュマロ 、 チェキ， 衣装 , ウィッグ "
     transcriber.transcribe(np.zeros(1600, dtype=np.float32), initial_prompt="前の文です、続き")
     assert calls[1]["hotwords"] == ["マシュマロ", "チェキ", "衣装", "ウィッグ"]
+
+
+@pytest.mark.parametrize("model,quantization", [
+    ("oboroge0/Haas-ja-v1.0-onnx-quantized", "quantized"),
+    ("nvidia/parakeet-tdt-0.6b-v3", "int8"),
+])
+def test_cpu_preload_quantization_label(model, quantization):
+    config = build_asr_config({"use_nemo_asr": True, "nemo_asr_model": model,
+                               "asr_compute_backend": "cpu"})
+    assert config.label() == f"sherpa-onnx: {model} (cpu, {quantization})"

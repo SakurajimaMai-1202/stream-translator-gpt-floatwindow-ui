@@ -251,3 +251,33 @@ def test_haas_delete_removes_staging_with_or_without_final(monkeypatch, tmp_path
         assert not staging.exists()
         assert not target.exists()
         assert not list(target.parent.glob(".deleted-*"))
+
+
+def test_haas_cleanup_failure_completes_and_retries_outside_lock(monkeypatch, tmp_path, caplog):
+    manager, payloads, target = _haas_fixture(monkeypatch, tmp_path)
+    target.mkdir(parents=True)
+    (target / "obsolete").write_text("old", encoding="utf-8")
+    unrelated = target.with_name(".deleted-other-bundle-stale")
+    unrelated.mkdir()
+    monkeypatch.setattr(module.HttpDownloader, "download",
+                        lambda self, url, destination: destination.write_bytes(payloads[destination.name]))
+    original = module.shutil.rmtree
+    def fail_cleanup(path, *args, **kwargs):
+        assert not manager._lock.locked()
+        raise PermissionError("busy tombstone")
+    monkeypatch.setattr(module.shutil, "rmtree", fail_cleanup)
+    async def run():
+        task = await manager.start_download("parakeet-ctc-ja", module.HAAS_MODEL_ID, "cpu")
+        await manager._workers[task]
+        assert manager._tasks[task].status == "completed"
+    asyncio.run(run())
+    assert all((target / name).read_bytes() == data for name, data in payloads.items())
+    assert "busy tombstone" in caplog.text
+    assert list(target.parent.glob(f".deleted-{target.name}-*"))
+    def cleanup(path, *args, **kwargs):
+        assert not manager._lock.locked()
+        return original(path, *args, **kwargs)
+    monkeypatch.setattr(module.shutil, "rmtree", cleanup)
+    asyncio.run(manager._download_sherpa_archive("retry", module.HAAS_MODEL_ID, Event()))
+    assert not list(target.parent.glob(f".deleted-{target.name}-*"))
+    assert unrelated.is_dir()

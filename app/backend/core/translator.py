@@ -18,6 +18,10 @@ from functools import lru_cache
 from typing import Dict, Any, AsyncGenerator, Optional, List, FrozenSet
 from pathlib import Path
 from backend.config import settings
+from backend.core.cpu_asr_runtime import (
+    HAAS_MODEL_ID, runtime_contains_model, haas_runtime_update_message,
+    resolve_profile_python as _resolve_profile_python,
+)
 from backend.core.external_process import popen_external
 from backend.core.process_lifecycle import assign_process, kill_process_tree, create_translation_job
 from backend.core.logging_setup import resolve_log_dir, resolve_log_file
@@ -213,30 +217,6 @@ def _extract_supported_cli_args(help_text: str) -> FrozenSet[str]:
     return frozenset(re.findall(r'--([a-zA-Z0-9_]+)', help_text))
 
 
-def _resolve_profile_python(runtime_profile: str | None, asr_compute_backend: str | None = None) -> Optional[str]:
-    profile = (runtime_profile or "").strip().lower()
-    compute = (asr_compute_backend or "auto").strip().lower()
-    candidates: List[Path] = []
-    if getattr(sys, 'frozen', False):
-        if compute == 'cpu':
-            runtime_name = '_runtime' if profile == 'cpu' else '_runtime_cpu_asr'
-            candidates.append(Path(sys.executable).parent / runtime_name / 'python.exe')
-        else:
-            candidates.append(Path(sys.executable).parent / '_runtime' / 'python.exe')
-    if compute == 'cpu':
-        candidates.append(settings.BASE_DIR / 'build-runtime-cache' / 'cpu-runtime' / 'python.exe')
-    elif profile:
-        candidates.append(settings.BASE_DIR / 'build-runtime-cache' / f'{profile}-runtime' / 'python.exe')
-    env_python = os.environ.get('STREAM_TRANSLATOR_BUILD_PYTHON')
-    if env_python:
-        candidates.append(Path(env_python))
-
-    for candidate in candidates:
-        if candidate.exists():
-            return str(candidate)
-    return None
-
-
 def _validate_cpu_asr_runtime(python_exe: str) -> None:
     """Fail early when a portable sidecar has been overwritten by another Python."""
     runtime_root = str(Path(python_exe).resolve().parent)
@@ -395,6 +375,9 @@ class TranslationContext:
         if profile_python:
             logger.info(f"Using runtime profile Python: {profile_python}")
             if is_frozen and str(self.config.get('asr_compute_backend') or 'auto').lower() == 'cpu':
+                if (self.config.get('use_nemo_asr') and self.config.get('nemo_asr_model') == HAAS_MODEL_ID
+                        and not runtime_contains_model(Path(profile_python).parent, HAAS_MODEL_ID)):
+                    raise RuntimeError(haas_runtime_update_message(self.config.get('runtime_profile')))
                 _validate_cpu_asr_runtime(profile_python)
             cmd = _build_source_python_command(profile_python, cwd)
         elif is_frozen:

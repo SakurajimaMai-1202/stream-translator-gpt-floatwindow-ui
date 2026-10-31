@@ -62,7 +62,8 @@ class ASRConfig:
                 self.qwen3_asr_model or self.nemo_asr_model or self.sensevoice_model
                 or self.fun_asr_model or self.model or ""
             )
-            return f"sherpa-onnx: {model} (cpu, int8)"
+            quantization = "quantized" if model == "oboroge0/Haas-ja-v1.0-onnx-quantized" else "int8"
+            return f"sherpa-onnx: {model} (cpu, {quantization})"
         extra = []
         if self.backend == "qwen3":
             extra.append(str(self.qwen3_asr_device_map or "auto"))

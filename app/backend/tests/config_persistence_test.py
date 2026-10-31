@@ -1,6 +1,11 @@
+import csv
+import ctypes
+import io
 import json
 import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -609,3 +614,170 @@ def test_existing_config_without_user_switch_stays_off(tmp_path):
     path = tmp_path / "config.yaml"
     path.write_text("terminology: {}", encoding="utf-8")
     assert ConfigManager(path).get_config()["terminology"]["use_terminology_glossary"] is False
+
+
+def _icacls(path, *arguments):
+    return subprocess.run(
+        ["icacls", str(path), *arguments], check=True,
+        capture_output=True, text=True,
+    ).stdout
+
+
+def _current_user_sid():
+    identity = subprocess.run(
+        ["whoami", "/user", "/fo", "csv", "/nh"], check=True,
+        capture_output=True, text=True,
+    ).stdout
+    return next(csv.reader(io.StringIO(identity)))[1]
+
+
+def _protect_config(path):
+    sid = _current_user_sid()
+    _icacls(path, "/inheritance:r", "/grant:r", f"*{sid}:(F)", "*S-1-5-18:(F)")
+
+
+def _assert_protected_config(path):
+    saved_acl = path.with_name(path.name + ".acl")
+    try:
+        _icacls(path, "/save", str(saved_acl))
+        lines = saved_acl.read_text(encoding="utf-16-le").splitlines()
+        dacl = next(line for line in lines if line.startswith("D:"))
+        assert dacl.startswith("D:P")
+        assert ";;;AU)" not in dacl
+        assert ";;;BU)" not in dacl
+        assert f";;;{_current_user_sid()})" in dacl
+    finally:
+        saved_acl.unlink(missing_ok=True)
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason="Windows file DACLs")
+def test_protected_config_stays_protected_after_save(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    manager = ConfigManager(config_path)
+    _protect_config(config_path)
+
+    manager.update_section("general", {"log_level": "ERROR"})
+
+    _assert_protected_config(config_path)
+    assert yaml.safe_load(config_path.read_text(encoding="utf-8"))["general"]["log_level"] == "ERROR"
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason="Windows file DACLs")
+def test_reset_backup_preserves_protected_config_permissions(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    manager = ConfigManager(config_path)
+    manager.update_section("general", {"log_level": "ERROR"})
+    _protect_config(config_path)
+
+    previous = config_path.read_bytes()
+    manager.reset_to_defaults()
+
+    _assert_protected_config(config_path)
+    backups = list(tmp_path.glob("config.yaml.bak-*"))
+    assert len(backups) == 1
+    _assert_protected_config(backups[0])
+    assert backups[0].read_bytes() == previous
+    assert yaml.safe_load(backups[0].read_text(encoding="utf-8"))["general"]["log_level"] == "ERROR"
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason="Windows file DACLs")
+def test_corrupt_config_rebuild_keeps_protected_permissions(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("general: [unclosed", encoding="utf-8")
+    _protect_config(config_path)
+
+    ConfigManager(config_path)
+
+    _assert_protected_config(config_path)
+    backups = list(tmp_path.glob("config.yaml.corrupt-*"))
+    assert len(backups) == 1
+    _assert_protected_config(backups[0])
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason="Windows file DACLs")
+def test_inherited_config_keeps_inherited_permissions_after_save(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    manager = ConfigManager(config_path)
+    _icacls(config_path, "/inheritance:e")
+    assert "(I)" in _icacls(config_path)
+
+    manager.update_section("general", {"log_level": "ERROR"})
+
+    assert "(I)" in _icacls(config_path)
+    assert yaml.safe_load(config_path.read_text(encoding="utf-8"))["general"]["log_level"] == "ERROR"
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason="Windows file DACLs")
+def test_dacl_failure_does_not_block_config_save(tmp_path, monkeypatch, caplog):
+    config_path = tmp_path / "config.yaml"
+    manager = ConfigManager(config_path)
+    _protect_config(config_path)
+
+    def fail_load(*args, **kwargs):
+        raise OSError("security API unavailable")
+
+    monkeypatch.setattr(ctypes, "WinDLL", fail_load)
+    manager.update_section("general", {"log_level": "ERROR"})
+
+    assert yaml.safe_load(config_path.read_text(encoding="utf-8"))["general"]["log_level"] == "ERROR"
+    assert "Could not preserve protected configuration permissions" in caplog.text
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason="Windows file DACLs")
+def test_keys_are_written_only_after_temp_file_is_protected(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.yaml"
+    manager = ConfigManager(config_path)
+    _protect_config(config_path)
+    original_dump = yaml.safe_dump
+    checked = []
+
+    def protected_dump(data, stream, **kwargs):
+        candidates = list(tmp_path.glob(".config.yaml.*.tmp"))
+        assert len(candidates) == 1
+        _assert_protected_config(candidates[0])
+        checked.append(candidates[0])
+        return original_dump(data, stream, **kwargs)
+
+    monkeypatch.setattr(yaml, "safe_dump", protected_dump)
+    manager.update_section("translation", {"openai_api_key": "test-secret"})
+    assert len(checked) == 1
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason="Windows file DACLs")
+def test_legacy_migration_preserves_protected_permissions(tmp_path):
+    legacy = tmp_path / "data" / "config.yaml"
+    legacy.parent.mkdir()
+    legacy.write_text("general:\n  log_level: ERROR\n", encoding="utf-8")
+    _protect_config(legacy)
+    config_path = tmp_path / "config.yaml"
+
+    manager = ConfigManager(config_path)
+
+    _assert_protected_config(config_path)
+    assert manager.get_config()["general"]["log_level"] == "ERROR"
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason="Windows file DACLs")
+def test_dacl_api_error_code_is_logged_without_blocking_save(tmp_path, monkeypatch, caplog):
+    config_path = tmp_path / "config.yaml"
+    manager = ConfigManager(config_path)
+    _protect_config(config_path)
+
+    class FakeFunction:
+        def __call__(self, *args):
+            return 5
+
+    class FakeDLL:
+        def __init__(self):
+            self.GetNamedSecurityInfoW = FakeFunction()
+            self.GetSecurityDescriptorControl = FakeFunction()
+            self.SetNamedSecurityInfoW = FakeFunction()
+            self.LocalFree = FakeFunction()
+
+    monkeypatch.setattr(ctypes, "WinDLL", lambda *args, **kwargs: FakeDLL())
+    manager.update_section("translation", {"openai_api_key": "private-test-key"})
+
+    assert yaml.safe_load(config_path.read_text(encoding="utf-8"))["translation"]["openai_api_key"] == "private-test-key"
+    assert "Windows error 5" in caplog.text
+    assert str(config_path) not in caplog.text
+    assert "private-test-key" not in caplog.text

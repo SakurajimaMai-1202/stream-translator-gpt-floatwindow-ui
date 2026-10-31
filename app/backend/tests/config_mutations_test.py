@@ -144,9 +144,9 @@ def test_a7_creation_and_reset_save_inside_lock(tmp_path, monkeypatch):
             finally:
                 active.pop()
 
-    def checked_save(self, config):
+    def checked_save(self, config, **kwargs):
         assert active
-        original_save(self, config)
+        original_save(self, config, **kwargs)
 
     monkeypatch.setattr(ConfigManager, "_config_lock", tracked_lock)
     monkeypatch.setattr(ConfigManager, "_save", checked_save)

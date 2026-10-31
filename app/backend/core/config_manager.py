@@ -6,6 +6,9 @@
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 import logging
+import ctypes
+from ctypes import wintypes
+import sys
 import math
 import yaml
 import copy
@@ -13,7 +16,6 @@ import json
 import os
 import tempfile
 import time
-import shutil
 from datetime import datetime
 from backend.core.config_secrets import SECRET_KEYS, restore_masked_secrets
 from contextlib import contextmanager
@@ -31,6 +33,72 @@ from backend.core.portable_paths import get_packaged_runtime_profile
 
 
 logger = logging.getLogger(__name__)
+
+
+def _copy_protected_dacl(source, target):
+    """Preserve an explicitly protected Windows DACL without blocking persistence."""
+    if sys.platform != 'win32':
+        return
+    try:
+        advapi32 = ctypes.WinDLL('advapi32', use_last_error=True)
+        kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        pointer = ctypes.c_void_p
+        get_security = advapi32.GetNamedSecurityInfoW
+        get_security.argtypes = [
+            wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD,
+            ctypes.POINTER(pointer), ctypes.POINTER(pointer),
+            ctypes.POINTER(pointer), ctypes.POINTER(pointer), ctypes.POINTER(pointer),
+        ]
+        get_security.restype = wintypes.DWORD
+        get_control = advapi32.GetSecurityDescriptorControl
+        get_control.argtypes = [pointer, ctypes.POINTER(wintypes.WORD), ctypes.POINTER(wintypes.DWORD)]
+        get_control.restype = wintypes.BOOL
+        set_security = advapi32.SetNamedSecurityInfoW
+        set_security.argtypes = [
+            wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD,
+            pointer, pointer, pointer, pointer,
+        ]
+        set_security.restype = wintypes.DWORD
+        local_free = kernel32.LocalFree
+        local_free.argtypes = [pointer]
+        local_free.restype = pointer
+
+        SE_FILE_OBJECT = 1
+        DACL_SECURITY_INFORMATION = 4
+        PROTECTED_DACL_SECURITY_INFORMATION = 0x80000000
+        SE_DACL_PROTECTED = 0x1000
+        descriptor = pointer()
+        dacl = pointer()
+        try:
+            error = get_security(
+                os.fspath(source), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
+                None, None, ctypes.byref(dacl), None, ctypes.byref(descriptor),
+            )
+            if error:
+                raise ctypes.WinError(error)
+            control = wintypes.WORD()
+            revision = wintypes.DWORD()
+            if not get_control(descriptor, ctypes.byref(control), ctypes.byref(revision)):
+                raise ctypes.WinError(ctypes.get_last_error())
+            if not control.value & SE_DACL_PROTECTED:
+                return
+            error = set_security(
+                os.fspath(target), SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                None, None, dacl, None,
+            )
+            if error:
+                raise ctypes.WinError(error)
+        finally:
+            if descriptor.value:
+                if local_free(descriptor):
+                    logger.warning("Could not free configuration security descriptor")
+    except Exception as error:
+        code = getattr(error, "winerror", None)
+        if code is not None:
+            logger.warning("Could not preserve protected configuration permissions (Windows error %d)", code)
+        else:
+            logger.warning("Could not preserve protected configuration permissions")
 
 
 def normalize_transcription_engine_flags(transcription: Dict[str, Any]) -> None:
@@ -367,7 +435,7 @@ class ConfigManager:
                         config = self._profile_defaults()
                 else:
                     config = self._profile_defaults()
-                self._save(config)
+                self._save(config, dacl_source=legacy if legacy.exists() else None)
                 return config
             raw = []
             config = self._read_current_config(raw_out=raw)
@@ -596,7 +664,7 @@ class ConfigManager:
         with self._config_lock():
             self._save(self.config)
     
-    def _save(self, config: Dict):
+    def _save(self, config: Dict, *, dacl_source=None):
         """內部儲存方法"""
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
         fd, temp_name = tempfile.mkstemp(
@@ -605,6 +673,11 @@ class ConfigManager:
             dir=str(self.config_path.parent),
         )
         try:
+            source = dacl_source if dacl_source is not None else (
+                self.config_path if self.config_path.exists() else None
+            )
+            if source is not None:
+                _copy_protected_dacl(source, temp_name)
             with os.fdopen(fd, 'w', encoding='utf-8', newline='\n') as f:
                 yaml.safe_dump(
                     config,
@@ -654,7 +727,7 @@ class ConfigManager:
             self.config_path.rename(backup)
             logger.warning("Invalid configuration moved to %s; restoring defaults", backup)
             defaults = self._profile_defaults()
-            self._save(defaults)
+            self._save(defaults, dacl_source=backup)
             return defaults
         if raw_out is not None:
             raw_out.append(self._deep_copy(loaded))
@@ -1534,10 +1607,33 @@ class ConfigManager:
         self._file_signature = self._get_file_signature()
         return self._deep_copy(updated)
 
+    def _backup_config(self, backup):
+        """Copy exact bytes only after applying the source's protected DACL."""
+        fd, temp_name = tempfile.mkstemp(
+            prefix=f".{self.config_path.name}.", suffix=".tmp",
+            dir=str(self.config_path.parent),
+        )
+        try:
+            with os.fdopen(fd, 'wb') as stream:
+                _copy_protected_dacl(self.config_path, temp_name)
+                with self.config_path.open('rb') as source:
+                    while chunk := source.read(1024 * 1024):
+                        stream.write(chunk)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temp_name, backup)
+        except Exception:
+            try:
+                os.unlink(temp_name)
+            except OSError:
+                pass
+            raise
+
     def reset_to_defaults(self):
         """Back up the exact previous file before resetting under the lock."""
         with self._config_lock():
             if self.config_path.exists():
-                shutil.copy2(self.config_path, self._backup_path('bak'))
+                backup = self._backup_path('bak')
+                self._backup_config(backup)
             return self._persist_locked(self._profile_defaults())
 

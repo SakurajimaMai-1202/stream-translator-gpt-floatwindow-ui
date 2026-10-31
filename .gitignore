@@ -103,6 +103,9 @@ stream-translator-gpt/stream_translator_gpt/native/*.dll
 app/config.yaml
 app/config.yaml.lock
 config.yaml
+config.yaml.bak*
+config.yaml.corrupt*
+.config.yaml.*.tmp
 
 # ── 日誌 ──────────────────────────────────────────────────────
 *.log

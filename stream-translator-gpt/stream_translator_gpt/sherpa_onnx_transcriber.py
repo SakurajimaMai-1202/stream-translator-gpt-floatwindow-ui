@@ -1,4 +1,4 @@
-﻿"""Unified CPU ASR adapter backed by sherpa-onnx INT8 models."""
+"""Unified CPU ASR adapter backed by sherpa-onnx INT8 models."""
 
 from __future__ import annotations
 
@@ -62,6 +62,11 @@ class SherpaOnnxTranscriber(AudioTranscriber):
                 encoder=self._path("encoder.int8.onnx"), decoder=self._path("decoder.int8.onnx"),
                 joiner=self._path("joiner.int8.onnx"), tokens=self._path("tokens.txt"),
                 model_type="nemo_transducer", **common)
+        if self.spec.family == "haas_transducer":
+            return sherpa.OfflineRecognizer.from_transducer(
+                encoder=self._path("encoder.quantized.onnx"), decoder=self._path("decoder.onnx"),
+                joiner=self._path("joiner.onnx"), tokens=self._path("tokens.txt"),
+                model_type="nemo_transducer", feature_dim=128, decoding_method="greedy_search", **common)
         if self.spec.family == "nemo_ctc":
             return sherpa.OfflineRecognizer.from_nemo_ctc(
                 model=self._path("model.int8.onnx"), tokens=self._path("tokens.txt"), **common)

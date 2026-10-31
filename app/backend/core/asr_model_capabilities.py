@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from typing import Any, Literal
 
@@ -109,6 +109,10 @@ ASR_MODEL_CAPABILITIES: dict[str, dict[str, Any]] = {
         "fixed",
         ("ja",),
         default_language="ja",
+    ),
+    "oboroge0/Haas-ja-v1.0-onnx-quantized": _entry(
+        "oboroge0/Haas-ja-v1.0-onnx-quantized", "parakeet-ctc-ja", "fixed", ("ja",),
+        default_language="ja", note="Japanese-only quantized Haas transducer; CPU sherpa-onnx only.",
     ),
     "nvidia/parakeet-tdt-0.6b-v3": _entry(
         "nvidia/parakeet-tdt-0.6b-v3",

@@ -1,7 +1,8 @@
-﻿from backend.core.app_sync import StatusPublisher
+from backend.core.app_sync import StatusPublisher
 import asyncio
 import copy
 import fnmatch
+import hashlib
 import logging
 import os
 import shutil
@@ -36,6 +37,7 @@ logger = logging.getLogger(__name__)
 WORKER_STOP_TIMEOUT_SECONDS = 15
 
 SHERPA_CPU_BUNDLES = {
+    "oboroge0/Haas-ja-v1.0-onnx-quantized": ("Haas-ja-v1.0-onnx-quantized", ("encoder.quantized.onnx", "encoder.data", "decoder.onnx", "joiner.onnx", "tokens.txt")),
     "nvidia/parakeet-tdt-0.6b-v3": ("sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8", ("encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt")),
     "nvidia/parakeet-tdt_ctc-0.6b-ja": ("sherpa-onnx-nemo-parakeet-tdt_ctc-0.6b-ja-35000-int8", ("model.int8.onnx", "tokens.txt")),
     "FunAudioLLM/Fun-ASR-Nano-2512": ("sherpa-onnx-funasr-nano-int8-2025-12-30", ("encoder_adaptor.int8.onnx", "llm.int8.onnx", "embedding.int8.onnx", "Qwen3-0.6B")),
@@ -48,6 +50,7 @@ SHERPA_HF_REPOS = {
     "Qwen/Qwen3-ASR-1.7B": "thieunv/sherpa-onnx-qwen3-asr-1.7B-int8",
 }
 SHERPA_CPU_ENGINES = {
+    "oboroge0/Haas-ja-v1.0-onnx-quantized": "parakeet-ctc-ja",
     "Qwen/Qwen3-ASR-0.6B": "qwen3-asr",
     "Qwen/Qwen3-ASR-1.7B": "qwen3-asr",
     "iic/SenseVoiceSmall": "sensevoice",
@@ -55,6 +58,19 @@ SHERPA_CPU_ENGINES = {
     "nvidia/parakeet-tdt-0.6b-v3": "parakeet-ctc-ja",
     "nvidia/parakeet-tdt_ctc-0.6b-ja": "parakeet-ctc-ja",
 }
+
+HAAS_MODEL_ID = "oboroge0/Haas-ja-v1.0-onnx-quantized"
+HAAS_REVISION = "7f5ab0a4b1bf39db78afd6691eeecbc4f9d42e39"
+# filename, byte size, SHA-256 at HAAS_REVISION (including attribution files).
+HAAS_PINNED_FILES = (
+    ("encoder.quantized.onnx", 42261252, "aba291d61d3d594bc6fb8c7f90acbd980e7bc7bf6b7caaf3965ddc25e6f42fac"),
+    ("encoder.data", 410744064, "30befbf6aeb75383e6551f5e58de53efdb76972ddc7d0f76070c517899873586"),
+    ("decoder.onnx", 15661602, "2947cb5512699cbba753fe45fe221428aadaa9856597debbb7aabe19cc253622"),
+    ("joiner.onnx", 12158641, "8a68320e750890ff9e944a794b41ae1c42c6f439ac4c273503458a6b42adc12d"),
+    ("tokens.txt", 28704, "ec78b13c5d9f156cf0d5fdbd6b5aec5785680f319c92630c11d5d11b14b83a84"),
+    ("LICENSE", 11358, "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"),
+    ("NOTICE", 783, "279784164ddd8a16f0b42aff954d34bc10485c0064a96c7a852419d95eca5cad"),
+)
 
 SUPPORTED_QWEN3_MODELS = {
     "Qwen/Qwen3-ASR-0.6B",
@@ -222,6 +238,8 @@ class ModelDownloadManager:
         return FASTER_WHISPER_MODEL_TO_REPO_ID.get(model_id, f"Systran/faster-whisper-{model_id}")
 
     def _validate_model_id(self, engine: str, model_id: str, compute_backend: ModelComputeBackend = "gpu") -> str:
+        if model_id == HAAS_MODEL_ID and compute_backend != "cpu":
+            raise ValueError("Haas quantized ONNX is supported only on CPU / sherpa-onnx")
         if compute_backend == "cpu":
             if model_id not in SHERPA_CPU_BUNDLES:
                 raise ValueError(f"CPU / sherpa-onnx 不支援此模型: {model_id}")
@@ -230,6 +248,7 @@ class ModelDownloadManager:
             expected_engine = SHERPA_CPU_ENGINES[model_id]
             if engine != expected_engine:
                 raise ValueError(f"CPU 模型 {model_id} 必須使用引擎 {expected_engine}，不是 {engine}")
+            return model_id
         if engine == "qwen3-asr":
             if model_id not in SUPPORTED_QWEN3_MODELS:
                 raise ValueError(f"不支援的 Qwen3-ASR 模型: {model_id}")
@@ -310,7 +329,7 @@ class ModelDownloadManager:
     async def _run_download_task(self, task_id: str, engine: str, model_id: str, compute_backend: ModelComputeBackend, cancel_event: Event) -> None:
         """執行單一下載任務"""
         download_logger = configure_dedicated_file_logger("model.download", "model_download")
-        source = (SHERPA_RELEASE_ROOT if compute_backend == "cpu" and model_id not in SHERPA_HF_REPOS
+        source = (SHERPA_RELEASE_ROOT if compute_backend == "cpu" and model_id not in SHERPA_HF_REPOS and model_id != HAAS_MODEL_ID
                   else "Hugging Face" if compute_backend == "cpu" or engine != "sensevoice"
                   else "ModelScope")
         download_logger.info("Starting task=%s backend=%s engine=%s model=%s source=%s",
@@ -353,6 +372,11 @@ class ModelDownloadManager:
         bundle, required_paths = SHERPA_CPU_BUNDLES[model_id]
         model_root = ensure_model_storage() / "sherpa-onnx"
         target = (model_root / bundle).resolve()
+        if model_id == HAAS_MODEL_ID:
+            self._update_task(task_id, progress=0.15, message="Downloading sherpa-onnx quantized Haas model from Hugging Face")
+            await asyncio.to_thread(self._download_haas_files, task_id, target, required_paths, cancel_event)
+            self._update_task(task_id, progress=0.95, message=f"sherpa-onnx model ready: {target}")
+            return
         archive = (model_root / f"{bundle}.tar.bz2").resolve()
 
         if model_id in SHERPA_HF_REPOS:
@@ -429,6 +453,60 @@ class ModelDownloadManager:
         self._update_task(task_id, progress=0.15, message="Downloading sherpa-onnx INT8 model")
         await asyncio.to_thread(blocking_download)
         self._update_task(task_id, progress=0.95, message=f"sherpa-onnx model ready: {target}")
+
+    def _download_haas_files(self, task_id: str, target: Path,
+                             required_paths: tuple[str, ...], cancel_event: Event) -> None:
+        self._check_cancelled(cancel_event)
+        if self._has_required_paths(target, required_paths):
+            return
+        # A stable revision-specific sibling preserves contiguous prefixes on retry.
+        # Only the exact final bundle name is visible to list_downloaded_models.
+        staging = target.with_name(f".{target.name}.{HAAS_REVISION}.partial")
+        staging.mkdir(parents=True, exist_ok=True)
+        total = sum(size for _, size, _ in HAAS_PINNED_FILES)
+        completed = 0
+        for name, size, expected in HAAS_PINNED_FILES:
+            self._check_cancelled(cancel_event)
+            partial = staging / name
+            HttpDownloader(
+                progress=lambda done, _total: self._update_byte_progress(
+                    task_id, completed + min(done, size), total, "下載中"),
+                cancel_event=cancel_event,
+            ).download(f"https://huggingface.co/{HAAS_MODEL_ID}/resolve/{HAAS_REVISION}/{name}", partial)
+            self._check_cancelled(cancel_event)
+            actual_size = partial.stat().st_size
+            if actual_size != size:
+                partial.unlink(missing_ok=True)
+                raise RuntimeError(f"Haas size mismatch for {name}: expected {size}, got {actual_size}")
+            digest = hashlib.sha256()
+            with partial.open("rb") as source:
+                while True:
+                    self._check_cancelled(cancel_event)
+                    block = source.read(4 * 1024 * 1024)
+                    if not block:
+                        break
+                    digest.update(block)
+            if digest.hexdigest() != expected:
+                partial.unlink(missing_ok=True)
+                raise RuntimeError(f"Haas SHA-256 mismatch for {name}; please download again")
+            completed += size
+            self._update_byte_progress(task_id, completed, total, "下載中")
+        # Serialize publication with cancel() and the existing active-worker guard.
+        tombstone = None
+        with self._lock:
+            self._check_cancelled(cancel_event)
+            if target.exists():
+                tombstone = target.with_name(f".deleted-{uuid.uuid4().hex}")
+                target.rename(tombstone)
+            try:
+                staging.rename(target)
+            except OSError:
+                if tombstone is not None:
+                    tombstone.rename(target)
+                raise
+        # Never restore a tombstone after cleanup starts: it may be incomplete.
+        if tombstone is not None:
+            shutil.rmtree(tombstone)
 
     async def _download_from_hf(self, task_id: str, repo_id: str, cancel_event: Event) -> None:
         """Download a Hugging Face model with byte-based progress."""
@@ -676,6 +754,8 @@ class ModelDownloadManager:
                 bundle, _ = SHERPA_CPU_BUNDLES[normalized_model_id]
                 cache_root = (get_model_storage_root() / "sherpa-onnx").resolve()
                 candidates = [cache_root / bundle]
+                if normalized_model_id == HAAS_MODEL_ID:
+                    candidates.append(cache_root / f".{bundle}.{HAAS_REVISION}.partial")
             elif engine == "sensevoice":
                 cache_root = self._get_modelscope_cache_dir().resolve()
                 candidates = self._get_modelscope_model_dirs(normalized_model_id)

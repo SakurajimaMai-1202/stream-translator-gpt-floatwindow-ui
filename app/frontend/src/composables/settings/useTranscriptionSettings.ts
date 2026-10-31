@@ -13,6 +13,7 @@ export function useTranscriptionSettings(localConfig: Ref<any>, store: ReturnTyp
   const allParakeetModels = [
     'nvidia/parakeet-tdt-0.6b-v3',
     'nvidia/parakeet-tdt_ctc-0.6b-ja',
+    'oboroge0/Haas-ja-v1.0-onnx-quantized',
     'nvidia/parakeet-tdt_ctc-1.1b',
     'grider-transwithai/parakeet-ctc-1.1b-ja',
   ];
@@ -59,7 +60,9 @@ export function useTranscriptionSettings(localConfig: Ref<any>, store: ReturnTyp
       .filter(model => allowedParakeetModels.value.includes(model))
       .map(model => ({
         value: model,
-        label: model === 'nvidia/parakeet-tdt-0.6b-v3'
+        label: model === 'oboroge0/Haas-ja-v1.0-onnx-quantized'
+          ? 'Haas ja v1.0 量化版（CPU・日文）'
+          : model === 'nvidia/parakeet-tdt-0.6b-v3'
           ? 'NVIDIA Parakeet TDT 0.6B v3（25 種語言）'
           : model === 'nvidia/parakeet-tdt_ctc-0.6b-ja'
           ? 'NVIDIA Parakeet 0.6B（日文）'
@@ -197,7 +200,7 @@ export function useTranscriptionSettings(localConfig: Ref<any>, store: ReturnTyp
   const allowedParakeetModels = computed<string[]>(() =>
     runtimeCapabilities.value?.parakeet_model_ids?.length
       ? runtimeCapabilities.value.parakeet_model_ids
-      : allParakeetModels
+      : allParakeetModels.filter(model => isSherpaOnnxMode.value || model !== 'oboroge0/Haas-ja-v1.0-onnx-quantized')
   );
 
   const runtimeSelection = computed(() => runtimeStatus.value?.selection || null);
@@ -279,6 +282,7 @@ export function useTranscriptionSettings(localConfig: Ref<any>, store: ReturnTyp
     if (!allowedParakeetModels.value.includes(transcription.nemo_asr_model)) {
       transcription.nemo_asr_model = allowedParakeetModels.value[0] || 'nvidia/parakeet-tdt_ctc-0.6b-ja';
     }
+    if (transcription.use_nemo_asr && transcription.nemo_asr_model === 'oboroge0/Haas-ja-v1.0-onnx-quantized') transcription.language = 'ja';
     normalizeAsrEngineSelection();
     if (
       !transcription.use_faster_whisper &&

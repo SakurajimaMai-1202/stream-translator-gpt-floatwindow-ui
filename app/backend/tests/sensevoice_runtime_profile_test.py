@@ -118,6 +118,7 @@ def test_nvidia_parakeet_uses_sherpa_only_in_cpu_profile():
     assert cpu.parakeet_model_ids == (
         "nvidia/parakeet-tdt-0.6b-v3",
         "nvidia/parakeet-tdt_ctc-0.6b-ja",
+        "oboroge0/Haas-ja-v1.0-onnx-quantized",
     )
 
 
@@ -528,3 +529,17 @@ def test_packaged_gpu_profile_selects_isolated_cpu_asr_sidecar(monkeypatch, tmp_
     assert translator_module._resolve_profile_python("cuda", "cpu") == str(cpu_python)
     assert translator_module._resolve_profile_python("rocm", "cpu") == str(cpu_python)
     assert translator_module._resolve_profile_python("cpu", "cpu") == str(gpu_python)
+
+
+def test_haas_status_uses_compute_backend_capabilities(monkeypatch):
+    model = "oboroge0/Haas-ja-v1.0-onnx-quantized"
+    for profile in ("cuda", "rocm"):
+        monkeypatch.setenv("STREAM_TRANSLATOR_PACKAGED_PROFILE", profile)
+        config = _config_for(profile)
+        config["transcription"]["asr_compute_backend"] = "cpu"
+        status = build_runtime_status(config, devices=[])
+        assert model in status["asr_capabilities"]["parakeet_model_ids"]
+        assert model not in status["capabilities"]["parakeet_model_ids"]
+        config["transcription"]["asr_compute_backend"] = "gpu"
+        status = build_runtime_status(config, devices=[])
+        assert model not in status["asr_capabilities"]["parakeet_model_ids"]

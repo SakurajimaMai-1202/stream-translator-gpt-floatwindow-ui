@@ -218,11 +218,12 @@ const qwen3AnimeModel = 'jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame';
 const parakeetModels = [
   { value: 'nvidia/parakeet-tdt-0.6b-v3', label: 'Parakeet TDT 0.6B v3（CPU INT8・25 語言）' },
   { value: 'nvidia/parakeet-tdt_ctc-0.6b-ja', label: 'NVIDIA Parakeet 0.6B（日文）' },
+  { value: 'oboroge0/Haas-ja-v1.0-onnx-quantized', label: 'Haas ja v1.0 量化版（CPU・日文）' },
   { value: 'nvidia/parakeet-tdt_ctc-1.1b', label: 'NVIDIA Parakeet 1.1B（英文）' },
   { value: 'grider-transwithai/parakeet-ctc-1.1b-ja', label: 'parakeet-ctc-1.1b-ja（日文）' }
 ];
 const parakeetLanguageForModel = (modelId: string) =>
-  modelId === 'nvidia/parakeet-tdt-0.6b-v3'
+  modelId === 'oboroge0/Haas-ja-v1.0-onnx-quantized' ? 'ja' : modelId === 'nvidia/parakeet-tdt-0.6b-v3'
     ? 'auto'
     : modelId === 'nvidia/parakeet-tdt_ctc-1.1b' ? 'en' : 'ja';
 const allFunAsrModelOptions: UiSelectOption[] = [
@@ -338,7 +339,7 @@ const allowedFunAsrModels = computed<string[]>(() =>
 const allowedParakeetModels = computed<string[]>(() =>
   runtimeCapabilities.value?.parakeet_model_ids?.length
     ? runtimeCapabilities.value.parakeet_model_ids
-    : parakeetModels.map((model) => model.value)
+    : parakeetModels.map((model) => model.value).filter(model => (selectedAsrComputeBackend.value === 'cpu' || store.runtimeStatus?.profile === 'cpu') || model !== 'oboroge0/Haas-ja-v1.0-onnx-quantized')
 );
 
 function coerceRuntimeLimitedSelections() {

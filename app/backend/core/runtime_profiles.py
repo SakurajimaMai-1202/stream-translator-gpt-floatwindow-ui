@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Literal
@@ -89,8 +89,8 @@ _CAPABILITIES: dict[RuntimeProfile, RuntimeCapabilities] = {
         fun_asr_model_ids=("FunAudioLLM/Fun-ASR-Nano-2512",),
         fun_asr_note="INT8 CPU inference through sherpa-onnx; timestamps are not available.",
         parakeet_status="official",
-        parakeet_models=("Parakeet TDT 0.6B v3 INT8 (25 languages)", "Parakeet TDT-CTC 0.6B INT8 JA"),
-        parakeet_model_ids=("nvidia/parakeet-tdt-0.6b-v3", "nvidia/parakeet-tdt_ctc-0.6b-ja"),
+        parakeet_models=("Parakeet TDT 0.6B v3 INT8 (25 languages)", "Parakeet TDT-CTC 0.6B INT8 JA", "Haas ja v1.0 量化版（CPU・日文）"),
+        parakeet_model_ids=("nvidia/parakeet-tdt-0.6b-v3", "nvidia/parakeet-tdt_ctc-0.6b-ja", "oboroge0/Haas-ja-v1.0-onnx-quantized"),
         parakeet_note="INT8 CPU inference through sherpa-onnx; independent from NVIDIA NeMo/CUDA.",
         faster_whisper_status="disabled",
         faster_whisper_models=(),

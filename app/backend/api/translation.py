@@ -6,7 +6,7 @@ import copy
 import logging
 from backend.models.translation import StartTranslationRequest, TranslationTaskResponse, DeviceListResponse, AudioDevice
 from backend.core.translator import active_translations, create_task, get_task, remove_task
-from backend.core.runtime_profiles import get_runtime_capabilities
+from backend.core.runtime_profiles import get_asr_capabilities
 from backend.core.config_manager import ConfigManager, normalize_transcription_engine_flags
 from backend.core.app_sync import publish_app_event
 from backend.core.config_secrets import restore_masked_secrets
@@ -27,6 +27,7 @@ async def process_audio_targets():
 SENSEVOICE_MODEL_IDS = {"iic/SenseVoiceSmall"}
 FUN_ASR_MODEL_IDS = {"FunAudioLLM/Fun-ASR-Nano-2512", "FunAudioLLM/Fun-ASR-MLT-Nano-2512"}
 PARAKEET_CTC_JA_MODEL_IDS = {
+    "oboroge0/Haas-ja-v1.0-onnx-quantized",
     "nvidia/parakeet-tdt_ctc-0.6b-ja",
     "nvidia/parakeet-tdt_ctc-1.1b",
     "grider-transwithai/parakeet-ctc-1.1b-ja",
@@ -356,7 +357,10 @@ async def start_translation(request: StartTranslationRequest, http_request: Requ
         # 3. 轉換為命令行參數
         # Coerce ASR backend based on runtime profile
         runtime_config = current_config.get('runtime', {})
-        rt_capabilities = get_runtime_capabilities(runtime_config.get('profile'))
+        rt_capabilities = get_asr_capabilities(
+            runtime_config.get('profile'),
+            current_config.get('transcription', {}).get('asr_compute_backend'),
+        )
         current_backend = str(current_config.get('transcription', {}).get('backend', '') or '')
         if current_backend == 'parakeet-ctc-ja' and 'parakeet-ctc-ja' not in rt_capabilities.local_asr_engines:
             # Parakeet is not supported by this runtime profile; coerce to a compatible backend

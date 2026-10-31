@@ -221,7 +221,7 @@ const {
                   <div class="flex-1">
                     <span class="text-white font-medium">Parakeet</span>
                     <p class="text-white/50 text-sm mt-1">
-                      <template v-if="isSherpaOnnxMode">Sherpa-ONNX INT8 CPU 推論；可選 25 語言 TDT 或日文專用 CTC bundle，不需要 NVIDIA GPU／NeMo。</template>
+                      <template v-if="isSherpaOnnxMode">Sherpa-ONNX 量化 CPU 推論；可選 Parakeet 25 語言 TDT、日文 CTC 或 Haas 日文 transducer，不需要 NVIDIA GPU／NeMo。</template>
                       <template v-else>CUDA 實驗性離線 ASR；官方模型透過 NVIDIA NeMo 執行。</template>
                     </p>
                   </div>

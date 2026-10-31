@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -88,6 +88,7 @@ def test_missing_bundle_has_actionable_error(tmp_path):
     ({"use_qwen3_asr": True, "qwen3_asr_model": "Qwen/Qwen3-ASR-0.6B"}, "Qwen/Qwen3-ASR-0.6B"),
     ({"use_sensevoice_asr": True, "sensevoice_model": "iic/SenseVoiceSmall"}, "iic/SenseVoiceSmall"),
     ({"use_fun_asr": True, "fun_asr_model": "FunAudioLLM/Fun-ASR-Nano-2512"}, "FunAudioLLM/Fun-ASR-Nano-2512"),
+    ({"use_nemo_asr": True, "nemo_asr_model": "oboroge0/Haas-ja-v1.0-onnx-quantized"}, "oboroge0/Haas-ja-v1.0-onnx-quantized"),
     ({"use_nemo_asr": True, "nemo_asr_model": "nvidia/parakeet-tdt_ctc-0.6b-ja"}, "nvidia/parakeet-tdt_ctc-0.6b-ja"),
 ])
 def test_cpu_preload_routes_each_supported_engine_to_sherpa_without_torch(
@@ -110,3 +111,35 @@ def test_cpu_preload_routes_each_supported_engine_to_sherpa_without_torch(
     assert asr_preload.resolve_preload_config(config) is config
     asr_preload.create_transcriber(config)
     assert captured["model"] == expected_model
+
+
+@pytest.mark.parametrize("model_id,filenames,extra", [
+    ("oboroge0/Haas-ja-v1.0-onnx-quantized",
+     ("encoder.quantized.onnx", "decoder.onnx", "joiner.onnx"),
+     {"feature_dim": 128, "decoding_method": "greedy_search"}),
+    ("nvidia/parakeet-tdt-0.6b-v3",
+     ("encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx"), {}),
+])
+def test_transducer_exact_factory_arguments(tmp_path, model_id, filenames, extra):
+    _materialize(tmp_path, model_id)
+    _FakeRecognizer.calls.clear()
+    transcriber = SherpaOnnxTranscriber(model=model_id, model_root=tmp_path,
+        num_threads=2, sherpa_module=FAKE_SHERPA, transcription_filters="")
+    expected = dict(zip(("encoder", "decoder", "joiner"),
+                        (str(transcriber.model_dir / name) for name in filenames)))
+    expected.update(tokens=str(transcriber.model_dir / "tokens.txt"),
+                    model_type="nemo_transducer", num_threads=2, provider="cpu", debug=False, **extra)
+    assert _FakeRecognizer.calls[0] == ("transducer", expected)
+
+
+def test_haas_cannot_reach_nemo():
+    from stream_translator_gpt.audio_transcriber import NemoASRTranscriber
+    with pytest.raises(ValueError, match="Unsupported NVIDIA Parakeet model"):
+        NemoASRTranscriber(model="oboroge0/Haas-ja-v1.0-onnx-quantized", transcription_filters="")
+
+
+def test_haas_has_no_archive_url():
+    spec = SHERPA_CPU_MODELS["oboroge0/Haas-ja-v1.0-onnx-quantized"]
+    for attr in ("archive_name", "download_url"):
+        with pytest.raises(ValueError, match="pinned individual"):
+            getattr(spec, attr)

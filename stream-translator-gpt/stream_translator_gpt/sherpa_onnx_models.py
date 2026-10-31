@@ -1,4 +1,4 @@
-﻿"""CPU-only sherpa-onnx model registry.
+"""CPU-only sherpa-onnx model registry.
 
 The public model ids stay identical to the CUDA UI/API ids while the CPU
 runtime resolves them to pre-exported INT8 sherpa-onnx bundles.
@@ -23,6 +23,8 @@ class SherpaModelSpec:
 
     @property
     def archive_name(self) -> str:
+        if self.family == "haas_transducer":
+            raise ValueError("Haas uses pinned individual Hugging Face files, not an archive")
         return f"{self.bundle}.tar.bz2"
 
     @property
@@ -42,6 +44,12 @@ SHERPA_CPU_MODELS: dict[str, SherpaModelSpec] = {
         family="nemo_ctc",
         bundle="sherpa-onnx-nemo-parakeet-tdt_ctc-0.6b-ja-35000-int8",
         required_paths=("model.int8.onnx", "tokens.txt"),
+    ),
+    "oboroge0/Haas-ja-v1.0-onnx-quantized": SherpaModelSpec(
+        model_id="oboroge0/Haas-ja-v1.0-onnx-quantized",
+        family="haas_transducer",
+        bundle="Haas-ja-v1.0-onnx-quantized",
+        required_paths=("encoder.quantized.onnx", "encoder.data", "decoder.onnx", "joiner.onnx", "tokens.txt"),
     ),
     "FunAudioLLM/Fun-ASR-Nano-2512": SherpaModelSpec(
         model_id="FunAudioLLM/Fun-ASR-Nano-2512",

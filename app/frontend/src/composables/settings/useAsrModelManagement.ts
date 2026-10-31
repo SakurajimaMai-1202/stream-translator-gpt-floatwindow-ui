@@ -11,7 +11,7 @@ export function useAsrModelManagement(localConfig: Ref<any>, store: ReturnType<t
   const cpuQwenModels = ['Qwen/Qwen3-ASR-0.6B', 'Qwen/Qwen3-ASR-1.7B'];
   const cpuSenseVoiceModels = ['iic/SenseVoiceSmall'];
   const cpuFunAsrModels = ['FunAudioLLM/Fun-ASR-Nano-2512'];
-  const cpuParakeetModels = ['nvidia/parakeet-tdt-0.6b-v3', 'nvidia/parakeet-tdt_ctc-0.6b-ja'];
+  const cpuParakeetModels = ['nvidia/parakeet-tdt-0.6b-v3', 'nvidia/parakeet-tdt_ctc-0.6b-ja', 'oboroge0/Haas-ja-v1.0-onnx-quantized'];
   const cpuQwenDescriptions = {
     'Qwen/Qwen3-ASR-0.6B': 'Sherpa-ONNX 專用 INT8 ONNX bundle；CPU 離線推論，不使用 PyTorch、CUDA dtype 或 4-bit 設定。',
     'Qwen/Qwen3-ASR-1.7B': 'Sherpa-ONNX INT8 1.7B CPU bundle；準確度較高，但下載約 2.4 GB、推論速度與記憶體需求也高於 0.6B。',
@@ -23,13 +23,14 @@ export function useAsrModelManagement(localConfig: Ref<any>, store: ReturnType<t
     'FunAudioLLM/Fun-ASR-Nano-2512': 'Sherpa-ONNX INT8 CPU bundle，支援中文、英文、日文及中文方言；目前不提供時間戳。',
   };
   const cpuParakeetDescriptions = {
+    'oboroge0/Haas-ja-v1.0-onnx-quantized': 'Sherpa-ONNX 量化 ONNX 模型；社群轉換版，語言固定為日文，下載約 480 MB，執行時約需 1 GB 記憶體。',
     'nvidia/parakeet-tdt-0.6b-v3': 'Sherpa-ONNX INT8 TDT bundle；支援 25 種語言及自動語言辨識，不需要 NVIDIA GPU 或 NeMo。',
     'nvidia/parakeet-tdt_ctc-0.6b-ja': 'Sherpa-ONNX INT8 CTC 日文專用 bundle；語言固定為日文，不需要 NVIDIA GPU 或 NeMo。',
   };
   const gpuQwenModels = computed(() => runtimeStatus.value?.capabilities?.qwen3_asr_model_ids || allQwenModels);
   const gpuSenseVoiceModels = computed(() => runtimeStatus.value?.capabilities?.sensevoice_model_ids || allSenseVoiceModels);
   const gpuFunAsrModels = computed(() => runtimeStatus.value?.capabilities?.fun_asr_model_ids || allFunAsrModels);
-  const gpuParakeetModels = computed(() => runtimeStatus.value?.capabilities?.parakeet_model_ids || allParakeetModels);
+  const gpuParakeetModels = computed(() => (runtimeStatus.value?.capabilities?.parakeet_model_ids || allParakeetModels).filter(model => model !== 'oboroge0/Haas-ja-v1.0-onnx-quantized'));
   const gpuFasterWhisperModels = computed(() => runtimeStatus.value?.capabilities?.faster_whisper_model_ids || allFasterWhisperModels);
   const managedDownloadedModels = computed(() =>
     modelDownloadStore.downloadedModels.filter((item) => item.compute_backend === modelManagementBackend.value)

@@ -160,7 +160,7 @@ const parakeetModelOptions = computed<UiSelectOption[]>(() => {
       const needsCpuBackend = showHaasDisabled && model.value === HAAS_MODEL_ID;
       return {
         value: model.value,
-        label: needsCpuBackend ? `${model.label} · 需先切換 ASR 後端為 CPU` : model.label,
+        label: needsCpuBackend ? `${model.label} · 請先把 ASR 運算模式切到 CPU` : model.label,
         disabled: needsCpuBackend
           || (selectedAsrCapability.value?.language_mode !== 'fixed'
             && !isModelLanguageCompatible(

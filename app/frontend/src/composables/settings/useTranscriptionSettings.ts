@@ -68,7 +68,7 @@ export function useTranscriptionSettings(localConfig: Ref<any>, store: ReturnTyp
       .map(model => {
         const needsCpuBackend = showHaasDisabled && model === HAAS_MODEL_ID;
         const baseLabel = model === HAAS_MODEL_ID
-          ? 'Haas ja v1.0 量化版（CPU・日文）'
+          ? 'Haas 日文（較準確，僅限 CPU）'
           : model === 'nvidia/parakeet-tdt-0.6b-v3'
           ? 'NVIDIA Parakeet TDT 0.6B v3（25 種語言）'
           : model === 'nvidia/parakeet-tdt_ctc-0.6b-ja'
@@ -78,7 +78,7 @@ export function useTranscriptionSettings(localConfig: Ref<any>, store: ReturnTyp
             : 'parakeet-ctc-1.1b-ja（日文）';
         return {
           value: model,
-          label: needsCpuBackend ? `${baseLabel} · 需先切換 ASR 後端為 CPU` : baseLabel,
+          label: needsCpuBackend ? `${baseLabel} · 請先把 ASR 運算模式切到 CPU` : baseLabel,
           disabled: needsCpuBackend,
         };
       });

@@ -218,7 +218,7 @@ const qwen3AnimeModel = 'jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame';
 const parakeetModels = [
   { value: 'nvidia/parakeet-tdt-0.6b-v3', label: 'Parakeet TDT 0.6B v3（CPU INT8・25 語言）' },
   { value: 'nvidia/parakeet-tdt_ctc-0.6b-ja', label: 'NVIDIA Parakeet 0.6B（日文）' },
-  { value: 'oboroge0/Haas-ja-v1.0-onnx-quantized', label: 'Haas ja v1.0 量化版（CPU・日文）' },
+  { value: 'oboroge0/Haas-ja-v1.0-onnx-quantized', label: 'Haas 日文（較準確，僅限 CPU）' },
   { value: 'nvidia/parakeet-tdt_ctc-1.1b', label: 'NVIDIA Parakeet 1.1B（英文）' },
   { value: 'grider-transwithai/parakeet-ctc-1.1b-ja', label: 'parakeet-ctc-1.1b-ja（日文）' }
 ];

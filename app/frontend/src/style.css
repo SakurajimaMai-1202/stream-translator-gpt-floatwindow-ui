@@ -467,7 +467,8 @@ select optgroup {
 /* Embedded Qt compositing has a different cost from the system browser.
    Keep control feedback immediate and avoid filtered layers in the control UI.
    Subtitle canvases are outside these selectors. */
-.fw-desktop-webview :is(.commercial-sidebar, .commercial-mobile-header, .commercial-main [class*="backdrop-blur"]) {
+.fw-desktop-webview :is(.commercial-sidebar, .commercial-mobile-header, .commercial-main [class*="backdrop-blur"],
+  .commercial-main [class*="fixed"][class*="inset-0"], .modal-overlay) {
   backdrop-filter: none !important;
 }
 .fw-desktop-webview :is(.commercial-shell, .fw-onboarding) button,

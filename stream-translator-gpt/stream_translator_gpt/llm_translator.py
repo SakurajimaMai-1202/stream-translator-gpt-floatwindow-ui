@@ -310,6 +310,8 @@ class LLMClient():
                               previous_translation=previous_translation)
             prepared = self.prompt_strategy.prepare(request)
         task._family_request = request
+        # Compared against rejected output by the request log, never written.
+        task._attempt_prompt_text = f"{prepared.system_instruction or ''}\n{prepared.user_content or ''}"
         if self.hy_mt2_debug:
             print(f'[DEBUG] [FAMILY OPTIMIZER] PROMPT={prepared.user_content!r}', file=sys.stderr, flush=True)
         return prepared
@@ -751,6 +753,7 @@ class LLMClient():
                 translation_task._llm_retry_started_at = llm_started_at
         translation_task._attempt_validation = ()
         translation_task._attempt_raw_output = None
+        translation_task._attempt_prompt_text = ""
         translation_task._attempt_finish_reason = None
         translation_task._attempt_error = None
         translation_task.translation_prompt_tokens = None

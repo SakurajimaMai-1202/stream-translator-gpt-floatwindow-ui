@@ -334,3 +334,37 @@ def test_gpt_attempt_raw_output_matches_stripped_validation_text(monkeypatch):
     client.translate(task)
     assert seen == ["first line\nsecond line"]
     assert task._attempt_raw_output == seen[0]
+
+
+@pytest.mark.parametrize("raw_output,keep_raw", [
+    ("譯文要口語\n人名一律不翻\n哈雷彗星很美", False),
+    ("彗星 翻譯成 哈雷彗星\n哈雷彗星很美", False),
+    ("  人名一律不翻  \n哈雷彗星很美", False),
+    ("第二行提示\n哈雷彗星很美", False),
+    ("前面那句的譯文\n哈雷彗星很美", True),
+])
+def test_attempt_log_drops_output_that_repeats_a_prompt_line(
+        monkeypatch, tmp_path, raw_output, keep_raw):
+    monkeypatch.setenv("STREAM_TRANSLATOR_LOG_DIR", str(tmp_path))
+    task = TranslationTask([], (0, 1))
+    task.transcript = "source"
+    task._attempt_validation = MULTILINE
+    task._attempt_finish_reason = None
+    task._attempt_raw_output = raw_output
+    task._attempt_prompt_text = "〖個人翻譯偏好〗\n譯文要口語\n人名一律不翻\n〖術語〗\n彗星 翻譯成 哈雷彗星"
+    client = make_client()
+    client.prompt = "第一行提示\n第二行提示"
+    request_log.log_attempt(client, task, 300)
+    record, = [json.loads(line) for line in
+               (tmp_path / "translation_requests.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert ("raw_output" in record) == keep_raw
+    assert "譯文要口語" not in json.dumps(record, ensure_ascii=False)
+
+
+def test_prepare_prompt_keeps_prompt_text_for_comparison_only(monkeypatch, tmp_path):
+    monkeypatch.setenv("STREAM_TRANSLATOR_LOG_DIR", str(tmp_path))
+    client = make_client()
+    task = TranslationTask([], (0, 1))
+    task.transcript = "source line"
+    prepared = client._prepare_prompt(task)
+    assert prepared.user_content in task._attempt_prompt_text

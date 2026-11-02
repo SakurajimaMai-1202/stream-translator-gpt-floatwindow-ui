@@ -101,11 +101,18 @@ def _schedule_snapshot(endpoint, segment_id, attempt_ms):
         pass
 
 
-def _loggable_raw_output(client, validation, raw_output):
+def _text_lines(text):
+    return {line.strip() for line in str(text or "").splitlines() if line.strip()}
+
+
+def _loggable_raw_output(client, task, validation, raw_output):
     if not set(validation) <= _RAW_OUTPUT_REASONS:
         return None
-    prompt = str(getattr(client, "prompt", "") or "").strip()
-    if any(mark in raw_output for mark in _PROMPT_TEXT_MARKS) or (prompt and prompt in raw_output):
+    if any(mark in raw_output for mark in _PROMPT_TEXT_MARKS):
+        return None
+    prompt_lines = (_text_lines(getattr(task, "_attempt_prompt_text", ""))
+                    | _text_lines(getattr(client, "prompt", "")))
+    if _text_lines(raw_output) & prompt_lines:
         return None
     return raw_output[:300]
 
@@ -126,7 +133,7 @@ def log_attempt(client, task, attempt_ms):
                       error=validation[0] if validation else getattr(task, "_attempt_error", None))
         if validation:
             record["source"] = str(task.transcript or "")[:300]
-            raw_output = _loggable_raw_output(client, validation, str(task._attempt_raw_output or ""))
+            raw_output = _loggable_raw_output(client, task, validation, str(task._attempt_raw_output or ""))
             if raw_output is not None:
                 record["raw_output"] = raw_output
         _write(record)

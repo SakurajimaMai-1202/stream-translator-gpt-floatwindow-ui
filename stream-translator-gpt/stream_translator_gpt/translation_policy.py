@@ -576,9 +576,6 @@ class ValidationIssue:
     severity: str = "error"
 
 
-PROMPT_LEAKAGE_MARKERS = ("【源文】", "【约束要求】", "【硬性要求】", "〖背景資訊", "<think>")
-
-
 def validate_translation(request: TranslationRequest, translation: str,
                          history: tuple[tuple[str, str], ...] = (),
                          normalize_output=None, raw_translation=None) -> tuple[ValidationIssue, ...]:
@@ -588,7 +585,7 @@ def validate_translation(request: TranslationRequest, translation: str,
         return (ValidationIssue("empty_output"),)
     leak_text = translation if raw_translation is None else str(raw_translation or "")
     if any(marker in leak_text and marker not in request.source_text
-           for marker in PROMPT_LEAKAGE_MARKERS):
+           for marker in ("【源文】", "【约束要求】", "【硬性要求】", "〖背景資訊", "<think>")):
         issues.append(ValidationIssue("prompt_leakage"))
     if normalize_output is None:
         from .qwen3_asr_postprocess import is_traditional_chinese_target, normalize_translation_script

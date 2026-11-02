@@ -64,7 +64,8 @@ def test_parallel_attempt_timing_and_durable_log(
     if retry:
         assert records[0]["validation"] == ["empty_output"]
         assert records[-1]["validation"] == []
-        assert len(records[0]["source"]) == len(records[0]["raw_output"]) == 300
+        assert len(records[0]["source"]) == 300
+        assert "raw_output" not in records[0]
         assert records[0]["attempt_ms"] == pytest.approx(first_seconds * 1000)
         assert records[0]["prompt_tokens"] == 42
 
@@ -252,13 +253,26 @@ def test_gemini_text_failure_preserves_response_metadata(monkeypatch):
     assert task.translation_completion_tokens == 7
 
 
+MULTILINE = ("unexpected_multiline_output",)
+
+
 @pytest.mark.parametrize("validation,raw_output,keep_raw", [
     (("prompt_leakage",), "echoed prompt", False),
-    (("unexpected_multiline_output",), "<think>private reasoning", False),
-    (("unexpected_multiline_output",), "private reasoning</think>", False),
-    (("unexpected_multiline_output",), "first line\nsecond line", True),
-] + [(("unexpected_multiline_output",), "x" * 301 + marker, False)
-     for marker in request_log.PROMPT_LEAKAGE_MARKERS])
+    (("residual_kana",), "plain text", False),
+    (("target_language_mismatch",), "plain text", False),
+    (MULTILINE + ("residual_kana",), "first\nsecond", False),
+    (MULTILINE, "<think>private reasoning", False),
+    (MULTILINE, "private reasoning</think>", False),
+    (MULTILINE, "first line\nsecond line", True),
+    (MULTILINE, "長\n" * 400, True),
+    (MULTILINE, "〖個人翻譯偏好〗\n偏好", False),
+    (MULTILINE, "〖術語〗\n彗星", False),
+    (MULTILINE, "〖翻譯要求〗\n要求", False),
+    (MULTILINE, "【注意】\n內容", False),
+    (MULTILINE, "【背景参考】\n內容", False),
+    (MULTILINE, "请将以下文本翻译为中文\n原文", False),
+    (MULTILINE, "my private prompt\n原文", False),
+])
 def test_attempt_log_suppresses_prompt_echoes(
         monkeypatch, tmp_path, validation, raw_output, keep_raw):
     monkeypatch.setenv("STREAM_TRANSLATOR_LOG_DIR", str(tmp_path))
@@ -267,14 +281,16 @@ def test_attempt_log_suppresses_prompt_echoes(
     task._attempt_validation = validation
     task._attempt_finish_reason = None
     task._attempt_raw_output = raw_output
-    request_log.log_attempt(make_client(), task, 300)
+    client = make_client()
+    client.prompt = "my private prompt"
+    request_log.log_attempt(client, task, 300)
     record, = [json.loads(line) for line in
                (tmp_path / "translation_requests.jsonl").read_text(encoding="utf-8").splitlines()]
     assert record["validation"] == list(validation)
     assert record["source"] == "source"
     assert ("raw_output" in record) == keep_raw
     if keep_raw:
-        assert record["raw_output"] == raw_output
+        assert record["raw_output"] == raw_output[:300]
 
 
 def test_retry_timer_starts_once_and_finishes_on_failure(monkeypatch):

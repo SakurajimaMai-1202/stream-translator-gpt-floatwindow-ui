@@ -12,14 +12,16 @@ import time
 from datetime import datetime
 from urllib.parse import urlsplit
 
-from .translation_policy import PROMPT_LEAKAGE_MARKERS
-
 
 _logger = logging.Logger(__name__, level=logging.INFO)
 _logger.propagate = False
 _lock = threading.Lock()
 _path = None
 _last_snapshot_at = None
+# Only multiline rejections need their text for diagnosis. Every other reason
+# is recorded by code alone, because rejected output can repeat the prompt.
+_RAW_OUTPUT_REASONS = frozenset({"unexpected_multiline_output"})
+_PROMPT_TEXT_MARKS = ("〖", "【", "<think>", "</think>", "请将以下文本翻译", "請將以下文本翻譯")
 
 
 class _QuietHandler(RotatingFileHandler):
@@ -99,6 +101,15 @@ def _schedule_snapshot(endpoint, segment_id, attempt_ms):
         pass
 
 
+def _loggable_raw_output(client, validation, raw_output):
+    if not set(validation) <= _RAW_OUTPUT_REASONS:
+        return None
+    prompt = str(getattr(client, "prompt", "") or "").strip()
+    if any(mark in raw_output for mark in _PROMPT_TEXT_MARKS) or (prompt and prompt in raw_output):
+        return None
+    return raw_output[:300]
+
+
 def log_attempt(client, task, attempt_ms):
     try:
         if not os.environ.get("STREAM_TRANSLATOR_LOG_DIR", "").strip():
@@ -115,11 +126,9 @@ def log_attempt(client, task, attempt_ms):
                       error=validation[0] if validation else getattr(task, "_attempt_error", None))
         if validation:
             record["source"] = str(task.transcript or "")[:300]
-            raw_output = str(task._attempt_raw_output or "")
-            if ("prompt_leakage" not in validation
-                    and not any(marker in raw_output
-                                for marker in (*PROMPT_LEAKAGE_MARKERS, "</think>"))):
-                record["raw_output"] = raw_output[:300]
+            raw_output = _loggable_raw_output(client, validation, str(task._attempt_raw_output or ""))
+            if raw_output is not None:
+                record["raw_output"] = raw_output
         _write(record)
         endpoint = (client.gemini_base_url if client.provider == "gemini" else
                     client.base_url or os.environ.get("OPENAI_BASE_URL"))

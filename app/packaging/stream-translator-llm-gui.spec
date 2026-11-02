@@ -51,6 +51,7 @@ a = Analysis(
     hiddenimports=[
         # The GUI backend builds worker arguments using this lightweight policy.
         'stream_translator_gpt.translation_policy',
+        'stream_translator_gpt.request_log',
         # Lightweight ctypes discovery only; capture runs in external runtime.
         'stream_translator_gpt.process_audio_targets',
         # FastAPI / uvicorn

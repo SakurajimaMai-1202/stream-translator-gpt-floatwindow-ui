@@ -24,6 +24,8 @@ export interface SubtitleLine {
   backend_timestamp?: string; // 後端傳來的字串時間戳 (00:00:01 -> 00:00:03)
   asr_latency_ms?: number | null;
   llm_latency_ms?: number | null;
+  translation_retry_ms?: number | null;
+  translation_retry_count?: number;
   translation_status?: 'failed' | 'timeout' | null;
   translation_queue_latency_ms?: number | null;
   total_latency_ms?: number | null;
@@ -395,6 +397,8 @@ export const useTranslationStore = defineStore('translation', () => {
           (subtitles.value[existingIdx] as any).backend_timestamp = backendTs || (subtitles.value[existingIdx] as any).backend_timestamp;
           (subtitles.value[existingIdx] as any).asr_latency_ms = data.asr_latency_ms ?? null;
           (subtitles.value[existingIdx] as any).llm_latency_ms = data.llm_latency_ms ?? null;
+          subtitles.value[existingIdx].translation_retry_ms = data.translation_retry_ms ?? null;
+          subtitles.value[existingIdx].translation_retry_count = data.translation_retry_count ?? 0;
           (subtitles.value[existingIdx] as any).translation_status = data.translation_status ?? null;
           (subtitles.value[existingIdx] as any).translation_queue_latency_ms = data.translation_queue_latency_ms ?? null;
           (subtitles.value[existingIdx] as any).total_latency_ms = data.total_latency_ms ?? null;
@@ -416,6 +420,8 @@ export const useTranslationStore = defineStore('translation', () => {
             backend_timestamp: backendTs,
             asr_latency_ms: data.asr_latency_ms ?? null,
             llm_latency_ms: data.llm_latency_ms ?? null,
+            translation_retry_ms: data.translation_retry_ms ?? null,
+            translation_retry_count: data.translation_retry_count ?? 0,
             translation_status: data.translation_status ?? null,
             translation_queue_latency_ms: data.translation_queue_latency_ms ?? null,
             total_latency_ms: data.total_latency_ms ?? null,

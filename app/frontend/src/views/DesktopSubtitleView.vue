@@ -90,7 +90,7 @@ function latencyLabel(sub: DesktopSubtitle): string {
   const parts: string[] = [];
   if (sub.asr_latency_ms != null) parts.push(`ASR ${formatLatency(sub.asr_latency_ms)}`);
   if (sub.translation_queue_latency_ms != null) parts.push(`排隊 ${formatLatency(sub.translation_queue_latency_ms)}`);
-  if (sub.llm_latency_ms != null) parts.push(`翻譯 ${formatLatency(sub.llm_latency_ms)}`);
+  if (sub.llm_latency_ms != null) parts.push(`翻譯 ${formatLatency(sub.llm_latency_ms)}${(sub.translation_retry_ms ?? 0) > 0 ? `（含重翻 ${formatLatency(sub.translation_retry_ms)}）` : ''}`);
   if (sub.total_latency_ms != null) parts.push(`總計 ${formatLatency(sub.total_latency_ms)}`);
   return parts.join(' · ');
 }

@@ -262,6 +262,11 @@ def test_native_subtitle_keeps_timestamp_and_latency_as_separate_color_runs():
         assert entry["metadata_timestamp"] == timestamp
         assert entry["metadata_latency"] == latency
         assert entry["metadata_timestamp_width"] > 0
+        line.update(llm_latency_ms=6500, translation_retry_ms=6200)
+        assert "翻譯 6.50s（含重翻 6.20s）" in window._metadata_parts(line)[1]
+        line["translation_retry_ms"] = 0
+        assert "翻譯 6.50s ·" in window._metadata_parts(line)[1]
+        assert "含重翻" not in window._metadata_parts(line)[1]
     finally:
         window.close()
         app.processEvents()

@@ -619,6 +619,10 @@ class NativeSubtitleWindow(QWidget):
                 value = line.get(field)
                 if isinstance(value, (int, float)):
                     formatted = f"{value / 1000:.2f}s" if value >= 1000 else f"{round(value)}ms"
+                    retry = line.get("translation_retry_ms")
+                    if field == "llm_latency_ms" and isinstance(retry, (int, float)) and retry > 0:
+                        retry_formatted = f"{retry / 1000:.2f}s" if retry >= 1000 else f"{round(retry)}ms"
+                        formatted += f"（含重翻 {retry_formatted}）"
                     latency_parts.append(f"{label} {formatted}")
         return timestamp, " · ".join(latency_parts)
 

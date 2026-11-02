@@ -9,6 +9,43 @@ if str(APP_DIR) not in sys.path:
 from backend.core import logging_setup
 
 
+def test_console_reconfigures_locale_pipe_to_utf8(monkeypatch, tmp_path):
+    import io
+    root = logging.getLogger()
+    handlers, level = root.handlers[:], root.level
+    reset_files = logging_setup._RESETTED_LOG_FILES.copy()
+    exception_hook = sys.excepthook
+    named_state = {name: (logger.handlers[:], logger.level, logger.propagate)
+                   for name, logger in logging.Logger.manager.loggerDict.items()
+                   if isinstance(logger, logging.Logger)}
+    warning_hook = __import__("warnings").showwarning
+    logging_warning_hook = logging._warnings_showwarning
+    stream = io.TextIOWrapper(io.BytesIO(), encoding="cp950")
+    stdout = io.TextIOWrapper(io.BytesIO(), encoding="cp950")
+    monkeypatch.setenv("STREAM_TRANSLATOR_LOG_DIR", str(tmp_path))
+    monkeypatch.setattr(sys, "stderr", stream)
+    monkeypatch.setattr(sys, "stdout", stdout)
+    root.handlers = []  # configure_logging must not close the test runner's handlers.
+    try:
+        logging_setup.configure_logging("backend", console=True)
+        root.warning("繁體中文翻譯")
+        _flush_root_handlers()
+        assert "繁體中文翻譯".encode("utf-8") in stream.buffer.getvalue()
+        assert stream.encoding == stdout.encoding == "utf-8"
+    finally:
+        logging_setup._close_handlers(root)
+        root.handlers = handlers
+        root.setLevel(level)
+        logging_setup._RESETTED_LOG_FILES.clear()
+        logging_setup._RESETTED_LOG_FILES.update(reset_files)
+        sys.excepthook = exception_hook
+        __import__("warnings").showwarning = warning_hook
+        logging._warnings_showwarning = logging_warning_hook
+        for name, logger in logging.Logger.manager.loggerDict.items():
+            if isinstance(logger, logging.Logger):
+                logger.handlers, logger.level, logger.propagate = named_state.get(name, ([], logging.NOTSET, True))
+
+
 def _flush_root_handlers():
     for handler in logging.getLogger().handlers:
         handler.flush()

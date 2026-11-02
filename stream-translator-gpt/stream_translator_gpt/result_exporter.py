@@ -48,6 +48,8 @@ def _format_latency_log(task: TranslationTask) -> str:
         parts.append(f"LLM {task.llm_latency_ms:.0f}ms")
     if task.translation_queue_latency_ms is not None:
         parts.append(f"Queue {task.translation_queue_latency_ms:.0f}ms")
+    if task.translation_retry_ms is not None:
+        parts.append(f"Retry {task.translation_retry_ms:.0f}ms")
     if task.total_latency_ms is not None:
         parts.append(f"Total {task.total_latency_ms:.0f}ms")
     if trace_metrics.get("end_to_end_ms") is not None:
@@ -321,6 +323,8 @@ class ResultExporter(LoopWorkerBase):
                 "translated": task.translation or "",
                 "asr_latency_ms": _format_latency_ms(task.asr_latency_ms),
                 "llm_latency_ms": _format_latency_ms(task.llm_latency_ms),
+                "translation_retry_ms": _format_latency_ms(task.translation_retry_ms),
+                "translation_retry_count": task.translation_retry_count,
                 "translation_queue_latency_ms": _format_latency_ms(task.translation_queue_latency_ms),
                 "total_latency_ms": _format_latency_ms(task.total_latency_ms),
                 "segment_id": task.segment_id,

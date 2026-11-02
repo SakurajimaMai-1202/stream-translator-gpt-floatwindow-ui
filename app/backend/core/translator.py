@@ -176,11 +176,12 @@ def _extract_latency_metrics(line: str) -> tuple[str, Dict[str, float]]:
     key_map = {
         "ASR": "asr_latency_ms",
         "LLM": "llm_latency_ms",
+        "Retry": "translation_retry_ms",
         "Queue": "translation_queue_latency_ms",
         "Total": "total_latency_ms",
     }
     metrics: Dict[str, float] = {}
-    for label, value in re.findall(r'(ASR|LLM|Queue|Total)\s+([\d.]+)ms', match.group(1)):
+    for label, value in re.findall(r'(ASR|LLM|Queue|Retry|Total)\s+([\d.]+)ms', match.group(1)):
         metrics[key_map[label]] = float(value)
     return line[:match.start()].rstrip(), metrics
 
@@ -847,6 +848,7 @@ class TranslationContext:
                                 "translated": pending_subtitles[timestamp]["translated"],
                                 "asr_latency_ms": pending_subtitles[timestamp].get("asr_latency_ms"),
                                 "llm_latency_ms": pending_subtitles[timestamp].get("llm_latency_ms"),
+                                "translation_retry_ms": pending_subtitles[timestamp].get("translation_retry_ms"),
                                 "translation_queue_latency_ms": pending_subtitles[timestamp].get(
                                     "translation_queue_latency_ms"
                                 ),

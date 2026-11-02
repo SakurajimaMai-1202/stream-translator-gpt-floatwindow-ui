@@ -9,6 +9,8 @@ export type SubtitleLine = {
   timestamp_id?: string;
   asr_latency_ms?: number | null;
   llm_latency_ms?: number | null;
+  translation_retry_ms?: number | null;
+  translation_retry_count?: number;
   translation_status?: 'failed' | 'timeout' | null;
   translation_queue_latency_ms?: number | null;
   total_latency_ms?: number | null;
@@ -26,6 +28,8 @@ export function updateLine(lines: SubtitleLine[], data: any, broadcast: boolean,
   const fields = {
     original: data.original || '', translated: data.translated || '',
     asr_latency_ms: data.asr_latency_ms ?? null, llm_latency_ms: data.llm_latency_ms ?? null,
+    translation_retry_ms: data.translation_retry_ms ?? null,
+    translation_retry_count: data.translation_retry_count ?? 0,
     translation_status: data.translation_status ?? null,
     total_latency_ms: data.total_latency_ms ?? null,
     latency_trace: data.latency_trace, latency_window: data.latency_window,

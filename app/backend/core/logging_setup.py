@@ -174,6 +174,13 @@ def configure_logging(
 
     handlers: list[logging.Handler] = [file_handler]
 
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if stream is not None and hasattr(stream, "reconfigure"):
+                stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
     if console:
         stream_handler = logging.StreamHandler()
         stream_handler.setLevel(log_level)

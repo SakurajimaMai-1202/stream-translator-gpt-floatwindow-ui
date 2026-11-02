@@ -193,6 +193,9 @@ class TranslationTask:
         self.asr_latency_ms = None
         self.llm_latency_ms = None
         self._llm_latency_started_at = None
+        self._llm_first_started_at = None
+        self.translation_retry_ms = None
+        self.translation_retry_count = 0
         self.created_at_monotonic = time.perf_counter()
         self.translation_queued_at = None
         self.translation_queue_latency_ms = None

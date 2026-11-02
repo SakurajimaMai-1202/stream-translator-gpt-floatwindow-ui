@@ -24,6 +24,7 @@ from .translation_policy import (
     short_line_fallback,
     _matching_glossary,
 )
+from . import request_log
 from .translation_glossary_auditor import TranslationGlossaryAuditor
 from .qwen3_asr_postprocess import normalize_translation_script, is_traditional_chinese_target, strip_unknown_token
 from .translation_output import TranslationOutputConversionError
@@ -39,6 +40,12 @@ def _is_task_timeout(task: TranslationTask, timeout: float) -> bool:
     if timeout == 0.0:
         return False
     return datetime.now(timezone.utc) - task.start_time > timedelta(seconds=timeout)
+
+
+def _mark_timeout_latency(task: TranslationTask):
+    started_at = task._llm_first_started_at if task._llm_first_started_at is not None else task._llm_latency_started_at
+    if task.llm_latency_ms is None and started_at is not None:
+        task.llm_latency_ms = (time.perf_counter() - started_at) * 1000
 
 
 class TranslationProvider:
@@ -400,6 +407,8 @@ class LLMClient():
             self.history_pairs.append((source_text, assistant_content))
 
     def _record_translation_failure(self, task, exc):
+        # Exception messages can contain transport URLs, headers or credentials.
+        task._attempt_error = type(exc).__name__
         task.translation = ""
         task.translation_failed = True
         task.translation_error = str(exc)
@@ -418,6 +427,7 @@ class LLMClient():
         task.translation = strip_unknown_token(task.translation)
         if not self.family_optimizer_enabled:
             if not (task.translation or "").strip():
+                task._attempt_validation = ("empty_output",)
                 self._record_translation_failure(task, ValueError("empty_output"))
                 return "empty_output"
             return None
@@ -433,6 +443,7 @@ class LLMClient():
             reasons = tuple(issue.code for issue in validate_translation(request, task.translation, history,
                 normalize_output=lambda text: normalize_translation_output(text, self.translation_target_language),
                 raw_translation=raw_translation))
+        task._attempt_validation = reasons
         task.translation_validation_reasons = reasons
         if not reasons:
             task.translation_error = None
@@ -570,6 +581,10 @@ class LLMClient():
             raw_content = completion.choices[0].message.content
             finish_reason = getattr(completion.choices[0], 'finish_reason', None)
             usage = getattr(completion, 'usage', None)
+            translation_task._attempt_raw_output = raw_content
+            translation_task._attempt_finish_reason = finish_reason
+            translation_task.translation_prompt_tokens = getattr(usage, 'prompt_tokens', None)
+            translation_task.translation_completion_tokens = getattr(usage, 'completion_tokens', None)
             message = completion.choices[0].message
             dump_message = getattr(message, 'model_dump', None)
             message_fields = tuple(dump_message(exclude_none=True).keys()) if callable(dump_message) else ('content',)
@@ -587,6 +602,7 @@ class LLMClient():
                     if not re.search(r'<think>|</think>|【源文】|(?:^|\n)\s*(?:思考过程|推理过程|Let me think)', alternate, re.IGNORECASE):
                         raw_content = alternate
                         content_field = 'reasoning_content_compat'
+            translation_task._attempt_raw_output = raw_content
             translation_content = raw_content
             think_block_stripped = (self.model_family == "index_translate"
                                     and content_field == 'content'
@@ -701,6 +717,13 @@ class LLMClient():
 
         try:
             response = client.models.generate_content(model=self.model, contents=messages, config=config)
+            candidates = getattr(response, "candidates", None)
+            reason = getattr(candidates[0], "finish_reason", None) if candidates else None
+            translation_task._attempt_finish_reason = getattr(reason, "name", reason)
+            usage = getattr(response, "usage_metadata", None)
+            translation_task.translation_prompt_tokens = getattr(usage, "prompt_token_count", None)
+            translation_task.translation_completion_tokens = getattr(usage, "candidates_token_count", None)
+            translation_task._attempt_raw_output = response.text
             translation_task.translation = parse_translation_output(response.text, prepared.output_format)
             self._validate_hy_mt2_output(translation_task, response.text)
             translation_task.translation = normalize_translation_output(
@@ -715,11 +738,23 @@ class LLMClient():
 
     def translate(self, translation_task: TranslationTask):
         llm_started_at = time.perf_counter()
-        translation_task.latency_trace.translation_started_at = llm_started_at
+        first_attempt = translation_task._llm_first_started_at is None
+        if first_attempt:
+            translation_task._llm_first_started_at = llm_started_at
+            translation_task.latency_trace.translation_started_at = llm_started_at
+        if not first_attempt:
+            translation_task.translation_retry_count = max(0, translation_task._translation_attempts - 1)
+            translation_task.translation_retry_ms = (llm_started_at - translation_task._llm_first_started_at) * 1000
+        translation_task._attempt_validation = ()
+        translation_task._attempt_raw_output = None
+        translation_task._attempt_finish_reason = None
+        translation_task._attempt_error = None
+        translation_task.translation_prompt_tokens = None
+        translation_task.translation_completion_tokens = None
         translation_task._llm_latency_started_at = llm_started_at
         translation_task.translation_provider = self.provider
         translation_task.translation_model = self.model
-        if translation_task.translation_queued_at is not None:
+        if first_attempt and translation_task.translation_queued_at is not None:
             translation_task.translation_queue_latency_ms = (
                 llm_started_at - translation_task.translation_queued_at
             ) * 1000
@@ -736,7 +771,11 @@ class LLMClient():
             print(f'[ERROR] Translation pipeline: {exc}', flush=True)
         finally:
             translation_task.latency_trace.translation_finished_at = time.perf_counter()
-            translation_task.llm_latency_ms = (translation_task.latency_trace.translation_finished_at - llm_started_at) * 1000
+            translation_task.llm_latency_ms = (translation_task.latency_trace.translation_finished_at - translation_task._llm_first_started_at) * 1000
+            try:
+                request_log.log_attempt(self, translation_task, (translation_task.latency_trace.translation_finished_at - llm_started_at) * 1000)
+            except Exception:
+                pass
             translation_task.total_latency_ms = (
                 time.perf_counter() - translation_task.created_at_monotonic
             ) * 1000
@@ -827,8 +866,7 @@ class ParallelTranslator(LoopWorkerBase):
                 print(f'[DEBUG] Translation retry scheduled: {task.transcript}', file=sys.stderr, flush=True)
 
     def _mark_timeout_latency(self, task: TranslationTask):
-        if task.llm_latency_ms is None and task._llm_latency_started_at is not None:
-            task.llm_latency_ms = (time.perf_counter() - task._llm_latency_started_at) * 1000
+        _mark_timeout_latency(task)
 
     def _get_results(self):
         results = []
@@ -960,8 +998,7 @@ class SerialTranslator(LoopWorkerBase):
                         _is_task_timeout(current_task, self.timeout)):
                     if not current_task.translation:
                         if _is_task_timeout(current_task, self.timeout):
-                            if current_task.llm_latency_ms is None and current_task._llm_latency_started_at is not None:
-                                current_task.llm_latency_ms = (time.perf_counter() - current_task._llm_latency_started_at) * 1000
+                            _mark_timeout_latency(current_task)
                             print(f'[WARNING] Translation timeout: {current_task.transcript}', file=sys.stderr, flush=True)
                         else:
                             print(f'[WARNING] Translation failed: {current_task.transcript}', file=sys.stderr, flush=True)

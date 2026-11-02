@@ -1,9 +1,13 @@
 <script setup lang="ts">
-import { computed, watchEffect } from 'vue';
+import { computed, watchEffect, onMounted, onBeforeUnmount } from 'vue';
 import { RouterView } from 'vue-router';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 
 const route = useRoute();
+const router = useRouter();
+const openSubtitleSettings = () => { void router.push('/subtitle-style'); };
+onMounted(() => window.addEventListener('native-open-subtitle-settings', openSubtitleSettings));
+onBeforeUnmount(() => window.removeEventListener('native-open-subtitle-settings', openSubtitleSettings));
 const isTransparentPage = computed(() => {
   const pathname = window.location.pathname.replace(/\/+$/, '') || '/';
   return route.name === 'subtitle' || route.path === '/subtitle' || pathname === '/subtitle';

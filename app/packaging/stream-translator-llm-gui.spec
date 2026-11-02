@@ -1,7 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
 import sys
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_data_files, collect_all, collect_dynamic_libs
+from importlib.util import find_spec
 
 app_dir = Path(SPECPATH).parent
 
@@ -38,17 +39,33 @@ if qt6_dir:
     if locales_dir.exists():
         qt_datas.append((str(locales_dir), 'PyQt6/Qt6/translations/qtwebengine_locales'))
 
+# pywebview 只提供兩個 DLL，不匯入或收集其 GUI 程式碼。
+sys.path.insert(0, str(app_dir))
+from webview_engine import resolve_webview2_dll_dir
+wv2_dir = resolve_webview2_dll_dir(False, None, find_spec)
+wv2_binaries = [
+    (str(wv2_dir / 'Microsoft.Web.WebView2.Core.dll'), 'webview2_runtime'),
+    (str(wv2_dir / 'runtimes/win-x64/native/WebView2Loader.dll'), 'webview2_runtime/runtimes/win-x64/native'),
+]
+net_datas, net_binaries, net_imports = [], [], []
+for package in ('pythonnet', 'clr_loader'):
+    data, binaries, imports = collect_all(package)
+    net_datas += data
+    net_binaries += binaries + collect_dynamic_libs(package)
+    net_imports += imports
+
 a = Analysis(
     [str(app_dir / 'main.py')],
     pathex=[str(app_dir), str(app_dir.parent / 'stream-translator-gpt')],
-    binaries=qt_binaries,
+    binaries=qt_binaries + wv2_binaries + net_binaries,
     datas=[
         (str(app_dir / 'backend/static'), 'backend/static'),
         (str(app_dir / 'config.example.yaml'), '.'),
         (str(app_dir / 'README.txt'), '.'),
         (str(app_dir / 'app_icon.ico'), '.'),
-    ] + qt_datas + collect_data_files('opencc'),
-    hiddenimports=[
+    ] + qt_datas + net_datas + collect_data_files('opencc'),
+    hiddenimports=net_imports + [
+        'clr', 'pythonnet', 'clr_loader', 'clr_loader.ffi', 'clr_loader.netfx', 'cffi',
         # The GUI backend builds worker arguments using this lightweight policy.
         'stream_translator_gpt.translation_policy',
         'stream_translator_gpt.request_log',
@@ -96,7 +113,7 @@ a = Analysis(
         'sklearn', 'scipy', 'numpy', 'numba', 'llvmlite',
         'librosa', 'soundfile', 'av', 'yt_dlp', 'pydub',
         'pandas', 'matplotlib',
-        'tkinter', 'wx',
+        'tkinter', 'wx', 'webview',
     ],
     noarchive=False,
     optimize=0,

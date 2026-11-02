@@ -213,6 +213,9 @@ subtitle_settings:
   backgroundOpacity: 5
   mousePassthrough: false
 ui:
+  # 主視窗引擎：Windows 預設 webview2，其他平台預設 qtwebengine。
+  # WebView2 啟動失敗會自動退回 Qt WebEngine；不影響字幕繪製。
+  # webview_engine: webview2
   theme: light
   transparency: 80
   font_size: 16

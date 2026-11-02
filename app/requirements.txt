@@ -26,6 +26,9 @@ PyQt6==6.9.1
 PyQt6-Qt6==6.9.1
 PyQt6-WebEngine==6.9.0
 PyQt6-WebEngine-Qt6==6.9.1
+# pywebview 僅提供 WebView2 1.0.3856.49 DLL，程式絕不匯入它。
+pythonnet==3.2.1
+pywebview==6.2.1
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 python-multipart>=0.0.6

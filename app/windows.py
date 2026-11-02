@@ -20,6 +20,7 @@ from PyQt6.QtGui import QIcon, QCursor, QMouseEvent, QWheelEvent, QKeyEvent, QCo
 import logging
 
 import ui_perf
+from webview_engine import allowed_origins, resolve_engine
 from backend.core.admin_auth import TOKEN_HEADER, get_admin_token
 
 logger = logging.getLogger(__name__)
@@ -30,10 +31,7 @@ class AdminTokenInterceptor(QWebEngineUrlRequestInterceptor):
 
     def __init__(self, token: str, backend_port: int, frontend_port: int | None = None):
         super().__init__(QWebEngineProfile.defaultProfile())
-        ports = {backend_port}
-        if frontend_port is not None:
-            ports.add(frontend_port)
-        self._origins = {("http", host, port) for host in ("127.0.0.1", "localhost") for port in ports}
+        self._origins = allowed_origins(backend_port, frontend_port)
         self._token = token.encode("utf-8")
 
     def interceptRequest(self, info):
@@ -203,7 +201,7 @@ class WebViewWindow(QMainWindow):
     initialLoadFinished = pyqtSignal(bool)
     """通用 WebView 視窗基類"""
     
-    def __init__(self, title: str, url: str, width: int = 1200, height: int = 800):
+    def __init__(self, title: str, url: str, width: int = 1200, height: int = 800, defer_webview: bool = False):
         super().__init__()
         self._initial_load_emitted = False
         self.setWindowOpacity(0.0)
@@ -218,10 +216,16 @@ class WebViewWindow(QMainWindow):
         # 設定視窗背景色為深色，避免載入或重新繪製時的白屏閃爍
         self.setStyleSheet("background-color: #0f172a;")
         
+        self._target_url = url
+        if not defer_webview:
+            self._build_qt_view()
+
+    def _build_qt_view(self):
         # 建立 WebView
         self.web_view = QWebEngineView()
         self.web_view.setPage(CustomWebPage(self.web_view))
         self.web_view.setVisible(True)
+        self._qt_frames_tracked = False
         self._render_reload_attempts = 0
         self._last_render_reload_at = 0.0
         self.web_view.page().renderProcessTerminated.connect(self._on_render_process_terminated)
@@ -251,7 +255,6 @@ class WebViewWindow(QMainWindow):
         self.setCentralWidget(self.web_view)
         
         # 延遲載入 URL（確保服務已啟動）
-        self._target_url = url
         QTimer.singleShot(500, self._load_url)
         QTimer.singleShot(4000, self._show_web_view_if_hidden)
         
@@ -269,9 +272,11 @@ class WebViewWindow(QMainWindow):
         self.setWindowOpacity(1.0)
         self.web_view.update()
         self.web_view.repaint()
+        if not getattr(self, "_qt_frames_tracked", False):
+            self._qt_frames_tracked = True
+            ui_perf.track_presented_frames(self.web_view.focusProxy(), self.windowTitle())
         if not self._initial_load_emitted:
             self._initial_load_emitted = True
-            ui_perf.track_presented_frames(self.web_view.focusProxy(), self.windowTitle())
             self.initialLoadFinished.emit(ok)
 
     def _show_web_view_if_hidden(self):
@@ -372,7 +377,11 @@ class ExternalLinkPage(QWebEnginePage):
 class HomeWindow(WebViewWindow):
     """主視窗（首頁）"""
 
-    def __init__(self, base_url: str = "http://localhost:5173", config_manager=None, on_open_subtitle=None):
+    def __init__(self, base_url: str = "http://localhost:5173", config_manager=None, on_open_subtitle=None, engine=None, backend_port=8010, frontend_port=None, token=""):
+        self._wv2 = None
+        self.engine = engine or resolve_engine(None, "")
+        self._pending_scripts = []
+        self._page_ready = False
         self.config_manager = config_manager
         width, height = 1287, 917
         x, y = None, None
@@ -393,7 +402,8 @@ class HomeWindow(WebViewWindow):
             title="Stream Translator",
             url=f"{base_url}/",
             width=width,
-            height=height
+            height=height,
+            defer_webview=self.engine == "webview2",
         )
 
         if x is not None and y is not None:
@@ -401,20 +411,95 @@ class HomeWindow(WebViewWindow):
 
         self._on_open_subtitle = on_open_subtitle
 
-        # 設定 WebChannel 以便與 JavaScript 通訊
-        self.channel = QWebChannel()
-        self.bridge = HomeBridge(base_url=base_url)
-        self.channel.registerObject("pyqt", self.bridge)
-        self.web_view.page().setWebChannel(self.channel)
-
+        self.bridge = HomeBridge(self, base_url=base_url)
         if callable(self._on_open_subtitle):
             self.bridge.openSubtitleWindowRequested.connect(self._handle_open_subtitle)
+        if self.engine == "webview2":
+            try:
+                from webview2_host import WebView2Host
+                self._wv2 = WebView2Host(self, self._target_url, self.bridge,
+                                       allowed_origins(backend_port, frontend_port), token)
+                self.setCentralWidget(self._wv2)
+                self._wv2.failed.connect(self._fallback_to_qt)
+                self._wv2.loadFinished.connect(self._on_wv2_load_finished)
+                self._wv2.loadStarted.connect(self._page_loading)
+                QTimer.singleShot(0, self._wv2.start)
+                QTimer.singleShot(4000, self._show_home_if_hidden)
+            except Exception as exc:
+                self._fallback_to_qt(str(exc))
+        else:
+            self._connect_qt_bridge()
+        logger.info("主視窗 WebView 引擎：%s", self.engine)
 
+    def _show_home_if_hidden(self):
+        try:
+            if self.windowOpacity() < 1.0:
+                self.setWindowOpacity(1.0)
+        except RuntimeError:
+            # The Qt window may have been deleted before the timer fires.
+            pass
+
+    def _connect_qt_bridge(self):
+        self.channel = QWebChannel(self)
+        self.channel.registerObject("pyqt", self.bridge)
+        self.web_view.page().setWebChannel(self.channel)
         self._inject_home_webchannel_scripts()
+        self.web_view.loadFinished.connect(self._page_loaded)
+        self.web_view.loadStarted.connect(self._page_loading)
+
+    def _fallback_to_qt(self, reason):
+        if self.engine == "qtwebengine":
+            return
+        logger.warning("WebView2 無法繼續，退回 Qt WebEngine：%s", reason)
+        if self._wv2 is not None:
+            self._wv2.shutdown()
+            self._wv2 = None
+        self.engine = "qtwebengine"
+        self._page_ready = False
+        self._build_qt_view()
+        self._connect_qt_bridge()
+        logger.info("主視窗 WebView 引擎：qtwebengine")
+
+    def _on_wv2_load_finished(self, ok):
+        if ok:
+            self.setWindowOpacity(1.0)
+            if not self._initial_load_emitted:
+                self._initial_load_emitted = True
+                self.initialLoadFinished.emit(True)
+        self._page_loaded(ok)
+
+    def _page_loading(self):
+        self._page_ready = False
+
+    def _page_loaded(self, ok):
+        if ok:
+            self._page_ready = True
+            pending, self._pending_scripts = self._pending_scripts, []
+            for script in pending:
+                self.run_javascript(script)
+
+    def run_javascript(self, script):
+        if not self._page_ready:
+            self._pending_scripts.append(script)
+        elif self._wv2 is not None:
+            self._wv2.run_javascript(script)
+        else:
+            self.web_view.page().runJavaScript(script)
+
+    def close_webview(self):
+        if self._wv2 is not None:
+            self._wv2.shutdown()
+
+    def nativeEvent(self, event_type, message):
+        if self._wv2 is not None:
+            self._wv2.native_event(message)
+        # PyQt6 的 super().nativeEvent 會造成 access violation；這裡只觀察訊息，不攔截。
+        return False, 0
 
     def closeEvent(self, event):
         """關閉視窗時儲存大小與位置"""
         self._save_window_geometry()
+        self.close_webview()
         super().closeEvent(event)
 
     def _save_window_geometry(self):
@@ -479,109 +564,10 @@ class SettingsWindow(WebViewWindow):
         )
 
 
-class SubtitleSettingsWindow(QMainWindow):
-    initialLoadFinished = pyqtSignal(bool)
-    """字幕設定彈窗（獨立視窗）"""
-    
-    def __init__(self, base_url: str = "http://localhost:5173", on_settings_updated=None):
-        super().__init__()
-        self._initial_load_emitted = False
-        self.setWindowOpacity(0.0)
-        self.setWindowTitle("字幕設定")
-        app = QApplication.instance()
-        if app is not None:
-            icon = app.windowIcon()
-            if not icon.isNull():
-                self.setWindowIcon(icon)
-        self.resize(450, 650)
-        
-        # 設定視窗屬性：置頂、工具視窗
-        self.setWindowFlags(
-            Qt.WindowType.Window |
-            Qt.WindowType.WindowStaysOnTopHint |
-            Qt.WindowType.Tool
-        )
-        
-        self.setStyleSheet("background-color: #0f172a;")
-        
-        # 建立 WebView
-        self.web_view = QWebEngineView()
-        self.web_view.setPage(CustomWebPage(self.web_view))
-        self.web_view.setVisible(True)
-        self.web_view.loadFinished.connect(self._on_load_finished)
-        self.web_view.setStyleSheet("background-color: #0f172a;")
-        self.web_view.page().setBackgroundColor(QColor("#0f172a"))
-
-        # 讓獨立字幕設定視窗可直接把變更送到原生字幕 renderer。
-        self.channel = QWebChannel()
-        self.bridge = HomeBridge(base_url=base_url)
-        self.channel.registerObject("pyqt", self.bridge)
-        self.web_view.page().setWebChannel(self.channel)
-        if callable(on_settings_updated):
-            self.bridge.subtitleSettingsUpdated.connect(on_settings_updated)
-        self._inject_webchannel_scripts()
-        
-        # 設定
-        settings = self.web_view.settings()
-        settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, True)
-        settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
-        
-        self.setCentralWidget(self.web_view)
-        
-        # 延遲載入 URL
-        self._target_url = f"{base_url}/subtitle-settings"
-        QTimer.singleShot(500, self._load_url)
-        QTimer.singleShot(4000, self._show_web_view_if_hidden)
-
-    def _inject_webchannel_scripts(self):
-        qwebchannel_script = QWebEngineScript()
-        qwebchannel_script.setSourceUrl(QUrl("qrc:///qtwebchannel/qwebchannel.js"))
-        qwebchannel_script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
-        qwebchannel_script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
-        qwebchannel_script.setRunsOnSubFrames(False)
-        self.web_view.page().scripts().insert(qwebchannel_script)
-
-        init_script = QWebEngineScript()
-        init_script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentReady)
-        init_script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
-        init_script.setRunsOnSubFrames(False)
-        init_script.setSourceCode(
-            "if (window.qt && window.qt.webChannelTransport) {"
-            "new QWebChannel(window.qt.webChannelTransport, function(channel) {"
-            "window.pyqt = channel.objects.pyqt;"
-            "});}"
-        )
-        self.web_view.page().scripts().insert(init_script)
-    
-    def _load_url(self):
-        """載入 URL"""
-        logger.info(f"載入字幕設定 URL: {self._target_url}")
-        self.web_view.setUrl(QUrl(self._target_url))
-
-    def _on_load_finished(self, ok: bool):
-        if not ok:
-            logger.warning(f"[WebView] Subtitle settings page load did not finish cleanly: {self._target_url}")
-        self.web_view.setVisible(True)
-        self.setWindowOpacity(1.0)
-        self.web_view.update()
-        self.web_view.repaint()
-        if not self._initial_load_emitted:
-            self._initial_load_emitted = True
-            self.initialLoadFinished.emit(ok)
-
-    def _show_web_view_if_hidden(self):
-        if not self.web_view.isVisible():
-            logger.warning("[WebView] Showing subtitle settings view after startup fallback timeout")
-            self.web_view.setVisible(True)
-        if self.windowOpacity() < 1.0:
-            self.setWindowOpacity(1.0)
-
-
 class FloatingSubtitleWindow(WebViewWindow):
     """浮動字幕視窗"""
     
-    def __init__(self, base_url: str = "http://localhost:5173", config_manager=None):
+    def __init__(self, base_url: str = "http://localhost:5173", config_manager=None, on_open_settings=None):
         # 不呼叫 super().__init__ 以自定義佈局
         QMainWindow.__init__(self)
         self._initial_load_emitted = False
@@ -676,7 +662,7 @@ class FloatingSubtitleWindow(WebViewWindow):
         self.bridge.mousePassthroughRequested.connect(self._set_mouse_passthrough)
         
         # 設定視窗引用
-        self.settings_window = None
+        self._on_open_settings = on_open_settings
         self.base_url = base_url
         
         # 安裝事件過濾器以處理 WebView 上的滑鼠事件
@@ -729,21 +715,13 @@ class FloatingSubtitleWindow(WebViewWindow):
     
     def _open_settings_window(self):
         """打開設定視窗"""
-        if self.settings_window is None:
-            self.settings_window = SubtitleSettingsWindow(self.base_url)
-            # 當視窗關閉時清除引用
-            self.settings_window.destroyed.connect(lambda: setattr(self, 'settings_window', None))
-        
-        self.settings_window.show()
-        self.settings_window.raise_()
-        self.settings_window.activateWindow()
+        if callable(self._on_open_settings):
+            self._on_open_settings()
 
     def _handle_close_requested(self):
         """處理字幕視窗關閉請求"""
         # 儲存視窗位置和大小
         self._save_window_geometry()
-        if self.settings_window is not None:
-            self.settings_window.close()
         self.hide()
 
     def eventFilter(self, obj, event):
@@ -880,8 +858,6 @@ class FloatingSubtitleWindow(WebViewWindow):
     def closeEvent(self, event):
         self._geometry_save_timer.stop()
         self._save_window_geometry()
-        if self.settings_window is not None:
-            self.settings_window.close()
         super().closeEvent(event)
 
     def _schedule_geometry_save(self):

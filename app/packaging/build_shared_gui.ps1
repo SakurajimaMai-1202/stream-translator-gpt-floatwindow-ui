@@ -55,6 +55,12 @@ if ($LASTEXITCODE -ne 0) {
     throw "PyQt6 WebEngine DLL import failed; install PyQt6-WebEngine and PyQt6-WebEngine-Qt6 matching the PyQt6 Qt minor version before packaging"
 }
 
+# 僅驗證已安裝的套件與 DLL，不在此安裝相依套件。
+& $pythonExe -c "import sys; from importlib.util import find_spec; sys.path.insert(0, sys.argv[1]); from webview_engine import resolve_webview2_dll_dir; missing=[name for name in ('pythonnet', 'clr_loader', 'webview') if find_spec(name) is None]; assert not missing, 'Missing packages: ' + ', '.join(missing); import clr_loader; print('WebView2 DLLs:', resolve_webview2_dll_dir(False, None, find_spec))" $scriptDir
+if ($LASTEXITCODE -ne 0) {
+    throw "WebView2 preflight failed; pythonnet, clr_loader and the two pywebview WebView2 DLLs must be installed before packaging"
+}
+
 $stopwatch = [Diagnostics.Stopwatch]::StartNew()
 Write-Host "[Shared GUI 1/2] Build frontend" -ForegroundColor Yellow
 Push-Location $frontendDir

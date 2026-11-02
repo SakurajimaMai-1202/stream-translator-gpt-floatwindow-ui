@@ -58,13 +58,14 @@ from backend.core.admin_auth import TOKEN_HEADER, ensure_admin_token
 from backend.core.admin_host import get_admin_host
 from backend.core.logging_setup import configure_logging
 import ui_perf
+from webview_engine import read_configured_engine, resolve_engine
 from webview_rendering import (
     apply_render_mode as apply_webview_render_mode,
     read_configured_render_mode as read_configured_webview_render_mode,
     resolve_render_mode as resolve_webview_render_mode,
 )
 from services import BackendProcess, FrontendServer
-from windows import HomeWindow, SettingsWindow, FloatingSubtitleWindow, SubtitleSettingsWindow, AdminTokenInterceptor
+from windows import HomeWindow, SettingsWindow, FloatingSubtitleWindow, AdminTokenInterceptor
 from native_subtitle import NativeSubtitleWindow
 from native_subtitle_sse import NativeSubtitleSseClient
 
@@ -105,7 +106,8 @@ def resolve_app_icon() -> QIcon:
 class UI2Application:
     """UI2 應用程式管理器"""
     
-    def __init__(self, dev_mode: bool = True, disable_gpu: bool = False):
+    def __init__(self, dev_mode: bool = True, disable_gpu: bool = False, webview_engine: str | None = None):
+        self.webview_engine = webview_engine or resolve_engine(None, "")
         self.admin_token = ensure_admin_token()
         self.dev_mode = dev_mode
         self.disable_gpu = disable_gpu
@@ -148,7 +150,6 @@ class UI2Application:
         self.settings_window = None
         self.subtitle_window = None
         self.subtitle_sse_client = None
-        self.subtitle_settings_window = None
         
         # 連接信號
         self.backend.started.connect(self._on_backend_started)
@@ -228,7 +229,11 @@ class UI2Application:
         logger.info(f"建立主視窗 (Base URL: {base_url})")
         from backend.core.config_manager import ConfigManager
         config_manager = ConfigManager()
-        self.home_window = HomeWindow(base_url, config_manager=config_manager, on_open_subtitle=self.open_subtitle_window)
+        self.home_window = HomeWindow(
+            base_url, config_manager=config_manager, on_open_subtitle=self.open_subtitle_window,
+            engine=self.webview_engine, backend_port=self.backend_port,
+            frontend_port=self.frontend_port if self.dev_mode else None, token=self.admin_token,
+        )
         self.home_window.bridge.appUpdateRequested.connect(self._apply_app_update)
         
         # 連接視窗關閉信號到 cleanup
@@ -276,6 +281,11 @@ class UI2Application:
     def cleanup(self):
         """清理資源"""
         logger.info("清理資源...")
+        if self.home_window is not None:
+            try:
+                self.home_window.close_webview()
+            except RuntimeError:
+                pass
 
         if self.subtitle_sse_client is not None:
             self.subtitle_sse_client.stop()
@@ -335,7 +345,10 @@ class UI2Application:
         use_web_subtitle = os.environ.get("STREAM_TRANSLATOR_USE_WEB_SUBTITLE", "").strip() == "1"
         if use_web_subtitle:
             logger.warning("浮動字幕使用舊 WebView fallback")
-            self.subtitle_window = FloatingSubtitleWindow(self.base_url, config_manager)
+            self.subtitle_window = FloatingSubtitleWindow(
+                self.base_url, config_manager,
+                on_open_settings=self._open_native_subtitle_settings_window,
+            )
         else:
             logger.info("浮動字幕使用原生 Qt QPainter renderer")
             self.subtitle_window = NativeSubtitleWindow(
@@ -368,7 +381,7 @@ class UI2Application:
     def _notify_subtitle_passthrough_changed(self, enabled: bool) -> None:
         if self.home_window is not None:
             value = "true" if enabled else "false"
-            self.home_window.web_view.page().runJavaScript(
+            self.home_window.run_javascript(
                 f"window.dispatchEvent(new CustomEvent('native-subtitle-passthrough', {{detail: {value}}}));"
             )
 
@@ -386,36 +399,40 @@ class UI2Application:
             self.subtitle_window = None
 
     def _open_native_subtitle_settings_window(self):
-        """由原生字幕視窗開啟獨立的字幕外觀設定視窗。"""
-        if self.subtitle_window is None:
-            return
-        if self.subtitle_settings_window is None:
-            self.subtitle_settings_window = SubtitleSettingsWindow(
-                self.base_url,
-                on_settings_updated=self._apply_native_subtitle_settings,
-            )
-            self.subtitle_settings_window.destroyed.connect(
-                lambda: setattr(self, 'subtitle_settings_window', None)
-            )
-        self.subtitle_settings_window.show()
-        self.subtitle_settings_window.raise_()
-        self.subtitle_settings_window.activateWindow()
-
-    def _apply_native_subtitle_settings(self, payload: str):
-        """將獨立設定彈窗的更新送到目前仍存在的原生字幕視窗。"""
-        if isinstance(self.subtitle_window, NativeSubtitleWindow):
-            self.subtitle_window.update_settings_json(payload)
-
-    def _stop_translation_from_subtitle(self):
-        """由原生字幕控制列停止目前所有翻譯任務。"""
+        """顯示主視窗的字幕外觀頁。"""
         if self.home_window is None:
             return
-        self.home_window.web_view.page().runJavaScript(
-            "fetch('/api/translation/status').then(r => r.json()).then(data => "
-            "Promise.all((data.tasks || []).map(task => "
-            "fetch('/api/translation/stop/' + task.task_id, { method: 'DELETE' })"
-            "))).catch(error => console.error('停止翻譯失敗', error));"
+        if self.home_window.isMinimized():
+            self.home_window.showNormal()
+        else:
+            self.home_window.show()
+        self.home_window.raise_()
+        self.home_window.activateWindow()
+        self.home_window.run_javascript(
+            "window.dispatchEvent(new Event('native-open-subtitle-settings'));"
         )
+
+    def _stop_translation_from_subtitle(self):
+        """背景執行已驗證的後端請求，避免阻塞 Qt。"""
+        backend_url = f"http://127.0.0.1:{self.backend_port}"
+        token = self.admin_token
+        def stop():
+            try:
+                import requests
+                from urllib.parse import quote
+                headers = {TOKEN_HEADER: token}
+                response = requests.get(f"{backend_url}/api/translation/status", headers=headers, timeout=5)
+                response.raise_for_status()
+                for task in response.json().get("tasks", []):
+                    try:
+                        task_id = quote(str(task["task_id"]), safe="")
+                        result = requests.delete(f"{backend_url}/api/translation/stop/{task_id}", headers=headers, timeout=5)
+                        result.raise_for_status()
+                    except Exception:
+                        logger.exception("停止翻譯任務失敗")
+            except Exception:
+                logger.exception("讀取翻譯任務失敗")
+        threading.Thread(target=stop, name="subtitle-stop", daemon=True).start()
 
     def _get_reserved_ports(self) -> set:
         """從設定檔讀取已被其他服務占用的端口，以避免衝突"""
@@ -514,6 +531,7 @@ def main():
         action='store_true',
         help='停用 Windows DirectComposition，供顯示相容性測試'
     )
+    parser.add_argument("--webview-engine", help="主視窗引擎：webview2 或 qtwebengine")
     args = parser.parse_args()
 
     if args.backend:
@@ -532,7 +550,8 @@ def main():
         )
         disable_webview_gpu = apply_webview_render_mode(render_mode, args)
 
-        app = UI2Application(dev_mode=dev_mode, disable_gpu=disable_webview_gpu)
+        app = UI2Application(dev_mode=dev_mode, disable_gpu=disable_webview_gpu,
+                             webview_engine=resolve_engine(args, read_configured_engine(settings.CONFIG_FILE)))
         exit_code = app.run()
         app.cleanup()
         sys.exit(exit_code)

@@ -54,10 +54,11 @@ async function bootstrap() {
     const isQtWebView = !!(window as any).qt
         || window.location.protocol === 'qrc:'
         || navigator.userAgent.includes('QtWebEngine');
-    if (isQtWebView) {
+    const isWebView2 = !!(window as any).__FW_WEBVIEW2__;
+    if (isQtWebView || isWebView2) {
         document.documentElement.classList.add('fw-desktop-webview');
         try {
-            await Promise.race([
+            if (!isWebView2) await Promise.race([
                 loadQtWebChannel(),
                 new Promise<void>((resolve) => window.setTimeout(resolve, 900)),
             ]);

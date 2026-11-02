@@ -84,8 +84,9 @@ def test_url_precheck_prefers_bundled_runtime_and_node_over_stale_path(monkeypat
     monkeypatch.setattr(source_checks, "run_external", run)
     result = source_checks.check_url("https://example.com/live")
     assert result.status == "ready"
-    assert observed["command"][:6] == [str(runtime), "-I", "-m", "yt_dlp", "--js-runtimes", f"node:{node}"]
+    assert observed["command"][:8] == [str(runtime), "-I", "-X", "utf8", "-m", "yt_dlp", "--js-runtimes", f"node:{node}"]
     assert observed["options"]["timeout"] == 20
+    assert observed["options"]["encoding"] == "utf-8" and observed["options"]["errors"] == "replace"
 
 
 def test_url_command_addon_keeps_node_arguments(monkeypatch, tmp_path):

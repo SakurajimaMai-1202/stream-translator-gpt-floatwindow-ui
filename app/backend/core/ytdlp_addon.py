@@ -17,6 +17,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 
+from backend.core.external_process import run_external
 from backend.core.http_downloader import HttpDownloader
 from backend.core.portable_paths import get_app_root
 from backend.core.reading_addon_installer import _remove_scratch
@@ -56,9 +57,10 @@ def _runtime_python():
 
 
 def _run(command, timeout):
-    return subprocess.run(command, capture_output=True, text=True, encoding='utf-8',
-                          errors='replace', timeout=timeout,
-                          creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    # Same launcher as the engine, so the smoke test sees the environment the engine will.
+    return run_external(command, capture_output=True, text=True, encoding='utf-8',
+                        errors='replace', timeout=timeout,
+                        creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
 
 
 def bundled_version():
@@ -122,8 +124,8 @@ def active_addon():
 def ytdlp_command(python):
     addon = active_addon()
     # -I drops PYTHONUTF8; without -X utf8 yt-dlp's stderr uses the console code page.
-    return ([str(python), '-I', '-X', 'utf8', '-c', BOOTSTRAP, str(addon)] if addon
-            else [str(python), '-I', '-m', 'yt_dlp'])
+    prefix = [str(python), '-I', '-X', 'utf8']
+    return prefix + (['-c', BOOTSTRAP, str(addon)] if addon else ['-m', 'yt_dlp'])
 
 
 def apply_ytdlp_addon_environment(env):

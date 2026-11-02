@@ -116,7 +116,8 @@ def check_url(url: str) -> SourceCheckResult:
                        "在進階設定檢查執行環境，或直接啟動後查看取得串流的錯誤。", host=parsed.netloc)
     command.extend(["--no-playlist", "--skip-download", "--dump-single-json", url.strip()])
     try:
-        completed = run_external(command, capture_output=True, text=True, timeout=20, check=False,
+        completed = run_external(command, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                   timeout=20, check=False,
                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except subprocess.TimeoutExpired:
         return _result("url", started, "error", "resolve", "網址解析逾時",

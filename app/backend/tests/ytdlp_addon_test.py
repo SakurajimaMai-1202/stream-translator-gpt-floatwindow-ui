@@ -93,7 +93,7 @@ def test_pointer_traversal_and_incomplete(installation):
 def test_newer_bundled_ignores_addon(installation, monkeypatch):
     monkeypatch.setattr(addon, 'bundled_version', lambda: '2026.11.01')
     assert addon.active_addon() is None
-    assert addon.ytdlp_command('python') == ['python', '-I', '-m', 'yt_dlp']
+    assert addon.ytdlp_command('python') == ['python', '-I', '-X', 'utf8', '-m', 'yt_dlp']
     monkeypatch.setattr(addon, 'bundled_version', lambda: None)
     assert addon.active_addon() == installation.old
 
@@ -224,7 +224,7 @@ def test_bundled_version_cached_runtime_only(monkeypatch):
         assert command[:3] == ['runtime-python', '-I', '-c']
         assert kwargs['timeout'] == 20
         return SimpleNamespace(returncode=0, stdout='2026.10.26\n')
-    monkeypatch.setattr(addon.subprocess, 'run', run)
+    monkeypatch.setattr(addon, 'run_external', run)
     assert addon.bundled_version() == addon.bundled_version() == '2026.10.26'
     assert len(calls) == 1
 
@@ -240,7 +240,7 @@ def test_bundled_failure_retries_later_and_frozen_gui_never_spawned(monkeypatch,
     def forbidden(*args, **kwargs):
         calls.append(args)
         raise AssertionError('must never spawn the GUI')
-    monkeypatch.setattr(addon.subprocess, 'run', forbidden)
+    monkeypatch.setattr(addon, 'run_external', forbidden)
     assert addon.bundled_version() is None
     assert addon._bundled is None and addon._bundled_retry_at > 0
     assert not calls

@@ -152,6 +152,10 @@ def _build_ytdlp_command(url: str,
     return cmd
 
 
+# Deliberately duplicated: the engine package must not import backend.
+YTDLP_BOOTSTRAP = "import sys;sys.path.insert(0,sys.argv.pop(1));sys.argv[0]='yt-dlp';import yt_dlp;yt_dlp.main()"
+
+
 def _resolve_ytdlp_command() -> list[str]:
     """解析可用的 yt-dlp 呼叫方式。
 
@@ -163,6 +167,10 @@ def _resolve_ytdlp_command() -> list[str]:
     打包版必須優先使用 runtime 內已驗證的版本，避免被使用者電腦
     PATH 中較舊的全域 yt-dlp.exe 覆蓋。
     """
+    addon = os.environ.get('STREAM_TRANSLATOR_YTDLP_ADDON', '')
+    if addon and (Path(addon) / 'yt_dlp' / '__main__.py').is_file():
+        # -I drops PYTHONUTF8; without -X utf8 yt-dlp's stderr uses the console code page.
+        return [sys.executable, '-I', '-X', 'utf8', '-c', YTDLP_BOOTSTRAP, addon]
     if importlib.util.find_spec('yt_dlp') is not None:
         return [sys.executable, '-m', 'yt_dlp']
 

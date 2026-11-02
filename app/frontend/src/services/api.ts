@@ -318,6 +318,22 @@ export const runtimeApi = {
       || `stream-translator-logs-${new Date().toISOString().replace(/[:.]/g, '-')}.zip`;
     return { blob: response.data, filename };
   },
+  async getYtDlpStatus(): Promise<YtDlpStatus> {
+    const response = await axios.get(`${API_BASE}/runtime/ytdlp`);
+    return response.data.data;
+  },
+  async checkYtDlp(): Promise<YtDlpStatus> {
+    const response = await axios.post(`${API_BASE}/runtime/ytdlp/check`, {});
+    return response.data.data;
+  },
+  async updateYtDlp(): Promise<YtDlpStatus> {
+    const response = await axios.post(`${API_BASE}/runtime/ytdlp/update`, {});
+    return response.data.data;
+  },
+  async restoreYtDlp(): Promise<YtDlpStatus> {
+    const response = await axios.post(`${API_BASE}/runtime/ytdlp/restore`, {});
+    return response.data.data;
+  },
   async getAppUpdateStatus(): Promise<AppUpdateStatus> {
     const response = await axios.get(`${API_BASE}/runtime/app-update`);
     return response.data.data || response.data;
@@ -339,6 +355,16 @@ export const runtimeApi = {
     return response.data.data || response.data;
   }
 };
+
+export interface YtDlpStatus {
+  bundled_version: string | null;
+  active_version: string | null;
+  latest_version: string | null;
+  update_available: boolean;
+  state: 'idle' | 'checking' | 'downloading' | 'installing' | 'error';
+  progress: number;
+  error: string | null;
+}
 
 export interface AppUpdateStatus {
   status: string;

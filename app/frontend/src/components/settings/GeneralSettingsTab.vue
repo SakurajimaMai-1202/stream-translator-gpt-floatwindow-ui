@@ -1,11 +1,41 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import UiSelect, { type UiSelectOption } from '../UiSelect.vue';
 import axios from 'axios';
-import { serverApi } from '../../services/api';
+import { serverApi, runtimeApi, type YtDlpStatus } from '../../services/api';
 import { useSettingsContext } from '../../composables/settings/settingsContext';
 
 const { localConfig, sharingLanAddresses, copiedSharingUrl, appUpdateStatus, appUpdateBusy, checkAppUpdate, downloadAppUpdate, cancelAppUpdate, applyAppUpdate, testingGpt, testingGemini, testConnection } = useSettingsContext();
+
+const ytdlpStatus = ref<YtDlpStatus | null>(null);
+const ytdlpRequest = ref(false);
+const ytdlpError = ref('');
+const ytdlpBusy = computed(() => ytdlpRequest.value || ['checking', 'downloading', 'installing'].includes(ytdlpStatus.value?.state || ''));
+let ytdlpTimer: ReturnType<typeof setTimeout> | undefined;
+let ytdlpDisposed = false;
+
+async function ytdlpAction(action: () => Promise<YtDlpStatus>) {
+  if (ytdlpTimer) clearTimeout(ytdlpTimer);
+  ytdlpRequest.value = true;
+  ytdlpError.value = '';
+  try {
+    const status = await action();
+    if (!ytdlpDisposed) ytdlpStatus.value = status;
+  } catch (error) {
+    const detail = axios.isAxiosError(error) ? error.response?.data?.detail : '';
+    ytdlpError.value = typeof detail === 'string' && detail ? detail : '無法取得 yt-dlp 更新狀態，請稍後再試。';
+  } finally {
+    ytdlpRequest.value = false;
+    if (!ytdlpDisposed && ['checking', 'downloading', 'installing'].includes(ytdlpStatus.value?.state || '')) {
+      ytdlpTimer = setTimeout(() => { void ytdlpAction(runtimeApi.getYtDlpStatus); }, 800);
+    }
+  }
+}
+onMounted(() => { void ytdlpAction(runtimeApi.getYtDlpStatus); });
+onUnmounted(() => {
+  ytdlpDisposed = true;
+  if (ytdlpTimer) clearTimeout(ytdlpTimer);
+});
 
 const sharingHost = computed(() => {
   const browserHost = window.location.hostname;
@@ -102,6 +132,34 @@ const logLevelOptions: UiSelectOption[] = [
                 <pre class="mt-3 whitespace-pre-wrap break-words text-xs leading-6 text-white/60 font-sans">{{ appUpdateStatus.release_notes }}</pre>
               </details>
               <p class="text-xs text-white/40">只會安裝相同 Profile 的 App Update；套用前會備份 config、術語、ASR 修正與 Cookies，模型、輸出與日誌不會被覆蓋。</p>
+            </div>
+
+            <div class="rounded-xl border border-blue-500/25 bg-blue-500/10 p-5 space-y-4">
+              <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div>
+                  <h3 class="text-lg font-semibold text-blue-200">yt-dlp</h3>
+                  <p class="text-sm text-white/55 mt-1">
+                    目前 {{ ytdlpStatus?.active_version || '—' }} · 內建 {{ ytdlpStatus?.bundled_version || '—' }}
+                    <template v-if="ytdlpStatus?.latest_version"> → 最新 {{ ytdlpStatus.latest_version }}</template>
+                  </p>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                  <button @click="ytdlpAction(runtimeApi.checkYtDlp)" :disabled="ytdlpBusy"
+                    class="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 font-semibold">檢查更新</button>
+                  <button v-if="ytdlpStatus?.update_available" @click="ytdlpAction(runtimeApi.updateYtDlp)" :disabled="ytdlpBusy"
+                    class="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 font-semibold">更新</button>
+                  <button v-if="ytdlpStatus?.active_version && ytdlpStatus.active_version !== ytdlpStatus.bundled_version"
+                    @click="ytdlpAction(runtimeApi.restoreYtDlp)" :disabled="ytdlpBusy"
+                    class="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-40 font-semibold">還原內建版本</button>
+                </div>
+              </div>
+              <div v-if="ytdlpBusy" class="space-y-2">
+                <div class="h-2 rounded-full bg-white/10 overflow-hidden"><div class="h-full bg-cyan-400" :style="{ width: `${Math.max(2, (ytdlpStatus?.progress || 0) * 100)}%` }"></div></div>
+                <p class="text-xs text-white/55">{{ Math.round((ytdlpStatus?.progress || 0) * 100) }}%</p>
+              </div>
+              <p v-if="ytdlpStatus?.latest_version && !ytdlpStatus.update_available && ytdlpStatus.state === 'idle'" class="text-sm text-emerald-300">目前已是最新版。</p>
+              <p v-if="ytdlpError || ytdlpStatus?.error" class="text-sm text-red-300 break-words">{{ ytdlpError || ytdlpStatus?.error }}</p>
+              <p class="text-xs text-white/40">不需要更新整個程式；下載後會驗證 SHA-256，下次開始翻譯時生效。</p>
             </div>
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">

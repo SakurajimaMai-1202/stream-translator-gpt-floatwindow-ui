@@ -20,6 +20,7 @@ from .audio_getter import (
     LocalFileAudioGetter,
     DeviceAudioGetter,
     _append_site_specific_ytdlp_args,
+    _resolve_ytdlp_command,
     _resolve_cookie_file,
 )
 from .audio_slicer import AudioSlicer
@@ -1240,7 +1241,7 @@ def cli():
         if args.get('loopback') or url.lower() == 'loopback':
             print(f'{ERROR}--list_format 需要指定有效的 URL 參數（不能是 loopback 模式）。')
             sys.exit(1)
-        cmd = ['yt-dlp', url, '-F']
+        cmd = _resolve_ytdlp_command() + [url, '-F']
         _append_site_specific_ytdlp_args(cmd, url)
         cookie_file = _resolve_cookie_file(url, args['cookies'])
         if cookie_file:

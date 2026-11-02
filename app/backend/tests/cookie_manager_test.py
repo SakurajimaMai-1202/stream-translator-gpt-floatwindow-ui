@@ -77,8 +77,11 @@ def test_export_platform_cookies_uses_managed_path_and_filters(monkeypatch, tmp_
     monkeypatch.setattr(settings, "CONFIG_FILE", config_path)
     monkeypatch.setattr(cookie_manager, "_resolve_runtime_python", lambda: runtime_python)
 
+    monkeypatch.setattr(cookie_manager, "active_addon", lambda: tmp_path / "addon")
+
     def fake_run(command, **_kwargs):
-        exported = Path(command[-1])
+        assert command[-1] == str(tmp_path / "addon")
+        exported = Path(command[-2])
         exported.write_text(
             "# Netscape HTTP Cookie File\n"
             ".youtube.com\tTRUE\t/\tTRUE\t0\tSID\tyoutube-secret\n"
@@ -167,3 +170,23 @@ def test_import_platform_cookie_file_uses_managed_destination(monkeypatch, tmp_p
     assert result["cookie_count"] == 1
     assert "youtube-secret" in destination.read_text(encoding="utf-8")
     assert "tiktok-secret" not in destination.read_text(encoding="utf-8")
+
+
+def test_browser_export_script_inserts_addon_before_import(tmp_path):
+    import sys
+    package = tmp_path / 'yt_dlp'
+    package.mkdir()
+    (package / '__init__.py').write_text('', encoding='utf-8')
+    (package / 'cookies.py').write_text(
+        'from pathlib import Path\n'
+        'class Jar:\n'
+        '    def save(self, output, **kwargs): Path(output).write_text("fake")\n'
+        'def extract_cookies_from_browser(browser, profile=None):\n'
+        '    assert browser == "edge" and profile == "Profile 1"\n'
+        '    return Jar()\n', encoding='utf-8')
+    output = tmp_path / 'cookies.txt'
+    result = subprocess.run([sys.executable, '-I', '-c', cookie_manager._BROWSER_EXPORT_SCRIPT,
+                             'edge', 'Profile 1', str(output), str(tmp_path)],
+                            capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+    assert output.read_text() == 'fake'

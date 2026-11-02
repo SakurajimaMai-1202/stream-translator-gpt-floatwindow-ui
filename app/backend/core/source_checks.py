@@ -9,6 +9,7 @@ import sys
 import time
 import uuid
 from dataclasses import asdict, dataclass
+from backend.core.ytdlp_addon import ytdlp_command
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlparse
@@ -92,7 +93,7 @@ def _resolve_url_command() -> list[str] | None:
         getattr(sys, "frozen", False)
         and runtime_python.resolve() == Path(sys.executable).resolve()
     ):
-        command = [str(runtime_python), "-I", "-m", "yt_dlp"]
+        command = ytdlp_command(runtime_python)
         for root in (runtime_python.parent, runtime_python.parent.parent):
             node = root / "_js_runtime" / "node.exe"
             if node.is_file():

@@ -600,6 +600,8 @@ class TranslationContext:
             env['STREAM_TRANSLATOR_ASR_CORRECTION_LOG_DIR'] = os.environ.get('STREAM_TRANSLATOR_ASR_CORRECTION_LOG_DIR', '').strip() or str(resolve_log_dir())
             from backend.core.reading_addon_installer import apply_reading_addon_environment
             apply_reading_addon_environment(env)
+            from backend.core.ytdlp_addon import apply_ytdlp_addon_environment
+            await asyncio.to_thread(apply_ytdlp_addon_environment, env)
             env['STREAM_TRANSLATOR_LOG_DIR'] = str(resolve_log_dir())
             env['PYTHONIOENCODING'] = 'utf-8'
             env['PYTHONUTF8'] = '1'
@@ -622,7 +624,8 @@ class TranslationContext:
             
             url = cmd[-1] if cmd else ""
             config_args = cmd[:-1] if cmd else []
-            process_signature = config_args + ["__HF_HOME__", env.get("HF_HOME", "")]
+            process_signature = config_args + ["__HF_HOME__", env.get("HF_HOME", ""),
+                                               "__YTDLP_ADDON__", env.get("STREAM_TRANSLATOR_YTDLP_ADDON", "")]
 
             global persistent_process, persistent_config_args
             reused = False

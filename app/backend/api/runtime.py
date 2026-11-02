@@ -13,6 +13,7 @@ from backend.core.runtime_status import build_runtime_status
 from backend.core.hardware_detector import detect_gpus
 from backend.core.cpu_asr_sidecar_manager import cpu_asr_sidecar_manager
 from backend.core.app_update_manager import app_update_manager
+from backend.core.ytdlp_addon import ytdlp_addon_manager
 
 from backend.core.admin_auth import get_admin_token
 from backend.core.config_secrets import SECRET_KEYS
@@ -252,6 +253,39 @@ async def export_runtime_logs():
         })
     except Exception as exc:
         raise HTTPException(status_code=500, detail="匯出 Log 失敗") from exc
+
+
+@router.get("/ytdlp")
+async def get_ytdlp_status():
+    return {"success": True, "data": await asyncio.to_thread(ytdlp_addon_manager.status)}
+
+
+@router.post("/ytdlp/check")
+async def check_ytdlp():
+    try:
+        return {"success": True, "data": await asyncio.to_thread(ytdlp_addon_manager.check)}
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+async def _change_ytdlp(action):
+    from backend.core.translator import active_translations
+    if any(context.running for context in active_translations.values()):
+        raise HTTPException(status_code=409, detail="請先停止翻譯再更新 yt-dlp。")
+    try:
+        return {"success": True, "data": await asyncio.to_thread(action)}
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/ytdlp/update")
+async def update_ytdlp():
+    return await _change_ytdlp(ytdlp_addon_manager.begin)
+
+
+@router.post("/ytdlp/restore")
+async def restore_ytdlp():
+    return await _change_ytdlp(ytdlp_addon_manager.restore_bundled)
 
 
 @router.get("/app-update")

@@ -86,3 +86,16 @@ def test_url_precheck_prefers_bundled_runtime_and_node_over_stale_path(monkeypat
     assert result.status == "ready"
     assert observed["command"][:6] == [str(runtime), "-I", "-m", "yt_dlp", "--js-runtimes", f"node:{node}"]
     assert observed["options"]["timeout"] == 20
+
+
+def test_url_command_addon_keeps_node_arguments(monkeypatch, tmp_path):
+    runtime = tmp_path / '_runtime/python.exe'
+    runtime.parent.mkdir()
+    runtime.touch()
+    node = tmp_path / '_js_runtime/node.exe'
+    node.parent.mkdir()
+    node.touch()
+    monkeypatch.setattr(source_checks, '_resolve_runtime_python', lambda: runtime)
+    prefix = [str(runtime), '-I', '-c', 'bootstrap', 'addon']
+    monkeypatch.setattr(source_checks, 'ytdlp_command', lambda python: prefix.copy())
+    assert source_checks._resolve_url_command() == prefix + ['--js-runtimes', f'node:{node}']

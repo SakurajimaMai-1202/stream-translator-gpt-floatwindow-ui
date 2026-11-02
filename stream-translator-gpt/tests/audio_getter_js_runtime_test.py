@@ -167,3 +167,15 @@ def test_youtube_stream_reconnects_after_audio_stall(monkeypatch):
     # S6: EOF flushes the tail immediately, before the end-of-stream sentinel.
     assert output.get() is AUDIO_STREAM_GAP
     assert output.get() is None
+
+
+def test_ytdlp_addon_command_and_unset_fallback(monkeypatch, tmp_path):
+    monkeypatch.setattr(audio_getter.importlib.util, 'find_spec', lambda name: object())
+    monkeypatch.delenv('STREAM_TRANSLATOR_YTDLP_ADDON', raising=False)
+    assert audio_getter._resolve_ytdlp_command() == [audio_getter.sys.executable, '-m', 'yt_dlp']
+    monkeypatch.setenv('STREAM_TRANSLATOR_YTDLP_ADDON', str(tmp_path))
+    assert audio_getter._resolve_ytdlp_command() == [audio_getter.sys.executable, '-m', 'yt_dlp']
+    (tmp_path / 'yt_dlp').mkdir()
+    (tmp_path / 'yt_dlp/__main__.py').touch()
+    assert audio_getter._resolve_ytdlp_command() == [
+        audio_getter.sys.executable, '-I', '-X', 'utf8', '-c', audio_getter.YTDLP_BOOTSTRAP, str(tmp_path)]

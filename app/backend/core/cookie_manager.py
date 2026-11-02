@@ -7,6 +7,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from backend.config import settings
+from backend.core.ytdlp_addon import active_addon
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,8 @@ SUPPORTED_BROWSERS = {"chrome", "edge", "firefox", "brave", "chromium"}
 
 _BROWSER_EXPORT_SCRIPT = r"""
 import sys
+if sys.argv[4]:
+    sys.path.insert(0, sys.argv[4])
 from yt_dlp.cookies import extract_cookies_from_browser
 
 browser, profile, output = sys.argv[1:4]
@@ -92,8 +95,9 @@ def _resolve_runtime_python() -> Path:
     candidates.extend([
         settings.BASE_DIR / "build-runtime-cache" / "python.exe",
         settings.BASE_DIR / "build-runtime-cache" / "cpu-runtime" / "python.exe",
-        Path(sys.executable),
     ])
+    if not getattr(sys, "frozen", False):
+        candidates.append(Path(sys.executable))
     for candidate in candidates:
         if candidate.is_file():
             return candidate
@@ -174,6 +178,7 @@ def export_platform_cookies(platform: str, browser: str, profile: str = "") -> d
                 normalized_browser,
                 str(profile or "").strip(),
                 str(exported),
+                str(active_addon() or ""),
             ],
             capture_output=True,
             text=True,

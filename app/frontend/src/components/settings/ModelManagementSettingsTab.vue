@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { asrModelLabel } from '../../utils/asrModelLabels';
 import { defineAsyncComponent } from 'vue';
 import { useSettingsTabBindings } from '../../composables/settings/settingsContext';
 const AsrModelGroup = defineAsyncComponent(() => import('../AsrModelGroup.vue'));
@@ -147,8 +148,9 @@ const {
               <div class="space-y-3">
                 <div v-for="modelId in qwenModelList" :key="`qwen-${modelId}`" class="p-4 rounded-lg bg-white/5 border border-white/10">
                   <div class="flex items-center justify-between gap-4">
-                    <div>
-                      <div class="text-white font-semibold">{{ modelId }}</div>
+                    <div class="min-w-0 flex-1">
+                      <div class="text-white font-semibold break-all">{{ asrModelLabel(modelId) }}</div>
+                      <div v-if="asrModelLabel(modelId) !== modelId" class="text-xs text-white/50 mt-1 break-all">{{ modelId }}</div>
                       <div :class="['text-sm mt-1', getModelStatusClass('qwen3-asr', modelId)]">
                         {{ getModelStatusText('qwen3-asr', modelId) }}
                       </div>
@@ -156,7 +158,7 @@ const {
                     <button
                       @click="startModelDownload('qwen3-asr', modelId)"
                       :disabled="!canStartDownload('qwen3-asr', modelId)"
-                      class="px-4 py-2 rounded-lg font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed bg-blue-600 hover:bg-blue-700 text-white"
+                      class="shrink-0 px-4 py-2 rounded-lg font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed bg-blue-600 hover:bg-blue-700 text-white"
                     >
                       {{ modelDownloadStore.isDownloaded('qwen3-asr', modelId) ? '已下載' : '預下載' }}
                     </button>
@@ -179,8 +181,9 @@ const {
               <div class="space-y-3">
                 <div v-for="modelId in senseVoiceModelList" :key="`sensevoice-${modelId}`" class="p-4 rounded-lg bg-white/5 border border-white/10">
                   <div class="flex items-center justify-between gap-4">
-                    <div>
-                      <div class="text-white font-semibold">{{ modelId }}</div>
+                    <div class="min-w-0 flex-1">
+                      <div class="text-white font-semibold break-all">{{ asrModelLabel(modelId) }}</div>
+                      <div v-if="asrModelLabel(modelId) !== modelId" class="text-xs text-white/50 mt-1 break-all">{{ modelId }}</div>
                       <div class="text-white/50 text-xs mt-1">CPU capable; ROCm remains experimental until AMD validation.</div>
                       <div :class="['text-sm mt-1', getModelStatusClass('sensevoice', modelId)]">
                         {{ getModelStatusText('sensevoice', modelId) }}
@@ -189,7 +192,7 @@ const {
                     <button
                       @click="startModelDownload('sensevoice', modelId)"
                       :disabled="!canStartDownload('sensevoice', modelId)"
-                      class="px-4 py-2 rounded-lg font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed bg-blue-600 hover:bg-blue-700 text-white"
+                      class="shrink-0 px-4 py-2 rounded-lg font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed bg-blue-600 hover:bg-blue-700 text-white"
                     >
                       {{ modelDownloadStore.isDownloaded('sensevoice', modelId) ? '已下載' : '預下載' }}
                     </button>
@@ -212,8 +215,9 @@ const {
               <div class="space-y-3">
                 <div v-for="modelId in funAsrModelList" :key="`fun-asr-${modelId}`" class="p-4 rounded-lg bg-white/5 border border-white/10">
                   <div class="flex items-center justify-between gap-4">
-                    <div>
-                      <div class="text-white font-semibold">{{ modelId }}</div>
+                    <div class="min-w-0 flex-1">
+                      <div class="text-white font-semibold break-all">{{ asrModelLabel(modelId) }}</div>
+                      <div v-if="asrModelLabel(modelId) !== modelId" class="text-xs text-white/50 mt-1 break-all">{{ modelId }}</div>
                       <div class="text-white/50 text-xs mt-1">
                         {{ modelId.includes('-MLT-') ? '31 語言模型' : '中英日與中文方言模型' }}
                       </div>
@@ -224,7 +228,7 @@ const {
                     <button
                       @click="startModelDownload('fun-asr-nano', modelId)"
                       :disabled="!canStartDownload('fun-asr-nano', modelId)"
-                      class="px-4 py-2 rounded-lg font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed bg-blue-600 hover:bg-blue-700 text-white"
+                      class="shrink-0 px-4 py-2 rounded-lg font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed bg-blue-600 hover:bg-blue-700 text-white"
                     >
                       {{ modelDownloadStore.isDownloaded('fun-asr-nano', modelId) ? '已下載' : '預下載' }}
                     </button>
@@ -247,8 +251,9 @@ const {
               <div class="space-y-3">
                 <div v-for="modelId in parakeetModelList" :key="`parakeet-${modelId}`" class="p-4 rounded-lg bg-white/5 border border-white/10">
                   <div class="flex items-center justify-between gap-4">
-                    <div>
-                      <div class="text-white font-semibold">{{ modelId }}</div>
+                    <div class="min-w-0 flex-1">
+                      <div class="text-white font-semibold break-all">{{ asrModelLabel(modelId) }}</div>
+                      <div v-if="asrModelLabel(modelId) !== modelId" class="text-xs text-white/50 mt-1 break-all">{{ modelId }}</div>
                       <div class="text-white/50 text-xs mt-1">CUDA experimental；英文／日文依模型固定；官方模型採 CC-BY-4.0，需 NVIDIA NeMo。</div>
                       <div :class="['text-sm mt-1', getModelStatusClass('parakeet-ctc-ja', modelId)]">
                         {{ getModelStatusText('parakeet-ctc-ja', modelId) }}
@@ -257,7 +262,7 @@ const {
                     <button
                       @click="startModelDownload('parakeet-ctc-ja', modelId)"
                       :disabled="!canStartDownload('parakeet-ctc-ja', modelId)"
-                      class="px-4 py-2 rounded-lg font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed bg-blue-600 hover:bg-blue-700 text-white"
+                      class="shrink-0 px-4 py-2 rounded-lg font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed bg-blue-600 hover:bg-blue-700 text-white"
                     >
                       {{ modelDownloadStore.isDownloaded('parakeet-ctc-ja', modelId) ? '已下載' : '預下載' }}
                     </button>
@@ -280,8 +285,9 @@ const {
               <div class="space-y-3">
                 <div v-for="modelId in fasterWhisperModelList" :key="`fw-${modelId}`" class="p-4 rounded-lg bg-white/5 border border-white/10">
                   <div class="flex items-center justify-between gap-4">
-                    <div>
-                      <div class="text-white font-semibold">{{ modelId }}</div>
+                    <div class="min-w-0 flex-1">
+                      <div class="text-white font-semibold break-all">{{ asrModelLabel(modelId) }}</div>
+                      <div v-if="asrModelLabel(modelId) !== modelId" class="text-xs text-white/50 mt-1 break-all">{{ modelId }}</div>
                       <div :class="['text-sm mt-1', getModelStatusClass('faster-whisper', modelId)]">
                         {{ getModelStatusText('faster-whisper', modelId) }}
                       </div>
@@ -289,7 +295,7 @@ const {
                     <button
                       @click="startModelDownload('faster-whisper', modelId)"
                       :disabled="!canStartDownload('faster-whisper', modelId)"
-                      class="px-4 py-2 rounded-lg font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed bg-blue-600 hover:bg-blue-700 text-white"
+                      class="shrink-0 px-4 py-2 rounded-lg font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed bg-blue-600 hover:bg-blue-700 text-white"
                     >
                       {{ modelDownloadStore.isDownloaded('faster-whisper', modelId) ? '已下載' : '預下載' }}
                     </button>
@@ -324,11 +330,12 @@ const {
               <div v-else class="space-y-2">
                 <div v-for="item in managedDownloadedModels" :key="`${item.compute_backend}-${item.engine}-${item.repo_id}`" class="p-3 rounded-lg bg-black/20 border border-white/10">
                   <div class="flex items-center justify-between gap-4">
-                    <div>
-                      <div class="text-white font-medium">{{ item.model_id }}</div>
-                      <div class="text-xs text-white/50 mt-1">{{ item.compute_backend.toUpperCase() }} · {{ item.engine }} · {{ item.repo_id }}</div>
+                    <div class="min-w-0 flex-1">
+                      <div class="text-white font-medium break-all">{{ asrModelLabel(item.model_id) }}</div>
+                      <div v-if="asrModelLabel(item.model_id) !== item.model_id" class="text-xs text-white/50 mt-1 break-all">{{ item.model_id }}</div>
+                      <div class="text-xs text-white/50 mt-1 break-all">{{ item.compute_backend.toUpperCase() }} · {{ item.engine }} · {{ item.repo_id }}</div>
                     </div>
-                    <div class="flex items-center gap-3">
+                    <div class="flex shrink-0 items-center gap-3">
                       <div class="text-sm text-white/70">{{ modelDownloadStore.formatSize(item.size_bytes) }}</div>
                       <button
                         @click="deleteDownloadedModel(item.engine, item.model_id, item.compute_backend)"

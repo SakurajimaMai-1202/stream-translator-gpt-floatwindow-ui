@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { asrModelLabel } from '../../utils/asrModelLabels';
 import { ref, computed, watch } from 'vue';
 import { configApi, translationApi } from '../../services/api';
 import UiSelect, { type UiSelectOption } from '../UiSelect.vue';
@@ -108,7 +109,7 @@ const allTranscriptionEngineOptions: UiSelectOption[] = [
 const whisperModelOptions = computed<UiSelectOption[]>(() =>
   whisperModels
     .filter((model) => allowedFasterWhisperModels.value.includes(model))
-    .map((model) => ({ value: model, label: model }))
+    .map((model) => ({ value: model, label: asrModelLabel(model) }))
 );
 
 const qwen3AsrModelOptions = computed<UiSelectOption[]>(() =>
@@ -116,14 +117,14 @@ const qwen3AsrModelOptions = computed<UiSelectOption[]>(() =>
     .filter((model) => allowedQwen3AsrModels.value.includes(model.value))
     .map((model) => ({
       value: model.value,
-      label: model.label,
+      label: asrModelLabel(model.value),
     }))
 );
 
 const senseVoiceModelOptions = computed<UiSelectOption[]>(() => [
   {
     value: 'iic/SenseVoiceSmall',
-    label: 'SenseVoiceSmall（中／粵／英／日／韓）',
+    label: asrModelLabel('iic/SenseVoiceSmall'),
     disabled: selectedAsrCapability.value?.language_mode !== 'fixed'
       && !isModelLanguageCompatible(
         runtimeCapabilities.value?.asr_model_capabilities,
@@ -210,7 +211,7 @@ const OPENAI_TRANSCRIPTION_MODELS = ['whisper-1', 'gpt-4o-transcribe', 'gpt-4o-m
 const openAiTranscriptionModelOptions = computed<UiSelectOption[]>(() => {
   const current = selectedOpenAiTranscriptionModel.value;
   const models = OPENAI_TRANSCRIPTION_MODELS.includes(current) ? OPENAI_TRANSCRIPTION_MODELS : [...OPENAI_TRANSCRIPTION_MODELS, current];
-  return models.map((model) => ({ value: model, label: model }));
+  return models.map((model) => ({ value: model, label: asrModelLabel(model) }));
 });
 
 const transcriptionEngineOptions = computed<UiSelectOption[]>(() =>

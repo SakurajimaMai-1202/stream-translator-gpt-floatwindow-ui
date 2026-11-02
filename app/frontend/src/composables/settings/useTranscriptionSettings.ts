@@ -1,3 +1,4 @@
+import { asrModelLabel } from '../../utils/asrModelLabels';
 import { computed, type Ref } from 'vue';
 import type { useTranslationStore } from '../../stores/translation';
 import type { UiSelectOption } from '../../components/UiSelect.vue';
@@ -21,12 +22,12 @@ export function useTranscriptionSettings(localConfig: Ref<any>, store: ReturnTyp
   const whisperModelSelectOptions = computed<UiSelectOption[]>(() =>
     allFasterWhisperModels
       .filter(m => allowedFasterWhisperModels.value.includes(m))
-      .map(m => ({ value: m, label: m }))
+      .map(m => ({ value: m, label: asrModelLabel(m) }))
   );
   const allQwen3AsrModelOptions: UiSelectOption[] = [
-    { value: 'Qwen/Qwen3-ASR-1.7B', label: 'Qwen3-ASR-1.7B (推薦)' },
-    { value: 'Qwen/Qwen3-ASR-0.6B', label: 'Qwen3-ASR-0.6B (更快)' },
-    { value: 'jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame', label: 'Qwen3-ASR-1.7B-JA-Anime' },
+    { value: 'Qwen/Qwen3-ASR-1.7B', label: asrModelLabel('Qwen/Qwen3-ASR-1.7B') },
+    { value: 'Qwen/Qwen3-ASR-0.6B', label: asrModelLabel('Qwen/Qwen3-ASR-0.6B') },
+    { value: 'jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame', label: asrModelLabel('jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame') },
   ];
   const qwen3AsrModelOptions = computed<UiSelectOption[]>(() =>
     allQwen3AsrModelOptions
@@ -46,7 +47,7 @@ export function useTranscriptionSettings(localConfig: Ref<any>, store: ReturnTyp
       .filter(model => allowedSenseVoiceModels.value.includes(model))
       .map(model => ({
         value: model,
-        label: 'SenseVoiceSmall（中／粵／英／日／韓）',
+        label: asrModelLabel(model),
         disabled: selectedSettingsAsrCapability.value?.language_mode !== 'fixed'
           && !isModelLanguageCompatible(
             runtimeCapabilities.value?.asr_model_capabilities,
@@ -67,15 +68,7 @@ export function useTranscriptionSettings(localConfig: Ref<any>, store: ReturnTyp
         || (showHaasDisabled && model === HAAS_MODEL_ID))
       .map(model => {
         const needsCpuBackend = showHaasDisabled && model === HAAS_MODEL_ID;
-        const baseLabel = model === HAAS_MODEL_ID
-          ? 'Haas 日文（較準確，僅限 CPU）'
-          : model === 'nvidia/parakeet-tdt-0.6b-v3'
-          ? 'NVIDIA Parakeet TDT 0.6B v3（25 種語言）'
-          : model === 'nvidia/parakeet-tdt_ctc-0.6b-ja'
-          ? 'NVIDIA Parakeet 0.6B（日文）'
-          : model === 'nvidia/parakeet-tdt_ctc-1.1b'
-            ? 'NVIDIA Parakeet 1.1B（英文）'
-            : 'parakeet-ctc-1.1b-ja（日文）';
+        const baseLabel = asrModelLabel(model);
         return {
           value: model,
           label: needsCpuBackend ? `${baseLabel} · 請先把 ASR 運算模式切到 CPU` : baseLabel,
@@ -112,9 +105,7 @@ export function useTranscriptionSettings(localConfig: Ref<any>, store: ReturnTyp
       .filter(model => allowedFunAsrModels.value.includes(model))
       .map(model => ({
         value: model,
-        label: model.endsWith('MLT-Nano-2512')
-          ? 'Fun-ASR MLT Nano（31 種語言）'
-          : 'Fun-ASR Nano（中文／英文／日文）',
+        label: asrModelLabel(model),
         disabled: selectedSettingsAsrCapability.value?.language_mode !== 'fixed'
           && !isModelLanguageCompatible(
             runtimeCapabilities.value?.asr_model_capabilities,

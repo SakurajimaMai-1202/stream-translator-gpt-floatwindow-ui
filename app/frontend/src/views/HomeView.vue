@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { asrModelLabel } from '../utils/asrModelLabels';
 import HomeHeaderStatus from '../components/home/HomeHeaderStatus.vue';
 import HomeUpdateNotice from '../components/home/HomeUpdateNotice.vue';
 import HomeFfmpegNotice from '../components/home/HomeFfmpegNotice.vue';
@@ -209,26 +210,26 @@ watch([selectedProcessTargetKey, urlInput, selectedDeviceIndex], () => { sourceC
 // 模型選擇
 const whisperModels = ['tiny', 'base', 'small', 'medium', 'large-v2', 'large-v3', 'large-v3-turbo'];
 const qwen3AsrModels = [
-  { value: 'Qwen/Qwen3-ASR-1.7B', label: 'Qwen3-ASR-1.7B (推薦)' },
-  { value: 'Qwen/Qwen3-ASR-0.6B', label: 'Qwen3-ASR-0.6B (更快)' },
-  { value: 'jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame', label: 'Qwen3-ASR-1.7B-JA-Anime' }
+  { value: 'Qwen/Qwen3-ASR-1.7B', label: asrModelLabel('Qwen/Qwen3-ASR-1.7B') },
+  { value: 'Qwen/Qwen3-ASR-0.6B', label: asrModelLabel('Qwen/Qwen3-ASR-0.6B') },
+  { value: 'jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame', label: asrModelLabel('jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame') }
 ];
 const legacyQwen3JaModel = 'neosophie/Qwen3-ASR-1.7B-JA';
 const qwen3AnimeModel = 'jaykwok/Qwen3-ASR-1.7B-JA-Anime-Galgame';
 const parakeetModels = [
-  { value: 'nvidia/parakeet-tdt-0.6b-v3', label: 'Parakeet TDT 0.6B v3（CPU INT8・25 語言）' },
-  { value: 'nvidia/parakeet-tdt_ctc-0.6b-ja', label: 'NVIDIA Parakeet 0.6B（日文）' },
-  { value: 'oboroge0/Haas-ja-v1.0-onnx-quantized', label: 'Haas 日文（較準確，僅限 CPU）' },
-  { value: 'nvidia/parakeet-tdt_ctc-1.1b', label: 'NVIDIA Parakeet 1.1B（英文）' },
-  { value: 'grider-transwithai/parakeet-ctc-1.1b-ja', label: 'parakeet-ctc-1.1b-ja（日文）' }
+  { value: 'nvidia/parakeet-tdt-0.6b-v3', label: asrModelLabel('nvidia/parakeet-tdt-0.6b-v3') },
+  { value: 'nvidia/parakeet-tdt_ctc-0.6b-ja', label: asrModelLabel('nvidia/parakeet-tdt_ctc-0.6b-ja') },
+  { value: 'oboroge0/Haas-ja-v1.0-onnx-quantized', label: asrModelLabel('oboroge0/Haas-ja-v1.0-onnx-quantized') },
+  { value: 'nvidia/parakeet-tdt_ctc-1.1b', label: asrModelLabel('nvidia/parakeet-tdt_ctc-1.1b') },
+  { value: 'grider-transwithai/parakeet-ctc-1.1b-ja', label: asrModelLabel('grider-transwithai/parakeet-ctc-1.1b-ja') }
 ];
 const parakeetLanguageForModel = (modelId: string) =>
   modelId === 'oboroge0/Haas-ja-v1.0-onnx-quantized' ? 'ja' : modelId === 'nvidia/parakeet-tdt-0.6b-v3'
     ? 'auto'
     : modelId === 'nvidia/parakeet-tdt_ctc-1.1b' ? 'en' : 'ja';
 const allFunAsrModelOptions: UiSelectOption[] = [
-  { value: 'FunAudioLLM/Fun-ASR-Nano-2512', label: 'Fun-ASR Nano（中／英／日）' },
-  { value: 'FunAudioLLM/Fun-ASR-MLT-Nano-2512', label: 'Fun-ASR MLT Nano（31 語言）' }
+  { value: 'FunAudioLLM/Fun-ASR-Nano-2512', label: asrModelLabel('FunAudioLLM/Fun-ASR-Nano-2512') },
+  { value: 'FunAudioLLM/Fun-ASR-MLT-Nano-2512', label: asrModelLabel('FunAudioLLM/Fun-ASR-MLT-Nano-2512') }
 ];
 
 const selectedAsrModelId = computed(() => {

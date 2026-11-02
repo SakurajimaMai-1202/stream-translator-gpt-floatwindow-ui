@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { asrModelLabel } from '../utils/asrModelLabels';
 import { computed, reactive } from 'vue';
 import { useModelDownloadStore } from '../stores/modelDownload';
 import type { ModelComputeBackend, ModelEngine } from '../services/api';
@@ -100,7 +101,8 @@ function description(modelId: string) {
       <li v-for="modelId in visibleModels" :key="`${engine}-${modelId}`" class="model-item">
         <div class="model-row">
           <div class="model-content">
-            <div class="model-name">{{ modelId }}</div>
+            <div class="model-name">{{ asrModelLabel(modelId) }}</div>
+            <div v-if="asrModelLabel(modelId) !== modelId" class="model-id">{{ modelId }}</div>
             <p v-if="description(modelId)" class="model-description">{{ description(modelId) }}</p>
             <span :class="['model-state', statusClass(modelId)]">{{ statusText(modelId) }}</span>
           </div>
@@ -148,6 +150,7 @@ function description(modelId: string) {
 .model-row { display:flex;align-items:center;justify-content:space-between;gap:1.25rem; }
 .model-content { min-width:0; }
 .model-name { font-size:.9375rem;font-weight:550;line-height:1.5;overflow-wrap:anywhere; }
+.model-id { margin-top:.25rem;font-size:.75rem;line-height:1.5;color:var(--fw-text-secondary);word-break:break-all; }
 .model-description { margin:.25rem 0 0;font-size:.8125rem;line-height:1.55;color:var(--fw-text-secondary);overflow-wrap:anywhere; }
 .model-state { display:inline-block;margin-top:.5rem;font-size:.75rem;line-height:1.4; }
 .is-idle { color:var(--fw-text-secondary); }.is-ready { color:#9bddb9; }.is-error,.download-error { color:#f4b6bb; }.is-active { color:#9abff6; }

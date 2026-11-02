@@ -1,6 +1,7 @@
 """WebView 引擎與安全政策；不載入 Qt、.NET 或 pywebview。"""
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -130,3 +131,22 @@ def webview2_user_data_dir(environ):
     if not environ.get("LOCALAPPDATA"):
         raise RuntimeError("缺少 LOCALAPPDATA，無法建立 WebView2 資料目錄")
     return Path(environ["LOCALAPPDATA"]) / "StreamTranslator" / "WebView2"
+
+
+def bundled_dotnet_files(meipass):
+    """Return only bundled assemblies and loaders that may carry download marks."""
+    root = Path(meipass)
+    return [
+        root / "pythonnet/runtime/Python.Runtime.dll",
+        *sorted((root / "clr_loader/ffi/dlls").rglob("ClrLoader.dll")),
+        root / "webview2_runtime/Microsoft.Web.WebView2.Core.dll",
+        root / "webview2_runtime/runtimes/win-x64/native/WebView2Loader.dll",
+    ]
+
+
+def clear_download_mark(path):
+    """Best effort removal, including on read-only installs."""
+    try:
+        os.remove(f"{path}:Zone.Identifier")
+    except (FileNotFoundError, OSError):
+        logger.debug("Could not remove download mark from %s", path, exc_info=True)

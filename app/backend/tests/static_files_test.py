@@ -57,11 +57,30 @@ def test_spa_fallback_requests(static_root, module_name):
     app = FastAPI()
     app.add_api_route("/{full_path:path}", namespace["spa_fallback"], methods=["GET"])
     with TestClient(app) as client:
-        assert client.get("/file.txt").text == "static content"
+        static_response = client.get("/file.txt")
+        assert static_response.text == "static content"
+        assert "cache-control" not in static_response.headers
+        assert client.get("/index.html").headers["cache-control"] == "no-cache"
         for url in ["/..%2Foutside.txt", "/../outside.txt", "/..%5Coutside.txt",
                     "/C:/outside.txt", "/desktop"]:
             response = client.get(url)
             assert response.status_code == 200
             assert response.text == "SPA index"
+            assert response.headers["cache-control"] == "no-cache"
         if module_name == "public_app.py":
             assert client.get("/api/unknown").status_code == 404
+
+
+def test_main_index_requires_revalidation(static_root):
+    import asyncio
+    from fastapi.responses import FileResponse
+
+    source = Path(__file__).resolve().parents[1] / "main.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    handler = next(node for node in ast.walk(tree)
+                   if isinstance(node, ast.AsyncFunctionDef) and node.name == "serve_index")
+    handler.decorator_list = []
+    namespace = {"index_file": static_root / "index.html", "FileResponse": FileResponse}
+    exec(compile(ast.Module(body=[handler], type_ignores=[]), str(source), "exec"), namespace)
+    response = asyncio.run(namespace["serve_index"]())
+    assert response.headers["cache-control"] == "no-cache"

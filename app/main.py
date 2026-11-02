@@ -292,21 +292,25 @@ class UI2Application:
             self.subtitle_sse_client = None
         
         # 停止 llama server
+        requests = None
         try:
             import requests
-            response = requests.post(
-                f"http://127.0.0.1:{self.backend_port}/api/llama/server/stop",
-                headers={TOKEN_HEADER: self.admin_token},
-                timeout=2
-            )
+            with requests.Session() as session:
+                session.trust_env = False
+                response = session.post(
+                    f"http://127.0.0.1:{self.backend_port}/api/llama/server/stop",
+                    headers={TOKEN_HEADER: self.admin_token},
+                    timeout=2
+                )
             if response.status_code == 200:
                 logger.info("✅ Llama server 已停止")
             else:
                 logger.warning(f"停止 Llama server 回應: {response.status_code}")
-        except requests.exceptions.ConnectionError:
-            logger.debug("Llama server 未執行或後端已關閉")
         except Exception as e:
-            logger.warning(f"停止 Llama server 失敗: {e}")
+            if requests is not None and isinstance(e, requests.exceptions.ConnectionError):
+                logger.debug("Llama server 未執行或後端已關閉")
+            else:
+                logger.warning(f"停止 Llama server 失敗: {e}")
         
         # 停止 backend 和 frontend
         if self.backend:
@@ -402,10 +406,9 @@ class UI2Application:
         """顯示主視窗的字幕外觀頁。"""
         if self.home_window is None:
             return
-        if self.home_window.isMinimized():
-            self.home_window.showNormal()
-        else:
-            self.home_window.show()
+        state = self.home_window.windowState()
+        self.home_window.setWindowState(state & ~Qt.WindowState.WindowMinimized)
+        self.home_window.show()
         self.home_window.raise_()
         self.home_window.activateWindow()
         self.home_window.run_javascript(
@@ -421,15 +424,17 @@ class UI2Application:
                 import requests
                 from urllib.parse import quote
                 headers = {TOKEN_HEADER: token}
-                response = requests.get(f"{backend_url}/api/translation/status", headers=headers, timeout=5)
-                response.raise_for_status()
-                for task in response.json().get("tasks", []):
-                    try:
-                        task_id = quote(str(task["task_id"]), safe="")
-                        result = requests.delete(f"{backend_url}/api/translation/stop/{task_id}", headers=headers, timeout=5)
-                        result.raise_for_status()
-                    except Exception:
-                        logger.exception("停止翻譯任務失敗")
+                with requests.Session() as session:
+                    session.trust_env = False
+                    response = session.get(f"{backend_url}/api/translation/status", headers=headers, timeout=5)
+                    response.raise_for_status()
+                    for task in response.json().get("tasks", []):
+                        try:
+                            task_id = quote(str(task["task_id"]), safe="")
+                            result = session.delete(f"{backend_url}/api/translation/stop/{task_id}", headers=headers, timeout=5)
+                            result.raise_for_status()
+                        except Exception:
+                            logger.exception("停止翻譯任務失敗")
             except Exception:
                 logger.exception("讀取翻譯任務失敗")
         threading.Thread(target=stop, name="subtitle-stop", daemon=True).start()

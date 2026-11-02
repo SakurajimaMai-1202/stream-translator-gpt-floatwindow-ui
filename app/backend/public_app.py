@@ -181,8 +181,8 @@ def mount_static(static_root: Path):
                 raise HTTPException(status_code=404, detail="Not found")
             candidate = resolve_static_file(static_root, full_path)
             if candidate is not None:
-                return FileResponse(candidate)
-            return FileResponse(index_file)
+                return FileResponse(candidate, headers={"Cache-Control": "no-cache"} if candidate == index_file.resolve() else None)
+            return FileResponse(index_file, headers={"Cache-Control": "no-cache"})
 
         logger.info(f"[公開端口] 已掛載前端 SPA: {index_file}")
     else:

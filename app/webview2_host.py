@@ -14,7 +14,8 @@ from PyQt6.QtWidgets import QApplication, QWidget
 
 import ui_perf
 from backend.core.admin_auth import TOKEN_HEADER
-from webview_engine import (BRIDGE_METHODS, build_bridge_script, parse_bridge_message,
+from webview_engine import (BRIDGE_METHODS, build_bridge_script, bundled_dotnet_files,
+                            clear_download_mark, parse_bridge_message,
                             resolve_webview2_dll_dir, url_origin, webview2_user_data_dir)
 
 logger = logging.getLogger(__name__)
@@ -92,6 +93,9 @@ class WebView2Host(QWidget):
                 raise RuntimeError("WebView2 僅支援 Windows")
             if QApplication.instance() is None:
                 raise RuntimeError("WebView2 需要 QApplication")
+            if getattr(sys, "frozen", False):
+                for path in bundled_dotnet_files(sys._MEIPASS):
+                    clear_download_mark(path)
             from pythonnet import load
             load("netfx")
             import clr
@@ -260,7 +264,7 @@ class WebView2Host(QWidget):
         kind = str(event.ProcessFailedKind)
         if "BrowserProcessExited" in kind:
             self._fail("WebView2 瀏覽器程序終止")
-        elif "RenderProcess" in kind:
+        elif kind in ("RenderProcessExited", "FrameRenderProcessExited"):
             now = monotonic()
             self._reloads = [when for when in self._reloads if now - when < 30]
             if len(self._reloads) >= 2:
@@ -268,6 +272,8 @@ class WebView2Host(QWidget):
             else:
                 self._reloads.append(now)
                 self._later(1200, self.core.Reload)
+        else:
+            logger.warning("WebView2 process failure: %s", kind)
 
     def _console(self, sender, event):
         data = json.loads(str(event.ParameterObjectAsJson))

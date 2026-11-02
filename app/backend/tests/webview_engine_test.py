@@ -12,6 +12,7 @@ import pytest
 
 from webview_engine import (
     BRIDGE_METHODS, WEBVIEW_ENGINES, allowed_origins, build_bridge_script,
+    bundled_dotnet_files, clear_download_mark,
     parse_bridge_message, read_configured_engine, resolve_engine,
     resolve_webview2_dll_dir, url_origin, webview2_user_data_dir,
 )
@@ -211,3 +212,61 @@ def test_host_does_not_shadow_qwidget_close():
     host = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "WebView2Host")
     assert not any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
                    and node.name == "close" for node in host.body)
+
+
+def test_bundled_dotnet_files_is_exact_allowlist(tmp_path):
+    expected = {
+        tmp_path / "pythonnet/runtime/Python.Runtime.dll",
+        tmp_path / "clr_loader/ffi/dlls/amd64/ClrLoader.dll",
+        tmp_path / "clr_loader/ffi/dlls/x86/ClrLoader.dll",
+        tmp_path / "webview2_runtime/Microsoft.Web.WebView2.Core.dll",
+        tmp_path / "webview2_runtime/runtimes/win-x64/native/WebView2Loader.dll",
+    }
+    for path in expected | {tmp_path / "other/ClrLoader.dll",
+                            tmp_path / "clr_loader/ffi/dlls/amd64/Other.dll"}:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    assert set(bundled_dotnet_files(tmp_path)) == expected
+    assert len(bundled_dotnet_files(tmp_path)) == len(expected)
+
+
+@pytest.mark.parametrize("error", [None, FileNotFoundError(), OSError("read-only")])
+def test_clear_download_mark_only_removes_stream(tmp_path, monkeypatch, caplog, error):
+    path = tmp_path / "Python.Runtime.dll"
+    path.write_bytes(b"assembly")
+    calls = []
+    def remove(target):
+        calls.append(target)
+        if error is not None:
+            raise error
+    monkeypatch.setattr("webview_engine.os.remove", remove)
+    with caplog.at_level("DEBUG", logger="webview_engine"):
+        clear_download_mark(path)
+    assert calls == [f"{path}:Zone.Identifier"]
+    assert path.read_bytes() == b"assembly"
+    if error is not None:
+        assert caplog.records[-1].levelname == "DEBUG"
+
+
+@pytest.mark.parametrize("kind,reloads", [
+    ("RenderProcessExited", 1), ("FrameRenderProcessExited", 1),
+    ("RenderProcessUnresponsive", 0), ("OtherRenderProcessExited", 0),
+])
+def test_process_failure_reloads_only_exited_renderers(kind, reloads, caplog):
+    from time import monotonic
+    import logging
+
+    source = APP / "webview2_host.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    method = next(node for node in ast.walk(tree)
+                  if isinstance(node, ast.FunctionDef) and node.name == "_process_failed")
+    namespace = {"monotonic": monotonic, "logger": logging.getLogger("process-failure-test")}
+    exec(compile(ast.Module(body=[method], type_ignores=[]), str(source), "exec"), namespace)
+    scheduled = []
+    host = SimpleNamespace(_reloads=[], core=SimpleNamespace(Reload=lambda: None),
+                           _later=lambda *args: scheduled.append(args),
+                           _fail=lambda reason: scheduled.append(reason))
+    namespace["_process_failed"](host, None, SimpleNamespace(ProcessFailedKind=kind))
+    assert len(scheduled) == reloads
+    if not reloads:
+        assert caplog.records[-1].levelname == "WARNING"

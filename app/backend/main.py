@@ -167,16 +167,16 @@ if assets_dir.exists():
 if index_file.exists():
     @app.get("/", include_in_schema=False)
     async def serve_index():
-        return FileResponse(index_file)
+        return FileResponse(index_file, headers={"Cache-Control": "no-cache"})
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def spa_fallback(full_path: str):
         # 嘗試返回靜態檔案
         candidate = resolve_static_file(static_root, full_path)
         if candidate is not None:
-            return FileResponse(candidate)
+            return FileResponse(candidate, headers={"Cache-Control": "no-cache"} if candidate == index_file.resolve() else None)
         # 否則返回 index.html (SPA fallback)
-        return FileResponse(index_file)
+        return FileResponse(index_file, headers={"Cache-Control": "no-cache"})
 else:
     logger.warning(f"前端構建目錄不存在: {static_root}，將無法在生產模式下提供網頁服務。")
 

@@ -71,7 +71,7 @@ export function useTranscriptionSettings(localConfig: Ref<any>, store: ReturnTyp
         const baseLabel = asrModelLabel(model);
         return {
           value: model,
-          label: needsCpuBackend ? `${baseLabel} · 請先把 ASR 運算模式切到 CPU` : baseLabel,
+          label: needsCpuBackend ? `${baseLabel} · 請先把 ASR 執行後端切到 CPU` : baseLabel,
           disabled: needsCpuBackend,
         };
       });

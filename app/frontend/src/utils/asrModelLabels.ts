@@ -13,7 +13,7 @@ const ASR_MODEL_LABELS = new Map<string, string>([
   ['FunAudioLLM/Fun-ASR-Nano-2512', 'Fun-ASR 標準版（中文／英文／日文）'],
   ['FunAudioLLM/Fun-ASR-MLT-Nano-2512', 'Fun-ASR 多語言版（31 種語言）'],
   ['nvidia/parakeet-tdt-0.6b-v3', 'Parakeet 多語言版（25 種歐洲語言）'],
-  ['nvidia/parakeet-tdt_ctc-0.6b-ja', 'Parakeet 日文版（CPU／GPU 皆可用）'],
+  ['nvidia/parakeet-tdt_ctc-0.6b-ja', 'Parakeet 日文版（CPU／NVIDIA GPU）'],
   ['oboroge0/Haas-ja-v1.0-onnx-quantized', 'Haas 日文（較準確，僅限 CPU）'],
   ['nvidia/parakeet-tdt_ctc-1.1b', 'Parakeet 英文版'],
   ['grider-transwithai/parakeet-ctc-1.1b-ja', 'Parakeet 日文舊版（不建議）'],

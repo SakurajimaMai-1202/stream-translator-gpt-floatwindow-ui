@@ -341,6 +341,8 @@ def test_gpt_attempt_raw_output_matches_stripped_validation_text(monkeypatch):
     ("彗星 翻譯成 哈雷彗星\n哈雷彗星很美", False),
     ("  人名一律不翻  \n哈雷彗星很美", False),
     ("第二行提示\n哈雷彗星很美", False),
+    ("口語一點\n哈雷彗星很美", False),
+    ("マリー→瑪麗\n哈雷彗星很美", False),
     ("前面那句的譯文\n哈雷彗星很美", True),
 ])
 def test_attempt_log_drops_output_that_repeats_a_prompt_line(
@@ -351,7 +353,8 @@ def test_attempt_log_drops_output_that_repeats_a_prompt_line(
     task._attempt_validation = MULTILINE
     task._attempt_finish_reason = None
     task._attempt_raw_output = raw_output
-    task._attempt_prompt_text = "〖個人翻譯偏好〗\n譯文要口語\n人名一律不翻\n〖術語〗\n彗星 翻譯成 哈雷彗星"
+    task._attempt_prompt_text = ("〖個人翻譯偏好〗\n譯文要口語\n人名一律不翻\n〖術語〗\n彗星 翻譯成 哈雷彗星\n"
+                                 "3. 【硬性要求】 专名/术语对照: マリー→瑪麗\n4. 【注意】 口語一點")
     client = make_client()
     client.prompt = "第一行提示\n第二行提示"
     request_log.log_attempt(client, task, 300)

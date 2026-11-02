@@ -110,9 +110,9 @@ def _loggable_raw_output(client, task, validation, raw_output):
         return None
     if any(mark in raw_output for mark in _PROMPT_TEXT_MARKS):
         return None
-    prompt_lines = (_text_lines(getattr(task, "_attempt_prompt_text", ""))
-                    | _text_lines(getattr(client, "prompt", "")))
-    if _text_lines(raw_output) & prompt_lines:
+    # Substring, not equality: Index joins a numbered prefix onto each constraint.
+    prompt_text = f'{getattr(task, "_attempt_prompt_text", "")}\n{getattr(client, "prompt", "") or ""}'
+    if any(line in prompt_text for line in _text_lines(raw_output)):
         return None
     return raw_output[:300]
 

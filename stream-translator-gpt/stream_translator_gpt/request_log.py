@@ -12,6 +12,8 @@ import time
 from datetime import datetime
 from urllib.parse import urlsplit
 
+from .translation_policy import PROMPT_LEAKAGE_MARKERS
+
 
 _logger = logging.Logger(__name__, level=logging.INFO)
 _logger.propagate = False
@@ -112,8 +114,12 @@ def log_attempt(client, task, attempt_ms):
                       failed=bool(task.translation_failed),
                       error=validation[0] if validation else getattr(task, "_attempt_error", None))
         if validation:
-            record.update(source=str(task.transcript or "")[:300],
-                          raw_output=str(task._attempt_raw_output or "")[:300])
+            record["source"] = str(task.transcript or "")[:300]
+            raw_output = str(task._attempt_raw_output or "")
+            if ("prompt_leakage" not in validation
+                    and not any(marker in raw_output
+                                for marker in (*PROMPT_LEAKAGE_MARKERS, "</think>"))):
+                record["raw_output"] = raw_output[:300]
         _write(record)
         endpoint = (client.gemini_base_url if client.provider == "gemini" else
                     client.base_url or os.environ.get("OPENAI_BASE_URL"))

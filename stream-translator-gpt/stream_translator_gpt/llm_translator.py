@@ -44,8 +44,12 @@ def _is_task_timeout(task: TranslationTask, timeout: float) -> bool:
 
 def _mark_timeout_latency(task: TranslationTask):
     started_at = task._llm_first_started_at if task._llm_first_started_at is not None else task._llm_latency_started_at
+    finished_at = time.perf_counter()
     if task.llm_latency_ms is None and started_at is not None:
-        task.llm_latency_ms = (time.perf_counter() - started_at) * 1000
+        task.llm_latency_ms = (finished_at - started_at) * 1000
+    retry_started_at = getattr(task, "_llm_retry_started_at", None)
+    if retry_started_at is not None:
+        task.translation_retry_ms = (finished_at - retry_started_at) * 1000
 
 
 class TranslationProvider:
@@ -581,7 +585,6 @@ class LLMClient():
             raw_content = completion.choices[0].message.content
             finish_reason = getattr(completion.choices[0], 'finish_reason', None)
             usage = getattr(completion, 'usage', None)
-            translation_task._attempt_raw_output = raw_content
             translation_task._attempt_finish_reason = finish_reason
             translation_task.translation_prompt_tokens = getattr(usage, 'prompt_tokens', None)
             translation_task.translation_completion_tokens = getattr(usage, 'completion_tokens', None)
@@ -602,13 +605,13 @@ class LLMClient():
                     if not re.search(r'<think>|</think>|【源文】|(?:^|\n)\s*(?:思考过程|推理过程|Let me think)', alternate, re.IGNORECASE):
                         raw_content = alternate
                         content_field = 'reasoning_content_compat'
-            translation_task._attempt_raw_output = raw_content
             translation_content = raw_content
             think_block_stripped = (self.model_family == "index_translate"
                                     and content_field == 'content'
                                     and isinstance(raw_content, str) and '</think>' in raw_content)
             if think_block_stripped:
                 translation_content = raw_content.rsplit('</think>', 1)[1].strip().removeprefix('<think>').strip()
+            translation_task._attempt_raw_output = translation_content
             parsed_translation = parse_translation_output(
                 translation_content,
                 prepared.output_format,
@@ -744,7 +747,8 @@ class LLMClient():
             translation_task.latency_trace.translation_started_at = llm_started_at
         if not first_attempt:
             translation_task.translation_retry_count = max(0, translation_task._translation_attempts - 1)
-            translation_task.translation_retry_ms = (llm_started_at - translation_task._llm_first_started_at) * 1000
+            if getattr(translation_task, "_llm_retry_started_at", None) is None:
+                translation_task._llm_retry_started_at = llm_started_at
         translation_task._attempt_validation = ()
         translation_task._attempt_raw_output = None
         translation_task._attempt_finish_reason = None
@@ -772,6 +776,9 @@ class LLMClient():
         finally:
             translation_task.latency_trace.translation_finished_at = time.perf_counter()
             translation_task.llm_latency_ms = (translation_task.latency_trace.translation_finished_at - translation_task._llm_first_started_at) * 1000
+            retry_started_at = getattr(translation_task, "_llm_retry_started_at", None)
+            if retry_started_at is not None:
+                translation_task.translation_retry_ms = (translation_task.latency_trace.translation_finished_at - retry_started_at) * 1000
             try:
                 request_log.log_attempt(self, translation_task, (translation_task.latency_trace.translation_finished_at - llm_started_at) * 1000)
             except Exception:

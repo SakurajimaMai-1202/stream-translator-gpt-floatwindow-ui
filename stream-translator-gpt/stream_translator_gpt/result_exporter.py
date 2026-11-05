@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 import queue
 import time
 import threading
@@ -145,7 +146,7 @@ class ResultExporter(LoopWorkerBase):
             try:
                 requests.post(url, headers=headers, data=data, timeout=10, proxies=self.proxies)
             except Exception as e:
-                print(e)
+                print(f'[WARNING] cqhttp 推送失敗: {e}', file=sys.stderr, flush=True)
 
     def _send_message_to_discord(self, webhook_url: str):
         while True:
@@ -166,7 +167,7 @@ class ResultExporter(LoopWorkerBase):
                 for sub_text in chunks:
                     self._post_discord_chunk(webhook_url, sub_text)
             except Exception as e:
-                print(f"Discord webhook error: {e}")
+                print(f"[WARNING] Discord webhook error: {e}", file=sys.stderr, flush=True)
 
     def _post_discord_chunk(self, webhook_url: str, text: str) -> bool:
         data = {'content': text}
@@ -175,12 +176,12 @@ class ResultExporter(LoopWorkerBase):
             if response.status_code == 429:
                 retry_after = _discord_retry_after(response)
                 if retry_after is None or attempt >= DISCORD_MAX_RATE_LIMIT_RETRIES:
-                    print(f"Discord webhook failed: {response.status_code} {response.text}")
+                    print(f"[WARNING] Discord webhook failed: {response.status_code} {response.text}", file=sys.stderr, flush=True)
                     return False
                 time.sleep(retry_after)
                 continue
             if response.status_code >= 300:
-                print(f"Discord webhook failed: {response.status_code} {response.text}")
+                print(f"[WARNING] Discord webhook failed: {response.status_code} {response.text}", file=sys.stderr, flush=True)
                 return False
             bucket_delay = _discord_bucket_delay(response)
             if bucket_delay:
@@ -198,7 +199,7 @@ class ResultExporter(LoopWorkerBase):
             try:
                 requests.post(f'{url}?{params}', timeout=10, proxies=self.proxies)
             except Exception as e:
-                print(e)
+                print(f'[WARNING] Telegram 推送失敗: {e}', file=sys.stderr, flush=True)
 
     def _write_message_to_file(self, file_path: str):
         is_srt = file_path.lower().endswith('.srt')
@@ -283,7 +284,7 @@ class ResultExporter(LoopWorkerBase):
                               timeout=3,
                               proxies=self.proxies)
             except Exception as e:
-                print(e)
+                print(f'[WARNING] 字幕推送失敗: {e}', file=sys.stderr, flush=True)
 
     def loop(self, input_queue: queue.SimpleQueue[TranslationTask]):
         while True:
@@ -354,7 +355,7 @@ class ResultExporter(LoopWorkerBase):
                 try:
                     self.gui_callback(task)
                 except Exception as e:
-                    print(f"GUI callback error: {e}")
+                    print(f"[WARNING] GUI callback error: {e}", file=sys.stderr, flush=True)
 
             timestamp_text = f'{sec2str(task.time_range[0])} --> {sec2str(task.time_range[1])}'
             text_to_send = (task.transcript + '\n') if self.output_whisper_result else ''

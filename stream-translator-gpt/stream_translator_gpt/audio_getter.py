@@ -922,7 +922,7 @@ class DeviceAudioGetter(LoopWorkerBase):
             if not self.running:
                 return
             if status:
-                print(status)
+                print(f'[WARNING] Audio capture status: {status}', file=sys.stderr, flush=True)
 
             self._capture_seconds += len(indata) / SAMPLE_RATE
             audio = np.concatenate([self.remaining_audio, indata.flatten().astype(np.float32)])

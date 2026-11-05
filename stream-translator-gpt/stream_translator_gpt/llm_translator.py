@@ -736,7 +736,7 @@ class LLMClient():
             )
         except Exception as e:
             self._record_translation_failure(translation_task, e)
-            print(e)
+            print(f'[ERROR] Gemini 翻譯錯誤: {e}', flush=True)
             return
         if not getattr(translation_task, "_translation_expired", False):
             self._append_history_message(translation_task.transcript, translation_task.translation)

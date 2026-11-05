@@ -70,7 +70,7 @@ def apply_configured_log_level(config_path: Optional[Path] = None) -> None:
     logging.getLogger().setLevel(level)
     for handler in _CONFIGURED_HANDLERS:
         handler.setLevel(level)
-    for dedicated_logger, handler in _DEDICATED_LOGGERS.items():
+    for dedicated_logger, handler in list(_DEDICATED_LOGGERS.items()):
         dedicated_logger.setLevel(level)
         handler.setLevel(level)
     for name in ("uvicorn", "uvicorn.error", "fastapi", "starlette", "py.warnings"):

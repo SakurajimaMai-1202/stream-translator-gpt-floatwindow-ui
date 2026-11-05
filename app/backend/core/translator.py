@@ -476,7 +476,7 @@ class _SubtitleSummary:
             # and take each latency field once per subtitle.
             segment = data.get("segment_id")
             if segment is None:
-                segment = data.get("timestamp")
+                segment = data.get("timestamp") or None
             if segment is None or segment not in self.seen and segment not in self.previous_seen:
                 if segment is not None:
                     self.seen.add(segment)
@@ -970,7 +970,7 @@ class TranslationContext:
                             stdout_traceback += 1
                             _log_engine_output("error", clean_line, command_secrets, "[STDOUT] ")
                             if (stdout_traceback >= 200 or not (
-                                clean_line[0].isspace()
+                                clean_line[:1].isspace()
                                 or clean_line.startswith(("Traceback (most recent call last):",
                                                           "During handling of the above exception",
                                                           "The above exception was the direct cause"))

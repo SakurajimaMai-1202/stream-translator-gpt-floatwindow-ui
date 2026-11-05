@@ -93,7 +93,7 @@ def test_pointer_traversal_and_incomplete(installation):
 def test_newer_bundled_ignores_addon(installation, monkeypatch):
     monkeypatch.setattr(addon, 'bundled_version', lambda: '2026.11.01')
     assert addon.active_addon() is None
-    assert addon.ytdlp_command('python') == ['python', '-I', '-X', 'utf8', '-m', 'yt_dlp']
+    assert addon.ytdlp_command('python') == ['python', '-I', '-X', 'utf8', '-c', addon.MODULE_BOOTSTRAP]
     monkeypatch.setattr(addon, 'bundled_version', lambda: None)
     assert addon.active_addon() == installation.old
 
@@ -198,11 +198,20 @@ def test_bootstrap_executes_and_forwards_arguments(tmp_path):
 
 
 def test_bootstrap_matches_engine():
-    source = Path(__file__).resolve().parents[3] / 'stream-translator-gpt/stream_translator_gpt/audio_getter.py'
-    tree = ast.parse(source.read_text(encoding='utf-8'))
-    value = next(node.value for node in tree.body if isinstance(node, ast.Assign)
-                 and any(isinstance(t, ast.Name) and t.id == 'YTDLP_BOOTSTRAP' for t in node.targets))
-    assert ast.literal_eval(value) == addon.BOOTSTRAP
+    def assignments(path):
+        tree = ast.parse(path.read_text(encoding='utf-8'))
+        return {t.id: node.value for node in tree.body if isinstance(node, ast.Assign)
+                for t in node.targets if isinstance(t, ast.Name)}
+
+    engine = assignments(Path(__file__).resolve().parents[3]
+                         / 'stream-translator-gpt/stream_translator_gpt/audio_getter.py')
+    backend = assignments(Path(addon.__file__))
+    assert ast.literal_eval(engine['YTDLP_SPACE_ID_PATCH']) == addon.YTDLP_SPACE_ID_PATCH
+    for engine_name, backend_name in (('YTDLP_BOOTSTRAP', 'BOOTSTRAP'),
+                                      ('YTDLP_MODULE_BOOTSTRAP', 'MODULE_BOOTSTRAP')):
+        engine_value = ast.dump(engine[engine_name]).replace('YTDLP_SPACE_ID_PATCH', 'PATCH')
+        backend_value = ast.dump(backend[backend_name]).replace('YTDLP_SPACE_ID_PATCH', 'PATCH')
+        assert engine_value == backend_value
 
 
 def test_api_running_conflicts(monkeypatch):
@@ -260,3 +269,43 @@ def test_api_status_is_local_and_runtime_errors_are_conflicts(installation, monk
         with pytest.raises(runtime.HTTPException) as exc:
             asyncio.run(action())
         assert exc.value.status_code == 409
+
+
+def test_space_patch_is_pinned_and_bootstraps_are_single_line():
+    expected = "for module in ('yt_dlp.extractor.extractors', 'yt_dlp.extractor.twitter'):\n    try:\n        cls = __import__(module, fromlist=['TwitterSpacesIE']).TwitterSpacesIE\n        old = '(?P<id>[0-9a-zA-Z]{13})'\n        if old in cls._VALID_URL:\n            cls._VALID_URL = cls._VALID_URL.replace(old, '(?P<id>[0-9a-zA-Z]{13,})')\n            if '_VALID_URL_RE' in cls.__dict__:\n                delattr(cls, '_VALID_URL_RE')\n    except Exception:\n        pass\n"
+    assert addon.YTDLP_SPACE_ID_PATCH == expected
+    for bootstrap in (addon.BOOTSTRAP, addon.MODULE_BOOTSTRAP):
+        assert '\n' not in bootstrap and '\r' not in bootstrap
+        assert 'exec(' + repr(expected) + ')' in bootstrap
+        compile(bootstrap, '<bootstrap>', 'exec')
+
+
+def test_space_patch_matches_installed_lazy_and_real_extractors(monkeypatch):
+    pytest.importorskip('yt_dlp')
+    from yt_dlp.extractor.extractors import TwitterSpacesIE as lazy
+    from yt_dlp.extractor.twitter import TwitterSpacesIE as real
+
+    for cls in dict.fromkeys((lazy, real)):
+        # Prime the old compiled pattern to verify cache invalidation as well.
+        monkeypatch.setattr(cls, '_VALID_URL', cls._VALID_URL)
+        monkeypatch.setattr(cls, '_VALID_URL_RE', cls.__dict__.get('_VALID_URL_RE'), raising=False)
+        delattr(cls, '_VALID_URL_RE')
+        cls.suitable('https://x.com/i/spaces/1qJVmQDVQEXGB')
+    exec(addon.YTDLP_SPACE_ID_PATCH, {})
+    for cls in (lazy, real):
+        for space_id in ('1kEvJlqpyyePkq', '1qJVmQDVQEXGB'):
+            url = 'https://x.com/i/spaces/' + space_id
+            assert cls.suitable(url)
+            assert cls._match_id(url) == space_id
+
+
+def test_module_bootstrap_runs_main_when_patch_import_fails(monkeypatch):
+    import sys
+    from types import ModuleType
+    fake = ModuleType('yt_dlp')
+    calls = []
+    fake.main = lambda: calls.append(list(sys.argv))
+    monkeypatch.setitem(sys.modules, 'yt_dlp', fake)
+    monkeypatch.setattr(sys, 'argv', ['-c', '--version'])
+    exec(addon.MODULE_BOOTSTRAP, {})
+    assert calls == [['yt-dlp', '--version']]

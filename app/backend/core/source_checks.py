@@ -124,6 +124,15 @@ def check_url(url: str) -> SourceCheckResult:
                        "檢查網路、直播狀態或稍後重試。", host=parsed.netloc)
     if completed.returncode:
         detail = completed.stderr.strip()[-1200:]
+        for pattern, message, recovery in (
+            ('twitter space not found', '找不到這個 X Space（網址錯誤、已刪除或尚未公開）',
+             '確認網址完整（Space ID 不要少字），或請主持人確認 Space 是否公開。'),
+            ('space ended and replay is disabled', 'X Space 已結束，且主持人沒有開放重播',
+             '這場 Space 已無法收聽；請改用正在進行或有開放重播的 Space。'),
+        ):
+            if pattern in completed.stderr.lower():
+                return _result("url", started, "error", "resolve", message, recovery,
+                               host=parsed.netloc, technical_detail=detail)
         return _result("url", started, "error", "resolve", "無法解析或存取直播網址",
                        "確認網址、直播是否已開始、Cookie 與網路狀態後重試。", host=parsed.netloc,
                        technical_detail=detail)

@@ -23,6 +23,8 @@ from .common import AudioSourceQueue, AUDIO_STREAM_GAP, SAMPLE_RATE, SAMPLES_PER
 # Definite configuration failures; ambiguous extractor/decoder failures need repetition.
 _HTTP_DENIED = '來源拒絕存取或不存在（403／404）'
 _STREAM_CONFIG_ERRORS = (
+    (r'twitter space not found', '找不到這個 X Space（網址錯誤、已刪除或尚未公開）', True),
+    (r'space ended and replay is disabled', 'X Space 已結束，且主持人沒有開放重播', True),
     (r'unsupported url|invalid url|not a valid url', '網址無效或不受支援', True),
     (r'no module named [\'"]?yt_dlp|ffmpeg.*(?:not found|not installed)', '缺少 yt-dlp 或 ffmpeg', True),
     (r'requested format.*not available', '要求的音訊格式無法使用', True),
@@ -152,8 +154,32 @@ def _build_ytdlp_command(url: str,
     return cmd
 
 
-# Deliberately duplicated: the engine package must not import backend.
-YTDLP_BOOTSTRAP = "import sys;sys.path.insert(0,sys.argv.pop(1));sys.argv[0]='yt-dlp';import yt_dlp;yt_dlp.main()"
+# Deliberately duplicated: engine must not import backend; keep both copies in sync.
+YTDLP_SPACE_ID_PATCH = (
+    "for module in ('yt_dlp.extractor.extractors', 'yt_dlp.extractor.twitter'):\n"
+    '    try:\n'
+    "        cls = __import__(module, fromlist=['TwitterSpacesIE']).TwitterSpacesIE\n"
+    "        old = '(?P<id>[0-9a-zA-Z]{13})'\n"
+    '        if old in cls._VALID_URL:\n'
+    "            cls._VALID_URL = cls._VALID_URL.replace(old, '(?P<id>[0-9a-zA-Z]{13,})')\n"
+    "            if '_VALID_URL_RE' in cls.__dict__:\n"
+    "                delattr(cls, '_VALID_URL_RE')\n"
+    '    except Exception:\n'
+    '        pass\n'
+)
+YTDLP_BOOTSTRAP = ';'.join((
+    'import sys',
+    'sys.path.insert(0,sys.argv.pop(1))',
+    "sys.argv[0]='yt-dlp'",
+    'import yt_dlp',
+    'exec(' + repr(YTDLP_SPACE_ID_PATCH) + ')', 'yt_dlp.main()',
+))
+YTDLP_MODULE_BOOTSTRAP = ';'.join((
+    'import sys',
+    "sys.argv[0]='yt-dlp'",
+    'import yt_dlp',
+    'exec(' + repr(YTDLP_SPACE_ID_PATCH) + ')', 'yt_dlp.main()',
+))
 
 
 def _resolve_ytdlp_command() -> list[str]:
@@ -172,7 +198,7 @@ def _resolve_ytdlp_command() -> list[str]:
         # -I drops PYTHONUTF8; without -X utf8 yt-dlp's stderr uses the console code page.
         return [sys.executable, '-I', '-X', 'utf8', '-c', YTDLP_BOOTSTRAP, addon]
     if importlib.util.find_spec('yt_dlp') is not None:
-        return [sys.executable, '-m', 'yt_dlp']
+        return [sys.executable, '-c', YTDLP_MODULE_BOOTSTRAP]
 
     py_dir = os.path.dirname(sys.executable)
     local_candidates = (
@@ -187,7 +213,7 @@ def _resolve_ytdlp_command() -> list[str]:
     if ytdlp_exe:
         return [ytdlp_exe]
 
-    return [sys.executable, '-m', 'yt_dlp']
+    return [sys.executable, '-c', YTDLP_MODULE_BOOTSTRAP]
 
 
 def _resolve_ffmpeg_dir() -> str | None:

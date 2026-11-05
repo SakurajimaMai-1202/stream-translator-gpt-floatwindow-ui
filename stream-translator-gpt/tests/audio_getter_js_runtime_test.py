@@ -22,8 +22,8 @@ def test_ytdlp_command_prefers_current_python_module_over_old_path_executable(mo
 
     assert audio_getter._resolve_ytdlp_command() == [
         str(runtime_python),
-        "-m",
-        "yt_dlp",
+        "-c",
+        audio_getter.YTDLP_MODULE_BOOTSTRAP,
     ]
 
 
@@ -172,10 +172,19 @@ def test_youtube_stream_reconnects_after_audio_stall(monkeypatch):
 def test_ytdlp_addon_command_and_unset_fallback(monkeypatch, tmp_path):
     monkeypatch.setattr(audio_getter.importlib.util, 'find_spec', lambda name: object())
     monkeypatch.delenv('STREAM_TRANSLATOR_YTDLP_ADDON', raising=False)
-    assert audio_getter._resolve_ytdlp_command() == [audio_getter.sys.executable, '-m', 'yt_dlp']
+    assert audio_getter._resolve_ytdlp_command() == [audio_getter.sys.executable, '-c', audio_getter.YTDLP_MODULE_BOOTSTRAP]
     monkeypatch.setenv('STREAM_TRANSLATOR_YTDLP_ADDON', str(tmp_path))
-    assert audio_getter._resolve_ytdlp_command() == [audio_getter.sys.executable, '-m', 'yt_dlp']
+    assert audio_getter._resolve_ytdlp_command() == [audio_getter.sys.executable, '-c', audio_getter.YTDLP_MODULE_BOOTSTRAP]
     (tmp_path / 'yt_dlp').mkdir()
     (tmp_path / 'yt_dlp/__main__.py').touch()
     assert audio_getter._resolve_ytdlp_command() == [
         audio_getter.sys.executable, '-I', '-X', 'utf8', '-c', audio_getter.YTDLP_BOOTSTRAP, str(tmp_path)]
+
+
+def test_ytdlp_command_missing_module_and_executables_uses_bootstrap(monkeypatch):
+    monkeypatch.delenv('STREAM_TRANSLATOR_YTDLP_ADDON', raising=False)
+    monkeypatch.setattr(audio_getter.importlib.util, 'find_spec', lambda name: None)
+    monkeypatch.setattr(audio_getter.os.path, 'exists', lambda path: False)
+    monkeypatch.setattr(audio_getter.shutil, 'which', lambda name: None)
+    assert audio_getter._resolve_ytdlp_command() == [
+        audio_getter.sys.executable, '-c', audio_getter.YTDLP_MODULE_BOOTSTRAP]

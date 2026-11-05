@@ -190,3 +190,20 @@ def test_confirmed_live_transport_failures_beyond_limit_wait_for_stop(source, mo
     assert audio_getter.ERROR not in capsys.readouterr().out
     items = [output.get() for _ in range(output.qsize())]
     assert items[-1] is None
+
+
+@pytest.mark.parametrize('stderr,reason', [
+    ('ERROR: Twitter Space not found', '找不到這個 X Space（網址錯誤、已刪除或尚未公開）'),
+    ('ERROR: Twitter Space ended and replay is disabled', 'X Space 已結束，且主持人沒有開放重播'),
+])
+def test_space_metadata_error_is_fatal_on_first_check(source, monkeypatch, stderr, reason):
+    getter, clock = source
+    def run(*args, **kwargs):
+        clock.calls += 1
+        return SimpleNamespace(returncode=1, stdout='', stderr=stderr + '\nUnable to extract')
+    monkeypatch.setattr(audio_getter.subprocess, 'run', run)
+    with pytest.raises(RuntimeError) as error:
+        getter._source_status()
+    assert reason in str(error.value)
+    assert clock.calls == 1
+    assert getter._startup_failures == 0

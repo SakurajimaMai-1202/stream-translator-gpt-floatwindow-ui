@@ -24,7 +24,32 @@ from backend.core.reading_addon_installer import _remove_scratch
 
 logger = logging.getLogger(__name__)
 
-BOOTSTRAP = "import sys;sys.path.insert(0,sys.argv.pop(1));sys.argv[0]='yt-dlp';import yt_dlp;yt_dlp.main()"
+# Deliberately duplicated: engine must not import backend; keep both copies in sync.
+YTDLP_SPACE_ID_PATCH = (
+    "for module in ('yt_dlp.extractor.extractors', 'yt_dlp.extractor.twitter'):\n"
+    '    try:\n'
+    "        cls = __import__(module, fromlist=['TwitterSpacesIE']).TwitterSpacesIE\n"
+    "        old = '(?P<id>[0-9a-zA-Z]{13})'\n"
+    '        if old in cls._VALID_URL:\n'
+    "            cls._VALID_URL = cls._VALID_URL.replace(old, '(?P<id>[0-9a-zA-Z]{13,})')\n"
+    "            if '_VALID_URL_RE' in cls.__dict__:\n"
+    "                delattr(cls, '_VALID_URL_RE')\n"
+    '    except Exception:\n'
+    '        pass\n'
+)
+BOOTSTRAP = ';'.join((
+    'import sys',
+    'sys.path.insert(0,sys.argv.pop(1))',
+    "sys.argv[0]='yt-dlp'",
+    'import yt_dlp',
+    'exec(' + repr(YTDLP_SPACE_ID_PATCH) + ')', 'yt_dlp.main()',
+))
+MODULE_BOOTSTRAP = ';'.join((
+    'import sys',
+    "sys.argv[0]='yt-dlp'",
+    'import yt_dlp',
+    'exec(' + repr(YTDLP_SPACE_ID_PATCH) + ')', 'yt_dlp.main()',
+))
 BUSY = {"checking", "downloading", "installing"}
 BUNDLED_RETRY_SECONDS = 60
 _bundled = None
@@ -125,7 +150,7 @@ def ytdlp_command(python):
     addon = active_addon()
     # -I drops PYTHONUTF8; without -X utf8 yt-dlp's stderr uses the console code page.
     prefix = [str(python), '-I', '-X', 'utf8']
-    return prefix + (['-c', BOOTSTRAP, str(addon)] if addon else ['-m', 'yt_dlp'])
+    return prefix + (['-c', BOOTSTRAP, str(addon)] if addon else ['-c', MODULE_BOOTSTRAP])
 
 
 def apply_ytdlp_addon_environment(env):

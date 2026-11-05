@@ -2,7 +2,10 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from backend.core import source_checks
+from backend.core.ytdlp_addon import MODULE_BOOTSTRAP
 
 
 def test_file_check_distinguishes_missing_file(tmp_path):
@@ -84,7 +87,7 @@ def test_url_precheck_prefers_bundled_runtime_and_node_over_stale_path(monkeypat
     monkeypatch.setattr(source_checks, "run_external", run)
     result = source_checks.check_url("https://example.com/live")
     assert result.status == "ready"
-    assert observed["command"][:8] == [str(runtime), "-I", "-X", "utf8", "-m", "yt_dlp", "--js-runtimes", f"node:{node}"]
+    assert observed["command"][:8] == [str(runtime), "-I", "-X", "utf8", "-c", MODULE_BOOTSTRAP, "--js-runtimes", f"node:{node}"]
     assert observed["options"]["timeout"] == 20
     assert observed["options"]["encoding"] == "utf-8" and observed["options"]["errors"] == "replace"
 
@@ -100,3 +103,20 @@ def test_url_command_addon_keeps_node_arguments(monkeypatch, tmp_path):
     prefix = [str(runtime), '-I', '-c', 'bootstrap', 'addon']
     monkeypatch.setattr(source_checks, 'ytdlp_command', lambda python: prefix.copy())
     assert source_checks._resolve_url_command() == prefix + ['--js-runtimes', f'node:{node}']
+
+
+@pytest.mark.parametrize('stderr,message,recovery', [
+    ('ERROR: Twitter Space not found', '找不到這個 X Space（網址錯誤、已刪除或尚未公開）',
+     '確認網址完整（Space ID 不要少字），或請主持人確認 Space 是否公開。'),
+    ('ERROR: Twitter Space ended and replay is disabled', 'X Space 已結束，且主持人沒有開放重播',
+     '這場 Space 已無法收聽；請改用正在進行或有開放重播的 Space。'),
+])
+def test_space_resolve_error_has_specific_reason(monkeypatch, stderr, message, recovery):
+    monkeypatch.setattr(source_checks, '_resolve_url_command', lambda: ['fake'])
+    monkeypatch.setattr(source_checks, 'run_external', lambda *a, **kw: SimpleNamespace(
+        returncode=1, stdout='', stderr=stderr))
+    result = source_checks.check_url('https://x.com/i/spaces/1kEvJlqpyyePkq')
+    assert (result.stage, result.status) == ('resolve', 'error')
+    assert result.message == message
+    assert result.recovery == recovery
+    assert result.details['technical_detail'] == stderr

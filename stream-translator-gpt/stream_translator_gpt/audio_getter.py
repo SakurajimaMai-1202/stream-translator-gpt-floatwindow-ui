@@ -22,9 +22,10 @@ from .common import AudioSourceQueue, AUDIO_STREAM_GAP, SAMPLE_RATE, SAMPLES_PER
 
 # Definite configuration failures; ambiguous extractor/decoder failures need repetition.
 _HTTP_DENIED = '來源拒絕存取或不存在（403／404）'
+_SPACE_NOT_FOUND = '找不到這個 X Space（網址錯誤、已刪除、尚未開始，或需要登入 Cookie）'
 _STREAM_CONFIG_ERRORS = (
     # Also seen for scheduled Spaces and transient guest-token failures: repeat first.
-    (r'twitter space not found', '找不到這個 X Space（網址錯誤、已刪除、尚未開始，或需要登入 Cookie）', False),
+    (r'twitter space not found', _SPACE_NOT_FOUND, False),
     (r'space ended and replay is disabled', 'X Space 已結束，且主持人沒有開放重播', True),
     (r'unsupported url|invalid url|not a valid url', '網址無效或不受支援', True),
     (r'no module named [\'"]?yt_dlp|ffmpeg.*(?:not found|not installed)', '缺少 yt-dlp 或 ffmpeg', True),
@@ -449,7 +450,8 @@ class StreamAudioGetter(LoopWorkerBase):
         if reason and not permanent and not self._received_audio:
             # ffmpeg lines carry a per-process pointer ("[https @ 0x…]") and often
             # a signed URL, so the same denial never repeats as identical text.
-            signature = reason if reason == _HTTP_DENIED else text.strip()
+            # Space lookups may add varying warning lines around the same error.
+            signature = reason if reason in (_HTTP_DENIED, _SPACE_NOT_FOUND) else text.strip()
             self._startup_failures = self._startup_failures + 1 if signature == self._startup_error else 1
             self._startup_error = signature
             permanent = self._startup_failures >= 5

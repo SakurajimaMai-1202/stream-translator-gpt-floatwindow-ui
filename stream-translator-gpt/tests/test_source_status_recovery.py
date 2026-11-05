@@ -210,7 +210,8 @@ def test_space_not_found_repeats_before_failing(source, monkeypatch):
     getter, clock = source
     def run(*args, **kwargs):
         clock.calls += 1
-        return SimpleNamespace(returncode=1, stdout='', stderr='ERROR: [twitter:spaces] x: Twitter Space not found')
+        return SimpleNamespace(returncode=1, stdout='',
+                               stderr=f'WARNING: guest token {clock.calls}\nERROR: [twitter:spaces] x: Twitter Space not found')
     monkeypatch.setattr(audio_getter.subprocess, 'run', run)
     for _ in range(4):
         assert getter._source_status() == 'unknown'

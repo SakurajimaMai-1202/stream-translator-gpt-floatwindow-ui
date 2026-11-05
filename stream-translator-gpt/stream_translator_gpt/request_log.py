@@ -31,6 +31,8 @@ class _QuietHandler(RotatingFileHandler):
 
 def _write(record):
     global _path
+    if os.environ.get("STREAM_TRANSLATOR_REQUEST_LOG") != "1":
+        return
     try:
         directory = os.environ.get("STREAM_TRANSLATOR_LOG_DIR", "").strip()
         if not directory:
@@ -119,6 +121,8 @@ def _loggable_raw_output(client, task, validation, raw_output):
 
 def log_attempt(client, task, attempt_ms):
     try:
+        if os.environ.get("STREAM_TRANSLATOR_REQUEST_LOG") != "1":
+            return
         if not os.environ.get("STREAM_TRANSLATOR_LOG_DIR", "").strip():
             return
         validation = list(task._attempt_validation)

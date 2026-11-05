@@ -355,7 +355,7 @@ class CustomWebPage(QWebEnginePage):
         """捕獲 JavaScript 控制台訊息"""
         ui_perf.record_console_message()
         log_levels = {
-            QWebEnginePage.JavaScriptConsoleMessageLevel.InfoMessageLevel: logger.info,
+            QWebEnginePage.JavaScriptConsoleMessageLevel.InfoMessageLevel: logger.debug,
             QWebEnginePage.JavaScriptConsoleMessageLevel.WarningMessageLevel: logger.warning,
             QWebEnginePage.JavaScriptConsoleMessageLevel.ErrorMessageLevel: logger.error
         }

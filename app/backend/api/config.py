@@ -10,6 +10,7 @@ import logging
 import time
 import httpx
 from backend.core.app_sync import publish_app_event
+from backend.core.logging_setup import apply_configured_log_level
 from backend.core.config_secrets import mask_secrets, omit_secrets, restore_masked_secrets
 
 router = APIRouter(prefix="/config", tags=["config"])
@@ -30,8 +31,15 @@ def _write_config(method, data=None):
     """Resolve the manager on the worker; mutations restore secrets under their lock."""
     manager = get_config_manager()
     if data is None:
-        return getattr(manager, method)()
-    return getattr(manager, method)(data)
+        result = getattr(manager, method)()
+    else:
+        result = getattr(manager, method)(data)
+    try:
+        # A level refresh must never turn a successful save into an error.
+        apply_configured_log_level(getattr(manager, "config_path", None))
+    except Exception:
+        logger.warning("Unable to apply the saved log level", exc_info=True)
+    return result
 
 
 def _read_config(method="get_config"):

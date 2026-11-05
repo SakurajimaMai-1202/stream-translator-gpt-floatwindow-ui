@@ -12,6 +12,7 @@ import re
 import json
 import uuid
 import logging
+import math
 import time
 import tempfile
 from urllib.parse import parse_qsl, urlsplit
@@ -25,7 +26,7 @@ from backend.core.cpu_asr_runtime import (
 )
 from backend.core.external_process import popen_external
 from backend.core.process_lifecycle import assign_process, kill_process_tree, create_translation_job
-from backend.core.logging_setup import resolve_log_dir, resolve_log_file
+from backend.core.logging_setup import resolve_log_dir, resolve_log_file, get_configured_log_level
 from backend.core.portable_paths import apply_model_cache_environment
 
 logger = logging.getLogger(__name__)
@@ -412,12 +413,96 @@ def _get_supported_cli_args(python_exe: str, cwd: str, *, refresh: bool = False)
     return None
 
 
+class _SubtitleSummary:
+    """Count emitted events; percentiles use linear interpolation between samples."""
+
+    fields = (("total_latency_ms", "total_ms"), ("asr_latency_ms", "asr_ms"),
+              ("llm_latency_ms", "llm_ms"), ("translation_queue_latency_ms", "queue_ms"))
+
+    def __init__(self, task_id, clock=time.monotonic):
+        self.task_id = task_id
+        self.clock = clock
+        self.started = clock()
+        self.count = self.total = 0
+        self.samples = {key: [] for key, _ in self.fields}
+        self.seen = set()
+        self.sampled = set()
+        self.finished = False
+        self.lock = threading.Lock()
+
+    @staticmethod
+    def percentile(values, fraction):
+        ordered = sorted(values)
+        index = (len(ordered) - 1) * fraction
+        lower = int(index)
+        upper = min(lower + 1, len(ordered) - 1)
+        return ordered[lower] + (ordered[upper] - ordered[lower]) * (index - lower)
+
+    def _emit(self, final=False):
+        if not self.count and not final:
+            return
+        window = "final" if final else "60s"
+        parts = [f"[Summary] task={self.task_id} {window}: subtitles={self.count}"]
+        for key, label in self.fields:
+            values = self.samples[key]
+            if values:
+                stats = []
+                if key == "total_latency_ms":
+                    stats.append(f"p50={self.percentile(values, 0.5):.1f}")
+                stats.append(f"p95={self.percentile(values, 0.95):.1f}")
+                parts.append(f"{label} {' '.join(stats)}")
+        if final:
+            parts.append(f"task_total={self.total}")
+        logger.info("%s", " ".join(parts))
+        self.count = 0
+        self.samples = {key: [] for key, _ in self.fields}
+
+    def add(self, data):
+        with self.lock:
+            if self.finished:
+                return
+            now = self.clock()
+            if now - self.started >= 60:
+                self._emit()
+                self.started = now
+            # One subtitle is sent again when its translation arrives; count it once
+            # and take each latency field once per subtitle.
+            segment = data.get("segment_id") or data.get("timestamp") or None
+            if segment is None or segment not in self.seen:
+                if segment is not None:
+                    self.seen.add(segment)
+                self.count += 1
+                self.total += 1
+            for key, _ in self.fields:
+                value = data.get(key)
+                if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
+                    if segment is not None:
+                        if (key, segment) in self.sampled:
+                            continue
+                        self.sampled.add((key, segment))
+                    self.samples[key].append(value)
+
+    def finish(self):
+        with self.lock:
+            if not self.finished:
+                self._emit(final=True)
+                self.finished = True
+
+
+def _write_engine_stderr(log_path, line, safe_line):
+    if _engine_stderr_level(line) == "debug" and not logging.getLogger().isEnabledFor(logging.DEBUG):
+        return
+    with open(log_path, "a", encoding="utf-8") as handle:
+        handle.write(safe_line + "\n")
+
+
 class TranslationContext:
     """翻譯執行上下文"""
     
     def __init__(self, config: Dict[str, Any], task_id: str):
         self.config = config
         self.task_id = task_id
+        self._summary = _SubtitleSummary(task_id)
         self.process = None
         self.process_job = None
         self.running = False
@@ -432,6 +517,7 @@ class TranslationContext:
         if self.running:
             return
             
+        self._summary = _SubtitleSummary(self.task_id)
         self.running = True
         self.asr_ready = False
         self.stop_requested = False
@@ -454,6 +540,8 @@ class TranslationContext:
 
     def _broadcast(self, event: dict):
         """將事件廣播給所有訂閱者（從任意執行緒呼叫）"""
+        if event.get("type") == "subtitle":
+            self._summary.add(event["data"])
         if not self._subscribers:
             return
         loop = self._loop
@@ -708,6 +796,11 @@ class TranslationContext:
             from backend.core.ytdlp_addon import apply_ytdlp_addon_environment
             await asyncio.to_thread(apply_ytdlp_addon_environment, env)
             env['STREAM_TRANSLATOR_LOG_DIR'] = str(resolve_log_dir())
+            # Child environment changes apply from the next task start.
+            if get_configured_log_level() == logging.DEBUG:
+                env['STREAM_TRANSLATOR_REQUEST_LOG'] = '1'
+            else:
+                env.pop('STREAM_TRANSLATOR_REQUEST_LOG', None)
             env['PYTHONIOENCODING'] = 'utf-8'
             env['PYTHONUTF8'] = '1'
             env['PYTHONUNBUFFERED'] = '1'
@@ -729,7 +822,8 @@ class TranslationContext:
             
             url = cmd[-1] if cmd else ""
             config_args = cmd[:-1] if cmd else []
-            process_signature = config_args + ["__HF_HOME__", env.get("HF_HOME", ""),
+            process_signature = config_args + ["__REQUEST_LOG__", env.get("STREAM_TRANSLATOR_REQUEST_LOG", ""),
+                                               "__HF_HOME__", env.get("HF_HOME", ""),
                                                "__YTDLP_ADDON__", env.get("STREAM_TRANSLATOR_YTDLP_ADDON", "")]
 
             global persistent_process, persistent_config_args
@@ -821,8 +915,7 @@ class TranslationContext:
                             else:
                                 _log_engine_output(_engine_stderr_level(line), line, command_secrets, "[STDERR] ")
                             try:
-                                with open(log_path, "a", encoding="utf-8") as f:
-                                    f.write(safe_line + "\n")
+                                _write_engine_stderr(log_path, line, safe_line)
                             except Exception as file_err:
                                 logger.error(f"Stderr log write error: {file_err}")
                 except Exception as e:
@@ -837,6 +930,7 @@ class TranslationContext:
                 pending_subtitles = {}  # timestamp -> dict
                 diagnostic_messages = {}
                 structured_timestamps = {}
+                stdout_traceback = False
                 hide_transcribe_result = self.config.get('output_notification', {}).get('hide_transcribe_result', False)
                 try:
                     for line in self.process.stdout:
@@ -845,6 +939,7 @@ class TranslationContext:
                         
                         line = line.strip()
                         if not line:
+                            stdout_traceback = False
                             continue
                         
                         # 檢查是否為翻譯行 (result_exporter.py 會加上 \x1b[1m BOLD)
@@ -853,6 +948,16 @@ class TranslationContext:
                         # 移除 ANSI 顏色碼
                         clean_line = re.sub(r'\x1b\[[0-9;]*m', '', line)
                         safe_clean_line = _redact_engine_output(clean_line, command_secrets)
+                        if clean_line.startswith("Traceback (most recent call last):"):
+                            stdout_traceback = True
+                        if stdout_traceback:
+                            if clean_line.startswith((_SUBTITLE_EVENT_PREFIX, '[INFO]', '[WARNING]', '[ERROR]')):
+                                stdout_traceback = False
+                            else:
+                                _log_engine_output("error", clean_line, command_secrets, "[STDOUT] ")
+                                continue
+                        if clean_line.startswith(('[WARNING]', '[ERROR]')):
+                            _log_engine_output(_engine_stderr_level(clean_line), clean_line, command_secrets, "[STDOUT] ")
 
                         # Older workers sent these diagnostics to stdout. They are
                         # never subtitle content, even without a log-level prefix.
@@ -920,7 +1025,7 @@ class TranslationContext:
                             continue
 
                         # 將實際輸出寫入後端終端,方便確認有無輸出
-                        _log_engine_output("info", clean_line, command_secrets, "[STDOUT] ")
+                        _log_engine_output("debug", clean_line, command_secrets, "[STDOUT] ")
                         
                         # 檢查是否包含時間戳
                         timestamp_match = re.search(
@@ -962,12 +1067,12 @@ class TranslationContext:
                                 ),
                                 "total_latency_ms": pending_subtitles[timestamp].get("total_latency_ms"),
                             }
-                            logger.info(f"[Subtitle] Emit: {_redact_engine_output(str(data), command_secrets)}")
+                            logger.debug(f"[Subtitle] Emit: {_redact_engine_output(str(data), command_secrets)}")
                             self._broadcast({"type": "subtitle", "data": data})
                         else:
                             # 沒有時間戳的行（罕見，fallback 處理）
                             if clean_line:
-                                logger.info(f"[Buffer] 純文本(無時間戳): '{safe_clean_line}'")
+                                logger.debug(f"[Buffer] 純文本(無時間戳): '{safe_clean_line}'")
                                 data = {
                                     "timestamp": "",
                                     "original": "" if hide_transcribe_result else clean_line,
@@ -1031,6 +1136,7 @@ class TranslationContext:
                             "type": "status",
                             "data": {"status": status, "code": return_code}
                         })
+                        self._summary.finish()
                         self.running = False
                         self.asr_ready = False
                         break
@@ -1048,6 +1154,7 @@ class TranslationContext:
                 "type": "error",
                 "data": {"message": f"{type(e).__name__}: {e}"}
             })
+            self._summary.finish()
             self.running = False
             self.asr_ready = False
 
@@ -1086,14 +1193,14 @@ class TranslationContext:
         
         hide_transcribe_result = self.config.get('output_notification', {}).get('hide_transcribe_result', False)
         
-        logger.info(f"[Buffer] texts={texts}, timestamp={timestamp}, hide_transcribe={hide_transcribe_result}")
+        logger.debug(f"[Buffer] texts={texts}, timestamp={timestamp}, hide_transcribe={hide_transcribe_result}")
         
         # 簡化邏輯:根據文本行數判斷
         if len(texts) >= 2:
             # 有兩行文本:第一行=原文,第二行=翻譯
             data["original"] = texts[0]
             data["translated"] = texts[1]
-            logger.info(f"[Buffer] Case: 2 texts -> first=original, second=translated")
+            logger.debug(f"[Buffer] Case: 2 texts -> first=original, second=translated")
         elif len(texts) == 1:
             # 只有一行文本
             text = texts[0]
@@ -1102,14 +1209,14 @@ class TranslationContext:
                 # 如果隱藏轉錄,所有輸出都是翻譯
                 data["original"] = ""
                 data["translated"] = text
-                logger.info(f"[Buffer] Case: hide_transcribe=True -> translated only")
+                logger.debug(f"[Buffer] Case: hide_transcribe=True -> translated only")
             else:
                 # 正常模式:單行文本視為原文(可能還在等待翻譯)
                 data["original"] = text
                 data["translated"] = ""
-                logger.info(f"[Buffer] Case: single text -> original (waiting for translation)")
+                logger.debug(f"[Buffer] Case: single text -> original (waiting for translation)")
         
-        logger.info(f"[Subtitle] Emit: {data}")
+        logger.debug(f"[Subtitle] Emit: {data}")
         self._broadcast({"type": "subtitle", "data": data})
 
 
@@ -1153,6 +1260,7 @@ class TranslationContext:
         # Only blocking termination work needs a worker thread.
         if self.process is not None or persistent_process is not None:
             await asyncio.to_thread(self._stop_processes)
+        self._summary.finish()
         logger.info(f"Task {self.task_id} stopped")
 
     def _stop_processes(self):

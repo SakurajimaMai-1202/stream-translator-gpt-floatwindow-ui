@@ -278,8 +278,8 @@ class WebView2Host(QWidget):
     def _console(self, sender, event):
         data = json.loads(str(event.ParameterObjectAsJson))
         ui_perf.record_console_message()
-        log = {"error": logger.error, "warning": logger.warning, "log": logger.info,
-               "info": logger.info}.get(data.get("type"), logger.debug)
+        log = {"error": logger.error, "warning": logger.warning, "log": logger.debug,
+               "info": logger.debug}.get(data.get("type"), logger.debug)
         frames = data.get("stackTrace", {}).get("callFrames", [])
         line = frames[0].get("lineNumber", 0) + 1 if frames else 0
         message = " ".join(str(arg.get("value", arg.get("description", ""))) for arg in data.get("args", []))

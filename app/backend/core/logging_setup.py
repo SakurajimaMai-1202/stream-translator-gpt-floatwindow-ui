@@ -24,6 +24,7 @@ DEFAULT_LOG_LEVEL_NAME = "INFO"
 LOG_MAX_BYTES = 5 * 1024 * 1024
 LOG_BACKUP_COUNT = 5
 _RESETTED_LOG_FILES: set[Path] = set()
+_CONFIGURED_HANDLERS: list[logging.Handler] = []
 
 
 def resolve_log_dir() -> Path:
@@ -60,6 +61,20 @@ def _read_log_level_name(config_path: Optional[Path] = None) -> str:
 def get_configured_log_level(config_path: Optional[Path] = None) -> int:
     """轉換設定檔中的 log level 為 logging 常數。"""
     return getattr(logging, _read_log_level_name(config_path), logging.INFO)
+
+
+def apply_configured_log_level(config_path: Optional[Path] = None) -> None:
+    """Reload levels without replacing handlers or resetting log files."""
+    level = get_configured_log_level(config_path)
+    logging.getLogger().setLevel(level)
+    for handler in _CONFIGURED_HANDLERS:
+        handler.setLevel(level)
+    for name in ("uvicorn", "uvicorn.error", "fastapi", "starlette", "py.warnings"):
+        logging.getLogger(name).setLevel(level)
+    logging.getLogger("uvicorn.access").setLevel(
+        logging.DEBUG if level <= logging.DEBUG else logging.WARNING)
+    for name in ("watchfiles", "asyncio", "httpx", "urllib3"):
+        logging.getLogger(name).setLevel(max(level, logging.WARNING))
 
 
 def _build_formatter() -> logging.Formatter:
@@ -192,6 +207,8 @@ def configure_logging(
     root_logger.setLevel(log_level)
     for handler in handlers:
         root_logger.addHandler(handler)
+
+    _CONFIGURED_HANDLERS[:] = handlers
 
     logging.captureWarnings(True)
     _install_exception_hook()

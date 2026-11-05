@@ -10,6 +10,18 @@ from stream_translator_gpt.common import TranslationTask
 from stream_translator_gpt.llm_translator import LLMClient, ParallelTranslator, SerialTranslator
 
 
+@pytest.fixture(autouse=True)
+def request_log_enabled(monkeypatch):
+    monkeypatch.setenv("STREAM_TRANSLATOR_REQUEST_LOG", "1")
+
+
+def test_request_log_needs_opt_in(monkeypatch, tmp_path):
+    monkeypatch.setenv("STREAM_TRANSLATOR_LOG_DIR", str(tmp_path))
+    monkeypatch.delenv("STREAM_TRANSLATOR_REQUEST_LOG")
+    request_log._write({"type": "attempt"})
+    assert not (tmp_path / "translation_requests.jsonl").exists()
+
+
 def make_client():
     return LLMClient("GPT", "custom", "Translate", 0, None, False,
                      provider="openai_compatible", api_key="test", output_format="text")

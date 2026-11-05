@@ -1,4 +1,4 @@
-﻿"""
+"""
 UI2 主程式
 PyQt6 + WebView + FastAPI 整合啟動器
 """
@@ -56,7 +56,8 @@ if "--update-health-check" in sys.argv:
 
 from backend.core.admin_auth import TOKEN_HEADER, ensure_admin_token
 from backend.core.admin_host import get_admin_host
-from backend.core.logging_setup import configure_logging
+from backend.core.logging_setup import configure_logging, apply_configured_log_level
+from backend.config import settings
 import ui_perf
 from webview_engine import read_configured_engine, resolve_engine
 from webview_rendering import (
@@ -106,6 +107,18 @@ def resolve_app_icon() -> QIcon:
 class UI2Application:
     """UI2 應用程式管理器"""
     
+    def _refresh_log_level(self):
+        try:
+            try:
+                mtime = settings.CONFIG_FILE.stat().st_mtime_ns
+            except FileNotFoundError:
+                mtime = 0
+            if mtime != self._log_config_mtime:
+                apply_configured_log_level()
+                self._log_config_mtime = mtime
+        except Exception:
+            logger.debug("Unable to refresh configured log level", exc_info=True)
+
     def __init__(self, dev_mode: bool = True, disable_gpu: bool = False, webview_engine: str | None = None):
         self.webview_engine = webview_engine or resolve_engine(None, "")
         self.admin_token = ensure_admin_token()
@@ -124,6 +137,11 @@ class UI2Application:
         
         self.app = QApplication(sys.argv)
         self.app.setApplicationName("Stream Translator")
+        self._log_config_mtime = None
+        self._log_level_timer = QTimer(self.app)
+        self._log_level_timer.timeout.connect(self._refresh_log_level)
+        self._refresh_log_level()
+        self._log_level_timer.start(5000)
         ui_perf.install_if_enabled(self.app)
 
         # 設定應用程式圖標（支援打包模式）

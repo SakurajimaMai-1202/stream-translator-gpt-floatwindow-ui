@@ -15,6 +15,72 @@ def registry(root, text):
     path.write_text(text, encoding="utf-8")
 
 
+def test_engine_fingerprint_contents_and_cache(monkeypatch, tmp_path):
+    package = tmp_path / 'engine'
+    assert runtime.engine_fingerprint(package) is None
+    package.mkdir()
+    source = package / 'main.py'
+    source.write_bytes(b'first')
+    initial = runtime.engine_fingerprint(package)
+    (package / '__pycache__').mkdir()
+    (package / '__pycache__/ignored.txt').write_bytes(b'ignored')
+    (package / 'ignored.pyc').write_bytes(b'ignored')
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, 'read_bytes', Mock(side_effect=AssertionError('cached digest')))
+        assert runtime.engine_fingerprint(package) == initial
+    source.write_bytes(b'changed contents')
+    changed = runtime.engine_fingerprint(package)
+    assert changed != initial
+    source.rename(package / 'renamed.py')
+    # A fresh directory with identical bytes but different paths hashes differently.
+    other = tmp_path / 'other'
+    other.mkdir()
+    (other / 'main.py').write_bytes(b'changed contents')
+    runtime._engine_fingerprints.clear()
+    assert runtime.engine_fingerprint(package) != runtime.engine_fingerprint(other)
+
+
+@pytest.mark.parametrize('frozen,compute,profile,folder,main,sidecar,mismatch', [
+    (True, 'cpu', 'cuda', '_runtime_cpu_asr', True, 'old', True),
+    (True, 'cpu', 'rocm', '_runtime_cpu_asr', True, None, True),
+    (True, 'cpu', 'cuda', '_runtime_cpu_asr', True, 'current', False),
+    (False, 'cpu', 'cuda', '_runtime_cpu_asr', True, 'old', False),
+    (True, 'cuda', 'cuda', '_runtime_cpu_asr', True, 'old', False),
+    (True, 'cpu', 'cpu', '_runtime_cpu_asr', True, 'old', False),
+    (True, 'cpu', 'cuda', 'fallback', True, 'old', False),
+    (True, 'cpu', 'cuda', '_runtime_cpu_asr', False, 'old', False),
+])
+def test_sidecar_engine_mismatch(monkeypatch, tmp_path, frozen, compute, profile, folder,
+                                main, sidecar, mismatch):
+    monkeypatch.setattr(runtime.sys, 'frozen', frozen, raising=False)
+    monkeypatch.setattr(runtime.sys, 'executable', str(tmp_path / 'app.exe'))
+    monkeypatch.setattr(runtime, 'resolve_profile_python', lambda *args: str(tmp_path / folder / 'python.exe'))
+    if main:
+        registry(tmp_path / '_runtime', 'current')
+    if sidecar:
+        registry(tmp_path / '_runtime_cpu_asr', sidecar)
+    message = runtime.sidecar_engine_mismatch_message(profile, compute)
+    assert message == ('CPU ASR Runtime 內的翻譯引擎與主程式版本不一致，請到「ASR 模型管理」重新安裝 CPU ASR Runtime 後再試。' if mismatch else None)
+
+
+def test_build_command_blocks_engine_mismatch_before_validation(monkeypatch, tmp_path):
+    monkeypatch.setattr(runtime.sys, 'frozen', True, raising=False)
+    monkeypatch.setattr(runtime.sys, 'executable', str(tmp_path / 'app.exe'))
+    python = tmp_path / '_runtime_cpu_asr/python.exe'
+    python.parent.mkdir()
+    python.touch()
+    registry(tmp_path / '_runtime', 'current')
+    registry(python.parent, 'old')
+    monkeypatch.setattr(translator, '_resolve_profile_python', lambda *args: str(python))
+    validate = Mock(side_effect=AssertionError('must not spawn'))
+    monkeypatch.setattr(translator, '_validate_cpu_asr_runtime', validate)
+    context = translator.TranslationContext({'runtime_profile': 'cuda', 'asr_compute_backend': 'cpu'}, 'test')
+    with pytest.raises(RuntimeError) as error:
+        context._build_command()
+    assert str(error.value) == runtime.sidecar_engine_mismatch_message('cuda', 'cpu')
+    validate.assert_not_called()
+
+
 def test_runtime_contains_model(tmp_path):
     assert not runtime.runtime_contains_model(tmp_path, runtime.HAAS_MODEL_ID)
     registry(tmp_path, "other model")

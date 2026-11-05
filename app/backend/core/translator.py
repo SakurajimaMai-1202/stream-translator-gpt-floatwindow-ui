@@ -376,6 +376,11 @@ class TranslationContext:
         if profile_python:
             logger.info(f"Using runtime profile Python: {profile_python}")
             if is_frozen and str(self.config.get('asr_compute_backend') or 'auto').lower() == 'cpu':
+                from backend.core.cpu_asr_runtime import sidecar_engine_mismatch_message
+                mismatch = sidecar_engine_mismatch_message(
+                    self.config.get('runtime_profile'), self.config.get('asr_compute_backend'))
+                if mismatch:
+                    raise RuntimeError(mismatch)
                 update_message = cpu_asr_start_update_message(self.config)
                 if update_message:
                     raise RuntimeError(update_message)

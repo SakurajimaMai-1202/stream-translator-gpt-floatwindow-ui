@@ -84,6 +84,34 @@ def range_server(mode="ranges"):
 
 
 class CpuAsrSidecarManagerTest(unittest.TestCase):
+    def test_status_engine_mismatch_and_reinstall_refresh(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            target = root / '_runtime_cpu_asr'
+            package = Path('Lib/site-packages/stream_translator_gpt')
+            for runtime in (target, root / '_runtime'):
+                (runtime / package).mkdir(parents=True)
+            (target / 'python.exe').touch()
+            main = root / '_runtime' / package / 'main.py'
+            engine = target / package / 'main.py'
+            main.write_text('current', encoding='utf-8')
+            engine.write_text('old', encoding='utf-8')
+            manager = sidecar_module.CpuAsrSidecarManager()
+            with mock.patch.object(sys, 'frozen', True, create=True), \
+                 mock.patch.object(sys, 'executable', str(root / 'app.exe')), \
+                 mock.patch.object(sidecar_module, 'get_cpu_asr_runtime_path', return_value=target), \
+                 mock.patch.object(manager, '_validate_runtime') as validate:
+                status = manager.status()
+                self.assertFalse(status['healthy'])
+                self.assertIn('翻譯引擎與主程式版本不一致', status['health_error'])
+                validate.assert_not_called()
+                engine.write_text('current', encoding='utf-8')
+                self.assertTrue(manager.status()['healthy'])
+                self.assertTrue(manager.status()['healthy'])
+                validate.assert_called_once_with(target)
+                main.write_text('next release', encoding='utf-8')
+                self.assertFalse(manager.status()['healthy'])
+
     def test_asset_url_uses_app_version_despite_older_runtime_manifest(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

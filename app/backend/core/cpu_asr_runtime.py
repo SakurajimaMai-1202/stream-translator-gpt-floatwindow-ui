@@ -1,5 +1,6 @@
 """Lightweight runtime selection and CPU model compatibility checks."""
 
+import hashlib
 import os
 import sys
 from pathlib import Path
@@ -7,6 +8,53 @@ from pathlib import Path
 from backend.config import settings
 
 HAAS_MODEL_ID = "oboroge0/Haas-ja-v1.0-onnx-quantized"
+
+_engine_fingerprints: dict[Path, tuple[tuple, str]] = {}
+
+
+def engine_fingerprint(site_packages_engine_dir: Path) -> str | None:
+    """Hash package contents, reusing the digest while file metadata is unchanged."""
+    root = Path(site_packages_engine_dir).resolve()
+    if not root.is_dir():
+        _engine_fingerprints.pop(root, None)
+        return None
+    files = []
+    for directory, directories, names in os.walk(root):
+        directories[:] = [name for name in directories if name != '__pycache__']
+        for name in names:
+            if not name.endswith('.pyc'):
+                path = Path(directory) / name
+                files.append((path.relative_to(root).as_posix(), path, path.stat()))
+    key = (root, len(files), max((stat.st_mtime_ns for _, _, stat in files), default=0),
+           sum(stat.st_size for _, _, stat in files))
+    cached = _engine_fingerprints.get(root)
+    if cached and cached[0] == key:
+        return cached[1]
+    digest = hashlib.sha256()
+    for relative, path, stat in sorted(files):
+        digest.update(relative.encode('utf-8') + b'\0')
+        digest.update(str(stat.st_size).encode('ascii') + b'\0')
+        digest.update(path.read_bytes())
+    result = digest.hexdigest()
+    _engine_fingerprints[root] = (key, result)
+    return result
+
+
+def sidecar_engine_mismatch_message(runtime_profile: str | None,
+                                    asr_compute_backend: str | None) -> str | None:
+    if (not getattr(sys, 'frozen', False)
+            or (asr_compute_backend or '').strip().lower() != 'cpu'
+            or (runtime_profile or '').strip().lower() == 'cpu'):
+        return None
+    root = Path(sys.executable).parent
+    python = resolve_profile_python(runtime_profile, asr_compute_backend)
+    if not python or Path(python).resolve() != (root / '_runtime_cpu_asr/python.exe').resolve():
+        return None
+    package = Path('Lib/site-packages/stream_translator_gpt')
+    main = engine_fingerprint(root / '_runtime' / package)
+    if main is not None and main != engine_fingerprint(root / '_runtime_cpu_asr' / package):
+        return 'CPU ASR Runtime 內的翻譯引擎與主程式版本不一致，請到「ASR 模型管理」重新安裝 CPU ASR Runtime 後再試。'
+    return None
 
 
 def runtime_contains_model(runtime: Path, model_id: str) -> bool:

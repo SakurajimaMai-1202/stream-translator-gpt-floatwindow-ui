@@ -174,29 +174,46 @@ def check_process_audio(process_id: int | None, process_start_time: str,
     started = time.perf_counter()
     source = 'process_audio'
     recovery = '重新選擇正在播放聲音的程式，再測試一次。'
+    def failure(stage: str, message: str, detail: str, recovery_message: str = recovery):
+        logger.warning('指定程式收音測試失敗 stage=%s technical_detail=%s', stage, detail)
+        return _result(source, started, 'error', stage, message, recovery_message,
+                       technical_detail=detail)
+
     from backend.core.process_audio import validate_process_target
     try:
         validate_process_target(process_id, process_start_time, window_handle or None)
     except (ValueError, RuntimeError, OSError) as exc:
-        return _result(source, started, 'error', 'target', str(exc), recovery)
+        return failure('target', str(exc), str(exc))
+    completed = None
     try:
         duration = min(max(float(duration_seconds), 0.2), 3.0)
-        command = _process_audio_probe_command(process_id, process_start_time, duration)
+        try:
+            command = _process_audio_probe_command(process_id, process_start_time, duration)
+        except RuntimeError as exc:
+            return failure('runtime', str(exc), str(exc),
+                           '到「ASR 模型管理」檢查 CPU ASR Runtime，或改用其他音訊來源。')
         completed = run_external(command, capture_output=True, text=True, timeout=duration + 15,
                                  check=False, encoding='utf-8', errors='replace',
                                  creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         payload = json.loads(completed.stdout.strip().splitlines()[-1])
+        if not isinstance(payload, dict):
+            raise ValueError('指定程式收音測試回傳的 JSON 格式不正確')
         if completed.returncode or payload.get('error'):
-            return _result(source, started, 'error', 'capture',
-                           str(payload.get('error') or payload.get('message') or '指定程式收音失敗'), recovery)
+            message = str(payload.get('error') or payload.get('message') or '指定程式收音失敗')
+            return failure('capture', message, (completed.stderr or message).strip()[-800:])
         received = bool(payload.get('received_audio'))
         return _result(source, started, 'ready' if received else 'unknown', 'capture',
                        '已收到指定程式的音訊' if received else '程式已開啟，但測試期間未收到明顯聲音',
                        '' if received else recovery, received_audio=received, detected_speech=None,
                        peak=payload.get('peak', 0), peak_dbfs=payload.get('peak_dbfs'))
     except (ValueError, RuntimeError, OSError, subprocess.TimeoutExpired, IndexError) as exc:
-        return _result(source, started, 'error', 'capture', '無法完成指定程式收音測試', recovery,
-                       technical_detail=str(exc))
+        stderr = completed.stderr if completed is not None else getattr(exc, 'stderr', '')
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode('utf-8', errors='replace')
+        message = '無法完成指定程式收音測試'
+        if 'No module named stream_translator_gpt.process_audio_capture' in (stderr or ''):
+            message = '目前的執行環境缺少指定應用程式音訊元件，請重新安裝 CPU ASR Runtime 或更新主程式。'
+        return failure('capture', message, (stderr or str(exc)).strip()[-800:])
 
 
 def check_device(source: SourceKind, device_index: int | None, duration_seconds: float = 1.0) -> SourceCheckResult:

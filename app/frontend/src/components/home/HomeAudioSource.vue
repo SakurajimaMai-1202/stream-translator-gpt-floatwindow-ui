@@ -281,6 +281,10 @@ function handleLocalFileInputChange(event: Event) {
                 <p class="font-bold">{{ sourceCheck.status === 'ready' ? '已就緒' : sourceCheck.status === 'error' ? '需要處理' : '狀態未知' }} · {{ sourceCheck.message }}</p>
                 <p v-if="audioSource === 'process_audio' && typeof sourceCheck.details.peak_dbfs === 'number'" class="mt-1 text-xs opacity-80">測試音量峰值：{{ sourceCheck.details.peak_dbfs.toFixed(1) }} dBFS</p>
                 <p v-if="sourceCheck.recovery" class="mt-1 leading-6">下一步：{{ sourceCheck.recovery }}</p>
+                <details v-if="sourceCheck.status !== 'ready' && typeof sourceCheck.details?.technical_detail === 'string' && sourceCheck.details.technical_detail.trim()" class="mt-2">
+                  <summary class="cursor-pointer text-xs opacity-80">技術細節</summary>
+                  <pre class="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-black/20 p-3 font-mono text-xs leading-5">{{ sourceCheck.details.technical_detail }}</pre>
+                </details>
                 <p class="mt-1 text-xs opacity-65">階段 {{ sourceCheck.stage }} · {{ sourceCheck.elapsed_ms }} ms<span v-if="sourceCheck.trace_id"> · 追蹤 {{ sourceCheck.trace_id.slice(0, 8) }}</span></p>
               </div>
             </section>

@@ -8,6 +8,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -18,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.core.http_downloader import HttpDownloader
+from backend.core.cpu_asr_runtime import engine_fingerprint, sidecar_engine_mismatch_message
 from backend.config import settings
 from backend.core.portable_paths import get_app_root, get_cpu_asr_runtime_path
 
@@ -180,6 +182,9 @@ class CpuAsrSidecarManager(HttpDownloader):
     @staticmethod
     def _runtime_fingerprint(runtime: Path) -> tuple[object, ...]:
         result: list[object] = [str(runtime)]
+        package = Path('Lib/site-packages/stream_translator_gpt')
+        result.extend((engine_fingerprint(runtime / package),
+                       engine_fingerprint(Path(sys.executable).parent / '_runtime' / package)))
         for path in (runtime / "python.exe", runtime / "runtime-version.json"):
             try:
                 stat = path.stat()
@@ -189,11 +194,14 @@ class CpuAsrSidecarManager(HttpDownloader):
         return tuple(result)
 
     def _runtime_health(self, runtime: Path) -> tuple[bool, str]:
-        fingerprint = self._runtime_fingerprint(runtime)
+        mismatch = sidecar_engine_mismatch_message('cpu' if runtime.name == '_runtime' else '', 'cpu')
+        fingerprint = (*self._runtime_fingerprint(runtime), mismatch)
         with self._lock:
             if fingerprint == self._health_fingerprint:
                 return self._health_result
         try:
+            if mismatch:
+                raise RuntimeError(mismatch)
             self._validate_runtime(runtime)
             result = (True, "")
         except Exception as exc:

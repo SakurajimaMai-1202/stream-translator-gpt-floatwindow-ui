@@ -93,6 +93,50 @@ def test_dead_or_reused_target_fails_before_capture(monkeypatch):
     assert result.message == 'PID 已重用'
 
 
+def test_probe_runtime_failure_is_actionable_and_logged(monkeypatch, caplog):
+    monkeypatch.setattr('backend.core.process_audio.validate_process_target', lambda *args: {})
+    def unavailable(*args):
+        raise RuntimeError('CPU ASR Runtime 需要重新安裝')
+    monkeypatch.setattr(source_checks, '_process_audio_probe_command', unavailable)
+    monkeypatch.setattr(source_checks, 'run_external', lambda *args, **kwargs: pytest.fail('must not spawn'))
+    result = source_checks.check_process_audio(123, '134038470994534567')
+    assert result.status == 'error'
+    assert result.stage == 'runtime'
+    assert result.message == 'CPU ASR Runtime 需要重新安裝'
+    assert result.recovery == '到「ASR 模型管理」檢查 CPU ASR Runtime，或改用其他音訊來源。'
+    assert result.details['technical_detail'] == result.message
+    assert 'stage=runtime' in caplog.text
+    assert result.message in caplog.text
+    assert any(record.levelname == 'WARNING' for record in caplog.records)
+
+
+@pytest.mark.parametrize('stdout,stderr,missing', [
+    ('', 'No module named stream_translator_gpt.process_audio_capture', True),
+    ('not JSON', '啟動失敗' * 300, False),
+    ('', '', False),
+])
+def test_probe_preserves_stderr_and_logs(monkeypatch, caplog, stdout, stderr, missing):
+    monkeypatch.setattr('backend.core.process_audio.validate_process_target', lambda *args: {})
+    monkeypatch.setattr(source_checks, '_process_audio_probe_command', lambda *args: ['probe'])
+    def run(*args, **kwargs):
+        assert kwargs['capture_output'] is True
+        assert kwargs['text'] is True
+        assert kwargs['encoding'] == 'utf-8'
+        assert kwargs['errors'] == 'replace'
+        return SimpleNamespace(returncode=1, stdout=stdout, stderr=stderr)
+    monkeypatch.setattr(source_checks, 'run_external', run)
+    result = source_checks.check_process_audio(123, '134038470994534567')
+    assert result.status == 'error'
+    assert result.stage == 'capture'
+    assert result.details['technical_detail']
+    if stderr:
+        assert result.details['technical_detail'] == stderr[-800:]
+    if missing:
+        assert result.message == '目前的執行環境缺少指定應用程式音訊元件，請重新安裝 CPU ASR Runtime 或更新主程式。'
+    assert 'stage=capture' in caplog.text
+    assert result.details['technical_detail'] in caplog.text
+
+
 def test_probe_uses_selected_runtime_source_prefix(monkeypatch):
     class Manager:
         def get_config(self):

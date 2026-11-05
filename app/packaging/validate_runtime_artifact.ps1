@@ -32,12 +32,12 @@ import yt_dlp_ejs
 from packaging.version import Version
 from pathlib import Path
 import sys
-from stream_translator_gpt.audio_getter import _resolve_ytdlp_command, _resolve_js_runtime_arg
+from stream_translator_gpt.audio_getter import YTDLP_MODULE_BOOTSTRAP, _resolve_ytdlp_command, _resolve_js_runtime_arg
 
 command = _resolve_ytdlp_command()
 actual = str(Path(command[0]).resolve()).casefold()
 expected = str(Path(sys.executable).resolve()).casefold()
-assert actual == expected and command[1:] == ['-m', 'yt_dlp'], command
+assert actual == expected and command[1:] == ['-c', YTDLP_MODULE_BOOTSTRAP], command
 version = importlib.metadata.version('yt-dlp')
 assert Version(yt_dlp.version.__version__).release == Version(version).release
 expected_version = os.environ.get('STREAM_TRANSLATOR_YTDLP_VERSION')

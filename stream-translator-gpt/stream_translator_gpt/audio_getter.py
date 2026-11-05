@@ -23,7 +23,8 @@ from .common import AudioSourceQueue, AUDIO_STREAM_GAP, SAMPLE_RATE, SAMPLES_PER
 # Definite configuration failures; ambiguous extractor/decoder failures need repetition.
 _HTTP_DENIED = '來源拒絕存取或不存在（403／404）'
 _STREAM_CONFIG_ERRORS = (
-    (r'twitter space not found', '找不到這個 X Space（網址錯誤、已刪除或尚未公開）', True),
+    # Also seen for scheduled Spaces and transient guest-token failures: repeat first.
+    (r'twitter space not found', '找不到這個 X Space（網址錯誤、已刪除、尚未開始，或需要登入 Cookie）', False),
     (r'space ended and replay is disabled', 'X Space 已結束，且主持人沒有開放重播', True),
     (r'unsupported url|invalid url|not a valid url', '網址無效或不受支援', True),
     (r'no module named [\'"]?yt_dlp|ffmpeg.*(?:not found|not installed)', '缺少 yt-dlp 或 ffmpeg', True),

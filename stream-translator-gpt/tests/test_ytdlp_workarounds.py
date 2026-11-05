@@ -69,8 +69,9 @@ def test_space_patch_matches_installed_lazy_and_real_extractors(monkeypatch):
     for cls in dict.fromkeys((lazy, real)):
         # Prime the old compiled pattern to verify cache invalidation as well.
         monkeypatch.setattr(cls, '_VALID_URL', cls._VALID_URL)
-        monkeypatch.setattr(cls, '_VALID_URL_RE', cls.__dict__.get('_VALID_URL_RE'), raising=False)
-        delattr(cls, '_VALID_URL_RE')
+        # Record the cache so teardown restores or removes it, then clear it.
+        monkeypatch.setattr(cls, '_VALID_URL_RE', None, raising=False)
+        monkeypatch.delattr(cls, '_VALID_URL_RE')
         cls.suitable('https://x.com/i/spaces/1qJVmQDVQEXGB')
     exec(audio_getter.YTDLP_SPACE_ID_PATCH, {})
     for cls in (lazy, real):
@@ -87,6 +88,9 @@ def test_module_bootstrap_runs_main_when_patch_import_fails(monkeypatch):
     calls = []
     fake.main = lambda: calls.append(list(sys.argv))
     monkeypatch.setitem(sys.modules, 'yt_dlp', fake)
+    # Already-imported submodules would let the patch reach the real classes.
+    for name in ('yt_dlp.extractor', 'yt_dlp.extractor.extractors', 'yt_dlp.extractor.twitter'):
+        monkeypatch.setitem(sys.modules, name, None)
     monkeypatch.setattr(sys, 'argv', ['-c', '--version'])
     exec(audio_getter.YTDLP_MODULE_BOOTSTRAP, {})
     assert calls == [['yt-dlp', '--version']]

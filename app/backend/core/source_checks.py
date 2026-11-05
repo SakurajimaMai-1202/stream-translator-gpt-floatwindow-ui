@@ -125,8 +125,8 @@ def check_url(url: str) -> SourceCheckResult:
     if completed.returncode:
         detail = completed.stderr.strip()[-1200:]
         for pattern, message, recovery in (
-            ('twitter space not found', '找不到這個 X Space（網址錯誤、已刪除或尚未公開）',
-             '確認網址完整（Space ID 不要少字），或請主持人確認 Space 是否公開。'),
+            ('twitter space not found', '找不到這個 X Space（網址錯誤、已刪除、尚未開始，或需要登入 Cookie）',
+             '確認網址完整；若 Space 尚未開始請等開播後再試，需要登入時請設定 X 的 Cookie。'),
             ('space ended and replay is disabled', 'X Space 已結束，且主持人沒有開放重播',
              '這場 Space 已無法收聽；請改用正在進行或有開放重播的 Space。'),
         ):

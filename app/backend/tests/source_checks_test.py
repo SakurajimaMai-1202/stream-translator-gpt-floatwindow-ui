@@ -106,8 +106,8 @@ def test_url_command_addon_keeps_node_arguments(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize('stderr,message,recovery', [
-    ('ERROR: Twitter Space not found', '找不到這個 X Space（網址錯誤、已刪除或尚未公開）',
-     '確認網址完整（Space ID 不要少字），或請主持人確認 Space 是否公開。'),
+    ('ERROR: Twitter Space not found', '找不到這個 X Space（網址錯誤、已刪除、尚未開始，或需要登入 Cookie）',
+     '確認網址完整；若 Space 尚未開始請等開播後再試，需要登入時請設定 X 的 Cookie。'),
     ('ERROR: Twitter Space ended and replay is disabled', 'X Space 已結束，且主持人沒有開放重播',
      '這場 Space 已無法收聽；請改用正在進行或有開放重播的 Space。'),
 ])

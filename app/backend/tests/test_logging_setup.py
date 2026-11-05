@@ -101,3 +101,33 @@ def test_configure_logging_clears_extra_log_files(monkeypatch, tmp_path):
     assert not stderr_backup.exists()
 
     _reset_root_logger_state()
+
+
+def test_backend_relay_levels_and_frontend_unchanged(caplog):
+    # Exercise the relay functions without requiring a Qt GUI installation.
+    import ast
+    import re
+    source = ast.parse((APP_DIR / 'services.py').read_text(encoding='utf-8'))
+    functions = [node for node in source.body if isinstance(node, ast.FunctionDef)
+                 and node.name in {'_classify_process_log_level', '_log_subprocess_output'}]
+    relay_logger = logging.getLogger('test.services.relay')
+    namespace = {'logging': logging, 're': re, 'logger': relay_logger}
+    exec(compile(ast.Module(body=functions, type_ignores=[]), 'services.py', 'exec'), namespace)
+    relay = namespace['_log_subprocess_output']
+    cases = [
+        ('Backend', '2026-11-05 [INFO] backend: error count 0', logging.INFO, logging.DEBUG),
+        ('Backend', '[DEBUG] warning details', logging.WARNING, logging.DEBUG),
+        ('Backend', '[WARNING] slow', logging.INFO, logging.WARNING),
+        ('Backend', '[ERROR] failed', logging.INFO, logging.ERROR),
+        ('Backend', '[CRITICAL] failed', logging.INFO, logging.CRITICAL),
+        ('Backend', 'INFO: server ready', logging.WARNING, logging.DEBUG),
+        ('Backend', 'Traceback (most recent call last):', logging.INFO, logging.ERROR),
+        ('Backend', 'startup crash text', logging.INFO, logging.WARNING),
+        ('Frontend', 'INFO ready', logging.WARNING, logging.INFO),
+        ('Frontend', 'warning: slow', logging.INFO, logging.WARNING),
+        ('Frontend', 'plain text', logging.INFO, logging.INFO),
+    ]
+    with caplog.at_level(logging.DEBUG, logger=relay_logger.name):
+        for prefix, line, default, expected in cases:
+            relay(prefix, line, default)
+            assert caplog.records[-1].levelno == expected

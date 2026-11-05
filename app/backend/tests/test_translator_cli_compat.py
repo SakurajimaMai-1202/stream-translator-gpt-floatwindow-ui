@@ -163,3 +163,175 @@ def test_translation_stop_does_not_block_event_loop():
         await stop_task
 
     asyncio.run(scenario())
+
+
+import json
+import os
+from pathlib import Path
+from types import SimpleNamespace
+import pytest
+
+
+@pytest.fixture
+def probe_runtime(monkeypatch, tmp_path):
+    python = tmp_path / 'runtime/python.exe'
+    python.parent.mkdir()
+    python.write_bytes(b'python')
+    version = python.parent / 'runtime-version.json'
+    version.write_text('{}', encoding='utf-8')
+    engine = python.parent / 'Lib/site-packages/stream_translator_gpt'
+    engine.mkdir(parents=True)
+    (engine / '__init__.py').write_text('VALUE = 1', encoding='utf-8')
+    monkeypatch.setenv('STREAM_TRANSLATOR_LOG_DIR', str(tmp_path / 'logs'))
+    calls = []
+    result = SimpleNamespace(returncode=0, stdout='--model --language', stderr='')
+    def run(*args, **kwargs):
+        calls.append((args, kwargs))
+        return result
+    monkeypatch.setattr(translator_module.subprocess, 'run', run)
+    return python, version, engine, calls, result
+
+
+def test_cli_persistent_hit_and_identity_changes(probe_runtime, tmp_path):
+    python, _, engine, calls, _ = probe_runtime
+    def probe():
+        return translator_module._get_supported_cli_args(str(python), str(tmp_path))
+    assert probe() == frozenset({'model', 'language'})
+    translator_module._get_supported_cli_args.cache_clear()
+    assert probe() == frozenset({'model', 'language'})
+    assert len(calls) == 1
+    stat = python.stat()
+    os.utime(python, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1000000000))
+    probe()
+    assert len(calls) == 2
+    (engine / '__init__.py').write_text('VALUE = 222', encoding='utf-8')
+    probe()
+    assert len(calls) == 3
+    source = tmp_path / 'stream-translator-gpt/stream_translator_gpt'
+    source.mkdir(parents=True)
+    (source / '__init__.py').write_text('SOURCE = True', encoding='utf-8')
+    probe()
+    assert len(calls) == 4
+    assert calls[-1][0][0][1] == '-c'
+
+
+def test_cpu_cache_invalidated_by_runtime_version(probe_runtime):
+    python, version, _, calls, _ = probe_runtime
+    translator_module._validate_cpu_asr_runtime(str(python))
+    translator_module._validate_cpu_asr_runtime(str(python))
+    assert len(calls) == 1
+    version.write_text('{"version": 2}', encoding='utf-8')
+    translator_module._validate_cpu_asr_runtime(str(python))
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize('cpu', [False, True])
+def test_probe_failures_never_cached(probe_runtime, tmp_path, cpu):
+    python, _, _, calls, result = probe_runtime
+    result.returncode = 1
+    result.stdout = ''
+    result.stderr = 'broken runtime'
+    for _ in range(2):
+        if cpu:
+            with pytest.raises(RuntimeError, match='broken runtime'):
+                translator_module._validate_cpu_asr_runtime(str(python))
+        else:
+            assert translator_module._get_supported_cli_args(str(python), str(tmp_path)) is None
+    assert len(calls) == 2
+    assert not (tmp_path / 'logs/engine_probe_cache.json').exists()
+
+
+@pytest.mark.parametrize('cpu', [False, True])
+def test_probe_exception_never_cached(probe_runtime, monkeypatch, tmp_path, cpu):
+    python, _, _, calls, _ = probe_runtime
+    def fail(*args, **kwargs):
+        calls.append(None)
+        raise OSError('cannot launch')
+    monkeypatch.setattr(translator_module.subprocess, 'run', fail)
+    for _ in range(2):
+        if cpu:
+            with pytest.raises(RuntimeError, match='CPU ASR sidecar'):
+                translator_module._validate_cpu_asr_runtime(str(python))
+        else:
+            assert translator_module._get_supported_cli_args(str(python), str(tmp_path)) is None
+    assert len(calls) == 2
+
+
+def test_corrupt_probe_cache_is_replaced(probe_runtime, tmp_path):
+    python, _, _, calls, _ = probe_runtime
+    cache = tmp_path / 'logs/engine_probe_cache.json'
+    cache.parent.mkdir()
+    cache.write_bytes(b'\xffinvalid')
+    translator_module._get_supported_cli_args(str(python), str(tmp_path))
+    assert len(calls) == 1
+    assert len(json.loads(cache.read_text(encoding='utf-8'))) == 1
+    assert not list(cache.parent.glob('*.tmp'))
+
+
+@pytest.mark.parametrize('cpu', [False, True])
+def test_missing_fingerprint_disables_probe_cache(probe_runtime, monkeypatch, tmp_path, cpu):
+    python, _, _, calls, _ = probe_runtime
+    monkeypatch.setattr(translator_module, 'engine_fingerprint', lambda _: None)
+    for _ in range(2):
+        if cpu:
+            translator_module._validate_cpu_asr_runtime(str(python))
+        else:
+            translator_module._get_supported_cli_args(str(python), str(tmp_path))
+    assert len(calls) == 2
+    assert not (tmp_path / 'logs/engine_probe_cache.json').exists()
+
+
+def test_probe_cache_is_bounded(probe_runtime, tmp_path):
+    for index in range(20):
+        translator_module._store_probe(str(index), True)
+    cache = json.loads((tmp_path / 'logs/engine_probe_cache.json').read_text(encoding='utf-8'))
+    assert len(cache) == 16
+    assert '0' not in cache and '19' in cache
+
+
+@pytest.mark.parametrize('line,level', [
+    ('[DEBUG] trace', 'debug'), ('[Assembler] trace', 'debug'),
+    ('[FAMILY OPTIMIZER] trace', 'debug'), ('[HY-MT2 OPTIMIZER] trace', 'debug'),
+    ('[INFO] ready', 'info'), ('[WARNING] slow', 'warning'),
+    ('Traceback (most recent call last):', 'error'), ('unknown', 'error'),
+])
+def test_engine_stderr_levels(line, level):
+    assert translator_module._engine_stderr_level(line) == level
+
+
+def test_sse_subtitle_log_level(monkeypatch, caplog):
+    from backend.api import translation
+    async def events():
+        yield {'type': 'subtitle', 'data': {'original': '字幕'}}
+        yield {'type': 'status', 'data': {'status': 'running'}}
+    context = SimpleNamespace(running=True, stream_output=events)
+    monkeypatch.setattr(translation, 'get_task', lambda _: context)
+    async def scenario():
+        response = await translation.stream_subtitles('probe-test')
+        return [chunk async for chunk in response.body_iterator]
+    with caplog.at_level(logging.DEBUG):
+        chunks = asyncio.run(scenario())
+    records = [r for r in caplog.records if '[SSE] Sending event' in r.message]
+    assert [r.levelno for r in records] == [logging.DEBUG, logging.INFO]
+    assert any('字幕' in chunk for chunk in chunks)
+
+
+def test_cpu_cache_invalidated_by_python_and_engine(probe_runtime):
+    python, _, engine, calls, _ = probe_runtime
+    translator_module._validate_cpu_asr_runtime(str(python))
+    stat = python.stat()
+    os.utime(python, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1000000000))
+    translator_module._validate_cpu_asr_runtime(str(python))
+    assert len(calls) == 2
+    (engine / '__init__.py').write_text('VALUE = 333', encoding='utf-8')
+    translator_module._validate_cpu_asr_runtime(str(python))
+    assert len(calls) == 3
+
+
+def test_unsuccessful_help_with_flags_is_not_cached(probe_runtime, tmp_path):
+    python, _, _, calls, result = probe_runtime
+    result.returncode = 1
+    for _ in range(2):
+        translator_module._get_supported_cli_args(str(python), str(tmp_path))
+    assert len(calls) == 2
+    assert not (tmp_path / 'logs/engine_probe_cache.json').exists()

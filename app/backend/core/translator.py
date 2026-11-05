@@ -13,12 +13,13 @@ import json
 import uuid
 import logging
 import time
+import tempfile
 from urllib.parse import parse_qsl, urlsplit
-from functools import lru_cache
 from typing import Dict, Any, AsyncGenerator, Optional, List, FrozenSet
 from pathlib import Path
 from backend.config import settings
 from backend.core.cpu_asr_runtime import (
+    engine_fingerprint,
     cpu_asr_start_update_message,
     resolve_profile_python as _resolve_profile_python,
 )
@@ -218,8 +219,85 @@ def _extract_supported_cli_args(help_text: str) -> FrozenSet[str]:
     return frozenset(re.findall(r'--([a-zA-Z0-9_]+)', help_text))
 
 
+_probe_cache_lock = threading.Lock()
+
+
+def _probe_key(python_exe: str, cwd: str | None = None) -> str | None:
+    try:
+        python = Path(python_exe).resolve()
+        stat = python.stat()
+        source = Path(cwd) / 'stream-translator-gpt' if cwd is not None else None
+        engine = (source / 'stream_translator_gpt' if source is not None and source.exists()
+                  else python.parent / 'Lib/site-packages/stream_translator_gpt')
+        fingerprint = engine_fingerprint(engine)
+        if fingerprint is None:
+            return None
+        key = [str(python), stat.st_size, stat.st_mtime_ns, str(engine.resolve()), fingerprint]
+        if cwd is None:
+            version = (python.parent / 'runtime-version.json').stat()
+            key.extend([version.st_size, version.st_mtime_ns])
+        return json.dumps(key)
+    except OSError:
+        return None
+
+
+def _read_probe_cache() -> dict:
+    try:
+        data = json.loads((resolve_log_dir() / 'engine_probe_cache.json').read_text(encoding='utf-8'))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError, UnicodeError):
+        return {}
+
+
+def _cached_probe(key: str | None):
+    if key is None:
+        return None
+    with _probe_cache_lock:
+        return _read_probe_cache().get(key)
+
+
+def _store_probe(key: str | None, value) -> None:
+    if key is None:
+        return
+    temporary = None
+    try:
+        with _probe_cache_lock:
+            data = _read_probe_cache()
+            data.pop(key, None)
+            data[key] = value
+            data = dict(list(data.items())[-16:])
+            directory = resolve_log_dir()
+            directory.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=directory,
+                                             prefix='engine_probe_cache.', suffix='.tmp', delete=False) as handle:
+                temporary = handle.name
+                json.dump(data, handle, ensure_ascii=False)
+            os.replace(temporary, directory / 'engine_probe_cache.json')
+    except (OSError, ValueError):
+        logger.debug('Unable to persist engine probe cache', exc_info=True)
+    finally:
+        if temporary is not None:
+            try:
+                Path(temporary).unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def _engine_stderr_level(line: str) -> str:
+    if line.startswith(('[DEBUG]', '[Assembler]', '[FAMILY OPTIMIZER]', '[HY-MT2 OPTIMIZER]')):
+        return 'debug'
+    if line.startswith('[INFO]'):
+        return 'info'
+    if line.startswith('[WARNING]'):
+        return 'warning'
+    return 'error'
+
+
 def _validate_cpu_asr_runtime(python_exe: str) -> None:
     """Fail early when a portable sidecar has been overwritten by another Python."""
+    key = _probe_key(python_exe)
+    if _cached_probe(key) is True:
+        return
     runtime_root = str(Path(python_exe).resolve().parent)
     probe = (
         "import glob, pathlib, sherpa_onnx, stream_translator_gpt.main, sys; "
@@ -250,6 +328,8 @@ def _validate_cpu_asr_runtime(python_exe: str) -> None:
             "CPU ASR sidecar Runtime 已損壞或被其他 Python 覆蓋；請在 ASR 模型管理重新安裝與目前版本相符的 sherpa-onnx CPU sidecar。 "
             + detail[0][-240:]
         )
+    _store_probe(key, True)
+
 
 def _obsolete_extract_supported_cli_args(help_text: str) -> FrozenSet[str]:
     """從 `stream_translator_gpt --help` 輸出解析可用 CLI 參數。"""
@@ -275,9 +355,13 @@ def _obsolete_resolve_profile_python(runtime_profile: str | None) -> Optional[st
     return None
 
 
-@lru_cache(maxsize=8)
 def _get_supported_cli_args(python_exe: str, cwd: str) -> Optional[FrozenSet[str]]:
     """偵測目前 Python 執行環境中的 stream_translator_gpt 支援哪些 CLI 參數。"""
+    key = _probe_key(python_exe, cwd)
+    cached = _cached_probe(key)
+    if isinstance(cached, list) and cached and all(isinstance(arg, str) for arg in cached):
+        return frozenset(cached)
+    started = time.monotonic()
     env = apply_model_cache_environment()
     _apply_source_pythonpath(env, cwd)
     env['PYTHONIOENCODING'] = 'utf-8'
@@ -298,17 +382,25 @@ def _get_supported_cli_args(python_exe: str, cwd: str) -> Optional[FrozenSet[str
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
         )
     except Exception as exc:
+        logger.info("Engine CLI probe took %.2f seconds", time.monotonic() - started)
         logger.warning(f"無法偵測 stream_translator_gpt CLI 參數，將使用內建白名單: {exc}")
         return None
 
+    logger.info("Engine CLI probe took %.2f seconds", time.monotonic() - started)
     help_text = '\n'.join(part for part in (result.stdout, result.stderr) if part)
     supported_args = _extract_supported_cli_args(help_text)
     if supported_args:
+        if result.returncode == 0:
+            _store_probe(key, sorted(supported_args))
         logger.info(f"偵測到 stream_translator_gpt CLI 參數 {len(supported_args)} 個")
         return supported_args
 
     logger.warning("stream_translator_gpt --help 未回傳可解析的參數，將使用內建白名單")
     return None
+
+# Compatibility for callers that previously cleared the in-process LRU cache.
+# Probe identity is now checked on every call; failures are never memoized.
+_get_supported_cli_args.cache_clear = lambda: None
 
 class TranslationContext:
     """翻譯執行上下文"""
@@ -719,7 +811,7 @@ class TranslationContext:
                             ):
                                 _log_engine_output("info", line, command_secrets, "[STDERR] ")
                             else:
-                                _log_engine_output("error", line, command_secrets, "[STDERR] ")
+                                _log_engine_output(_engine_stderr_level(line), line, command_secrets, "[STDERR] ")
                             try:
                                 with open(log_path, "a", encoding="utf-8") as f:
                                     f.write(safe_line + "\n")
@@ -773,7 +865,7 @@ class TranslationContext:
                                 timestamp = str(data.get("timestamp") or "")
                                 if timestamp:
                                     structured_timestamps[timestamp] = time.time()
-                                logger.info(f"[Subtitle JSON] Emit segment={data.get('segment_id')}")
+                                logger.debug(f"[Subtitle JSON] Emit segment={data.get('segment_id')}")
                                 self._broadcast({"type": "subtitle", "data": data})
                             except (TypeError, ValueError, json.JSONDecodeError) as exc:
                                 logger.warning(f"Invalid structured subtitle event: {exc}")

@@ -456,7 +456,9 @@ async def stream_subtitles(task_id: str):
                     yield ": ping\n\n" # comment keep-alive
                 else:
                     # 詳細記錄每個事件
-                    logger.info(f"[SSE] Sending event #{event_count} type={event['type']} data={event['data']}")
+                    logger.log(logging.DEBUG if event["type"] == "subtitle" else logging.INFO,
+                               "[SSE] Sending event #%s type=%s data=%s",
+                               event_count, event["type"], event["data"])
                     yield f"event: {event['type']}\n"
                     yield f"data: {json.dumps(event['data'], ensure_ascii=False)}\n\n"
             logger.info(f"Event generator finished for task {task_id}, sent {event_count} events")

@@ -120,3 +120,14 @@ def test_space_resolve_error_has_specific_reason(monkeypatch, stderr, message, r
     assert result.message == message
     assert result.recovery == recovery
     assert result.details['technical_detail'] == stderr
+
+
+def test_url_failure_detail_hides_query_strings(monkeypatch):
+    stderr = "ERROR: HTTP Error 403 for https://cdn.example.com/a.m3u8?token=secret&sig=abc"
+    monkeypatch.setattr(source_checks, '_resolve_url_command', lambda: ['fake'])
+    monkeypatch.setattr(source_checks, 'run_external', lambda *a, **kw: SimpleNamespace(
+        returncode=1, stdout='', stderr=stderr))
+    result = source_checks.check_url('https://example.com/live')
+    detail = result.details['technical_detail']
+    assert 'secret' not in detail and 'sig=' not in detail
+    assert 'https://cdn.example.com/a.m3u8?…' in detail

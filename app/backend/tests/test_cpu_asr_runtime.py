@@ -237,3 +237,42 @@ def test_url_start_returns_runtime_update_400(monkeypatch, tmp_path, profile):
     assert error.value.detail == runtime.haas_runtime_update_message(profile)
     create.assert_not_called()
     preflight.assert_not_called()
+
+
+def test_engine_fingerprint_returns_none_when_a_file_vanishes(tmp_path, monkeypatch):
+    from backend.core import cpu_asr_runtime
+    package = tmp_path / 'stream_translator_gpt'
+    package.mkdir()
+    (package / 'main.py').write_text('x', encoding='utf-8')
+    monkeypatch.setattr(cpu_asr_runtime.Path, 'read_bytes', lambda self: (_ for _ in ()).throw(PermissionError('locked')))
+    assert cpu_asr_runtime.engine_fingerprint(package) is None
+
+
+def test_engine_fingerprint_cache_sees_same_size_older_mtime_change(tmp_path):
+    import os
+    from backend.core import cpu_asr_runtime
+    package = tmp_path / 'stream_translator_gpt'
+    package.mkdir()
+    first, second = package / 'a.py', package / 'b.py'
+    first.write_text('aa', encoding='utf-8')
+    second.write_text('bb', encoding='utf-8')
+    os.utime(first, ns=(1_000_000_000, 1_000_000_000))
+    os.utime(second, ns=(2_000_000_000, 2_000_000_000))
+    before = cpu_asr_runtime.engine_fingerprint(package)
+    first.write_text('cc', encoding='utf-8')
+    os.utime(first, ns=(1_500_000_000, 1_500_000_000))
+    assert cpu_asr_runtime.engine_fingerprint(package) != before
+
+
+def test_engine_fingerprint_ignores_rebuilt_dll_bytes_and_line_endings(tmp_path):
+    from backend.core import cpu_asr_runtime
+    copies = []
+    for name, dll, source in (('a', b'MZ-stamp-1', b'x = 1\r\n'), ('b', b'MZ-stamp-2', b'x = 1\n')):
+        package = tmp_path / name / 'stream_translator_gpt'
+        (package / 'native').mkdir(parents=True)
+        (package / 'native' / 'process_audio_capture.dll').write_bytes(dll)
+        (package / 'main.py').write_bytes(source)
+        copies.append(package)
+    assert cpu_asr_runtime.engine_fingerprint(copies[0]) == cpu_asr_runtime.engine_fingerprint(copies[1])
+    (copies[1] / 'native' / 'process_audio_capture.dll').unlink()
+    assert cpu_asr_runtime.engine_fingerprint(copies[0]) != cpu_asr_runtime.engine_fingerprint(copies[1])

@@ -19,22 +19,33 @@ def engine_fingerprint(site_packages_engine_dir: Path) -> str | None:
         _engine_fingerprints.pop(root, None)
         return None
     files = []
-    for directory, directories, names in os.walk(root):
-        directories[:] = [name for name in directories if name != '__pycache__']
-        for name in names:
-            if not name.endswith('.pyc'):
-                path = Path(directory) / name
-                files.append((path.relative_to(root).as_posix(), path, path.stat()))
-    key = (root, len(files), max((stat.st_mtime_ns for _, _, stat in files), default=0),
-           sum(stat.st_size for _, _, stat in files))
+    try:
+        for directory, directories, names in os.walk(root):
+            directories[:] = [name for name in directories if name != '__pycache__']
+            for name in names:
+                if not name.endswith('.pyc'):
+                    path = Path(directory) / name
+                    files.append((path.relative_to(root).as_posix(), path, path.stat()))
+    except OSError:
+        # An install, restore or antivirus lock can race the scan.
+        return None
+    files.sort(key=lambda item: item[0])
+    key = (root, tuple((relative, stat.st_size, stat.st_mtime_ns) for relative, _, stat in files))
     cached = _engine_fingerprints.get(root)
     if cached and cached[0] == key:
         return cached[1]
     digest = hashlib.sha256()
-    for relative, path, stat in sorted(files):
-        digest.update(relative.encode('utf-8') + b'\0')
-        digest.update(str(stat.st_size).encode('ascii') + b'\0')
-        digest.update(path.read_bytes())
+    try:
+        for relative, path, _stat in files:
+            digest.update(relative.encode('utf-8') + b'\0')
+            # Only Python source is compared by content: rebuilt DLLs embed a
+            # link timestamp, and checkouts may differ in line endings. Other
+            # files still count by name, so a missing module or DLL shows up.
+            if relative.endswith('.py'):
+                digest.update(path.read_bytes().replace(b'\r\n', b'\n'))
+            digest.update(b'\0')
+    except OSError:
+        return None
     result = digest.hexdigest()
     _engine_fingerprints[root] = (key, result)
     return result

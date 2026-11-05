@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import json
 import math
+import re
 import shutil
 import subprocess
 import sys
@@ -104,6 +105,9 @@ def _resolve_url_command() -> list[str] | None:
     return [executable] if executable else None
 
 
+_URL_QUERY = re.compile(r"(https?://[^\s?#'\"]+)\?[^\s'\"]*")
+
+
 def check_url(url: str) -> SourceCheckResult:
     started = time.perf_counter()
     parsed = urlparse(url.strip())
@@ -123,7 +127,8 @@ def check_url(url: str) -> SourceCheckResult:
         return _result("url", started, "error", "resolve", "網址解析逾時",
                        "檢查網路、直播狀態或稍後重試。", host=parsed.netloc)
     if completed.returncode:
-        detail = completed.stderr.strip()[-1200:]
+        # Shown in the UI: hide query strings, which can carry signed tokens.
+        detail = _URL_QUERY.sub(r"\1?…", completed.stderr.strip()[-1200:])
         for pattern, message, recovery in (
             ('twitter space not found', '找不到這個 X Space（網址錯誤、已刪除、尚未開始，或需要登入 Cookie）',
              '確認網址完整；若 Space 尚未開始請等開播後再試，需要登入時請設定 X 的 Cookie。'),
@@ -169,6 +174,10 @@ def _process_audio_probe_command(process_id: int, process_start_time: str, durat
                      '--duration', str(duration_seconds)]
 
 
+_MISSING_PROCESS_AUDIO = 'No module named stream_translator_gpt.process_audio_capture'
+_MISSING_PROCESS_AUDIO_MESSAGE = '目前的執行環境缺少指定應用程式音訊元件，請重新安裝 CPU ASR Runtime 或更新主程式。'
+
+
 def check_process_audio(process_id: int | None, process_start_time: str,
                         duration_seconds: float = 1.0, window_handle: str = '') -> SourceCheckResult:
     started = time.perf_counter()
@@ -195,6 +204,8 @@ def check_process_audio(process_id: int | None, process_start_time: str,
         completed = run_external(command, capture_output=True, text=True, timeout=duration + 15,
                                  check=False, encoding='utf-8', errors='replace',
                                  creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        if _MISSING_PROCESS_AUDIO in (completed.stderr or ''):
+            return failure('capture', _MISSING_PROCESS_AUDIO_MESSAGE, completed.stderr.strip()[-800:])
         payload = json.loads(completed.stdout.strip().splitlines()[-1])
         if not isinstance(payload, dict):
             raise ValueError('指定程式收音測試回傳的 JSON 格式不正確')
@@ -211,8 +222,8 @@ def check_process_audio(process_id: int | None, process_start_time: str,
         if isinstance(stderr, bytes):
             stderr = stderr.decode('utf-8', errors='replace')
         message = '無法完成指定程式收音測試'
-        if 'No module named stream_translator_gpt.process_audio_capture' in (stderr or ''):
-            message = '目前的執行環境缺少指定應用程式音訊元件，請重新安裝 CPU ASR Runtime 或更新主程式。'
+        if _MISSING_PROCESS_AUDIO in (stderr or ''):
+            message = _MISSING_PROCESS_AUDIO_MESSAGE
         return failure('capture', message, (stderr or str(exc)).strip()[-800:])
 
 

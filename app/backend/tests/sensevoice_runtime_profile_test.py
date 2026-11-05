@@ -482,8 +482,7 @@ def test_fun_asr_command_reprobes_stale_runtime_capabilities(monkeypatch):
             "Probe",
             (),
             {
-                "__call__": staticmethod(lambda *_: next(probes)),
-                "cache_clear": staticmethod(lambda: None),
+                "__call__": staticmethod(lambda *_, refresh=False: next(probes)),
             },
         )(),
     )

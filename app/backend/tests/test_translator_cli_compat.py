@@ -21,7 +21,7 @@ def test_build_command_skips_args_unsupported_by_runtime(monkeypatch):
     monkeypatch.setattr(
         translator_module,
         '_get_supported_cli_args',
-        lambda python_exe, cwd: frozenset({
+        lambda python_exe, cwd, **kwargs: frozenset({
             'openai_api_key',
             'use_qwen3_asr',
             'qwen3_dtype',
@@ -54,7 +54,7 @@ def test_build_command_skips_args_unsupported_by_runtime(monkeypatch):
 
 
 def test_build_command_keeps_args_when_runtime_capability_unknown(monkeypatch):
-    monkeypatch.setattr(translator_module, '_get_supported_cli_args', lambda python_exe, cwd: None)
+    monkeypatch.setattr(translator_module, '_get_supported_cli_args', lambda python_exe, cwd, **kwargs: None)
 
     context = TranslationContext(
         {
@@ -182,6 +182,9 @@ def probe_runtime(monkeypatch, tmp_path):
     engine = python.parent / 'Lib/site-packages/stream_translator_gpt'
     engine.mkdir(parents=True)
     (engine / '__init__.py').write_text('VALUE = 1', encoding='utf-8')
+    sherpa = python.parent / 'Lib/site-packages/sherpa_onnx'
+    sherpa.mkdir()
+    (sherpa / '__init__.py').write_text('VALUE = 1', encoding='utf-8')
     monkeypatch.setenv('STREAM_TRANSLATOR_LOG_DIR', str(tmp_path / 'logs'))
     calls = []
     result = SimpleNamespace(returncode=0, stdout='--model --language', stderr='')
@@ -197,7 +200,6 @@ def test_cli_persistent_hit_and_identity_changes(probe_runtime, tmp_path):
     def probe():
         return translator_module._get_supported_cli_args(str(python), str(tmp_path))
     assert probe() == frozenset({'model', 'language'})
-    translator_module._get_supported_cli_args.cache_clear()
     assert probe() == frozenset({'model', 'language'})
     assert len(calls) == 1
     stat = python.stat()
@@ -335,3 +337,59 @@ def test_unsuccessful_help_with_flags_is_not_cached(probe_runtime, tmp_path):
         translator_module._get_supported_cli_args(str(python), str(tmp_path))
     assert len(calls) == 2
     assert not (tmp_path / 'logs/engine_probe_cache.json').exists()
+
+
+def test_cli_refresh_reprobes_and_stores_success(probe_runtime, tmp_path):
+    python, _, _, calls, result = probe_runtime
+    probe = translator_module._get_supported_cli_args
+    assert probe(str(python), str(tmp_path)) == frozenset({'model', 'language'})
+    result.stdout = '--model --new_flag'
+    assert probe(str(python), str(tmp_path)) == frozenset({'model', 'language'})
+    assert len(calls) == 1
+    assert probe(str(python), str(tmp_path), refresh=True) == frozenset({'model', 'new_flag'})
+    assert len(calls) == 2
+    assert probe(str(python), str(tmp_path)) == frozenset({'model', 'new_flag'})
+    assert len(calls) == 2
+
+
+def test_cli_key_tracks_optional_runtime_version(probe_runtime, tmp_path):
+    python, version, _, _, _ = probe_runtime
+    key = translator_module._probe_key(str(python), str(tmp_path))
+    assert key is not None
+    version.write_text('{"version": 2}', encoding='utf-8')
+    assert translator_module._probe_key(str(python), str(tmp_path)) != key
+    version.unlink()
+    assert translator_module._probe_key(str(python), str(tmp_path)) is not None
+    assert translator_module._probe_key(str(python)) is None
+
+
+def test_empty_source_directory_uses_site_packages(probe_runtime, tmp_path):
+    python, _, engine, _, _ = probe_runtime
+    key = translator_module._probe_key(str(python), str(tmp_path))
+    (tmp_path / 'stream-translator-gpt').mkdir()
+    assert key is not None
+    assert translator_module._probe_key(str(python), str(tmp_path)) == key
+    (engine / '__init__.py').write_text('VALUE = 444', encoding='utf-8')
+    assert translator_module._probe_key(str(python), str(tmp_path)) != key
+
+
+def test_cpu_key_tracks_removed_sherpa_file(probe_runtime):
+    python, _, _, _, _ = probe_runtime
+    module = python.parent / 'Lib/site-packages/sherpa_onnx/module.py'
+    module.write_text('VALUE = 1', encoding='utf-8')
+    key = translator_module._probe_key(str(python))
+    assert key is not None
+    module.unlink()
+    assert translator_module._probe_key(str(python)) != key
+
+
+@pytest.mark.parametrize('name', ['python311._pth', 'python311.dll'])
+def test_cpu_key_tracks_runtime_file_mtime(probe_runtime, name):
+    python, _, _, _, _ = probe_runtime
+    runtime_file = python.parent / name
+    runtime_file.write_bytes(b'runtime')
+    key = translator_module._probe_key(str(python))
+    assert key is not None
+    stat = runtime_file.stat()
+    os.utime(runtime_file, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1000000000))
+    assert translator_module._probe_key(str(python)) != key

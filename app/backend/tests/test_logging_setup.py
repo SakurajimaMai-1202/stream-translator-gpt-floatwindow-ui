@@ -115,11 +115,15 @@ def test_backend_relay_levels_and_frontend_unchanged(caplog):
     exec(compile(ast.Module(body=functions, type_ignores=[]), 'services.py', 'exec'), namespace)
     relay = namespace['_log_subprocess_output']
     cases = [
-        ('Backend', '2026-11-05 [INFO] backend: error count 0', logging.INFO, logging.DEBUG),
-        ('Backend', '[DEBUG] warning details', logging.WARNING, logging.DEBUG),
+        ('Backend', '2026-11-05 12:34:56,789 [INFO] backend: error count 0', logging.INFO, logging.DEBUG),
+        ('Backend', '[DEBUG] warning details', logging.WARNING, logging.WARNING),
+        ('Backend', '[INFO] Error initializing CUDA', logging.INFO, logging.ERROR),
+        ('Backend', '2026-11-05 12:34:56,789 [INFO] Error initializing CUDA', logging.INFO, logging.DEBUG),
+        ('Backend', 'message contains [INFO] Error initializing CUDA', logging.INFO, logging.ERROR),
+        ('Backend', '  INFO: server ready', logging.WARNING, logging.DEBUG),
         ('Backend', '[WARNING] slow', logging.INFO, logging.WARNING),
         ('Backend', '[ERROR] failed', logging.INFO, logging.ERROR),
-        ('Backend', '[CRITICAL] failed', logging.INFO, logging.CRITICAL),
+        ('Backend', '2026-11-05 12:34:56,789 [CRITICAL] failed', logging.INFO, logging.CRITICAL),
         ('Backend', 'INFO: server ready', logging.WARNING, logging.DEBUG),
         ('Backend', 'Traceback (most recent call last):', logging.INFO, logging.ERROR),
         ('Backend', 'startup crash text', logging.INFO, logging.WARNING),

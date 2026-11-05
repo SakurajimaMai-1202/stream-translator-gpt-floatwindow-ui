@@ -51,9 +51,8 @@ def test_process_source_is_distinct_and_preserves_filetime_precision():
 @pytest.mark.parametrize('supported', [None, frozenset({'device_index'}), frozenset({'process_id'})])
 def test_old_runtime_never_silently_drops_process_target(monkeypatch, supported):
     monkeypatch.setattr(translator, '_resolve_profile_python', lambda *args: None)
-    def help_args(*args):
+    def help_args(*args, refresh=False):
         return supported
-    help_args.cache_clear = lambda: None
     monkeypatch.setattr(translator, '_get_supported_cli_args', help_args)
     context = translator.TranslationContext({'url': 'process_audio', 'process_id': 123,
                                             'process_start_time': '134038470994534567'}, 'test')
@@ -63,7 +62,7 @@ def test_old_runtime_never_silently_drops_process_target(monkeypatch, supported)
 
 def test_supported_runtime_passes_complete_target(monkeypatch):
     monkeypatch.setattr(translator, '_resolve_profile_python', lambda *args: None)
-    monkeypatch.setattr(translator, '_get_supported_cli_args', lambda *args: frozenset({'process_id', 'process_start_time'}))
+    monkeypatch.setattr(translator, '_get_supported_cli_args', lambda *args, **kwargs: frozenset({'process_id', 'process_start_time'}))
     command = translator.TranslationContext({'url': 'process_audio', 'process_id': 123,
                                             'process_start_time': '134038470994534567'}, 'test')._build_command()
     assert command[-1] == 'process_audio'

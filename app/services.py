@@ -43,7 +43,7 @@ def _classify_process_log_level(line: str, default_level: int) -> int:
 def _log_subprocess_output(prefix: str, line: str, default_level: int):
     if prefix == "Backend":
         # Parse the outer record, never severity words inside its message.
-        match = re.search(r"\[(DEBUG|INFO|WARNING|ERROR|CRITICAL)\]|^\s*(DEBUG|INFO|WARNING|ERROR|CRITICAL):", line)
+        match = re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} \[(DEBUG|INFO|WARNING|ERROR|CRITICAL)\] |^\s*(DEBUG|INFO|WARNING|ERROR|CRITICAL):", line)
         if match:
             parsed = getattr(logging, match.group(1) or match.group(2))
             level = parsed if parsed >= logging.WARNING else logging.DEBUG

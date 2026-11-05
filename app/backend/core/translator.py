@@ -227,15 +227,28 @@ def _probe_key(python_exe: str, cwd: str | None = None) -> str | None:
         python = Path(python_exe).resolve()
         stat = python.stat()
         source = Path(cwd) / 'stream-translator-gpt' if cwd is not None else None
-        engine = (source / 'stream_translator_gpt' if source is not None and source.exists()
+        engine = (source / 'stream_translator_gpt' if source is not None and (source / 'stream_translator_gpt').is_dir()
                   else python.parent / 'Lib/site-packages/stream_translator_gpt')
         fingerprint = engine_fingerprint(engine)
         if fingerprint is None:
             return None
         key = [str(python), stat.st_size, stat.st_mtime_ns, str(engine.resolve()), fingerprint]
-        if cwd is None:
-            version = (python.parent / 'runtime-version.json').stat()
+        version_path = python.parent / 'runtime-version.json'
+        if cwd is None or version_path.exists():
+            version = version_path.stat()
             key.extend([version.st_size, version.st_mtime_ns])
+        if cwd is None:
+            sherpa_fingerprint = engine_fingerprint(python.parent / 'Lib/site-packages/sherpa_onnx')
+            if sherpa_fingerprint is None:
+                return None
+            key.append(sherpa_fingerprint)
+            runtime_files = sorted(
+                [*python.parent.glob('python*._pth'), *python.parent.glob('python3*.dll')],
+                key=lambda path: path.name,
+            )
+            for path in runtime_files:
+                runtime_stat = path.stat()
+                key.append([path.name, runtime_stat.st_size, runtime_stat.st_mtime_ns])
         return json.dumps(key)
     except OSError:
         return None
@@ -355,10 +368,10 @@ def _obsolete_resolve_profile_python(runtime_profile: str | None) -> Optional[st
     return None
 
 
-def _get_supported_cli_args(python_exe: str, cwd: str) -> Optional[FrozenSet[str]]:
+def _get_supported_cli_args(python_exe: str, cwd: str, *, refresh: bool = False) -> Optional[FrozenSet[str]]:
     """偵測目前 Python 執行環境中的 stream_translator_gpt 支援哪些 CLI 參數。"""
     key = _probe_key(python_exe, cwd)
-    cached = _cached_probe(key)
+    cached = None if refresh else _cached_probe(key)
     if isinstance(cached, list) and cached and all(isinstance(arg, str) for arg in cached):
         return frozenset(cached)
     started = time.monotonic()
@@ -398,9 +411,6 @@ def _get_supported_cli_args(python_exe: str, cwd: str) -> Optional[FrozenSet[str
     logger.warning("stream_translator_gpt --help 未回傳可解析的參數，將使用內建白名單")
     return None
 
-# Compatibility for callers that previously cleared the in-process LRU cache.
-# Probe identity is now checked on every call; failures are never memoized.
-_get_supported_cli_args.cache_clear = lambda: None
 
 class TranslationContext:
     """翻譯執行上下文"""
@@ -577,8 +587,7 @@ class TranslationContext:
         if self.config.get('url') == 'process_audio':
             required_process_args = {'process_id', 'process_start_time'}
             if not runtime_supported_args or not required_process_args.issubset(runtime_supported_args):
-                _get_supported_cli_args.cache_clear()
-                runtime_supported_args = _get_supported_cli_args(cmd[0], cwd)
+                runtime_supported_args = _get_supported_cli_args(cmd[0], cwd, refresh=True)
             if not runtime_supported_args or not required_process_args.issubset(runtime_supported_args):
                 raise RuntimeError('目前選用的音訊執行環境不支援指定程式收音，請更新或重建執行環境。')
         required_backend_args = {
@@ -595,8 +604,7 @@ class TranslationContext:
         if runtime_supported_args and not required_backend_args.issubset(runtime_supported_args):
             # The selected runtime may have been refreshed while the backend stays open.
             # Re-probe once so a stale --help cache can never silently switch ASR engines.
-            _get_supported_cli_args.cache_clear()
-            runtime_supported_args = _get_supported_cli_args(cmd[0], cwd)
+            runtime_supported_args = _get_supported_cli_args(cmd[0], cwd, refresh=True)
         missing_backend_args = (
             required_backend_args - runtime_supported_args
             if runtime_supported_args

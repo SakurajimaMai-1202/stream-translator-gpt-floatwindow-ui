@@ -25,6 +25,7 @@ LOG_MAX_BYTES = 5 * 1024 * 1024
 LOG_BACKUP_COUNT = 5
 _RESETTED_LOG_FILES: set[Path] = set()
 _CONFIGURED_HANDLERS: list[logging.Handler] = []
+_DEDICATED_LOGGERS: dict[logging.Logger, logging.Handler] = {}
 
 
 def resolve_log_dir() -> Path:
@@ -68,6 +69,9 @@ def apply_configured_log_level(config_path: Optional[Path] = None) -> None:
     level = get_configured_log_level(config_path)
     logging.getLogger().setLevel(level)
     for handler in _CONFIGURED_HANDLERS:
+        handler.setLevel(level)
+    for dedicated_logger, handler in _DEDICATED_LOGGERS.items():
+        dedicated_logger.setLevel(level)
         handler.setLevel(level)
     for name in ("uvicorn", "uvicorn.error", "fastapi", "starlette", "py.warnings"):
         logging.getLogger(name).setLevel(level)
@@ -237,6 +241,7 @@ def configure_dedicated_file_logger(logger_name: str, log_name: str) -> logging.
     expected_path = resolve_log_file(log_name)
     for handler in logger.handlers:
         if isinstance(handler, RotatingFileHandler) and Path(handler.baseFilename) == expected_path:
+            _DEDICATED_LOGGERS[logger] = handler
             return logger
 
     _close_handlers(logger)
@@ -252,4 +257,5 @@ def configure_dedicated_file_logger(logger_name: str, log_name: str) -> logging.
     logger.addHandler(handler)
     logger.setLevel(get_configured_log_level())
     logger.propagate = False
+    _DEDICATED_LOGGERS[logger] = handler
     return logger

@@ -114,6 +114,80 @@ class LogLevelControlsTest(unittest.TestCase):
         self.assertIn("final: subtitles=1 total_ms p50=300.0 p95=300.0", message)
         self.assertIn("task_total=1", message)
 
+    def stdout_reader(self, lines):
+        tree = ast.parse((ROOT / "app/backend/core/translator.py").read_text(encoding="utf-8"))
+        reader = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "read_output")
+        log = Mock()
+        context = SimpleNamespace(config={}, stop_requested=False, asr_ready=False,
+                                  process=SimpleNamespace(stdout=lines), _broadcast=Mock())
+        ns = dict(self=context, logger=log, re=__import__("re"), json=json, **{n: getattr(__import__("typing"), n) for n in ("List", "Dict", "Any", "Optional", "FrozenSet")},
+                  command_secrets=[], cmd=[], _SUBTITLE_EVENT_PREFIX="__ST_SUBTITLE_EVENT__",
+                  _ASR_READY_EVENT="__ST_ASR_READY__")
+        extract("app/backend/core/translator.py",
+                {"_redact_engine_output", "_log_engine_output", "_diagnostic_status",
+                 "_redact_command_args", "_extract_latency_metrics"}, ns)
+        exec(compile(ast.Module(body=[reader], type_ignores=[]), "stdout_reader", "exec"), ns)
+        ns["read_output"]()
+        return context, log
+
+    def test_stdout_traceback_ends_before_legacy_subtitle(self):
+        context, log = self.stdout_reader([
+            "Traceback (most recent call last):\n", '  File "worker.py", line 1\n',
+            "ValueError: failed\n", "00:00:01,000 --> 00:00:02,000 字幕\n"])
+        self.assertEqual(log.error.call_count, 3)
+        self.assertEqual(context._broadcast.call_args.args[0]["data"]["original"], "字幕")
+
+    def test_stdout_chained_traceback(self):
+        for chain in ("During handling of the above exception, another exception occurred:",
+                      "The above exception was the direct cause of the following exception:"):
+            context, log = self.stdout_reader([
+                "Traceback (most recent call last):", "  first frame", "ValueError: first", "",
+                chain, "", "Traceback (most recent call last):", "  second frame",
+                "RuntimeError: second", "字幕"])
+            self.assertEqual(log.error.call_count, 7)
+            subtitles = [c.args[0]["data"]["original"] for c in context._broadcast.call_args_list]
+            self.assertIn("字幕", subtitles)
+
+    def test_stdout_traceback_cap_and_prefixes(self):
+        context, log = self.stdout_reader(["Traceback (most recent call last):"] +
+                                          ["  frame"] * 199 + ["字幕"])
+        self.assertEqual(log.error.call_count, 200)
+        self.assertEqual(context._broadcast.call_args.args[0]["data"]["original"], "字幕")
+        for prefix in ("[INFO]", "[WARNING]", "[ERROR]", "[DEBUG]"):
+            context, log = self.stdout_reader(["Traceback (most recent call last):",
+                                              prefix + " diagnostic", prefix + " diagnostic", "字幕"])
+            self.assertEqual(log.error.call_count, 2 if prefix == "[ERROR]" else 1)
+            self.assertEqual(log.warning.call_count, 1 if prefix == "[WARNING]" else 0)
+            self.assertEqual(context._broadcast.call_args.args[0]["data"]["original"], "字幕")
+
+    def test_summary_failure_does_not_stop_broadcast(self):
+        log = Mock()
+        ns = extract("app/backend/core/translator.py", {"_broadcast"},
+                     dict(logger=log), "TranslationContext")
+        context = SimpleNamespace(_summary=Mock(), _subscribers=set())
+        context._summary.add.side_effect = ValueError("summary failed")
+        ns["_broadcast"](context, {"type": "subtitle", "data": {}})
+        log.debug.assert_called_once_with("Subtitle summary update failed", exc_info=True)
+
+    def test_summary_zero_and_rotation(self):
+        ns = self.translator()
+        now = [0]
+        summary = ns["_SubtitleSummary"]("rotation", clock=lambda: now[0])
+        data = {"segment_id": 0, "timestamp": "first", "total_latency_ms": 10}
+        summary.add(data)
+        summary.add(dict(data, timestamp="second"))
+        self.assertEqual(summary.total, 1)
+        now[0] = 60
+        summary.add(data)
+        self.assertEqual(summary.total, 1)
+        self.assertEqual(summary.samples["total_latency_ms"], [])
+        now[0] = 120
+        summary.add(data)
+        self.assertEqual(summary.total, 2)
+        self.assertEqual(summary.samples["total_latency_ms"], [10])
+        self.assertEqual(summary.previous_seen, set())
+        self.assertEqual(summary.previous_sampled, set())
+
     def test_apply_levels_and_preserve_handlers(self):
         # Load the real module with only its settings dependency substituted.
         import sys
@@ -124,7 +198,8 @@ class LogLevelControlsTest(unittest.TestCase):
         root = logging.getLogger()
         old_handlers, old_level = root.handlers[:], root.level
         names = ("uvicorn", "uvicorn.error", "fastapi", "starlette", "py.warnings",
-                 "uvicorn.access", "watchfiles", "asyncio", "httpx", "urllib3")
+                 "uvicorn.access", "watchfiles", "asyncio", "httpx", "urllib3",
+                 "llama.server", "model.download", "test.dedicated")
         old_named = {name: (logging.getLogger(name).level, logging.getLogger(name).handlers[:],
                             logging.getLogger(name).propagate) for name in names}
         root.handlers = []
@@ -134,16 +209,26 @@ class LogLevelControlsTest(unittest.TestCase):
                 with patch.object(module, "resolve_log_dir", return_value=Path(directory)):
                     config.write_text("general: {log_level: INFO}", encoding="utf-8")
                     module.configure_logging("test", config)
+                    with patch.object(module, "get_configured_log_level", return_value=logging.INFO):
+                        dedicated = [module.configure_dedicated_file_logger(name, name)
+                                     for name in ("llama.server", "model.download", "test.dedicated")]
+                    dedicated_handlers = [target.handlers[:] for target in dedicated]
                     handlers = root.handlers[:]
                     for level in ("DEBUG", "INFO", "ERROR"):
                         config.write_text("general: {log_level: " + level + "}", encoding="utf-8")
                         module.apply_configured_log_level(config)
+                        for target, original in zip(dedicated, dedicated_handlers):
+                            self.assertEqual(target.level, getattr(logging, level))
+                            self.assertEqual(target.handlers, original)
+                            self.assertTrue(all(h.level == target.level for h in target.handlers))
                         self.assertEqual(root.level, getattr(logging, level))
                         self.assertEqual(root.handlers, handlers)
                         self.assertTrue(all(h.level == root.level for h in handlers))
                         self.assertEqual(logging.getLogger("uvicorn.error").level, root.level)
                         self.assertEqual(logging.getLogger("uvicorn.access").level,
                                          logging.DEBUG if level == "DEBUG" else logging.WARNING)
+                    for target in dedicated:
+                        module._close_handlers(target)
                     module._close_handlers(root)
         finally:
             root.handlers = old_handlers

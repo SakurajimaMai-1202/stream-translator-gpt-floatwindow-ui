@@ -427,6 +427,8 @@ class _SubtitleSummary:
         self.samples = {key: [] for key, _ in self.fields}
         self.seen = set()
         self.sampled = set()
+        self.previous_seen = set()
+        self.previous_sampled = set()
         self.finished = False
         self.lock = threading.Lock()
 
@@ -464,11 +466,18 @@ class _SubtitleSummary:
             now = self.clock()
             if now - self.started >= 60:
                 self._emit()
+                self.previous_seen, self.seen = self.seen, set()
+                self.previous_sampled, self.sampled = self.sampled, set()
+                if now - self.started >= 120:
+                    self.previous_seen.clear()
+                    self.previous_sampled.clear()
                 self.started = now
             # One subtitle is sent again when its translation arrives; count it once
             # and take each latency field once per subtitle.
-            segment = data.get("segment_id") or data.get("timestamp") or None
-            if segment is None or segment not in self.seen:
+            segment = data.get("segment_id")
+            if segment is None:
+                segment = data.get("timestamp")
+            if segment is None or segment not in self.seen and segment not in self.previous_seen:
                 if segment is not None:
                     self.seen.add(segment)
                 self.count += 1
@@ -477,7 +486,7 @@ class _SubtitleSummary:
                 value = data.get(key)
                 if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
                     if segment is not None:
-                        if (key, segment) in self.sampled:
+                        if (key, segment) in self.sampled or (key, segment) in self.previous_sampled:
                             continue
                         self.sampled.add((key, segment))
                     self.samples[key].append(value)
@@ -541,7 +550,10 @@ class TranslationContext:
     def _broadcast(self, event: dict):
         """將事件廣播給所有訂閱者（從任意執行緒呼叫）"""
         if event.get("type") == "subtitle":
-            self._summary.add(event["data"])
+            try:
+                self._summary.add(event["data"])
+            except Exception:
+                logger.debug("Subtitle summary update failed", exc_info=True)
         if not self._subscribers:
             return
         loop = self._loop
@@ -930,16 +942,16 @@ class TranslationContext:
                 pending_subtitles = {}  # timestamp -> dict
                 diagnostic_messages = {}
                 structured_timestamps = {}
-                stdout_traceback = False
+                stdout_traceback = 0
                 hide_transcribe_result = self.config.get('output_notification', {}).get('hide_transcribe_result', False)
                 try:
                     for line in self.process.stdout:
                         if self.stop_requested:
                             break
                         
-                        line = line.strip()
-                        if not line:
-                            stdout_traceback = False
+                        line = line.rstrip("\r\n")
+                        if not line.strip():
+                            stdout_traceback = 0
                             continue
                         
                         # 檢查是否為翻譯行 (result_exporter.py 會加上 \x1b[1m BOLD)
@@ -948,16 +960,24 @@ class TranslationContext:
                         # 移除 ANSI 顏色碼
                         clean_line = re.sub(r'\x1b\[[0-9;]*m', '', line)
                         safe_clean_line = _redact_engine_output(clean_line, command_secrets)
-                        if clean_line.startswith("Traceback (most recent call last):"):
-                            stdout_traceback = True
-                        if stdout_traceback:
-                            if clean_line.startswith((_SUBTITLE_EVENT_PREFIX, '[INFO]', '[WARNING]', '[ERROR]')):
-                                stdout_traceback = False
-                            else:
-                                _log_engine_output("error", clean_line, command_secrets, "[STDOUT] ")
-                                continue
-                        if clean_line.startswith(('[WARNING]', '[ERROR]')):
-                            _log_engine_output(_engine_stderr_level(clean_line), clean_line, command_secrets, "[STDOUT] ")
+                        if clean_line.startswith((_SUBTITLE_EVENT_PREFIX, '[INFO]', '[WARNING]', '[ERROR]', '[DEBUG]')):
+                            stdout_traceback = 0
+                        elif stdout_traceback or clean_line.startswith((
+                            "Traceback (most recent call last):",
+                            "During handling of the above exception",
+                            "The above exception was the direct cause",
+                        )):
+                            stdout_traceback += 1
+                            _log_engine_output("error", clean_line, command_secrets, "[STDOUT] ")
+                            if (stdout_traceback >= 200 or not (
+                                clean_line[0].isspace()
+                                or clean_line.startswith(("Traceback (most recent call last):",
+                                                          "During handling of the above exception",
+                                                          "The above exception was the direct cause"))
+                            )):
+                                stdout_traceback = 0
+                            continue
+                        clean_line = clean_line.strip()
 
                         # Older workers sent these diagnostics to stdout. They are
                         # never subtitle content, even without a log-level prefix.

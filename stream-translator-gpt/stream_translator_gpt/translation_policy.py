@@ -540,18 +540,21 @@ class IndexTranslatePromptStrategy(TranslationPromptStrategy):
                 candidates = _matching_glossary(request.source_text, request.candidates or {}, settings.max_terms)
                 if candidates:
                     constraints.append("【注意】 以下是不确定的辨识候选，仅供消歧，不得强制改写原文：" + str(candidates))
-                remaining = settings.max_context_chars
-                context = []
-                for source in reversed(request.previous_sources[-settings.context_window:] if settings.context_window else ()):
-                    if source.strip() and len(source.strip()) <= remaining:
-                        context.insert(0, source)
-                        remaining -= len(source.strip())
-                if context:
-                    # Brackets inside a context line must not look like our own tags.
-                    joined = " / ".join(re.sub(r"\s*[\r\n]+\s*", " ", source).strip()
-                                        .replace("【", "「").replace("】", "」")
-                                         for source in context)
-                    constraints.append("【注意】 前文仅供理解，不要翻译、复述或输出前文：" + joined)
+                # A source this short gives the model nothing to translate; the
+                # context would become the answer.
+                if len(re.sub(r"[\W_]+", "", request.source_text.strip())) > 2:
+                    remaining = settings.max_context_chars
+                    context = []
+                    for source in reversed(request.previous_sources[-settings.context_window:] if settings.context_window else ()):
+                        if source.strip() and len(source.strip()) <= remaining:
+                            context.insert(0, source)
+                            remaining -= len(source.strip())
+                    if context:
+                        # Brackets inside a context line must not look like our own tags.
+                        joined = " / ".join(re.sub(r"\s*[\r\n]+\s*", " ", source).strip()
+                                            .replace("【", "「").replace("】", "」")
+                                             for source in context)
+                        constraints.append("【注意】 前文仅供理解，不要翻译、复述或输出前文：" + joined)
         # The repair hint stays a hard constraint in the constrained layout; in
         # the plain branch it must precede the source or it gets translated too.
         kana_line = _kana_repair_line(request)
@@ -574,6 +577,15 @@ class IndexTranslatePromptStrategy(TranslationPromptStrategy):
 class ValidationIssue:
     code: str
     severity: str = "error"
+
+
+def max_run(text: str) -> int:
+    """Largest number of consecutive repeats of a unit of 1 to 6 characters."""
+    longest = 0
+    for size in range(1, 7):
+        for match in re.finditer(r"(.{%d}?)\1+" % size, text or "", re.S):
+            longest = max(longest, len(match.group(0)) // len(match.group(1)))
+    return longest
 
 
 def validate_translation(request: TranslationRequest, translation: str,
@@ -670,6 +682,15 @@ def validate_translation(request: TranslationRequest, translation: str,
                 break
     if repeats_previous_translation(request.source_text, translation, history):
         issues.append(ValidationIssue("context_echo_rejected"))
+    # A slash-joined reply to a contextual request is the context line echoed as
+    # the answer; the source itself may legitimately contain the separator.
+    # Only when the reply is far longer than the source: a short list such as
+    # "黑桃1 / 方塊7" can be a faithful translation of a short list.
+    if request.previous_sources and len(translation) > 3 * max(4, len(request.source_text.strip())) and any(
+            marker in translation and marker not in request.source_text
+            for marker in ("／", " / ")):
+        if not any(issue.code == "context_echo_rejected" for issue in issues):
+            issues.append(ValidationIssue("context_echo_rejected"))
     if any(target not in translation for target in _matching_glossary(request.source_text, request.glossary or {}, len(request.glossary or {})).values() if target):
         issues.append(ValidationIssue("fixed_term_missing"))
     elements = [element for element in request.preserve_elements if element and element in request.source_text]
@@ -679,6 +700,9 @@ def validate_translation(request: TranslationRequest, translation: str,
         pattern = "|".join(re.escape(e) for e in sorted(set(elements), key=len, reverse=True))
         if re.findall(pattern, translation) != re.findall(pattern, request.source_text):
             issues.append(ValidationIssue("preserve_element_order"))
+    translation_run, source_run = max_run(translation), max_run(request.source_text)
+    if translation_run >= 8 and translation_run > 2 * source_run:
+        issues.append(ValidationIssue("repetition_loop"))
     return tuple(issues)
 
 

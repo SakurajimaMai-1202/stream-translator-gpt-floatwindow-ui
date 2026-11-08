@@ -48,7 +48,7 @@ def test_index_repair_request_omits_context_line():
 def test_index_context_stays_within_budget():
     strategy = create_prompt_strategy("index_translate", "translate", "text")
     strategy.optimizer_settings = OptimizerSettings(max_context_chars=10, context_window=3)
-    prompt = strategy.prepare(TranslationRequest(1, "今回", previous_sources=(
+    prompt = strategy.prepare(TranslationRequest(1, "今回はここまで", previous_sources=(
         "長い前文です。", "みじかい", "これも長すぎる前文です。"))).user_content
     # Newest sentences are kept first; the 10-character budget fits only みじかい.
     assert "みじかい" in prompt
@@ -96,11 +96,78 @@ def test_foreign_script_does_not_flag_currency_symbols():
 def test_context_brackets_are_softened_and_budget_uses_stripped_length():
     strategy = create_prompt_strategy("index_translate", "translate", "text")
     strategy.optimizer_settings = OptimizerSettings(max_context_chars=12, context_window=3)
-    prompt = strategy.prepare(TranslationRequest(1, "今回", previous_sources=(
+    prompt = strategy.prepare(TranslationRequest(1, "今回はここまで", previous_sources=(
         "  【注意】音量  ", "\n\n みじかい \n"))).user_content
     # Both fit once surrounding whitespace is not counted; no inner tag survives.
     assert "「注意」音量 / みじかい" in prompt
-    assert prompt.count("【注意】") == 1
+    assert prompt.count("前文仅供理解") == 1 and "【注意】音量" not in prompt
+
+
+def test_index_context_line_skipped_for_short_sources():
+    strategy = create_prompt_strategy("index_translate", "translate", "text")
+    strategy.optimizer_settings = OptimizerSettings()
+    # One meaningful character, including punctuation-only differences.
+    for source in ("ー", "フ", "ー！", " ー "):
+        prompt = strategy.prepare(TranslationRequest(1, source, previous_sources=("前の文",))).user_content
+        assert "前文仅供理解" not in prompt and "前の文" not in prompt
+    # No other constraint: the plain branch is used.
+    prompt = strategy.prepare(TranslationRequest(1, "Hi", previous_sources=("前の文",))).user_content
+    assert "前文仅供理解" not in prompt and "【源文】" not in prompt
+    for source in ("ABC", "あいう"):
+        prompt = strategy.prepare(TranslationRequest(1, source, previous_sources=("前の文",))).user_content
+        assert "前文仅供理解" in prompt and "前の文" in prompt
+
+
+def test_context_echo_slash_requires_context_and_absent_source_marker():
+    request = TranslationRequest(1, "逃げて", previous_sources=("前の文",))
+    for marker in ("／", " / "):
+        output = f"嗯……等等，我现在正被追着呢！{marker}然后要逃到安全区去！"
+        assert "context_echo_rejected" in [
+            issue.code for issue in validate_translation(request, output)]
+        # Without context, a slash is a legitimate part of the translation.
+        assert validate_translation(TranslationRequest(1, "逃げて"), output) == ()
+        # The source may itself contain the separator.
+        source = f"逃げて{marker}安全地帯へ"
+        assert validate_translation(
+            TranslationRequest(1, source, previous_sources=("前の文",)), output) == ()
+    # A short list can be translated faithfully with a separator: only a reply far
+    # longer than its source counts as an echo.
+    assert validate_translation(TranslationRequest(
+        1, "スペードの1. ダイヤの7", previous_sources=("前の文",)), "黑桃1 / 方塊7") == ()
+
+
+def test_repetition_loop_only_when_translation_repeats_beyond_source():
+    degenerate = TranslationRequest(1, "てんてんでんてんでんが")
+    assert "repetition_loop" in [
+        issue.code for issue in validate_translation(degenerate, "噔" * 40)]
+    assert validate_translation(TranslationRequest(1, "こんにちは"), "哈" * 6) == ()
+    assert validate_translation(
+        TranslationRequest(1, "ははははははははは"), "哈" * 9) == ()
+    assert validate_translation(TranslationRequest(1, "いらない"), "不要不要不要") == ()
+
+
+def test_repetition_loop_is_not_accepted_by_kana_fallback():
+    from stream_translator_gpt.common import TranslationTask
+    client = _preview_client(index_translate_optimizer_enabled=True,
+                             translation_target_language='Traditional Chinese')
+    task = TranslationTask(None, (0, 1))
+    task.transcript = 'てんてんでんてんでんが'
+    try:
+        task._family_request, _ = client.prepare_translation_request(task.transcript, task.segment_id)
+        task._translation_attempts = 1
+        task.translation = '噔' * 40
+        client._validate_hy_mt2_output(task)
+        assert 'repetition_loop' in task.translation_validation_reasons
+        assert task.translation_failed and not task.translation_validation_rejected
+        assert getattr(task, '_family_repair', False)
+        task._translation_attempts = 2
+        assert client._prepare_prompt(task).temperature == 0.5
+        task.translation = '噔' * 40
+        client._validate_hy_mt2_output(task)
+        assert task.translation == '' and task.translation_failed
+        assert not task.translation_kana_fallback
+    finally:
+        client.close()
 
 
 def test_foreign_script_is_not_accepted_by_kana_fallback():

@@ -543,11 +543,13 @@ class IndexTranslatePromptStrategy(TranslationPromptStrategy):
                 remaining = settings.max_context_chars
                 context = []
                 for source in reversed(request.previous_sources[-settings.context_window:] if settings.context_window else ()):
-                    if source.strip() and len(source) <= remaining:
+                    if source.strip() and len(source.strip()) <= remaining:
                         context.insert(0, source)
-                        remaining -= len(source)
+                        remaining -= len(source.strip())
                 if context:
+                    # Brackets inside a context line must not look like our own tags.
                     joined = " / ".join(re.sub(r"\s*[\r\n]+\s*", " ", source).strip()
+                                        .replace("【", "「").replace("】", "」")
                                          for source in context)
                     constraints.append("【注意】 前文仅供理解，不要翻译、复述或输出前文：" + joined)
         # The repair hint stays a hard constraint in the constrained layout; in
@@ -583,7 +585,11 @@ def validate_translation(request: TranslationRequest, translation: str,
         return (ValidationIssue("empty_output"),)
     leak_text = translation if raw_translation is None else str(raw_translation or "")
     if any(marker in leak_text and marker not in request.source_text
-           for marker in ("【源文】", "【约束要求】", "【硬性要求】", "〖背景資訊", "前文仅供理解", "<think>")):
+           for marker in ("【源文】", "【约束要求】", "【硬性要求】", "〖背景資訊", "<think>")):
+        issues.append(ValidationIssue("prompt_leakage"))
+    elif (any(note in leak_text for note in ("前文仅供理解", "前文僅供理解"))
+          and not any(note in request.source_text for note in ("前文仅供理解", "前文僅供理解"))):
+        # The context note, echoed in either script; the source may legitimately say it.
         issues.append(ValidationIssue("prompt_leakage"))
     if normalize_output is None:
         from .qwen3_asr_postprocess import is_traditional_chinese_target, normalize_translation_script
@@ -646,7 +652,7 @@ def validate_translation(request: TranslationRequest, translation: str,
         foreign = re.findall(
             r"[\u0400-\u052f\u0590-\u05ff\ufb1d-\ufb4f\u0600-\u06ff\u0750-\u077f"
             r"\u08a0-\u08ff\ufb50-\ufdff\ufe70-\ufefc\u0900-\u097f\ua8e0-\ua8ff"
-            r"\u0e00-\u0e7f\u1100-\u11ff\u3130-\u318f\uac00-\ud7af]", output_remainder)
+            r"\u0e00-\u0e3e\u0e40-\u0e7f\u1100-\u11ff\u3130-\u318f\uac00-\ud7af]", output_remainder)
         if any(char not in allowed_scripts for char in foreign):
             issues.append(ValidationIssue("foreign_script"))
     if '\n' in translation and '\n' not in request.source_text:

@@ -82,6 +82,25 @@ def test_prompt_leakage_rejects_echoed_context_note():
     assert "prompt_leakage" in codes
     # The marker inside the source itself is legitimate.
     assert validate_translation(TranslationRequest(1, "前文仅供理解"), "前文僅供理解。") == ()
+    # Echoed in Traditional script, with or without the raw (pre-normalisation) text.
+    for raw in (None, "前文仅供理解，不要翻译。", "前文僅供理解，不要翻譯。"):
+        codes = [issue.code for issue in validate_translation(
+            TranslationRequest(1, "こんにちは"), "前文僅供理解，不要翻譯。", raw_translation=raw)]
+        assert "prompt_leakage" in codes
+
+
+def test_foreign_script_does_not_flag_currency_symbols():
+    assert validate_translation(TranslationRequest(1, "ビットコインを買った"), "買了 1฿") == ()
+
+
+def test_context_brackets_are_softened_and_budget_uses_stripped_length():
+    strategy = create_prompt_strategy("index_translate", "translate", "text")
+    strategy.optimizer_settings = OptimizerSettings(max_context_chars=12, context_window=3)
+    prompt = strategy.prepare(TranslationRequest(1, "今回", previous_sources=(
+        "  【注意】音量  ", "\n\n みじかい \n"))).user_content
+    # Both fit once surrounding whitespace is not counted; no inner tag survives.
+    assert "「注意」音量 / みじかい" in prompt
+    assert prompt.count("【注意】") == 1
 
 
 def test_foreign_script_is_not_accepted_by_kana_fallback():

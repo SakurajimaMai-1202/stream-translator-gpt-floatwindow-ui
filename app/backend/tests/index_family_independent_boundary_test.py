@@ -69,6 +69,8 @@ def test_index_family_independent_preview_client_uses_only_selected_family_setti
     assert request.candidates == {"ミオ": "候補譯名"}
     assert request.glossary["ミオ"] == "大神澪"
     assert "【源文】" in prepared.user_content
+    assert "【源文结束】" not in prepared.user_content
+    assert "【背景参考】" not in prepared.user_content
     assert "不确定" in prepared.user_content
 
     basic = create_family_preview_client(args, optimized=False)

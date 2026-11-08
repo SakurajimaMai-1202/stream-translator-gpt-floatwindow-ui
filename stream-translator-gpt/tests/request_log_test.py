@@ -281,7 +281,7 @@ MULTILINE = ("unexpected_multiline_output",)
     (MULTILINE, "〖術語〗\n彗星", False),
     (MULTILINE, "〖翻譯要求〗\n要求", False),
     (MULTILINE, "【注意】\n內容", False),
-    (MULTILINE, "【背景参考】\n內容", False),
+    (MULTILINE, "【约束要求】\n內容", False),
     (MULTILINE, "请将以下文本翻译为中文\n原文", False),
     (MULTILINE, "my private prompt\n原文", False),
 ])

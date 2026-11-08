@@ -38,6 +38,21 @@ def test_index_family_independent_uses_single_user_insttrans_prompt_and_standard
     assert capabilities.supports_structured_output is False
 
 
+def test_index_family_independent_context_is_a_constraint_not_a_background_block():
+    strategy = create_prompt_strategy("index_translate", "翻譯成繁體中文", "text")
+    strategy.optimizer_settings = OptimizerSettings()
+    prompt = strategy.prepare(TranslationRequest(
+        segment_id=5,
+        source_text="今日は配信です。",
+        previous_sources=("昨日は雨でした。", "今日も晴れです。"),
+    )).user_content
+
+    assert "【注意】 前文仅供理解，不要翻译、复述或输出前文：昨日は雨でした。 / 今日も晴れです。" in prompt
+    assert "【背景参考】" not in prompt
+    assert "【源文结束】" not in prompt
+    assert prompt.endswith("只输出译文，不要有任何额外说明。")
+
+
 def test_index_family_independent_separates_fixed_terms_from_uncertain_candidates():
     strategy = create_prompt_strategy("index_translate", "翻譯成繁體中文", "text")
     strategy.optimizer_settings = OptimizerSettings()

@@ -12,13 +12,100 @@ def test_index_official_and_quantized_detection():
     assert resolve_model_family("auto", "index-reader", "llama_cpp") == "generic_chat"
 
 
-def test_index_background_has_separate_boundaries():
+def test_index_context_is_one_constraint_line_without_background_block():
     strategy = create_prompt_strategy("index_translate", "translate", "text")
     strategy.optimizer_settings = OptimizerSettings()
     prompt = strategy.prepare(TranslationRequest(1, "人と人", previous_sources=(
-        "新しい私を形づくる", "誰かが見つけてくれたから", "私の後ろに道が出来た"))).user_content
-    assert prompt.index("【背景参考结束】") < prompt.index("【源文】")
-    assert "【源文】\n人と人\n【源文结束】" in prompt
+        "新しい私を形づくる", "誰かが\n見つけてくれたから", "私の後ろに道が出来た"))).user_content
+    note = ("【注意】 前文仅供理解，不要翻译、复述或输出前文："
+            "新しい私を形づくる / 誰かが 見つけてくれたから / 私の後ろに道が出来た")
+    assert note in prompt
+    assert "【背景参考】" not in prompt and "【源文结束】" not in prompt
+    assert "【源文】\n人と人\n\n【约束要求】" in prompt
+    assert prompt.endswith("只输出译文，不要有任何额外说明。")
+
+
+def test_index_no_context_keeps_plain_prompt():
+    strategy = create_prompt_strategy("index_translate", "translate", "text")
+    strategy.optimizer_settings = OptimizerSettings()
+    prompt = strategy.prepare(TranslationRequest(1, "Hello")).user_content
+    assert prompt == ("请将以下文本翻译为繁體中文（台灣用語），直接输出翻译结果，不要进行任何解释。"
+                      "\n\nHello")
+    assert "【注意】" not in prompt and "【源文】" not in prompt
+
+
+def test_index_repair_request_omits_context_line():
+    strategy = create_prompt_strategy("index_translate", "translate", "text")
+    strategy.optimizer_settings = OptimizerSettings()
+    prompt = strategy.prepare(TranslationRequest(
+        1, "マリー", glossary={"マリー": "瑪麗"}, previous_sources=("前の文",),
+        repair=True, residual_kana=("リ",))).user_content
+    assert "前文仅供理解" not in prompt and "前の文" not in prompt
+    assert "【约束要求】" in prompt
+    assert "【硬性要求】 上次译文残留日文「リ」，请全部翻成目标语言，不要保留日文假名。" in prompt
+
+
+def test_index_context_stays_within_budget():
+    strategy = create_prompt_strategy("index_translate", "translate", "text")
+    strategy.optimizer_settings = OptimizerSettings(max_context_chars=10, context_window=3)
+    prompt = strategy.prepare(TranslationRequest(1, "今回", previous_sources=(
+        "長い前文です。", "みじかい", "これも長すぎる前文です。"))).user_content
+    # Newest sentences are kept first; the 10-character budget fits only みじかい.
+    assert "みじかい" in prompt
+    assert "長い前文です。" not in prompt and "これも長すぎる前文です。" not in prompt
+    assert " / " not in prompt
+
+
+@pytest.mark.parametrize("output", ["สวัสดีค่ะ", "안녕하세요", "Привет"])
+def test_foreign_script_rejected_for_chinese_target(output):
+    codes = [issue.code for issue in validate_translation(TranslationRequest(1, "こんにちは"), output)]
+    assert "foreign_script" in codes
+
+
+def test_foreign_script_allowed_when_source_or_protected_span_has_it():
+    assert validate_translation(TranslationRequest(1, "สวัสดี"), "สวัสดี") == ()
+    assert validate_translation(
+        TranslationRequest(1, "こんにちは @タイ", preserve_elements=("สวัสดี",)), "สวัสดี 你好") == ()
+    assert validate_translation(
+        TranslationRequest(1, "こんにちは", glossary={"タイ": "สวัสดี"}), "สวัสดี") == ()
+
+
+def test_foreign_script_ignores_kana_latin_and_chinese():
+    assert validate_translation(TranslationRequest(1, "こんにちは"), "Hello 你好") == ()
+    assert "foreign_script" not in [
+        issue.code for issue in validate_translation(TranslationRequest(1, "こんにちは"), "すいちゃん，你好")]
+
+
+def test_prompt_leakage_rejects_echoed_context_note():
+    codes = [issue.code for issue in validate_translation(
+        TranslationRequest(1, "こんにちは"), "前文仅供理解，不要翻译。")]
+    assert "prompt_leakage" in codes
+    # The marker inside the source itself is legitimate.
+    assert validate_translation(TranslationRequest(1, "前文仅供理解"), "前文僅供理解。") == ()
+
+
+def test_foreign_script_is_not_accepted_by_kana_fallback():
+    from stream_translator_gpt.common import TranslationTask
+    client = _preview_client(index_translate_optimizer_enabled=True,
+                             translation_target_language='Traditional Chinese')
+    task = TranslationTask(None, (0, 1))
+    task.transcript = 'こんにちは'
+    try:
+        task._family_request, _ = client.prepare_translation_request(task.transcript, task.segment_id)
+        task._translation_attempts = 1
+        task.translation = 'สวัสดีค่ะ'
+        client._validate_hy_mt2_output(task)
+        assert 'foreign_script' in task.translation_validation_reasons
+        assert task.translation_failed and not task.translation_validation_rejected
+        assert getattr(task, '_family_repair', False)
+        task._translation_attempts = 2
+        assert client._prepare_prompt(task).temperature == 0.5
+        task.translation = 'Привет'
+        client._validate_hy_mt2_output(task)
+        assert task.translation == '' and task.translation_failed
+        assert not task.translation_kana_fallback
+    finally:
+        client.close()
 
 
 def test_exact_japanese_copy_detection_respects_exemptions():
@@ -473,7 +560,7 @@ def test_preview_repair_success_clears_failure():
     assert result["validation"] == [] and result["retry_count"] == 1
 
 
-def test_japanese_copy_repaired_without_background():
+def test_japanese_copy_repaired_without_context():
     client = _preview_client(index_translate_optimizer_enabled=True)
     prompts = []
     class Provider:
@@ -484,7 +571,8 @@ def test_japanese_copy_repaired_without_background():
     client.provider_adapter = Provider()
     result = client.translate_preview("人と人", [{'source': '私の後ろに道が出来た'}])
     assert result['translation'] == '人與人' and result['retry_count'] == 1
-    assert '【背景参考】' in prompts[0] and '【背景参考】' not in prompts[1]
+    assert '前文仅供理解' in prompts[0] and '私の後ろに道が出来た' in prompts[0]
+    assert '前文仅供理解' not in prompts[1]
 
 
 def test_preview_baseline_diagnostic_does_not_enforce():

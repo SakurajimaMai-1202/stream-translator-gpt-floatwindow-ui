@@ -522,7 +522,6 @@ class IndexTranslatePromptStrategy(TranslationPromptStrategy):
         if target.lower().replace("_", "-") in {"traditional chinese", "zh-tw", "zh-hant"}:
             target = "繁體中文（台灣用語）"
         constraints = []
-        background = ""
         if settings is not None:
             if not request.repair:
                 if re.search(r"[\u3040-\u30ff]", request.source_text):
@@ -548,23 +547,22 @@ class IndexTranslatePromptStrategy(TranslationPromptStrategy):
                         context.insert(0, source)
                         remaining -= len(source)
                 if context:
-                    background = ("【背景参考】\n以下是之前的原文，仅用于理解。不要翻译、复述或输出本区块。\n"
-                                  + "\n".join(context) + "\n【背景参考结束】\n\n")
-                    constraints.append("【注意】 只翻译【源文】到【源文结束】之间的本次原文，包括语气词；即使句子尚未说完，也翻译现有内容，不要等待后文或输出空白。")
-        # The hint must never follow the source text, or it gets translated too.
+                    joined = " / ".join(re.sub(r"\s*[\r\n]+\s*", " ", source).strip()
+                                         for source in context)
+                    constraints.append("【注意】 前文仅供理解，不要翻译、复述或输出前文：" + joined)
+        # The repair hint stays a hard constraint in the constrained layout; in
+        # the plain branch it must precede the source or it gets translated too.
         kana_line = _kana_repair_line(request)
         if kana_line and constraints:
             constraints.append("【硬性要求】 " + kana_line)
         if constraints:
             content = (f"请将以下文本翻译成{target}，并且严格遵循所有约束要求。\n\n【源文】\n"
-                       + request.source_text.strip() + "\n【源文结束】\n\n【约束要求】\n"
+                       + request.source_text.strip() + "\n\n【约束要求】\n"
                        + "\n".join(f"{i}. {value}" for i, value in enumerate(constraints, 1))
                        + "\n\n只输出译文，不要有任何额外说明。")
         else:
             content = (f"请将以下文本翻译为{target}，直接输出翻译结果，不要进行任何解释。"
                        + (kana_line if kana_line else "") + f"\n\n{request.source_text.strip()}")
-        if background:
-            content = background + content
         # Greedy decoding repeats the rejected answer verbatim, so a repair
         # attempt samples to get a different candidate.
         return PreparedPrompt(None, content, "text", 0.5 if request.repair else 0.0, 1.0, None, None)
@@ -585,7 +583,7 @@ def validate_translation(request: TranslationRequest, translation: str,
         return (ValidationIssue("empty_output"),)
     leak_text = translation if raw_translation is None else str(raw_translation or "")
     if any(marker in leak_text and marker not in request.source_text
-           for marker in ("【源文】", "【约束要求】", "【硬性要求】", "〖背景資訊", "<think>")):
+           for marker in ("【源文】", "【约束要求】", "【硬性要求】", "〖背景資訊", "前文仅供理解", "<think>")):
         issues.append(ValidationIssue("prompt_leakage"))
     if normalize_output is None:
         from .qwen3_asr_postprocess import is_traditional_chinese_target, normalize_translation_script
@@ -638,10 +636,23 @@ def validate_translation(request: TranslationRequest, translation: str,
         if (re.search(r"[\u3041-\u3096]+", output_remainder)
                 and not any(issue.code == "target_language_mismatch" for issue in issues)):
             issues.append(ValidationIssue("residual_kana"))
+        # Scripts no Chinese translation should introduce unless the source or an
+        # explicitly protected span already uses them.
+        allowed_scripts = set(request.source_text)
+        for element in request.preserve_elements:
+            allowed_scripts.update(element or "")
+        for fixed in (request.glossary or {}).values():
+            allowed_scripts.update(fixed or "")
+        foreign = re.findall(
+            r"[\u0400-\u052f\u0590-\u05ff\ufb1d-\ufb4f\u0600-\u06ff\u0750-\u077f"
+            r"\u08a0-\u08ff\ufb50-\ufdff\ufe70-\ufefc\u0900-\u097f\ua8e0-\ua8ff"
+            r"\u0e00-\u0e7f\u1100-\u11ff\u3130-\u318f\uac00-\ud7af]", output_remainder)
+        if any(char not in allowed_scripts for char in foreign):
+            issues.append(ValidationIssue("foreign_script"))
     if '\n' in translation and '\n' not in request.source_text:
         if request.previous_sources and len([line for line in translation.splitlines() if line.strip()]) > 1:
             # A single live segment has no requested line layout. Multiple lines
-            # in a contextual reply can be a translation of the background.
+            # in a contextual reply can be a translation of the context.
             issues.append(ValidationIssue('unexpected_multiline_output'))
         from .hy_mt2_output_validation import _comparable
         lines = [_comparable(line) for line in translation.splitlines()]

@@ -110,10 +110,8 @@ def test_index_context_line_skipped_for_short_sources():
     for source in ("ー", "フ", "ー！", " ー "):
         prompt = strategy.prepare(TranslationRequest(1, source, previous_sources=("前の文",))).user_content
         assert "前文仅供理解" not in prompt and "前の文" not in prompt
-    # No other constraint: the plain branch is used.
-    prompt = strategy.prepare(TranslationRequest(1, "Hi", previous_sources=("前の文",))).user_content
-    assert "前文仅供理解" not in prompt and "【源文】" not in prompt
-    for source in ("ABC", "あいう"):
+    # Two characters (うん, はい, 本当) keep the context: measured clean on 570 such lines.
+    for source in ("うん。", "Hi", "本当", "ABC", "あいう"):
         prompt = strategy.prepare(TranslationRequest(1, source, previous_sources=("前の文",))).user_content
         assert "前文仅供理解" in prompt and "前の文" in prompt
 
@@ -134,6 +132,15 @@ def test_context_echo_slash_requires_context_and_absent_source_marker():
     # longer than its source counts as an echo.
     assert validate_translation(TranslationRequest(
         1, "スペードの1. ダイヤの7", previous_sources=("前の文",)), "黑桃1 / 方塊7") == ()
+    # A glossary target that contains the separator is not an echo; neither is a repair
+    # attempt (its prompt carries no context) nor a one-character source.
+    long_reply = "這是系統的輸入／輸出介面啊啊啊啊啊"
+    assert validate_translation(TranslationRequest(
+        1, "入出力は", previous_sources=("前の文",), glossary={"入出力": "輸入／輸出"}), long_reply) == ()
+    assert validate_translation(TranslationRequest(
+        1, "逃げて", previous_sources=("前の文",), repair=True), long_reply) == ()
+    assert validate_translation(TranslationRequest(
+        1, "ー", previous_sources=("前の文",)), long_reply) == ()
 
 
 def test_repetition_loop_only_when_translation_repeats_beyond_source():
@@ -144,6 +151,15 @@ def test_repetition_loop_only_when_translation_repeats_beyond_source():
     assert validate_translation(
         TranslationRequest(1, "ははははははははは"), "哈" * 9) == ()
     assert validate_translation(TranslationRequest(1, "いらない"), "不要不要不要") == ()
+    # Laughter, onomatopoeia, digits and rules are legitimate repeats.
+    assert validate_translation(TranslationRequest(1, "草"), "哈" * 8) == ()
+    assert validate_translation(TranslationRequest(1, "草"), "哈" * 11) == ()
+    assert validate_translation(TranslationRequest(1, "ふふふ、ふふふ、ふふ"), "呵" * 8) == ()
+    assert validate_translation(TranslationRequest(1, "ドン、ドン、ドン"), "咚" * 8) == ()
+    assert validate_translation(TranslationRequest(1, "一億"), "100000000") == ()
+    assert validate_translation(TranslationRequest(1, "区切り"), "=" * 20 + "……" * 10) == ()
+    # A real loop is long.
+    assert "repetition_loop" in [issue.code for issue in validate_translation(TranslationRequest(1, "草"), "哈" * 12)]
 
 
 def test_repetition_loop_is_not_accepted_by_kana_fallback():

@@ -540,9 +540,10 @@ class IndexTranslatePromptStrategy(TranslationPromptStrategy):
                 candidates = _matching_glossary(request.source_text, request.candidates or {}, settings.max_terms)
                 if candidates:
                     constraints.append("【注意】 以下是不确定的辨识候选，仅供消歧，不得强制改写原文：" + str(candidates))
-                # A source this short gives the model nothing to translate; the
-                # context would become the answer.
-                if len(re.sub(r"[\W_]+", "", request.source_text.strip())) > 2:
+                # A single character gives the model nothing to translate; the
+                # context would become the answer. Two-character interjections
+                # (うん, はい, よし) measured clean with context and keep it.
+                if len(re.sub(r"[\W_]+", "", request.source_text.strip())) > 1:
                     remaining = settings.max_context_chars
                     context = []
                     for source in reversed(request.previous_sources[-settings.context_window:] if settings.context_window else ()):
@@ -584,6 +585,8 @@ def max_run(text: str) -> int:
     longest = 0
     for size in range(1, 7):
         for match in re.finditer(r"(.{%d}?)\1+" % size, text or "", re.S):
+            if re.fullmatch(r"[\W\d_]+", match.group(1)):
+                continue  # digits, punctuation and spaces repeat legitimately (1億, ……)
             longest = max(longest, len(match.group(0)) // len(match.group(1)))
     return longest
 
@@ -686,9 +689,17 @@ def validate_translation(request: TranslationRequest, translation: str,
     # the answer; the source itself may legitimately contain the separator.
     # Only when the reply is far longer than the source: a short list such as
     # "黑桃1 / 方塊7" can be a faithful translation of a short list.
-    if request.previous_sources and len(translation) > 3 * max(4, len(request.source_text.strip())) and any(
-            marker in translation and marker not in request.source_text
-            for marker in ("／", " / ")):
+    # The prompt only carries context for a first attempt on a source of 2+ characters,
+    # and a glossary target may itself contain the separator.
+    echo_text = translation
+    for fixed in (request.glossary or {}).values():
+        if fixed:
+            echo_text = echo_text.replace(fixed, "")
+    if (request.previous_sources and not request.repair
+            and len(re.sub(r"[\W_]+", "", request.source_text)) > 1
+            and len(translation) > 3 * max(4, len(request.source_text.strip()))
+            and any(marker in echo_text and marker not in request.source_text
+                    for marker in ("／", " / "))):
         if not any(issue.code == "context_echo_rejected" for issue in issues):
             issues.append(ValidationIssue("context_echo_rejected"))
     if any(target not in translation for target in _matching_glossary(request.source_text, request.glossary or {}, len(request.glossary or {})).values() if target):
@@ -700,8 +711,11 @@ def validate_translation(request: TranslationRequest, translation: str,
         pattern = "|".join(re.escape(e) for e in sorted(set(elements), key=len, reverse=True))
         if re.findall(pattern, translation) != re.findall(pattern, request.source_text):
             issues.append(ValidationIssue("preserve_element_order"))
-    translation_run, source_run = max_run(translation), max_run(request.source_text)
-    if translation_run >= 8 and translation_run > 2 * source_run:
+    # Laughter and onomatopoeia ("哈" x8..11) are legitimate; a loop runs to the token
+    # limit. The source is compared without punctuation so "ふふふ、ふふふ" counts as one run.
+    translation_run = max_run(translation)
+    source_run = max_run(re.sub(r"[\W_]+", "", request.source_text))
+    if translation_run >= 12 and translation_run > 2 * source_run:
         issues.append(ValidationIssue("repetition_loop"))
     return tuple(issues)
 

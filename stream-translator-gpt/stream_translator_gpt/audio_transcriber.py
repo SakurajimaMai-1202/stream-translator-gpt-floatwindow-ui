@@ -1195,16 +1195,32 @@ class Qwen3ASRTranscriber(AudioTranscriber):
         hf_model._stream_translator_pad_token_wrapped = True
 
     def transcribe(self, audio: np.array, initial_prompt: str = None) -> tuple[str, list | None]:
+        self.context_echo_retries = getattr(self, 'context_echo_retries', 0)
         rms = float(np.sqrt(np.mean(audio.astype(np.float32) ** 2)))
         if rms < self.rms_threshold:
             return "", None
 
+        def extract_text(results):
+            result = results[0] if results else None
+            if result is None:
+                return ''
+            if isinstance(result, dict):
+                text = result.get('text', '')
+            else:
+                text = getattr(result, 'text', '')
+            return strip_qwen3_asr_markers(text)
+
         results = self.model.transcribe(audio=(audio, SAMPLE_RATE), context=initial_prompt or '', language=self.language)
-        result = results[0] if results else None
-        if result is None:
-            return '', None
-        if isinstance(result, dict):
-            text = result.get('text', '')
-        else:
-            text = getattr(result, 'text', '')
-        return strip_qwen3_asr_markers(text), None
+        text = extract_text(results)
+        if initial_prompt and text and initial_prompt != self.constant_prompt:
+            normalized_text = re.sub(r"[\W_]+", "", text)
+            normalized_prompt = re.sub(r"[\W_]+", "", initial_prompt)
+            if normalized_text and normalized_text in normalized_prompt:
+                # Drop previous transcript context once to check a suspected echo.
+                self.context_echo_retries += 1
+                retry_results = self.model.transcribe(
+                    audio=(audio, SAMPLE_RATE), context=self.constant_prompt or '', language=self.language)
+                retry_text = extract_text(retry_results)
+                if re.sub(r"[\W_]+", "", retry_text) != normalized_text:
+                    text = retry_text
+        return text, None

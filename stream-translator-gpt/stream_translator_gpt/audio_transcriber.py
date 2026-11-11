@@ -1213,21 +1213,29 @@ class Qwen3ASRTranscriber(AudioTranscriber):
         results = self.model.transcribe(audio=(audio, SAMPLE_RATE), context=initial_prompt or '', language=self.language)
         text = extract_text(results)
         if initial_prompt and text:
-            # Only the dynamic previous-transcript part can be echoed; a term from the
-            # constant prompt that the speaker really says is not an echo. The loop builds
-            # f"{constant} {dynamic}".strip(), so compare stripped text.
-            constant = (self.constant_prompt or '').strip()
-            dynamic = initial_prompt.strip()
-            if constant and dynamic.startswith(constant):
-                dynamic = dynamic[len(constant):]
+            # An echo is the result copied out of the whole context (constant prompt plus the
+            # previous transcript). A term of the constant prompt that the speaker really says
+            # is contained in the constant part and is not an echo. Compare normalized text:
+            # the loop builds f"{constant} {dynamic}".strip().
             normalized_text = re.sub(r"[\W_]+", "", text).casefold()
-            normalized_dynamic = re.sub(r"[\W_]+", "", dynamic).casefold()
-            if normalized_text and normalized_dynamic and normalized_text in normalized_dynamic:
-                # Drop previous transcript context once to check a suspected echo.
+            normalized_prompt = re.sub(r"[\W_]+", "", initial_prompt).casefold()
+            normalized_constant = re.sub(r"[\W_]+", "", self.constant_prompt or '').casefold()
+            if (normalized_text and normalized_text in normalized_prompt
+                    and normalized_text not in normalized_constant):
+                # Drop the previous transcript context once to check a suspected echo.
                 self.context_echo_retries += 1
-                retry_results = self.model.transcribe(
-                    audio=(audio, SAMPLE_RATE), context=self.constant_prompt or '', language=self.language)
-                retry_text = extract_text(retry_results)
+                try:
+                    retry_results = self.model.transcribe(
+                        audio=(audio, SAMPLE_RATE), context=(self.constant_prompt or '').strip(),
+                        language=self.language)
+                    retry_text = extract_text(retry_results)
+                except Exception as exc:
+                    # The first result is most likely the echo: emit nothing rather than repeat it.
+                    if not getattr(self, '_context_echo_retry_warned', False):
+                        self._context_echo_retry_warned = True
+                        print(f'{WARNING}Qwen3-ASR retry after a suspected context echo failed: {exc}',
+                              file=sys.stderr, flush=True)
+                    return '', None
                 if re.sub(r"[\W_]+", "", retry_text).casefold() != normalized_text:
                     text = retry_text
         return text, None

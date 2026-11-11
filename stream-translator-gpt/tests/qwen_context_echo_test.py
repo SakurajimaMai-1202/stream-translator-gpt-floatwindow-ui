@@ -171,3 +171,27 @@ def test_echo_check_ignores_letter_case():
     transcriber = _make_transcriber(['hello', 'Hello'])
     text, _ = _transcribe(transcriber, 'Hello')
     assert text == 'hello'
+
+
+def test_copy_of_constant_plus_previous_transcript_is_an_echo():
+    transcriber = _make_transcriber(['ペコラ、ご飯、 今日は暑いね。', 'ねえ、'], constant_prompt='ペコラ、ご飯、')
+    text, _ = _transcribe(transcriber, 'ペコラ、ご飯、 今日は暑いね。')
+    assert text == 'ねえ、'
+    assert [call[1] for call in transcriber.model.calls] == ['ペコラ、ご飯、 今日は暑いね。', 'ペコラ、ご飯、']
+
+
+def test_failing_retry_emits_nothing_and_warns_once(capsys):
+    class _FailingSecondCall(_StubModel):
+        def transcribe(self, audio, context, language):
+            if self.calls:
+                self.calls.append((audio, context, language))
+                raise RuntimeError('CUDA out of memory')
+            return super().transcribe(audio, context, language)
+
+    transcriber = _make_transcriber(['ご飯かな。'])
+    transcriber.model = _FailingSecondCall(['ご飯かな。'])
+    assert _transcribe(transcriber, 'ご飯かな。') == ('', None)
+    assert transcriber.context_echo_retries == 1
+    transcriber.model = _FailingSecondCall(['ご飯かな。'])
+    assert _transcribe(transcriber, 'ご飯かな。') == ('', None)
+    assert capsys.readouterr().err.count('suspected context echo failed') == 1

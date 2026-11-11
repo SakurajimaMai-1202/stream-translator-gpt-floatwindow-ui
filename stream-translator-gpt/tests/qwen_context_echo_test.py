@@ -144,3 +144,30 @@ def test_retry_counter_accumulates_across_calls():
     assert _transcribe(transcriber, 'はい次。') == ('ねえ、', None)
     assert _transcribe(transcriber, 'はい次。') == ('はい次。', None)
     assert transcriber.context_echo_retries == 2
+
+
+def test_term_from_constant_prompt_is_not_an_echo():
+    # The speaker really says a hotword that is only in the constant prompt part.
+    transcriber = _make_transcriber(['ペコラ。'], constant_prompt='ペコラ、ご飯、')
+    text, _ = _transcribe(transcriber, 'ペコラ、ご飯、 今日は暑いね。')
+    assert text == 'ペコラ。'
+    assert len(transcriber.model.calls) == 1
+
+
+def test_constant_prompt_with_trailing_space_and_no_dynamic_part_is_not_retried():
+    # __init__ may leave "A, B, " while the loop strips the joined prompt to "A, B,".
+    transcriber = _make_transcriber(['ご飯。'], constant_prompt='ペコラ、 ご飯、 ')
+    text, _ = _transcribe(transcriber, 'ペコラ、 ご飯、')
+    assert text == 'ご飯。'
+    assert len(transcriber.model.calls) == 1
+
+
+def test_echo_check_ignores_letter_case():
+    transcriber = _make_transcriber(['welcome to the stream', 'Hello'])
+    text, _ = _transcribe(transcriber, 'Welcome to the Stream')
+    assert text == 'Hello'
+    assert len(transcriber.model.calls) == 2
+    # A retry that only differs in case is the same text: a genuine repeat.
+    transcriber = _make_transcriber(['hello', 'Hello'])
+    text, _ = _transcribe(transcriber, 'Hello')
+    assert text == 'hello'

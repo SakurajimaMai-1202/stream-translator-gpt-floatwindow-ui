@@ -1212,15 +1212,22 @@ class Qwen3ASRTranscriber(AudioTranscriber):
 
         results = self.model.transcribe(audio=(audio, SAMPLE_RATE), context=initial_prompt or '', language=self.language)
         text = extract_text(results)
-        if initial_prompt and text and initial_prompt != self.constant_prompt:
-            normalized_text = re.sub(r"[\W_]+", "", text)
-            normalized_prompt = re.sub(r"[\W_]+", "", initial_prompt)
-            if normalized_text and normalized_text in normalized_prompt:
+        if initial_prompt and text:
+            # Only the dynamic previous-transcript part can be echoed; a term from the
+            # constant prompt that the speaker really says is not an echo. The loop builds
+            # f"{constant} {dynamic}".strip(), so compare stripped text.
+            constant = (self.constant_prompt or '').strip()
+            dynamic = initial_prompt.strip()
+            if constant and dynamic.startswith(constant):
+                dynamic = dynamic[len(constant):]
+            normalized_text = re.sub(r"[\W_]+", "", text).casefold()
+            normalized_dynamic = re.sub(r"[\W_]+", "", dynamic).casefold()
+            if normalized_text and normalized_dynamic and normalized_text in normalized_dynamic:
                 # Drop previous transcript context once to check a suspected echo.
                 self.context_echo_retries += 1
                 retry_results = self.model.transcribe(
                     audio=(audio, SAMPLE_RATE), context=self.constant_prompt or '', language=self.language)
                 retry_text = extract_text(retry_results)
-                if re.sub(r"[\W_]+", "", retry_text) != normalized_text:
+                if re.sub(r"[\W_]+", "", retry_text).casefold() != normalized_text:
                     text = retry_text
         return text, None

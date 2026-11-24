@@ -94,7 +94,7 @@ def bundled_version():
         if _bundled is not None or time.monotonic() < _bundled_retry_at:
             return _bundled
         try:
-            result = _run([_runtime_python(), '-I', '-c',
+            result = _run([_runtime_python(), '-I', '-X', 'utf8', '-c',
                            "import importlib.metadata;print(importlib.metadata.version('yt-dlp'))"], 20)
             if not result.returncode and result.stdout.strip():
                 _bundled = result.stdout.strip()
@@ -313,11 +313,11 @@ class YtDlpAddonManager:
             (staged / '.complete.json').write_text(json.dumps(dict(version=version, ejs_version=ejs,
                 wheels=hashes, files=files)), encoding='utf-8')
             python = _runtime_python()
-            result = _run([python, '-I', '-c', BOOTSTRAP, str(staged), '--version'], 60)
+            result = _run([python, '-I', '-X', 'utf8', '-c', BOOTSTRAP, str(staged), '--version'], 60)
             if result.returncode or not _same_release(result.stdout.strip(), version):
                 raise ValueError('版本測試失敗。')
             smoke = "import sys;sys.path.insert(0,sys.argv.pop(1));from pathlib import Path;import yt_dlp;from yt_dlp import YoutubeDL;import yt_dlp_ejs;assert Path(yt_dlp.__file__).resolve().is_relative_to(Path(sys.path[0]).resolve())"
-            if _run([python, '-I', '-c', smoke, str(staged)], 60).returncode:
+            if _run([python, '-I', '-X', 'utf8', '-c', smoke, str(staged)], 60).returncode:
                 raise ValueError('套件載入測試失敗。')
             target = root / f'yt-dlp-{version}'
             os.rename(staged, target)

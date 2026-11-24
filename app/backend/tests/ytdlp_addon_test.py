@@ -57,12 +57,14 @@ def installation(monkeypatch, tmp_path):
             self.progress(len(payloads[url]), len(payloads[url]))
     monkeypatch.setattr(addon, 'HttpDownloader', Downloader)
     calls = []
-    def run(command, timeout):
-        calls.append((command, timeout))
-        assert command[:3] == ['runtime-python', '-I', '-c']
+    def run(command, **kwargs):
+        calls.append((command, kwargs['timeout']))
+        assert command[:5] == ['runtime-python', '-I', '-X', 'utf8', '-c']
+        assert kwargs['encoding'] == 'utf-8'
+        assert kwargs['errors'] == 'replace'
         # The real command prints a nightly without its wheel's .dev0 suffix.
         return SimpleNamespace(returncode=0, stdout='2026.10.29.232701\n')
-    monkeypatch.setattr(addon, '_run', run)
+    monkeypatch.setattr(addon, 'run_external', run)
     manager = addon.YtDlpAddonManager()
     manager._latest = '2026.10.29.232701.dev0'
     return SimpleNamespace(manager=manager, old=old, root=tmp_path, metadata=metadata,
@@ -230,7 +232,9 @@ def test_bundled_version_cached_runtime_only(monkeypatch):
     calls = []
     def run(command, **kwargs):
         calls.append(command)
-        assert command[:3] == ['runtime-python', '-I', '-c']
+        assert command[:5] == ['runtime-python', '-I', '-X', 'utf8', '-c']
+        assert kwargs['encoding'] == 'utf-8'
+        assert kwargs['errors'] == 'replace'
         assert kwargs['timeout'] == 20
         return SimpleNamespace(returncode=0, stdout='2026.10.26\n')
     monkeypatch.setattr(addon, 'run_external', run)

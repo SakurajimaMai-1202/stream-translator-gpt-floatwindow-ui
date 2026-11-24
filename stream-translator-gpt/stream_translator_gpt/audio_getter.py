@@ -405,7 +405,7 @@ class StreamAudioGetter(LoopWorkerBase):
                 metadata=True)
             # Metadata is bounded and must not inherit infinite fragment retries.
             result = subprocess.run(cmd, capture_output=True, text=True,
-                                    encoding='utf-8', timeout=15)
+                                    encoding='utf-8', errors='replace', timeout=15)
             if result.returncode:
                 self._check_stream_error(getattr(result, 'stderr', ''))
                 return 'unknown'

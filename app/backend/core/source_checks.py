@@ -67,16 +67,20 @@ def check_file(path_text: str) -> SourceCheckResult:
     command = [ffprobe, "-v", "error", "-show_entries", "stream=index,codec_type,codec_name",
                "-of", "json", str(path)]
     try:
-        completed = subprocess.run(command, capture_output=True, text=True, timeout=15, check=False,
+        completed = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                   timeout=15, check=False,
                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except subprocess.TimeoutExpired:
         return _result("file", started, "error", "decode", "檔案檢查逾時",
                        "確認檔案未損壞，或轉換成常見影音格式後重試。", path=str(path))
-    if completed.returncode:
+    try:
+        payload = json.loads(completed.stdout or "") if not completed.returncode else None
+    except json.JSONDecodeError:
+        payload = None
+    if not isinstance(payload, dict):
         return _result("file", started, "error", "decode", "影音格式無法解析",
                        "確認檔案完整，或用 FFmpeg 轉換後重試。", path=str(path),
-                       technical_detail=completed.stderr.strip()[-1000:])
-    payload = json.loads(completed.stdout or "{}")
+                       technical_detail=(completed.stderr or "").strip()[-1000:])
     audio = [item for item in payload.get("streams", []) if item.get("codec_type") == "audio"]
     if not audio:
         return _result("file", started, "error", "audio_track", "檔案沒有可用音軌",
@@ -118,7 +122,12 @@ def check_url(url: str) -> SourceCheckResult:
     if not command:
         return _result("url", started, "unknown", "resolver", "尚未能解析網址：找不到 yt-dlp",
                        "在進階設定檢查執行環境，或直接啟動後查看取得串流的錯誤。", host=parsed.netloc)
-    command.extend(["--no-playlist", "--skip-download", "--dump-single-json", url.strip()])
+    command.extend(["--no-playlist", "--skip-download", "--dump-single-json"])
+    # Keep this hostname rule in sync with audio_getter._is_twitter_url.
+    hostname = (parsed.hostname or "").lower()
+    if hostname in {"x.com", "twitter.com"} or hostname.endswith((".x.com", ".twitter.com")):
+        command.extend(["--extractor-args", "twitter:api=syndication"])
+    command.append(url.strip())
     try:
         completed = run_external(command, capture_output=True, text=True, encoding="utf-8", errors="replace",
                                    timeout=20, check=False,
@@ -128,14 +137,15 @@ def check_url(url: str) -> SourceCheckResult:
                        "檢查網路、直播狀態或稍後重試。", host=parsed.netloc)
     if completed.returncode:
         # Shown in the UI: hide query strings, which can carry signed tokens.
-        detail = _URL_QUERY.sub(r"\1?…", completed.stderr.strip()[-1200:])
+        stderr = completed.stderr or ""
+        detail = _URL_QUERY.sub(r"\1?…", stderr.strip())[-1200:]
         for pattern, message, recovery in (
             ('twitter space not found', '找不到這個 X Space（網址錯誤、已刪除、尚未開始，或需要登入 Cookie）',
              '確認網址完整；若 Space 尚未開始請等開播後再試，需要登入時請設定 X 的 Cookie。'),
             ('space ended and replay is disabled', 'X Space 已結束，且主持人沒有開放重播',
              '這場 Space 已無法收聽；請改用正在進行或有開放重播的 Space。'),
         ):
-            if pattern in completed.stderr.lower():
+            if pattern in stderr.lower():
                 return _result("url", started, "error", "resolve", message, recovery,
                                host=parsed.netloc, technical_detail=detail)
         return _result("url", started, "error", "resolve", "無法解析或存取直播網址",

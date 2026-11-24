@@ -173,6 +173,9 @@ def export_platform_cookies(platform: str, browser: str, profile: str = "") -> d
         process = subprocess.run(
             [
                 str(runtime_python),
+                "-I",
+                "-X",
+                "utf8",
                 "-c",
                 _BROWSER_EXPORT_SCRIPT,
                 normalized_browser,

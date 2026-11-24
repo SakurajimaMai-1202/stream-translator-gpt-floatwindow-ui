@@ -79,7 +79,11 @@ def test_export_platform_cookies_uses_managed_path_and_filters(monkeypatch, tmp_
 
     monkeypatch.setattr(cookie_manager, "active_addon", lambda: tmp_path / "addon")
 
-    def fake_run(command, **_kwargs):
+    def fake_run(command, **kwargs):
+        assert command[:6] == [str(runtime_python), "-I", "-X", "utf8", "-c",
+                               cookie_manager._BROWSER_EXPORT_SCRIPT]
+        assert kwargs["encoding"] == "utf-8"
+        assert kwargs["errors"] == "replace"
         assert command[-1] == str(tmp_path / "addon")
         exported = Path(command[-2])
         exported.write_text(

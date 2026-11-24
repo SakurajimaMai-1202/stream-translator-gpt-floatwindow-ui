@@ -56,6 +56,8 @@ def test_source_status_reads_live_metadata_from_stdout_without_output_option(mon
 
     def run(cmd, **kwargs):
         assert '-o' not in cmd
+        assert kwargs['encoding'] == 'utf-8'
+        assert kwargs['errors'] == 'replace'
         return SimpleNamespace(returncode=0, stdout=json.dumps({'live_status': 'is_live'}), stderr='')
 
     monkeypatch.setattr(audio_getter.subprocess, 'run', run)

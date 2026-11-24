@@ -101,6 +101,7 @@ CUDA／ROCm 使用者若要改用 CPU 語音辨識，可匯入 `StreamTranslator
 | --- | --- |
 | **Qwen3-ASR** | 提供 0.6B、1.7B 及日文特化模型；GPU 權重與 CPU ONNX 模型分別準備。 |
 | **NVIDIA Parakeet** | 提供多語、日文與英文模型；CUDA 與 CPU 可用型號依模型清單而異。 |
+| **Haas 日文（量化版）** | 僅限 CPU 版，約 480 MB；日文直播測試錯字率約 12–15%，比 CPU 的日文 CTC 模型（約 22%）準確。 |
 | **Fun-ASR／SenseVoice** | 適用於中文、英文、日文等內容，具體語言支援依模型而異。 |
 | **faster-whisper** | 提供 Whisper 多種尺寸模型，目前打包版使用 GPU 原生執行環境。 |
 | **OpenAI Whisper API** | 使用雲端辨識，無須下載本機模型；需網路與 API 金鑰，可能產生費用。 |
@@ -122,8 +123,8 @@ CUDA／ROCm 使用者若要改用 CPU 語音辨識，可匯入 `StreamTranslator
 
 | 模型系列 | 選擇方向 |
 | --- | --- |
-| **HY-MT2** | 提供 1.8B 與 7B；7B GGUF 建議使用 [`unsloth/Hy-MT2-7B-GGUF`](https://huggingface.co/unsloth/Hy-MT2-7B-GGUF)。較大模型需要更多記憶體與顯存。 |
-| **Index-Translate** | 官方 2B／9B GGUF；Q4_K_M 約 **1.31／5.78 GB**，推薦頁顯存估算為 **4／8 GB**。 |
+| **Hy-MT 系列（推薦）** | **Hy-MT3 7B** 為推薦模型，官方 GGUF [`tencent/Hy-MT3-7B-GGUF`](https://huggingface.co/tencent/Hy-MT3-7B-GGUF)，Q4_K_M 約 **5.15 GB**，可使用 Flash Attention。Hy-MT3 1.8B（Q8_0 約 1.91 GB）較輕量，程式會自動關閉前文以免把前文一起翻出。舊的 Hy-MT2 1.8B／7B 仍可使用。 |
+| **Index-Translate 系列** | 官方 2B／9B GGUF；Q4_K_M 約 **1.31／5.78 GB**，推薦頁顯存估算為 **4／8 GB**。 |
 | **Sakura** | 日文到中文模型，涵蓋 Galgame 與文學語氣；使用前請確認所選模型授權。 |
 | **其他 GGUF 模型** | 可依語言與內容需求匯入，翻譯效果取決於模型、提示詞及參數。 |
 

@@ -1,8 +1,8 @@
 # Stream Translator FloatWindow 操作指南
 
-適用版本：v1.6.0。本文說明 Windows 完整包的日常操作。
+適用版本：v1.6.1。本文說明 Windows 完整包的日常操作。
 
-[返回專案首頁](README.md) · [下載最新版](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest) · [版本更新說明](app/docs/RELEASE_NOTES_v1.6.0_zh-TW.md)
+[返回專案首頁](README.md) · [下載最新版](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest) · [版本更新說明](app/docs/RELEASE_NOTES_v1.6.1_zh-TW.md)
 
 ## 目錄
 
@@ -76,7 +76,7 @@
 
 ### CPU 與 GPU 切換
 
-CPU 完整包已包含 CPU 辨識執行環境。CUDA／ROCm 使用者若要切換 CPU 辨識，需確認 CPU ASR Sidecar 已就緒，再準備 CPU 模型；缺少元件時，可匯入 `StreamTranslator-CPU-ASR-Sidecar-v1.6.0.zip`。
+CPU 完整包已包含 CPU 辨識執行環境。CUDA／ROCm 使用者若要切換 CPU 辨識，需確認 CPU ASR Sidecar 已就緒，再準備 CPU 模型；缺少元件時，可匯入 `StreamTranslator-CPU-ASR-Sidecar-v1.6.1.zip`。CPU ASR 元件需與程式版本相同；更新程式後若出現版本過舊的提示，請重新安裝對應版本的元件。
 
 辨識模型越大，通常需要更多運算資源。字幕明顯落後時，可先選較小模型，或改用 CPU ASR 搭配雲端翻譯，減少本機模型同時競爭資源。
 
@@ -106,7 +106,7 @@ OpenAI 語音辨識與文字翻譯有各自的金鑰設定，請確認填在對�
 
 新安裝預設使用本機模型。所有步驟都在側欄的「本地翻譯」頁完成，頁首也有使用步驟說明。
 
-1. **選擇模型：** 在「1. 選擇模型」的「推薦下載」按「下載並使用」，程式會依顯存挑選適合的模型；已有 GGUF 檔時，到「本機已有」選資料夾掃描後選擇。
+1. **選擇模型：** 在「1. 選擇模型」的「推薦下載」按「下載並使用」，程式會依顯存挑選適合的模型（目前推薦 Hy-MT3 7B，選擇時自動套用建議參數）；已有 GGUF 檔時，到「本機已有」選資料夾掃描後選擇。
 2. **啟動：** 在「2. 啟動」按啟動服務。NVIDIA 優先使用 CUDA；AMD／Intel Arc 獨顯建議使用 Vulkan。偵測到獨立顯卡時，預設將模型完整載入顯卡；CPU 版也能透過 Vulkan 使用顯卡。GPU 層數為 0 時使用 CPU。
 3. **試譯：** 在「3. 試譯」輸入一句確認能翻譯，之後首頁的「本地 LLM 翻譯」開關就能直接使用。
 
@@ -116,6 +116,8 @@ OpenAI 語音辨識與文字翻譯有各自的金鑰設定，請確認填在對�
 
 模型載入時顯存不足，可降低 GPU 層數、上下文長度，或選擇較小模型。請依實際試譯結果調整。
 
+Hy-MT3 1.8B 會把前文一起翻出，程式偵測到這個模型時會自動關閉前文參考；Hy-MT2 會自動關閉 Flash Attention，Hy-MT3 則可以使用。
+
 ### LM Studio 或其他相容服務
 
 1. 在外部服務啟動模型與 OpenAI-compatible API 伺服器。
@@ -123,7 +125,7 @@ OpenAI 語音辨識與文字翻譯有各自的金鑰設定，請確認填在對�
 3. 填入 Base URL、模型名稱與服務要求的 API Key。LM Studio 常見位址為 `http://127.0.0.1:1234/v1`，請以實際服務設定為準。
 4. 執行測試翻譯，確認正常後再啟動即時轉譯。
 
-使用外部服務時，先確認該服務已啟動，模型名稱須與服務提供的名稱一致。HY-MT2 與 Index 可分別保存端點、模型、金鑰與提示詞。
+使用外部服務時，先確認該服務已啟動，模型名稱須與服務提供的名稱一致。Hy-MT 系列（MT2、MT3）與 Index-Translate 系列可分別保存端點、模型、金鑰與提示詞。
 
 ## 開始與停止轉譯
 
@@ -215,6 +217,6 @@ v1.6.0 起，翻譯詞條與 ASR 修正合併在「術語表」一份清單中�
 | 字幕落後或排隊 | 使用較小模型、減少同時使用的本機模型，確認 CPU／GPU 負載。 |
 | 固定譯名不一致 | 原文是否正確；正確時替詞條填寫譯法，誤辨時替詞條加上常見誤辨。 |
 | 手機開不了字幕頁 | 是否在同一區網、是否使用區網 IP、防火牆與路由器隔離設定。 |
-| 控制介面捲動或下拉選單不流暢 | Windows 預設使用軟體渲染以避免破圖，約每秒 15 幀。想要更流暢可在 `config.yaml` 的 `ui` 區段加入 `webview_rendering: gpu-safe` 後重新啟動（GPU 合成，部分環境在展開區塊或縮放視窗後可能破圖、殘影）；`--enable-webview-gpu` 則改用完整 GPU 渲染。 |
+| 控制介面捲動不流暢或畫面異常 | v1.6.1 起主視窗預設使用 Windows 內建的 WebView2，無法使用時會自動改回舊引擎。若 `config.yaml` 的 `ui` 區段設定了 `webview_engine: qtwebengine`，舊引擎在 Windows 使用軟體渲染，約每秒 15 幀；刪除該設定並重新啟動即可改回 WebView2。 |
 
 若仍無法解決，可在 [GitHub Issues](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/issues) 提供版本、套件類型、作業系統、音源、模型及錯誤訊息。日誌通常位於程式附近的 `logs` 資料夾；分享前請移除 API Key、Cookies 與私人網址。

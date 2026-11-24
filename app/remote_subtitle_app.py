@@ -30,7 +30,7 @@ APP_USER_MODEL_ID = "StreamTranslator.RemoteSubtitle"
 logger = logging.getLogger(__name__)
 
 NUMBERS = {
-    "fontSize": ("字體大小", 10, 200, 18),
+    "fontSize": ("字體大小", 10, 200, 16),
     "fontWeight": ("字重", 100, 900, 700),
     "maxDisplayCount": ("顯示筆數", 1, 100, 5),
     "backgroundOpacity": ("背景透明度（0 全透明／100 不透明）", 0, 100, 5),

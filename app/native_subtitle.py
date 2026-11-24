@@ -197,7 +197,7 @@ class NativeSubtitleWindow(QWidget):
         self._controls_hide_timer.timeout.connect(lambda: self._set_controls_visible(False))
 
         self.settings: dict[str, Any] = {
-            "fontSize": 18,
+            "fontSize": 16,
             "fontWeight": 700,
             "showOriginal": True,
             "showTranslated": True,
@@ -426,7 +426,7 @@ class NativeSubtitleWindow(QWidget):
         path.addRoundedRect(0, 0, self.width(), self.height(), 14, 14)
         painter.fillPath(path, background)
 
-        font_size = max(10, int(self.settings.get("fontSize", 18)))
+        font_size = max(10, int(self.settings.get("fontSize", 16)))
         font_weight = max(100, min(900, int(self.settings.get("fontWeight", 700))))
         text_font = QFont("Microsoft JhengHei UI")
         text_font.setPixelSize(font_size)

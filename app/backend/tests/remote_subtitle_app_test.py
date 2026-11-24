@@ -84,7 +84,7 @@ def test_settings_invalid_or_missing_falls_back(tmp_path, content):
     app = QApplication.instance() or QApplication([])
     window = NativeSubtitleWindow(store)
     try:
-        assert window.settings["fontSize"] == 18
+        assert window.settings["fontSize"] == 16
     finally:
         window.close()
         app.processEvents()

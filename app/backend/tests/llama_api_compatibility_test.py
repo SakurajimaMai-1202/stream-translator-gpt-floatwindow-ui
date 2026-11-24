@@ -1,4 +1,9 @@
+import os
+import subprocess
 from types import SimpleNamespace
+from unittest.mock import Mock, call
+
+import pytest
 from fastapi import Request
 
 from backend.api import llama
@@ -134,16 +139,37 @@ def test_custom_runtime_directory_resolves_to_server(monkeypatch, tmp_path):
             return {"llama": {"server_exe": str(runtime_dir)}}
 
     monkeypatch.setattr(config_api, "get_config_manager", lambda: ConfigManager())
-    monkeypatch.setattr(
-        llama, "run_external",
-        lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="version: test\n", stderr=""),
-    )
+    version = "version: 0.7.0-dev (build 11669, commit 620d2225c)"
+    run = Mock(return_value=SimpleNamespace(
+        returncode=0,
+        stdout="",
+        stderr=(
+            "ggml_vulkan: Found 1 Vulkan devices:\n"
+            f"{version}\n"
+            "built with Clang 20.1.8 for Windows x86_64\n"
+        ),
+    ))
+    env = {"TEST_LLAMA_ENV": "1"}
+    monkeypatch.setattr(llama, "run_external", run)
+    monkeypatch.setattr(llama, "llama_child_env", lambda: env)
+    monkeypatch.setattr(llama, "_runtime_info_cache", {})
+    monkeypatch.setattr(llama, "_runtime_info_cache_at", 0.0)
+    monkeypatch.setattr(llama, "_runtime_info_cache_key", "")
     assert llama._find_llama_server() == executable.resolve()
     result = asyncio.run(llama.validate_runtime_path(
         llama.RuntimePathRequest(server_exe=str(runtime_dir)),
         Request({"type": "http", "client": ("127.0.0.1", 12345), "headers": []}),
     ))
     assert result["path"] == str(executable.resolve())
+    assert result["version"] == version
+    assert llama._get_llama_runtime_info()["version"] == version
+    expected_call = call(
+        [str(executable.resolve()), "--version"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=5, env=env,
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+    )
+    assert run.call_args_list == [expected_call, expected_call]
 
 
 def test_custom_runtime_directory_without_server_does_not_fallback(monkeypatch, tmp_path):
@@ -183,28 +209,43 @@ def test_validate_model_path_rejects_renamed_file(tmp_path):
         asyncio.run(llama.validate_model_path(llama.ModelPathRequest(model_path=str(model))))
 
 
-def test_resource_status_reuses_short_lived_cache(monkeypatch):
-    calls = 0
+_NVIDIA_SMI_GPU = "NVIDIA GeForce RTX 4060 Ti, 3055, 16380, 32"
 
-    def fake_run(*args, **kwargs):
-        nonlocal calls
-        calls += 1
-        return SimpleNamespace(
-            returncode=0,
-            stdout="Test GPU, 100, 1000, 25\n",
-            stderr="",
-        )
 
-    monkeypatch.setattr(llama.subprocess, "run", fake_run)
+@pytest.mark.parametrize(
+    "stdout, expected_used",
+    [
+        (_NVIDIA_SMI_GPU + "\n", 3055.0),
+        ("NVIDIA GeForce RTX 4060 Ti, [N/A], 16380, 32\n", None),
+        (_NVIDIA_SMI_GPU + "\nSecond GPU, 100, 1000, 25\n", 3055.0),
+    ],
+)
+def test_resource_status_parses_first_gpu_and_reuses_cache(monkeypatch, stdout, expected_used):
+    run = Mock(return_value=SimpleNamespace(returncode=0, stdout=stdout, stderr=""))
+    monkeypatch.setattr(llama.subprocess, "run", run)
     monkeypatch.setattr(llama, "_resource_status_cache", {})
     monkeypatch.setattr(llama, "_resource_status_cache_at", 0.0)
 
     first = llama._collect_resource_status()
     second = llama._collect_resource_status()
 
-    assert calls == 1
+    run.assert_called_once_with(
+        [
+            "nvidia-smi",
+            "--query-gpu=name,memory.used,memory.total,utilization.gpu",
+            "--format=csv,noheader,nounits",
+        ],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=3, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+    )
     assert first == second
-    assert second["gpu_name"] == "Test GPU"
+    if expected_used is None:
+        assert "vram_used_mb" not in first
+    else:
+        assert first["vram_used_mb"] == expected_used
+    assert first["gpu_name"] == "NVIDIA GeForce RTX 4060 Ti"
+    assert first["vram_total_mb"] == 16380.0
+    assert first["gpu_percent"] == 32.0
 
 
 def test_flash_attention_uses_explicit_value_for_new_runtime(monkeypatch):

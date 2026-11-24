@@ -1,8 +1,11 @@
 import asyncio
 import hashlib
 import io
+import os
+import subprocess
 import zipfile
 from pathlib import Path
+from unittest.mock import Mock, call
 
 import pytest
 
@@ -602,13 +605,47 @@ def test_latest_release_marks_active_runtime_as_current(monkeypatch, tmp_path):
     assert result["variants"][1]["installed_latest"] is False
 
 
-def test_legacy_runtime_version_can_be_recognized_as_latest(monkeypatch, tmp_path):
-    root = tmp_path / "llama"
-    root.mkdir()
-    (root / "llama-server.exe").write_bytes(b"runtime")
-    monkeypatch.setattr(runtime, "llama_root", lambda: root)
-    monkeypatch.setattr(runtime, "run_external", lambda *_args, **_kwargs: type("Result", (), {
-        "stdout": "version: 10312 (abcdef)", "stderr": ""
-    })())
+_CUDA_VERSION_OUTPUT = (
+    "version: 0.7.0-dev (build 11669, commit 620d2225c)\n"
+    "built with Clang 20.1.8 for Windows x86_64\n"
+)
 
-    assert runtime.installed_runtime_build_tag() == "b10312"
+
+@pytest.mark.parametrize(
+    "stdout, stderr, returncode, expected_tag",
+    [
+        (_CUDA_VERSION_OUTPUT, "", 0, "b11669"),
+        ("version: 10312 (abcdef)", "", 0, "b10312"),
+        ("b10312", "", 0, "b10312"),
+        ("", "ggml_cuda_init: found 1 CUDA devices:\n" + _CUDA_VERSION_OUTPUT, 0, "b11669"),
+        ("", "llama-server b11669 crashed", 1, "b8642"),
+    ],
+)
+def test_installed_runtime_build_tag(monkeypatch, tmp_path, stdout, stderr, returncode, expected_tag):
+    root = tmp_path / "llama"
+    active = root / "runtimes" / "active" / "llama-server.exe"
+    active.parent.mkdir(parents=True)
+    active.write_bytes(b"runtime")
+    legacy = root / "llama-server.exe"
+    legacy.write_bytes(b"runtime")
+    (root / "active-runtime.txt").write_text("runtimes/active", encoding="utf-8")
+
+    monkeypatch.setattr(runtime, "llama_root", lambda: root)
+    env = {"TEST_LLAMA_ENV": "1"}
+    monkeypatch.setattr(runtime, "llama_child_env", lambda: env)
+    run = Mock(side_effect=[
+        subprocess.CompletedProcess([], returncode, stdout, stderr),
+        subprocess.CompletedProcess([], 0, "version: 8642 (abcdef)", ""),
+    ])
+    monkeypatch.setattr(runtime, "run_external", run)
+
+    assert runtime.installed_runtime_build_tag() == expected_tag
+    kwargs = dict(
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=5, check=False, env=env,
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+    )
+    expected_calls = [call([str(active.resolve()), "--version"], **kwargs)]
+    if returncode:
+        expected_calls.append(call([str(legacy), "--version"], **kwargs))
+    assert run.call_args_list == expected_calls

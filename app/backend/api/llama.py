@@ -793,6 +793,14 @@ def _find_llama_server() -> Optional[Path]:
     return next((path.resolve() for path in candidates if path and path.exists()), None)
 
 
+def _llama_version_line(stdout: str, stderr: str) -> str:
+    lines = (stdout + "\n" + stderr).strip().splitlines()
+    return next(
+        (line.strip() for line in lines if line.strip().lower().startswith("version:")),
+        lines[0] if lines else "未知版本",
+    )
+
+
 @router.post("/runtime/validate")
 async def validate_runtime_path(payload: RuntimePathRequest, request: Request):
     executable = _resolve_custom_runtime(payload.server_exe)
@@ -810,8 +818,7 @@ async def validate_runtime_path(payload: RuntimePathRequest, request: Request):
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "未知錯誤").strip()[-500:]
         raise HTTPException(status_code=400, detail=f"llama Runtime 驗證失敗: {detail}")
-    output = (result.stdout + "\n" + result.stderr).strip()
-    return {"success": True, "path": str(executable), "version": output.splitlines()[0] if output else "未知版本"}
+    return {"success": True, "path": str(executable), "version": _llama_version_line(result.stdout, result.stderr)}
 
 
 @router.post("/model/validate")
@@ -854,8 +861,7 @@ def _get_llama_runtime_info() -> Dict[str, Any]:
                 encoding="utf-8", errors="replace", timeout=5, env=llama_child_env(),
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
-            lines = (result.stdout + "\n" + result.stderr).strip().splitlines()
-            version = next((line.strip() for line in lines if line.strip().lower().startswith("version:")), lines[0] if lines else "未知版本")
+            version = _llama_version_line(result.stdout, result.stderr)
         except Exception:
             logger.debug("讀取 llama Runtime 版本失敗", exc_info=True)
             version = "無法讀取版本"
@@ -906,12 +912,17 @@ def _collect_resource_status() -> Dict[str, Any]:
     try:
         gpu = subprocess.run(
             ["nvidia-smi", "--query-gpu=name,memory.used,memory.total,utilization.gpu", "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=3,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=3,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         if gpu.returncode == 0 and gpu.stdout.strip():
             name, used, total, utilization = [part.strip() for part in gpu.stdout.splitlines()[0].split(",")]
-            result.update({"gpu_name": name, "vram_used_mb": float(used), "vram_total_mb": float(total), "gpu_percent": float(utilization)})
+            result["gpu_name"] = name
+            for key, value in (("vram_used_mb", used), ("vram_total_mb", total), ("gpu_percent", utilization)):
+                try:
+                    result[key] = float(value)
+                except ValueError:
+                    continue
     except Exception:
         logger.debug("查詢 NVIDIA 顯卡資源失敗", exc_info=True)
         pass

@@ -101,8 +101,10 @@ def installed_runtime_build_tag() -> str:
                 env=llama_child_env(),
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
+            if result.returncode != 0:
+                continue
             output = f"{result.stdout}\n{result.stderr}"
-            match = re.search(r"(?:version:\s*|\bb)(\d{3,})\b", output, re.IGNORECASE)
+            match = re.search(r"(?:version:\s*|\bbuild\s+|\bb)(\d{3,})\b", output, re.IGNORECASE)
             if match:
                 return f"b{match.group(1)}"
         except (OSError, subprocess.TimeoutExpired):

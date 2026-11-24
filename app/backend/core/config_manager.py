@@ -1358,6 +1358,7 @@ class ConfigManager:
         # endpoint identity changes; glossary, context and prompt stay upstream.
         # Explicit family wins over stale optimizer/provider settings from another family.
         from stream_translator_gpt.translation_policy import resolve_model_family
+        served_model = fallback_model = ''
         requested_family = translation_config.get('translation_model_family', 'auto')
         family = resolve_model_family(requested_family, args.get('gpt_model'), args.get('translation_provider'))
         if (str(requested_family or 'auto').lower() == 'auto'
@@ -1368,8 +1369,9 @@ class ConfigManager:
             probe_url, fallback_model = family_probe_target(backend, config, args)
             served_family = ''
             if is_loopback_probe(probe_url):
-                served_family, _ = detect_served_family(probe_url, args.get('openai_api_key', ''),
-                                                        args['translation_provider'], args.get('gpt_model', ''))
+                served_family, served_model = detect_served_family(
+                    probe_url, args.get('openai_api_key', ''), args['translation_provider'], args.get('gpt_model', '')
+                )
             if not served_family and fallback_model:
                 # Server not up yet: the model selected in Llama settings is what it will load.
                 fallback_family = resolve_model_family('auto', fallback_model, args['translation_provider'])
@@ -1403,6 +1405,18 @@ class ConfigManager:
                 args['gpt_base_url'] = endpoint
                 args['gpt_model'] = model_id
                 args['openai_api_key'] = str(translation_config.get(f'{prefix}_api_key', '') or '').strip() or '114514'
+
+        if family == 'hy_mt2':
+            from logging import getLogger
+            from re import IGNORECASE, search
+
+            if not (served_model or fallback_model):
+                from backend.core.model_identity import family_probe_target
+                _, fallback_model = family_probe_target(backend, config, args)
+            identified_model = served_model or fallback_model or args.get('gpt_model') or ''
+            if search(r'hy[-_ ]?mt3[-_ .]*1[._]?8b', identified_model, IGNORECASE):
+                args['hy_mt2_context_window'] = 0
+                getLogger(__name__).info('Previous-sentence context turned off for Hy-MT3 1.8B')
 
         auto_optimizer = bool(translation_config.get('family_optimizer_auto', True))
         legacy_hy = bool(translation_config.get('hy_mt2_optimizer_enabled', False))

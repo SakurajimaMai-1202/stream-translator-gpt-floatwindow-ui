@@ -37,6 +37,9 @@ def _next_vram_tier(required_gb: float) -> int:
     return next((tier for tier in VRAM_TIERS_GB if tier >= required_gb), int(required_gb + 0.999))
 
 
+HY_MT3_7B_QUANT_SIZES_GB = {"Q4_K_M": 5.15, "Q8_0": 8.73}
+
+
 MODEL_CATALOG: tuple[dict[str, Any], ...] = (
     {
         "id": "index-translate-2b",
@@ -108,6 +111,43 @@ MODEL_CATALOG: tuple[dict[str, Any], ...] = (
         "parameter_source": "Gemma 4 官方採樣建議與 1024-token 範例；上下文採即時翻譯平衡值",
     },
     {
+        "id": "hy-mt3-7b",
+        "match": ("hymt37b",),
+        "name": "Hy-MT3 7B",
+        "repo": "tencent/Hy-MT3-7B-GGUF",
+        "url": "https://huggingface.co/tencent/Hy-MT3-7B-GGUF/tree/main",
+        "recommended_quant": "Q4_K_M",
+        "model_size_gb": HY_MT3_7B_QUANT_SIZES_GB["Q4_K_M"],
+        "minimum_quant": "Q4_K_M",
+        "minimum_size_gb": HY_MT3_7B_QUANT_SIZES_GB["Q4_K_M"],
+        "category": "translation",
+        "app_preferred": True,
+        "app_preferred_order": 0,
+        "app_preference_reason": "本程式具備 Hy-MT 專用提示詞、術語與上下文策略，建議優先使用。",
+        "summary": "支援 102 種語言，適合繁體中文即時翻譯。",
+        "languages": ["102 語", "繁體中文"],
+        "deployment_config": {"temp": 0.7, "top_p": 0.6, "top_k": 20, "repeat_penalty": 1.05, "n_ctx": 4096, "n_predict": 4096},
+        "parameter_source": "Tencent Hy-MT3 1.8B／7B 官方推論建議",
+        "runtime_note": "支援 hunyuan-dense 的近期 llama.cpp；可使用 Flash Attention。",
+    },
+    {
+        "id": "hy-mt3-1.8b",
+        "match": ("hymt318b",),
+        "name": "Hy-MT3 1.8B",
+        "repo": "tencent/Hy-MT3-1.8B-GGUF",
+        "url": "https://huggingface.co/tencent/Hy-MT3-1.8B-GGUF/tree/main",
+        "recommended_quant": "Q8_0",
+        "model_size_gb": 1.91,
+        "minimum_quant": "Q4_K_M",
+        "minimum_size_gb": 1.35,
+        "category": "translation",
+        "summary": "輕量多語翻譯模型。本程式會自動關閉前文參考，避免把前文一起翻出。",
+        "languages": ["102 語", "繁體中文"],
+        "deployment_config": {"temp": 0.7, "top_p": 0.6, "top_k": 20, "repeat_penalty": 1.05, "n_ctx": 4096, "n_predict": 4096},
+        "parameter_source": "Tencent Hy-MT3 1.8B／7B 官方推論建議",
+        "runtime_note": "支援 hunyuan-dense 的近期 llama.cpp；可使用 Flash Attention。",
+    },
+    {
         "id": "hy-mt2-7b",
         "match": ("hymt27b",),
         "name": "Hy-MT2 7B",
@@ -119,7 +159,7 @@ MODEL_CATALOG: tuple[dict[str, Any], ...] = (
         "minimum_size_gb": 3.13,
         "category": "translation",
         "app_preferred": True,
-        "app_preferred_order": 0,
+        "app_preferred_order": 2,
         "app_preference_reason": "本程式具備 Hy-MT2 專用提示詞、術語與上下文策略，建議優先使用。",
         "summary": "新一代 33 語專用翻譯模型；支援繁體中文與複雜翻譯指令，並需為 KV cache 與 ASR 保留額外顯存。",
         "languages": ["33 語", "繁體中文"],
@@ -227,13 +267,21 @@ def build_translation_model_recommendations(devices: Iterable[GpuDevice]) -> dic
     options: list[dict[str, Any]] = []
     if supported_gpu:
         band = _simple_band(selected.memory_mb)
-        hy_id, hy_quant, hy_size = {
-            "8gb_plus": ("hy-mt2-q6-k", "Q6_K", 6.16),
-            "6_to_8gb": ("hy-mt2-iq4-nl", "IQ4_NL", 4.38),
-        }.get(band, ("hy-mt2-iq3-xxs", "UD-IQ3_XXS", 3.13))
+        from .llama_model_installer import MODELS
+
+        memory_mb = selected.memory_mb or 0
+        if memory_mb >= 15000:
+            hy_id, hy_quant, hy_size = "hy-mt3-q8-0", "Q8_0", HY_MT3_7B_QUANT_SIZES_GB["Q8_0"]
+        elif memory_mb >= 7168:
+            hy_id, hy_quant, hy_size = "hy-mt3-q4-k-m", "Q4_K_M", HY_MT3_7B_QUANT_SIZES_GB["Q4_K_M"]
+        elif band == "6_to_8gb":
+            hy_id, hy_quant, hy_size = "hy-mt2-iq4-nl", "IQ4_NL", 4.38
+        else:
+            hy_id, hy_quant, hy_size = "hy-mt2-iq3-xxs", "UD-IQ3_XXS", 3.13
+        hy_profile = "hy-mt3-7b" if memory_mb >= 7168 else "hy-mt2-7b"
         index_id = "index-translate-9b" if band == "8gb_plus" else "index-translate-2b"
         catalog = {model["id"]: model for model in MODEL_CATALOG}
-        hy_note = "33 種語言，繁體中文品質穩定"
+        hy_note = "102 種語言，繁體中文品質穩定、速度較快" if memory_mb >= 7168 else "33 種語言，繁體中文品質穩定"
         if band != "unknown" and selected.memory_mb < HY_CPU_SPILL_MB:
             hy_note += "；這張顯示卡記憶體較少，部分會交給 CPU，速度較慢"
         elif band == "unknown":
@@ -241,9 +289,9 @@ def build_translation_model_recommendations(devices: Iterable[GpuDevice]) -> dic
         options = [
             {
                 "key": hy_id, "model_id": hy_id, "quant": hy_quant,
-                "name": "Hy-MT2 7B", "family": "hy_mt2", "size_gb": hy_size,
-                "recommended": False, "note": hy_note, "profile_id": "hy-mt2-7b",
-                "deployment_config": dict(catalog["hy-mt2-7b"]["deployment_config"]),
+                "name": catalog[hy_profile]["name"], "family": "hy_mt2", "size_gb": hy_size,
+                "recommended": False, "note": hy_note, "profile_id": hy_profile,
+                "deployment_config": dict(catalog[hy_profile]["deployment_config"]),
             },
             {
                 "key": f"{index_id}-q4_k_m", "model_id": index_id, "quant": "Q4_K_M",
@@ -262,7 +310,7 @@ def build_translation_model_recommendations(devices: Iterable[GpuDevice]) -> dic
         recommended["recommended"] = True
         simple_setup = {
             "supported": True, "model_id": recommended["model_id"],
-            "filename": f"Hy-MT2-7B-{hy_quant}.gguf" if recommended["family"] == "hy_mt2" else "",
+            "filename": MODELS.get(recommended["model_id"], ""),
             "quant": recommended["quant"], "options": options,
             "reason": f"偵測到 {selected.name}，使用 GPU Runtime；{recommended['note']}（推薦）。",
         }

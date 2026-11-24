@@ -65,9 +65,9 @@ def _select_server_error(current: Optional[str], line: str) -> Optional[str]:
 
 
 def _is_hymt_model(model_path: str | Path) -> bool:
-    """Hy-MT/Hy-MT2 GGUF requires Flash Attention and mmap to stay disabled."""
+    """Hy-MT 1.x and Hy-MT2 GGUF files require Flash Attention and mmap to stay disabled."""
     compact_name = Path(model_path).name.lower().replace("-", "").replace("_", "")
-    return "hymt" in compact_name
+    return "hymt" in compact_name and "hymt3" not in compact_name
 
 
 def _is_index_translate_model(model_path: str | Path) -> bool:
@@ -468,7 +468,7 @@ async def _start_server(config: ServerConfig, background_tasks: BackgroundTasks,
         process_logger = configure_dedicated_file_logger("llama.server", "llama")
         if _is_hymt_model(model_path):
             compatibility_message = (
-                "Hy-MT compatibility override applied: Flash Attention disabled, mmap disabled "
+                "Hy-MT 1.x/Hy-MT2 compatibility override applied: Flash Attention disabled, mmap disabled "
                 f"({' '.join(_no_mmap_args(str(server_exe)))})."
             )
             logger.info(compatibility_message)

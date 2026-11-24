@@ -180,14 +180,24 @@ def test_bad_quant_and_unknown_model_rejected():
     assert installer.status()["state"] == "idle"
 
 
-@pytest.mark.parametrize("model_id,filename", models.MODELS.items())
-def test_legacy_ids_keep_exact_files(tmp_path, monkeypatch, model_id, filename):
+@pytest.mark.parametrize("model_id,repo,filename,quant", [
+    ("hy-mt2-iq3-xxs", "unsloth/Hy-MT2-7B-GGUF", "Hy-MT2-7B-UD-IQ3_XXS.gguf", "UD-IQ3_XXS"),
+    ("hy-mt2-iq4-nl", "unsloth/Hy-MT2-7B-GGUF", "Hy-MT2-7B-IQ4_NL.gguf", "IQ4_NL"),
+    ("hy-mt2-q6-k", "unsloth/Hy-MT2-7B-GGUF", "Hy-MT2-7B-Q6_K.gguf", "Q6_K"),
+    ("hy-mt3-q4-k-m", "tencent/Hy-MT3-7B-GGUF", "Hy-MT3-7B-Q4_K_M.gguf", "Q4_K_M"),
+    ("hy-mt3-q8-0", "tencent/Hy-MT3-7B-GGUF", "Hy-MT3-7B-Q8_0.gguf", "Q8_0"),
+])
+def test_simple_ids_install_verified_files(tmp_path, monkeypatch, model_id, repo, filename, quant):
     payload = b"legacy gguf"
     configured = tmp_path / "configured"
     configured.mkdir()
     monkeypatch.setattr(sys.modules["backend.api.config"], "_read_config",
                         lambda: {"llama": {"model_dir": str(configured)}})
-    mock_metadata(monkeypatch, [filename], hashlib.sha256(payload).hexdigest(), len(payload))
+    def siblings(requested_repo):
+        assert requested_repo == repo
+        return [{"rfilename": filename, "lfs": {"sha256": hashlib.sha256(payload).hexdigest(), "size": len(payload)}}]
+
+    monkeypatch.setattr(models.LlamaModelInstaller, "_siblings", staticmethod(siblings))
     monkeypatch.setattr(models, "simple_model_directory", lambda: tmp_path)
     monkeypatch.setattr(models.HttpDownloader, "download", lambda self, url, path: path.write_bytes(payload))
     installer = models.LlamaModelInstaller()
@@ -196,6 +206,7 @@ def test_legacy_ids_keep_exact_files(tmp_path, monkeypatch, model_id, filename):
     status = installer.status()
     assert status["state"] == "completed"
     assert status["filename"] == filename
+    assert status["quant"] == quant
     assert status["catalog_id"] == ""
     assert status["deployment_config"] == {}
     assert status["path"] == str(tmp_path / filename)

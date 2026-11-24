@@ -49,6 +49,9 @@ def test_hymt2_policy_uses_single_user_prompt_and_plain_text():
 
 def test_model_family_auto_detection_and_output_parsing():
     assert resolve_model_family("auto", "Tencent-Hunyuan/Hy-MT2-7B", "openai_compatible") == "hy_mt2"
+    for model in ("tencent/Hy-MT3-7B", "HYMT3-1.8B", "hy_mt3-7b"):
+        assert resolve_model_family("auto", model, "openai_compatible") == "hy_mt2"
+    assert resolve_model_family("HyMT3", "localllm", "openai_compatible") == "hy_mt2"
     assert resolve_model_family("auto", "gemma", "openai_compatible") == "generic_chat"
     assert resolve_model_family("auto", "gpt-5-mini", "openai") == "structured_api"
     assert parse_translation_output('```json\n{"translation":"測試"}\n```', "json") == "測試"

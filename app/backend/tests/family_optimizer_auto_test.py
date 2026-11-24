@@ -10,6 +10,57 @@ def _args(tmp_path, **translation):
     return manager.to_main_args(config)
 
 
+def test_context_window_uses_identified_hy_model(tmp_path, monkeypatch, caplog):
+    from backend.core import model_identity
+
+    manager = ConfigManager(tmp_path / 'config.yaml')
+    config = manager.get_config()
+    config['translation'].update(backend='llama', gpt_model='localllm', hy_mt2_context_window=5)
+    for served, fallback, expected in (
+        ('Hy-MT3-1.8B', 'Hy-MT3-7B', 0),
+        ('Hy-MT3-7B', 'Hy-MT3-1.8B', 5),
+        ('', 'HY_MT3-1_8B-Q4_K_M.gguf', 0),
+    ):
+        monkeypatch.setattr(model_identity, 'detect_served_family',
+                            lambda *args: ('hy_mt2', served) if served else ('', ''))
+        config['llama']['model_path'] = fallback
+        caplog.clear()
+        with caplog.at_level('INFO'):
+            assert manager.to_main_args(config)['hy_mt2_context_window'] == expected
+        assert caplog.text.count('context turned off for Hy-MT3 1.8B') == int(expected == 0)
+        assert config['translation']['hy_mt2_context_window'] == 5
+
+
+def test_explicit_hy_family_uses_backend_model(tmp_path, monkeypatch):
+    from backend.core import model_identity
+
+    def unexpected_probe(*args, **kwargs):
+        raise AssertionError('Explicit family must not probe the server')
+
+    monkeypatch.setattr(model_identity, 'detect_served_family', unexpected_probe)
+    manager = ConfigManager(tmp_path / 'config.yaml')
+    config = manager.get_config()
+    translation = config['translation']
+    translation.update(translation_model_family='hy_mt2', gpt_model='localllm', hy_mt2_context_window=3)
+    translation['custom_models'] = [
+        {'name': 'remote', 'model_name': 'remote-model', 'base_url': 'https://example.invalid/v1'},
+    ]
+    for backend, filename, expected in (
+        ('llama', 'Hy-MT3-1.8B-Q8_0.gguf', 0),
+        ('llama', 'Hy-MT3-7B-Q4_K_M.gguf', 3),
+        ('custom:remote', 'Hy-MT3-1.8B-Q8_0.gguf', 3),
+    ):
+        translation['backend'] = backend
+        config['llama']['model_path'] = rf'D:\models\{filename}'
+        assert manager.to_main_args(config)['hy_mt2_context_window'] == expected
+
+
+def test_context_window_with_configured_model_name(tmp_path):
+    for model, expected in (('tencent/HyMT3-18B', 0), ('Hy-MT3-7B', 5), ('Hy-MT2-1.8B', 5)):
+        args = _args(tmp_path, backend='gpt', gpt_model=model, hy_mt2_context_window=5)
+        assert args['hy_mt2_context_window'] == expected
+
+
 def test_default_auto_enabled(tmp_path):
     assert ConfigManager(tmp_path / 'config.yaml').get_config()['translation']['family_optimizer_auto'] is True
 

@@ -107,6 +107,7 @@ def resolve_model_family(requested: str | None, model: str, provider: str) -> st
     normalized = str(requested or "auto").strip().lower().replace("-", "_")
     aliases = {
         "hymt2": "hy_mt2",
+        "hymt3": "hy_mt2",
         "hy_mt": "hy_mt2",
         "generic": "generic_chat",
         "chat": "generic_chat",
@@ -121,7 +122,7 @@ def resolve_model_family(requested: str | None, model: str, provider: str) -> st
     model_lower = str(model or "").lower()
     if re.search(r"index[-_ ]?translate(?:[-_/ .]|$)", model_lower):
         return "index_translate"
-    if "hy-mt2" in model_lower or "hymt2" in model_lower:
+    if any(token in model_lower for token in ("hy-mt2", "hymt2", "hy_mt2", "hy-mt3", "hymt3", "hy_mt3")):
         return "hy_mt2"
     if provider in {"openai", "gemini"}:
         return "structured_api"

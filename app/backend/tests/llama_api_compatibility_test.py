@@ -324,6 +324,11 @@ def test_index_translate_model_detection():
 def test_hymt_models_force_flash_attention_and_mmap_off():
     assert llama._is_hymt_model("Hy-MT2-7B.i1-Q6_K.gguf") is True
     assert llama._is_hymt_model("Hy-MT2-7B-UD-Q4_K_XL.gguf") is True
+    assert llama._is_hymt_model("Hy-MT1.5-7B.gguf") is True
+    for filename in ("Hy-MT3-7B-Q4_K_M.gguf", "HY_MT3-1.8B-Q8_0.gguf"):
+        assert llama._is_hymt_model(filename) is False
+        for options in (("on", False), ("off", True)):
+            assert llama._effective_memory_options(filename, *options) == options
     assert llama._is_hymt_model("hy_mt-translation.gguf") is True
     assert llama._effective_memory_options("Hy-MT2-7B.gguf", "auto", False) == ("off", True)
 

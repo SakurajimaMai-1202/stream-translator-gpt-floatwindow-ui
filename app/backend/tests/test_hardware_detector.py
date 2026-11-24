@@ -50,7 +50,7 @@ def test_windows_arc_name_reaches_simple_onboarding():
     result = build_translation_model_recommendations([device])
     assert result["selected_gpu"]["name"] == name
     assert result["simple_setup"]["supported"] is True
-    assert result["simple_setup"]["model_id"] == "hy-mt2-q6-k"
+    assert result["simple_setup"]["model_id"] == "hy-mt3-q4-k-m"
 
 
 def test_integrated_gpu_heuristic_prefers_discrete_markers():
@@ -185,7 +185,9 @@ def test_simple_setup_model_choices_at_exact_vram_boundaries():
     for memory, model_id in ((2899, "index-translate-2b"), (2900, "hy-mt2-iq3-xxs"),
                              (4095, "hy-mt2-iq3-xxs"), (4096, "hy-mt2-iq3-xxs"),
                              (5799, "hy-mt2-iq3-xxs"), (5800, "hy-mt2-iq4-nl"),
-                             (8191, "hy-mt2-iq4-nl"), (8192, "hy-mt2-q6-k"),
+                             (7167, "hy-mt2-iq4-nl"), (7168, "hy-mt3-q4-k-m"),
+                             (8191, "hy-mt3-q4-k-m"), (8192, "hy-mt3-q4-k-m"),
+                             (14999, "hy-mt3-q4-k-m"), (15000, "hy-mt3-q8-0"),
                              (None, "hy-mt2-iq3-xxs")):
         device = GpuDevice(0, "NVIDIA GPU", "nvidia", "cuda", memory, False)
         setup = build_translation_model_recommendations([device])["simple_setup"]

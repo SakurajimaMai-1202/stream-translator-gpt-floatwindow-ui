@@ -57,7 +57,7 @@ def test_cpu_package_uses_dxgi_vram_for_rx_9070_xt(monkeypatch):
     assert result["selected_gpu"]["name"] == "AMD Radeon RX 9070 XT"
     assert result["vram_gb"] == 16.0
     assert result["simple_setup"]["supported"] is True
-    assert result["simple_setup"]["model_id"] == "hy-mt2-q6-k"
+    assert result["simple_setup"]["model_id"] == "hy-mt3-q8-0"
 
 
 def test_gemma_e4b_recommendation_uses_qat_repository():
@@ -86,6 +86,22 @@ def test_hymt2_uses_official_sampling_recommendation():
     }
 
 
+def test_hymt3_catalog_quantizations_and_settings():
+    catalog = {model["id"]: model for model in MODEL_CATALOG}
+    for size, recommended, minimum in (
+        ("7B", ("Q4_K_M", 5.15), ("Q4_K_M", 5.15)),
+        ("1.8B", ("Q8_0", 1.91), ("Q4_K_M", 1.35)),
+    ):
+        model = catalog[f"hy-mt3-{size.lower()}"]
+        assert model["repo"] == f"tencent/Hy-MT3-{size}-GGUF"
+        assert model["url"] == f"https://huggingface.co/{model['repo']}/tree/main"
+        assert (model["recommended_quant"], model["model_size_gb"]) == recommended
+        assert (model["minimum_quant"], model["minimum_size_gb"]) == minimum
+        assert model["deployment_config"] == catalog["hy-mt2-7b"]["deployment_config"]
+        assert model["languages"] == ["102 語", "繁體中文"]
+    assert not catalog["hy-mt3-1.8b"].get("app_preferred")
+
+
 def test_every_recommended_model_has_deployment_parameters():
     result = build_translation_model_recommendations([gpu("NVIDIA GeForce RTX", 24576)])
     assert all(model.get("deployment_config") for model in result["models"])
@@ -104,14 +120,14 @@ def test_vram_recommendations_are_derived_from_reference_quant_file_sizes():
     assert (models["hy-mt2-7b"]["minimum_quant"], models["hy-mt2-7b"]["minimum_size_gb"]) == ("UD-IQ3_XXS", 3.13)
 
 
-def test_hymt2_is_first_when_it_fits_but_does_not_override_hardware_fit():
+def test_hymt3_is_first_when_it_fits_but_does_not_override_hardware_fit():
     eight_gb = build_translation_model_recommendations([gpu("NVIDIA GeForce RTX", 8192)])
-    assert eight_gb["models"][0]["id"] == "hy-mt2-7b"
+    assert eight_gb["models"][0]["id"] == "hy-mt3-7b"
     assert eight_gb["models"][0]["app_preferred"] is True
     assert eight_gb["models"][1]["id"] == "index-translate-9b"
     assert eight_gb["models"][1]["app_preferred"] is True
     assert [model["id"] for model in eight_gb["models"] if model.get("app_preferred")] == [
-        "hy-mt2-7b", "index-translate-9b"]
+        "hy-mt3-7b", "index-translate-9b", "hy-mt2-7b"]
 
     four_gb = build_translation_model_recommendations([gpu("NVIDIA GeForce RTX", 4096)])
     assert four_gb["models"][0]["id"] != "hy-mt2-7b"
@@ -136,11 +152,11 @@ def test_simple_setup_four_gb_card_gets_iq3_instead_of_iq4():
     assert result["vram_tier"] == "4_to_8gb"
 
 
-def test_simple_setup_uses_q6_model_for_eight_gb_nvidia():
+def test_simple_setup_uses_mt3_q4_model_for_eight_gb_nvidia():
     result = build_translation_model_recommendations([gpu("NVIDIA GeForce RTX", 8192)])
     assert result["simple_setup"]["supported"] is True
-    assert result["simple_setup"]["model_id"] == "hy-mt2-q6-k"
-    assert result["simple_setup"]["quant"] == "Q6_K"
+    assert result["simple_setup"]["model_id"] == "hy-mt3-q4-k-m"
+    assert result["simple_setup"]["quant"] == "Q4_K_M"
     assert result["vram_tier"] == "8gb_plus"
 
 
@@ -174,14 +190,14 @@ def test_simple_setup_supports_amd_in_middle_and_high_tiers():
     high = build_translation_model_recommendations([gpu("AMD Radeon RX", 12288, vendor="amd")])
     assert middle["simple_setup"]["model_id"] == "hy-mt2-iq4-nl"
     assert middle["vram_tier"] == "4_to_8gb"
-    assert high["simple_setup"]["model_id"] == "hy-mt2-q6-k"
+    assert high["simple_setup"]["model_id"] == "hy-mt3-q4-k-m"
     assert high["vram_tier"] == "8gb_plus"
 
 
 def test_simple_setup_supports_arc_with_known_or_unknown_vram():
     arc = build_translation_model_recommendations([gpu("Intel(R) Arc(TM) A750 Graphics", 8192, vendor="intel")])
     assert arc["simple_setup"]["supported"] is True
-    assert arc["simple_setup"]["model_id"] == "hy-mt2-q6-k"
+    assert arc["simple_setup"]["model_id"] == "hy-mt3-q4-k-m"
     unknown = build_translation_model_recommendations([gpu("Intel Arc A750", None, vendor="intel")])
     assert unknown["selected_gpu"]["vendor"] == "intel"
     assert unknown["simple_setup"]["model_id"] == "hy-mt2-iq3-xxs"
@@ -240,6 +256,8 @@ def test_catalog_matcher_matches_expected_gguf_filenames():
         assert result["deployment_config"] == hymt_config
 
     expected = {
+        "Hy-MT3-7B-Q4_K_M.gguf": "hy-mt3-7b",
+        "Hy-MT3-1.8B-Q8_0.gguf": "hy-mt3-1.8b",
         "Index-Translate-2B.Q2_K.gguf": "index-translate-2b",
         "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf": "gemma-4-e4b-qat",
         "GalTransl-v4-4B-2601-Q5_K_S.gguf": "sakura-galtransl-v4-4b",
@@ -261,7 +279,11 @@ def test_catalog_matcher_rejects_unmatched_filenames_and_copies_config():
 
 def test_simple_setup_options_follow_vram_tiers_and_catalog_profiles():
     cases = [
-        (8192, ["hy-mt2-q6-k", "index-translate-9b-q4_k_m"], [6.16, 5.78]),
+        (8192, ["hy-mt3-q4-k-m", "index-translate-9b-q4_k_m"], [5.15, 5.78]),
+        (12288, ["hy-mt3-q4-k-m", "index-translate-9b-q4_k_m"], [5.15, 5.78]),
+        (14999, ["hy-mt3-q4-k-m", "index-translate-9b-q4_k_m"], [5.15, 5.78]),
+        (15000, ["hy-mt3-q8-0", "index-translate-9b-q4_k_m"], [8.73, 5.78]),
+        (16380, ["hy-mt3-q8-0", "index-translate-9b-q4_k_m"], [8.73, 5.78]),
         (4096, ["hy-mt2-iq3-xxs", "index-translate-2b-q4_k_m"], [3.13, 1.31]),
         (3072, ["hy-mt2-iq3-xxs", "index-translate-2b-q4_k_m"], [3.13, 1.31]),
         (2048, ["index-translate-2b-q4_k_m", "hy-mt2-iq3-xxs"], [1.31, 3.13]),
@@ -272,7 +294,10 @@ def test_simple_setup_options_follow_vram_tiers_and_catalog_profiles():
         (2900, ["hy-mt2-iq3-xxs", "index-translate-2b-q4_k_m"], [3.13, 1.31]),
         (5799, ["hy-mt2-iq3-xxs", "index-translate-2b-q4_k_m"], [3.13, 1.31]),
         (5800, ["hy-mt2-iq4-nl", "index-translate-2b-q4_k_m"], [4.38, 1.31]),
-        (8191, ["hy-mt2-iq4-nl", "index-translate-2b-q4_k_m"], [4.38, 1.31]),
+        (7167, ["hy-mt2-iq4-nl", "index-translate-2b-q4_k_m"], [4.38, 1.31]),
+        (7168, ["hy-mt3-q4-k-m", "index-translate-2b-q4_k_m"], [5.15, 1.31]),
+        (8188, ["hy-mt3-q4-k-m", "index-translate-2b-q4_k_m"], [5.15, 1.31]),
+        (8191, ["hy-mt3-q4-k-m", "index-translate-2b-q4_k_m"], [5.15, 1.31]),
     ]
     catalog = {model["id"]: model for model in MODEL_CATALOG}
     for memory, keys, sizes in cases:
@@ -286,8 +311,13 @@ def test_simple_setup_options_follow_vram_tiers_and_catalog_profiles():
         assert setup["model_id"] == options[0]["model_id"]
         assert setup["quant"] == options[0]["quant"]
         assert options[0]["note"] in setup["reason"]
-        assert setup["filename"] == (f"Hy-MT2-7B-{setup['quant']}.gguf"
-                                      if options[0]["family"] == "hy_mt2" else "")
+        assert setup["filename"] == {
+            "hy-mt2-iq3-xxs": "Hy-MT2-7B-UD-IQ3_XXS.gguf",
+            "hy-mt2-iq4-nl": "Hy-MT2-7B-IQ4_NL.gguf",
+            "hy-mt3-q4-k-m": "Hy-MT3-7B-Q4_K_M.gguf",
+            "hy-mt3-q8-0": "Hy-MT3-7B-Q8_0.gguf",
+            "index-translate-2b": "",
+        }[setup["model_id"]]
         for option in options:
             assert option["size_gb"] > 0
             assert option["name"] and option["note"]
@@ -297,7 +327,8 @@ def test_simple_setup_options_follow_vram_tiers_and_catalog_profiles():
                 assert option["profile_id"] == option["model_id"]
                 assert option["quant"] == "Q4_K_M"
             else:
-                assert option["profile_id"] == "hy-mt2-7b"
+                assert option["profile_id"] == ("hy-mt3-7b" if (memory or 0) >= 7168 else "hy-mt2-7b")
+                assert option["name"] == catalog[option["profile_id"]]["name"]
 
 
 def test_simple_setup_notes_describe_cpu_spill_and_translation_tradeoffs():
@@ -305,7 +336,7 @@ def test_simple_setup_notes_describe_cpu_spill_and_translation_tradeoffs():
     for memory in (2048, 3072, 4096, 4599, 4600, 6144, 8192, None, 0):
         setup = build_translation_model_recommendations([gpu("NVIDIA GPU", memory)])["simple_setup"]
         hy = next(option for option in setup["options"] if option["family"] == "hy_mt2")
-        expected = base
+        expected = "102 種語言，繁體中文品質穩定、速度較快" if (memory or 0) >= 7168 else base
         if memory and memory < 4600:
             expected += "；這張顯示卡記憶體較少，部分會交給 CPU，速度較慢"
         elif not memory:

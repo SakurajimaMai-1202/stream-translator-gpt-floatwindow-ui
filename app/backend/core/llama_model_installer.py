@@ -22,11 +22,14 @@ logger = logging.getLogger(__name__)
 
 
 REPOSITORY = "unsloth/Hy-MT2-7B-GGUF"
-MODELS = {
-    "hy-mt2-iq3-xxs": "Hy-MT2-7B-UD-IQ3_XXS.gguf",
-    "hy-mt2-iq4-nl": "Hy-MT2-7B-IQ4_NL.gguf",
-    "hy-mt2-q6-k": "Hy-MT2-7B-Q6_K.gguf",
+SIMPLE_MODELS = {
+    "hy-mt2-iq3-xxs": (REPOSITORY, "Hy-MT2-7B-UD-IQ3_XXS.gguf", "UD-IQ3_XXS"),
+    "hy-mt2-iq4-nl": (REPOSITORY, "Hy-MT2-7B-IQ4_NL.gguf", "IQ4_NL"),
+    "hy-mt2-q6-k": (REPOSITORY, "Hy-MT2-7B-Q6_K.gguf", "Q6_K"),
+    "hy-mt3-q4-k-m": ("tencent/Hy-MT3-7B-GGUF", "Hy-MT3-7B-Q4_K_M.gguf", "Q4_K_M"),
+    "hy-mt3-q8-0": ("tencent/Hy-MT3-7B-GGUF", "Hy-MT3-7B-Q8_0.gguf", "Q8_0"),
 }
+MODELS = {model_id: filename for model_id, (_, filename, _) in SIMPLE_MODELS.items()}
 BUSY = {"resolving", "downloading", "verifying"}
 
 
@@ -97,7 +100,7 @@ class LlamaModelInstaller:
             raise RuntimeError("不支援的翻譯模型")
         if model_id in MODELS:
             catalog = None
-            quant = MODELS[model_id].removeprefix("Hy-MT2-7B-").removesuffix(".gguf")
+            quant = SIMPLE_MODELS[model_id][2]
         else:
             quant = _quant_token(quant or catalog["recommended_quant"])
             allowed = {_quant_token(catalog[key]) for key in ("recommended_quant", "minimum_quant")}
@@ -164,11 +167,12 @@ class LlamaModelInstaller:
 
     @staticmethod
     def _metadata(filename: str) -> tuple[str, int, str]:
-        sibling = next((item for item in LlamaModelInstaller._siblings(REPOSITORY)
+        repo = next(repo for repo, name, _ in SIMPLE_MODELS.values() if name == filename)
+        sibling = next((item for item in LlamaModelInstaller._siblings(repo)
                         if item.get("rfilename") == filename), None)
         if not sibling:
             raise RuntimeError(f"模型發布頁缺少 {filename}")
-        return LlamaModelInstaller._asset(REPOSITORY, sibling)
+        return LlamaModelInstaller._asset(repo, sibling)
 
     def install(self, job_id: str, model_id: str) -> None:
         # A cancelled worker must release its partial file before another uses it.

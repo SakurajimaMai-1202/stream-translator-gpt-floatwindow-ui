@@ -952,6 +952,33 @@ class ConfigManager:
         if config is None:
             config = self.config
         
+        input_config, audio_source, url, loopback, use_loopback = self._resolve_audio_source(config)
+        (
+            transcription_backend, transcription_model, runtime_capabilities,
+            configured_asr_compute_backend, effective_asr_backend, runtime_device_policy,
+            runtime_allow_integrated_gpu, qwen3_dtype, qwen3_device_map,
+        ) = self._resolve_asr_model(config)
+        args = self._build_basic_args(
+            config, input_config, audio_source, url, loopback, use_loopback,
+            transcription_backend, transcription_model, runtime_capabilities,
+            configured_asr_compute_backend, effective_asr_backend, runtime_device_policy,
+            runtime_allow_integrated_gpu, qwen3_dtype, qwen3_device_map,
+        )
+        vocabulary = self._apply_asr_context(config, args, transcription_backend)
+        translation_config, resolved_api_keys = self._apply_translation_prompt(config, args, vocabulary)
+        self._apply_translation_parameters(config, args, translation_config)
+        backend = self._apply_backend_model(config, args, resolved_api_keys)
+        self._apply_model_family(config, args, translation_config, backend, vocabulary)
+        args['google_api_key'] = resolved_api_keys.get('google_api_key', '')
+        args['openai_transcription_api_key'] = str(
+            config.get('transcription', {}).get('openai_api_key', '')
+            or config.get('general', {}).get('openai_api_key', '')
+            or ''
+        ).strip()
+        self._apply_output(config, args)
+        return args
+
+    def _resolve_audio_source(self, config):
         # 處理音訊來源
         input_config = config.get('input', {})
         audio_source = input_config.get('audio_source', 'url')
@@ -974,7 +1001,9 @@ class ConfigManager:
         else:
             # 預設使用 URL
             url = input_config.get('url', '')
-        
+        return input_config, audio_source, url, loopback, use_loopback
+
+    def _resolve_asr_model(self, config):
         runtime_config = config.get('runtime', {})
         runtime_capabilities = get_runtime_capabilities(runtime_config.get('profile'))
         configured_asr_compute_backend = normalize_asr_compute_backend(
@@ -1064,7 +1093,18 @@ class ConfigManager:
                 asr_capabilities.faster_whisper_model_ids,
                 'small',
             )
+        return (
+            transcription_backend, transcription_model, runtime_capabilities,
+            configured_asr_compute_backend, effective_asr_backend, runtime_device_policy,
+            runtime_allow_integrated_gpu, qwen3_dtype, qwen3_device_map,
+        )
 
+    def _build_basic_args(
+        self, config, input_config, audio_source, url, loopback, use_loopback,
+        transcription_backend, transcription_model, runtime_capabilities,
+        configured_asr_compute_backend, effective_asr_backend, runtime_device_policy,
+        runtime_allow_integrated_gpu, qwen3_dtype, qwen3_device_map,
+    ):
         # 基本參數對映
         transcription_language = coerce_model_language(
             transcription_model,
@@ -1156,7 +1196,9 @@ class ConfigManager:
             'asr_correction_learning_enabled': config['transcription'].get('asr_correction_learning_enabled', False),
             'asr_corrections_case_sensitive': config['transcription'].get('asr_corrections_case_sensitive', False),
         }
+        return args
 
+    def _apply_asr_context(self, config, args, transcription_backend):
         # Resolve once so every engine feed shares the same session vocabulary.
         from backend.core.hy_mt2_glossary_presets import ASR_PROMPT_BACKENDS, session_vocabulary
         vocabulary = session_vocabulary(config)
@@ -1206,7 +1248,9 @@ class ConfigManager:
         # 術語對照功能完全由翻譯層的 _filter_glossary() 承擔（只注入原文中有出現的術語），
         # 這樣可以保留翻譯準確性，同時消除 ASR 幻覺風險。
         args['qwen3_context'] = None
-        
+        return vocabulary
+
+    def _apply_translation_prompt(self, config, args, vocabulary):
         translation_config = config.get('translation', {})
         resolved_api_keys = self._resolve_translation_api_keys(config)
 
@@ -1264,7 +1308,9 @@ class ConfigManager:
         else:
             args['translation_prompt'] = ''
             args['translation_glossary'] = None
-        
+        return translation_config, resolved_api_keys
+
+    def _apply_translation_parameters(self, config, args, translation_config):
         # 翻譯參數
         translation_backend = str(translation_config.get('backend', '') or '')
         if translation_backend == 'gemini':
@@ -1313,6 +1359,8 @@ class ConfigManager:
             'use_json_result': translation_config.get('use_json_result', False),
             'retry_if_translation_fails': translation_config.get('retry_if_translation_fails', True),
         })
+
+    def _apply_backend_model(self, config, args, resolved_api_keys):
         # 後端模型邏輯
         backend = config['translation'].get('backend', '')
         gpt_model = config['translation'].get('gpt_model', 'gpt-4o-mini')
@@ -1353,7 +1401,9 @@ class ConfigManager:
         else:
             args['gpt_model'] = gpt_model
             args['openai_api_key'] = resolved_api_keys.get('openai_api_key', '')
+        return backend
 
+    def _apply_model_family(self, config, args, translation_config, backend, vocabulary):
         # Both local servers use the same OpenAI-compatible request path. Only
         # endpoint identity changes; glossary, context and prompt stay upstream.
         # Explicit family wins over stale optimizer/provider settings from another family.
@@ -1447,13 +1497,7 @@ class ConfigManager:
                     path = self.config_path.parent / path
                 args[f'{_family}_glossary_folder'] = str(path)
 
-        args['google_api_key'] = resolved_api_keys.get('google_api_key', '')
-        args['openai_transcription_api_key'] = str(
-            config.get('transcription', {}).get('openai_api_key', '')
-            or config.get('general', {}).get('openai_api_key', '')
-            or ''
-        ).strip()
-        
+    def _apply_output(self, config, args):
         # 輸出配置
         output_notification = config.get('output_notification', {})
         output_config = config.get('output', {})
@@ -1514,8 +1558,6 @@ class ConfigManager:
             'telegram_token': telegram_token,
             'telegram_chat_id': telegram_chat_id,
         })
-        
-        return args
     
     def update_from_ui(self, section: str, key: str, value: Any):
         """從 UI 更新單個配置值"""

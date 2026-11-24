@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+from ctypes import wintypes
 import json
 import logging
 import os
@@ -21,6 +22,81 @@ from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication, QDialog, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton, QTextEdit, QVBoxLayout
 
 logger = logging.getLogger(__name__)
+
+
+# Keep the standalone updater independent of backend imports.
+# keep in sync with config_manager._copy_protected_dacl
+def _copy_protected_dacl(source, target):
+    """Preserve an explicitly protected Windows DACL without blocking persistence."""
+    if sys.platform != 'win32':
+        return
+    try:
+        advapi32 = ctypes.WinDLL('advapi32', use_last_error=True)
+        kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        pointer = ctypes.c_void_p
+        get_security = advapi32.GetNamedSecurityInfoW
+        get_security.argtypes = [
+            wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD,
+            ctypes.POINTER(pointer), ctypes.POINTER(pointer),
+            ctypes.POINTER(pointer), ctypes.POINTER(pointer), ctypes.POINTER(pointer),
+        ]
+        get_security.restype = wintypes.DWORD
+        get_control = advapi32.GetSecurityDescriptorControl
+        get_control.argtypes = [pointer, ctypes.POINTER(wintypes.WORD), ctypes.POINTER(wintypes.DWORD)]
+        get_control.restype = wintypes.BOOL
+        set_security = advapi32.SetNamedSecurityInfoW
+        set_security.argtypes = [
+            wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD,
+            pointer, pointer, pointer, pointer,
+        ]
+        set_security.restype = wintypes.DWORD
+        local_free = kernel32.LocalFree
+        local_free.argtypes = [pointer]
+        local_free.restype = pointer
+
+        SE_FILE_OBJECT = 1
+        DACL_SECURITY_INFORMATION = 4
+        PROTECTED_DACL_SECURITY_INFORMATION = 0x80000000
+        SE_DACL_PROTECTED = 0x1000
+        descriptor = pointer()
+        dacl = pointer()
+        try:
+            error = get_security(
+                os.fspath(source), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
+                None, None, ctypes.byref(dacl), None, ctypes.byref(descriptor),
+            )
+            if error:
+                raise ctypes.WinError(error)
+            control = wintypes.WORD()
+            revision = wintypes.DWORD()
+            if not get_control(descriptor, ctypes.byref(control), ctypes.byref(revision)):
+                raise ctypes.WinError(ctypes.get_last_error())
+            if not control.value & SE_DACL_PROTECTED:
+                return
+            error = set_security(
+                os.fspath(target), SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                None, None, dacl, None,
+            )
+            if error:
+                raise ctypes.WinError(error)
+        finally:
+            if descriptor.value:
+                if local_free(descriptor):
+                    logger.warning("Could not free configuration security descriptor")
+    except Exception as error:
+        code = getattr(error, "winerror", None)
+        if code is not None:
+            logger.warning("Could not preserve protected configuration permissions (Windows error %d)", code)
+        else:
+            logger.warning("Could not preserve protected configuration permissions")
+
+
+def _preserve_backup_permissions(source: Path, target: Path) -> None:
+    try:
+        _copy_protected_dacl(source, target)
+    except Exception:
+        logger.warning("Could not preserve protected backup permissions")
 
 
 ALLOWED = {
@@ -178,22 +254,28 @@ class Worker(QThread):
         config_path = app_root / "config.yaml"
         if not config_path.is_file():
             raise RuntimeError("找不到 config.yaml，已停止更新")
-        shutil.copy2(config_path, backup_root / "config.yaml")
+        config_backup = backup_root / "config.yaml"
+        shutil.copy2(config_path, config_backup)
+        _preserve_backup_permissions(config_path, config_backup)
         try:
             config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
         except Exception as exc:
             raise RuntimeError(f"config.yaml 無法解析，已停止更新：{exc}") from exc
         terminology = (config.get("terminology") or {}).get("glossary_list") or []
         corrections = (config.get("transcription") or {}).get("asr_correction_rules") or []
-        (backup_root / "custom-glossary.json").write_text(json.dumps(terminology, ensure_ascii=False, indent=2), encoding="utf-8")
-        (backup_root / "asr-correction-rules.json").write_text(json.dumps(corrections, ensure_ascii=False, indent=2), encoding="utf-8")
+        for name, data in (("custom-glossary.json", terminology), ("asr-correction-rules.json", corrections)):
+            destination = backup_root / name
+            destination.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            _preserve_backup_permissions(config_path, destination)
         cookie_backup = backup_root / "cookies"
         cookie_backup.mkdir()
         local_cookie_dir = app_root / "cookies"
         if local_cookie_dir.is_dir():
             for source in local_cookie_dir.glob("*.txt"):
                 if source.is_file():
-                    shutil.copy2(source, cookie_backup / source.name)
+                    destination = cookie_backup / source.name
+                    shutil.copy2(source, destination)
+                    _preserve_backup_permissions(source, destination)
         input_config = config.get("input") or {}
         configured = [str(input_config.get("cookies") or "").strip()]
         by_site = input_config.get("cookies_by_site") or {}
@@ -215,6 +297,7 @@ class Worker(QThread):
             if destination.exists():
                 destination = cookie_backup / f"configured-{index + 1}-{resolved.name}"
             shutil.copy2(resolved, destination)
+            _preserve_backup_permissions(resolved, destination)
         manifest = {
             "schema": 1, "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "before_version": str(version),

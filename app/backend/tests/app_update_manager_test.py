@@ -78,12 +78,30 @@ class AppUpdateManagerTest(unittest.TestCase):
                 "transcription:\n  asr_correction_rules:\n    - canonical: VTuber\n      aliases: [V tuber]\n",
                 encoding="utf-8",
             )
-            snapshot=Worker.backup_user_settings(root,"1.4.0")
+            with mock.patch("updater._copy_protected_dacl") as copy_dacl:
+                snapshot = Worker.backup_user_settings(root, "1.4.0")
+            config = root / "config.yaml"
+            cookie = root / "cookies" / "youtube.cookies.txt"
+            self.assertEqual(copy_dacl.call_args_list, [
+                mock.call(config, snapshot / "config.yaml"),
+                mock.call(config, snapshot / "custom-glossary.json"),
+                mock.call(config, snapshot / "asr-correction-rules.json"),
+                mock.call(cookie, snapshot / "cookies" / "youtube.cookies.txt"),
+                mock.call(cookie.resolve(), snapshot / "cookies" / "configured-1-youtube.cookies.txt"),
+            ])
             self.assertEqual((snapshot/"config.yaml").read_text(encoding="utf-8"),(root/"config.yaml").read_text(encoding="utf-8"))
             self.assertEqual(json.loads((snapshot/"custom-glossary.json").read_text(encoding="utf-8"))[0]["translated"],"測試")
             self.assertEqual(json.loads((snapshot/"asr-correction-rules.json").read_text(encoding="utf-8"))[0]["canonical"],"VTuber")
             self.assertEqual((snapshot/"cookies"/"youtube.cookies.txt").read_text(encoding="utf-8"),"secret-cookie")
             self.assertTrue((snapshot/"backup-manifest.json").is_file())
+
+    def test_user_settings_snapshot_survives_dacl_failure(self):
+        with tempfile.TemporaryDirectory(dir=APP_DIR) as temp_dir:
+            root = Path(temp_dir)
+            (root / "config.yaml").write_text("{}", encoding="utf-8")
+            with mock.patch("updater._copy_protected_dacl", side_effect=OSError), self.assertLogs("updater"):
+                snapshot = Worker.backup_user_settings(root, "1.4.0")
+            self.assertTrue((snapshot / "backup-manifest.json").is_file())
 
     def test_user_settings_snapshots_keep_only_latest_five(self):
         with tempfile.TemporaryDirectory(dir=APP_DIR) as temp_dir:

@@ -1386,6 +1386,7 @@ class ConfigManager:
                 and translation_config.get('hy_mt2_provider') in {'lm_studio', 'llama_cpp'}):
             # Preserve old local HY configs predating an explicit family selector.
             family = 'hy_mt2'
+        external_override = False
         if family in {'hy_mt2', 'index_translate'} and backend != 'none':
             local_provider = translation_config.get(f'{family}_provider', 'existing')
             prefix = f'{family}_{local_provider}'
@@ -1400,6 +1401,7 @@ class ConfigManager:
             if local_provider in {'lm_studio', 'llama_cpp'}:
                 if not endpoint or not model_id:
                     raise ValueError(f'{local_provider} requires a server URL and model ID')
+                external_override = True
                 args['translation_provider'] = local_provider
                 args['translation_model_family'] = family
                 args['gpt_base_url'] = endpoint
@@ -1410,10 +1412,13 @@ class ConfigManager:
             from logging import getLogger
             from re import IGNORECASE, search
 
-            if not (served_model or fallback_model):
-                from backend.core.model_identity import family_probe_target
-                _, fallback_model = family_probe_target(backend, config, args)
-            identified_model = served_model or fallback_model or args.get('gpt_model') or ''
+            if external_override:
+                identified_model = args['gpt_model']
+            else:
+                if not (served_model or fallback_model):
+                    from backend.core.model_identity import family_probe_target
+                    _, fallback_model = family_probe_target(backend, config, args)
+                identified_model = served_model or fallback_model or args.get('gpt_model') or ''
             if search(r'hy[-_ ]?mt3[-_ .]*1[._]?8b', identified_model, IGNORECASE):
                 args['hy_mt2_context_window'] = 0
                 getLogger(__name__).info('Previous-sentence context turned off for Hy-MT3 1.8B')

@@ -1101,10 +1101,14 @@ watch(() => llamaStore.serverConfig.allow_integrated_gpu, () => {
 
 watch(
   isHyMtModel,
-  (hyMtSelected) => {
-    if (!hyMtSelected) return;
-    llamaStore.serverConfig.flash_attn = 'off';
-    llamaStore.serverConfig.no_mmap = true;
+  (hyMtSelected, wasHyMtSelected) => {
+    if (hyMtSelected) {
+      llamaStore.serverConfig.flash_attn = 'off';
+      llamaStore.serverConfig.no_mmap = true;
+    } else if (wasHyMtSelected) {
+      llamaStore.serverConfig.flash_attn = 'auto';
+      llamaStore.serverConfig.no_mmap = false;
+    }
   },
   { immediate: true }
 );

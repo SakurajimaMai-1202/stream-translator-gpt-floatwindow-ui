@@ -4,7 +4,7 @@ import axios from 'axios';
 import UiSelect from '../UiSelect.vue';
 import { useSettingsTabBindings } from '../../composables/settings/settingsContext';
 const {
-  activeCategoryLabels, activeTab, activeTranslationFamily, familyDetecting, servedModels, scheduleFamilyDetection, checkHyMt2Backend, deleteCustomModel, effectiveGlossaryCount, familyLabel, familySettings, hyMt2EffectiveBackend, hyMt2HealthChecking, hyMt2HealthResult, localConfig, openCustomModelDialog, previewBusy, previewContext, previewError, previewLatencyLabel, previewResult, previewText, previewValidationStatus, runTranslationPreview, targetLanguageOptions, testConnection, testingGemini, testingGpt, translationBackendOptions, translationModelFamilyOptions, translationOutputFormatOptions
+  activeCategoryLabels, activeTab, activeTranslationFamily, familyDetecting, servedModels, scheduleFamilyDetection, checkHyMt2Backend, contextForcedOff, deleteCustomModel, effectiveGlossaryCount, familyLabel, familySettings, hyMt2EffectiveBackend, hyMt2HealthChecking, hyMt2HealthResult, localConfig, openCustomModelDialog, previewBusy, previewContext, previewError, previewLatencyLabel, previewResult, previewText, previewValidationStatus, runTranslationPreview, targetLanguageOptions, testConnection, testingGemini, testingGpt, translationBackendOptions, translationModelFamilyOptions, translationOutputFormatOptions
 } = useSettingsTabBindings();
 type CloudBackend = 'gpt' | 'gemini';
 const cloudModels = reactive<Record<CloudBackend, { ids: string[]; busy: boolean; status: string }>>({
@@ -267,7 +267,8 @@ onMounted(scheduleFamilyDetection);
                   <input v-model="localConfig.translation[familySettings + '_glossary_folder']" type="text" placeholder="例如：data/glossary" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
                 </label>
                 <label class="text-white/70">前文句數（0–5）
-                  <input v-model.number="localConfig.translation[familySettings + '_context_window']" type="number" min="0" max="5" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />
+                  <input v-model.number="localConfig.translation[familySettings + '_context_window']" :disabled="contextForcedOff" type="number" min="0" max="5" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white disabled:opacity-50" />
+                  <span v-if="contextForcedOff" class="mt-1 block text-xs text-white/60">Hy-MT3 1.8B 會把前文一起翻出，本程式已自動關閉前文。</span>
                 </label>
                 <label class="text-white/70">前文字數上限
                   <input v-model.number="localConfig.translation[familySettings + '_max_context_chars']" type="number" min="0" max="4000" class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white" />

@@ -145,6 +145,30 @@ export function useTranslationSettings(localConfig: Ref<any>, sectionSaveTimers:
     } finally { previewBusy.value = false; }
   }
 
+  const contextForcedOff = computed(() => {
+    if (activeTranslationFamily.value !== 'hy_mt2') return false;
+
+    const t = localConfig.value.translation;
+    const provider = t.hy_mt2_provider;
+    const smallHyMt3 = /hy[-_ ]?mt3[-_ .]*1[._]?8b/i;
+    if (provider === 'lm_studio' || provider === 'llama_cpp') {
+      const url = String(t['hy_mt2_' + provider + '_url'] || '').trim();
+      const model = String(t['hy_mt2_' + provider + '_model'] || '').trim();
+      if (url && model) return smallHyMt3.test(model);
+    }
+
+    const backend = String(t.backend || '');
+    let configuredModel = '';
+    if (backend === 'llama' || backend === 'localllm') {
+      const modelPath = String(localConfig.value.llama?.model_path || llamaStore.selectedModelPath || '');
+      configuredModel = modelPath.split(/[\\/]/).pop() || '';
+    } else if (backend.startsWith('custom:')) {
+      const custom = (t.custom_models || []).find((m: any) => m.name === backend.slice(7));
+      configuredModel = custom?.model_name || '';
+    }
+    return smallHyMt3.test(servedModels.value[0] || configuredModel || t.gpt_model || '');
+  });
+
   const hyMt2EffectiveBackend = computed(() => {
     const t = localConfig.value.translation;
     const provider = t[familySettings.value + '_provider'];
@@ -195,6 +219,7 @@ export function useTranslationSettings(localConfig: Ref<any>, sectionSaveTimers:
     familyDetecting,
     scheduleFamilyDetection,
     familySettings,
+    contextForcedOff,
     familyLabel,
     optimizerEffective,
     previewText,

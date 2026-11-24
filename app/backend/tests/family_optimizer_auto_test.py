@@ -31,6 +31,31 @@ def test_context_window_uses_identified_hy_model(tmp_path, monkeypatch, caplog):
         assert config['translation']['hy_mt2_context_window'] == 5
 
 
+def test_context_window_uses_external_hy_override(tmp_path, monkeypatch):
+    from backend.core import model_identity
+
+    manager = ConfigManager(tmp_path / 'config.yaml')
+    config = manager.get_config()
+    translation = config['translation']
+    translation.update(
+        backend='llama', gpt_model='localllm', hy_mt2_context_window=5,
+        hy_mt2_provider='lm_studio', hy_mt2_lm_studio_url='http://127.0.0.1:1234/v1',
+    )
+    for built_in, external, expected in (
+        ('Hy-MT2-7B', 'hy-mt3-1.8b', 0),
+        ('Hy-MT3-1.8B', 'hy-mt3-7b', 5),
+    ):
+        config['llama']['model_path'] = f'{built_in}.gguf'
+        monkeypatch.setattr(model_identity, 'detect_served_family', lambda *args: ('hy_mt2', built_in))
+        translation['hy_mt2_lm_studio_model'] = external
+
+        args = manager.to_main_args(config)
+        assert args['translation_provider'] == 'lm_studio'
+        assert args['gpt_model'] == external
+        assert args['hy_mt2_context_window'] == expected
+        assert translation['hy_mt2_context_window'] == 5
+
+
 def test_explicit_hy_family_uses_backend_model(tmp_path, monkeypatch):
     from backend.core import model_identity
 

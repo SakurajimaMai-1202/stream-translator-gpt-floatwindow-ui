@@ -164,7 +164,7 @@ onMounted(scheduleFamilyDetection);
               <h3 class="commercial-section-title">翻譯優化</h3>
               <p class="text-white/40 text-xs mt-2"><template v-if="familyDetecting">正在偵測模型…</template><template v-else-if="localConfig.translation.translation_model_family === 'auto' && ['hy_mt2', 'index_translate'].includes(activeTranslationFamily)">已自動偵測到 {{ familyLabel }}<template v-if="servedModels.length">（伺服器模型：{{ servedModels[0] }}）</template></template><template v-else>模型類型：{{ translationModelFamilyOptions.find(option => option.value === activeTranslationFamily)?.label || '一般翻譯' }}<template v-if="servedModels.length">（伺服器模型：{{ servedModels[0] }}）</template>。如果模型沒有被正確識別，可在下方「進階：模型與推理設定」手動指定。</template></p>
               <label class="mt-4 flex items-center gap-2 font-semibold text-white"><input v-model="localConfig.translation.family_optimizer_auto" type="checkbox" class="h-4 w-4 accent-blue-500" />依模型自動套用翻譯優化</label>
-              <p class="mt-1 text-sm text-white/55">偵測到 HY-MT2／HY-MT3 或 Index-Translate 時，自動使用術語與台灣繁中風格，並依模型決定是否使用前文。</p>
+              <p class="mt-1 text-sm text-white/55">偵測到 Hy-MT 系列（MT2、MT3）或 Index-Translate 系列模型時，自動使用術語與台灣繁中風格，並依模型決定是否使用前文。</p>
               <div v-if="['hy_mt2', 'index_translate'].includes(activeTranslationFamily)" class="mt-4 border-t border-white/10 pt-4">
               <div class="flex flex-wrap items-start justify-between gap-4">
                 <div>
@@ -343,7 +343,7 @@ onMounted(scheduleFamilyDetection);
                 <div>
                   <label class="block text-white/70 font-semibold mb-2">輸出格式</label>
                   <UiSelect v-model="localConfig.translation.translation_output_format" :options="translationOutputFormatOptions" />
-                  <p class="text-white/40 text-xs mt-1">HY-MT2／HY-MT3 與 Index-Translate 使用純文字；支援的 API 才會使用 JSON。</p>
+                  <p class="text-white/40 text-xs mt-1">Hy-MT 系列與 Index-Translate 系列使用純文字；支援的 API 才會使用 JSON。</p>
                 </div>
 
                 <div>

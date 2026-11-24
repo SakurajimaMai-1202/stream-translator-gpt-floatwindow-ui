@@ -9,8 +9,8 @@ export function useTranslationSettings(localConfig: Ref<any>, sectionSaveTimers:
   const hyMt2HealthResult = ref('');
   const translationModelFamilyOptions: UiSelectOption[] = [
     { value: 'auto', label: '自動判斷' },
-    { value: 'hy_mt2', label: 'Hy-MT 專用翻譯模型（Hy-MT2／Hy-MT3）' },
-    { value: 'index_translate', label: 'Index-Translate 專用翻譯模型' },
+    { value: 'hy_mt2', label: 'Hy-MT 系列翻譯模型（MT2、MT3）' },
+    { value: 'index_translate', label: 'Index-Translate 系列翻譯模型' },
     { value: 'generic_chat', label: '通用聊天模型（Gemma 等）' },
     { value: 'structured_api', label: '結構化 API（OpenAI / Gemini）' },
   ];

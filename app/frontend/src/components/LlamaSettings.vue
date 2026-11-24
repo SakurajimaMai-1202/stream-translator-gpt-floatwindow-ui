@@ -1106,8 +1106,8 @@ watch(
       llamaStore.serverConfig.flash_attn = 'off';
       llamaStore.serverConfig.no_mmap = true;
     } else if (wasHyMtSelected) {
-      llamaStore.serverConfig.flash_attn = 'auto';
-      llamaStore.serverConfig.no_mmap = false;
+      if (llamaStore.serverConfig.flash_attn === 'off') llamaStore.serverConfig.flash_attn = 'auto';
+      if (llamaStore.serverConfig.no_mmap === true) llamaStore.serverConfig.no_mmap = false;
     }
   },
   { immediate: true }

@@ -3,6 +3,7 @@ from backend.core.translator import TranslationContext
 import asyncio
 import logging
 import threading
+import pytest
 
 
 def test_extract_supported_cli_args_parses_help_output():
@@ -51,6 +52,69 @@ def test_build_command_skips_args_unsupported_by_runtime(monkeypatch):
     assert '--vad_every_n_frames' not in command
     assert '--realtime_processing' not in command
     assert command[-1] == 'https://example.com/live'
+
+
+def test_build_command_silently_ignores_app_only_keys_and_warns_for_unknown(monkeypatch, caplog):
+    monkeypatch.setattr(translator_module, '_get_supported_cli_args', lambda python_exe, cwd, **kwargs: None)
+    context = TranslationContext(
+        {
+            'backend': 'llama',
+            'family_optimizer_auto': True,
+            'loopback': True,
+            'use_loopback': True,
+            'unknown_option': True,
+        },
+        'app-only-args',
+    )
+
+    with caplog.at_level(logging.DEBUG):
+        command = context._build_command()
+
+    assert not any('Skipping unsupported CLI arg: backend' in r.message for r in caplog.records)
+    assert not any('Skipping unsupported CLI arg: family_optimizer_auto' in r.message for r in caplog.records)
+    assert not any('Skipping unsupported CLI arg: loopback' in r.message for r in caplog.records)
+    assert not any('Skipping unsupported CLI arg: use_loopback' in r.message for r in caplog.records)
+    assert any('Skipping unsupported CLI arg: unknown_option' in r.message for r in caplog.records)
+    assert '--backend' not in command
+    assert '--family_optimizer_auto' not in command
+    assert '--loopback' not in command
+    assert '--use_loopback' not in command
+
+
+@pytest.mark.parametrize(('source_arg', 'new_arg'), [
+    ('gpt_base_url', 'openai_base_url'),
+    ('gemini_base_url', 'google_base_url'),
+])
+def test_build_command_uses_new_base_url_flag_when_supported(monkeypatch, source_arg, new_arg):
+    monkeypatch.setattr(
+        translator_module,
+        '_get_supported_cli_args',
+        lambda python_exe, cwd, **kwargs: frozenset({new_arg}),
+    )
+    context = TranslationContext({source_arg: 'https://api.example'}, 'new-base-url')
+
+    command = context._build_command()
+
+    assert f'--{new_arg}' in command
+    assert f'--{source_arg}' not in command
+
+
+@pytest.mark.parametrize(('source_arg', 'new_arg'), [
+    ('gpt_base_url', 'openai_base_url'),
+    ('gemini_base_url', 'google_base_url'),
+])
+def test_build_command_keeps_old_base_url_flag_when_new_flag_unsupported(monkeypatch, source_arg, new_arg):
+    monkeypatch.setattr(
+        translator_module,
+        '_get_supported_cli_args',
+        lambda python_exe, cwd, **kwargs: frozenset({source_arg}),
+    )
+    context = TranslationContext({source_arg: 'https://api.example'}, 'old-base-url')
+
+    command = context._build_command()
+
+    assert f'--{source_arg}' in command
+    assert f'--{new_arg}' not in command
 
 
 def test_build_command_keeps_args_when_runtime_capability_unknown(monkeypatch):
@@ -169,7 +233,6 @@ import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
-import pytest
 
 
 @pytest.fixture

@@ -631,6 +631,13 @@ class TranslationContext:
             # 開發環境：使用當前 Python 解釋器
             cmd = [sys.executable, '-m', 'stream_translator_gpt']
 
+        app_only_args = frozenset({
+            'backend', 'family_optimizer_auto', 'loopback', 'use_loopback',
+        })
+        argument_aliases = {
+            'gpt_base_url': 'openai_base_url',
+            'gemini_base_url': 'google_base_url',
+        }
         allowed_args = {
             'proxy', 'openai_api_key', 'google_api_key', 'format', 'list_format', 'cookies',
             'input_proxy', 'device_index', 'list_devices', 'device_recording_interval',
@@ -723,7 +730,11 @@ class TranslationContext:
                     "目前 stream_translator_gpt runtime 不支援部分參數，將自動略過: %s",
                     ', '.join(unsupported_runtime_args)
                 )
-            allowed_args &= runtime_supported_args
+            allowed_args = {
+                key for key in allowed_args
+                if key in runtime_supported_args
+                or argument_aliases.get(key) in runtime_supported_args
+            }
         
         # 複製配置以避免修改原始字典
         config_copy = self.config.copy()
@@ -732,6 +743,9 @@ class TranslationContext:
         # 添加所有配置參數
         zero_allowed_args = {'hy_mt2_context_window', 'hy_mt2_max_context_chars', 'hy_mt2_max_terms', 'index_translate_context_window', 'index_translate_max_context_chars', 'index_translate_max_terms'}
         for key, value in sorted(config_copy.items()):
+            if key in app_only_args:
+                logger.debug(f"Ignoring app-only config key: {key}")
+                continue
             if key not in allowed_args:
                 logger.warning(f"Skipping unsupported CLI arg: {key}")
                 continue
@@ -744,7 +758,12 @@ class TranslationContext:
                 continue
             
             # Convert arg name
-            arg_name = f'--{key}'
+            arg_key = key
+            if key in argument_aliases and runtime_supported_args:
+                new_arg = argument_aliases[key]
+                if new_arg in runtime_supported_args:
+                    arg_key = new_arg
+            arg_name = f'--{arg_key}'
             
             # Boolean handling
             if isinstance(value, bool):

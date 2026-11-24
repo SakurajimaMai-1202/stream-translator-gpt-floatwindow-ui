@@ -645,7 +645,9 @@ def _assert_protected_config(path):
         assert dacl.startswith("D:P")
         assert ";;;AU)" not in dacl
         assert ";;;BU)" not in dacl
-        assert f";;;{_current_user_sid()})" in dacl
+        sid = _current_user_sid()
+        # SDDL writes the built-in Administrator (RID 500, the CI runner user) as "LA".
+        assert f";;;{sid})" in dacl or (sid.endswith("-500") and ";;;LA)" in dacl)
     finally:
         saved_acl.unlink(missing_ok=True)
 
@@ -696,7 +698,11 @@ def test_corrupt_config_rebuild_keeps_protected_permissions(tmp_path):
 
 @pytest.mark.skipif(sys.platform != 'win32', reason="Windows file DACLs")
 def test_inherited_config_keeps_inherited_permissions_after_save(tmp_path):
-    config_path = tmp_path / "config.yaml"
+    # pytest's temp root can lack inheritable ACEs (CI runner), so give the folder one.
+    folder = tmp_path / "inherit"
+    folder.mkdir()
+    _icacls(folder, "/grant", f"*{_current_user_sid()}:(OI)(CI)(F)")
+    config_path = folder / "config.yaml"
     manager = ConfigManager(config_path)
     _icacls(config_path, "/inheritance:e")
     assert "(I)" in _icacls(config_path)

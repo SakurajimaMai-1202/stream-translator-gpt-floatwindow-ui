@@ -641,7 +641,7 @@ const selectedRuntimeOption = computed(() => runtimeRelease.value?.variants.find
 
 function isHyMtModelPath(modelPath: string): boolean {
   const compactName = (modelPath.split(/[\\/]/).pop() || '').toLowerCase().replace(/[-_]/g, '');
-  return compactName.includes('hymt');
+  return compactName.includes('hymt') && !compactName.includes('hymt3');
 }
 
 const isHyMtModel = computed(() => isHyMtModelPath(llamaStore.selectedModelPath));

@@ -9,7 +9,7 @@ export function useTranslationSettings(localConfig: Ref<any>, sectionSaveTimers:
   const hyMt2HealthResult = ref('');
   const translationModelFamilyOptions: UiSelectOption[] = [
     { value: 'auto', label: '自動判斷' },
-    { value: 'hy_mt2', label: 'Hy-MT2 專用翻譯模型' },
+    { value: 'hy_mt2', label: 'Hy-MT 專用翻譯模型（Hy-MT2／Hy-MT3）' },
     { value: 'index_translate', label: 'Index-Translate 專用翻譯模型' },
     { value: 'generic_chat', label: '通用聊天模型（Gemma 等）' },
     { value: 'structured_api', label: '結構化 API（OpenAI / Gemini）' },
@@ -110,7 +110,7 @@ export function useTranslationSettings(localConfig: Ref<any>, sectionSaveTimers:
     familyNeedsServerProbe.value && ['hy_mt2', 'index_translate'].includes(detectedFamily.value)
       ? detectedFamily.value : nameFamily.value));
   const familySettings = computed(() => activeTranslationFamily.value === 'index_translate' ? 'index_translate' : 'hy_mt2');
-  const familyLabel = computed(() => activeTranslationFamily.value === 'index_translate' ? 'Index-Translate' : 'HY-MT2');
+  const familyLabel = computed(() => activeTranslationFamily.value === 'index_translate' ? 'Index-Translate' : 'HY-MT');
   const optimizerEffective = computed(() => String(localConfig.value.translation.backend || 'none') !== 'none' && ['hy_mt2', 'index_translate'].includes(activeTranslationFamily.value) && (localConfig.value.translation.family_optimizer_auto === true || localConfig.value.translation[familySettings.value + '_optimizer_enabled'] === true));
   const previewText = ref('今日はすいちゃんと一緒にゲームをします。');
   const previewContext = ref('');

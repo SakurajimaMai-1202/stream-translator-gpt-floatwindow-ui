@@ -38,7 +38,8 @@ const modelName = computed(() => {
   const filename = llamaStore.selectedModelPath.split(/[\\/]/).pop() || '';
   const index = /index[-_. ]?translate[-_. ]?(2|9)b/i.exec(filename);
   if (index) return `Index-Translate ${index[1]}B`;
-  if (/hy[-_]?mt2/i.test(filename)) return /1[._]8b/i.test(filename) ? 'Hy-MT2 1.8B' : 'Hy-MT2 7B';
+  const hyMt = /hy[-_]?mt([23])/i.exec(filename);
+  if (hyMt) return `Hy-MT${hyMt[1]} ${/1[._]8b/i.test(filename) ? '1.8B' : '7B'}`;
   return filename.replace(/\.gguf$/i, '').replace(/[-_.]Q\d[^ ]*$/i, '').replace(/[-_]/g, ' ') || '翻譯模型';
 });
 const simpleStatus = computed(() => llamaStore.errorMessage || llamaStore.serverStatus?.last_error ? '錯誤'

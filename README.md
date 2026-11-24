@@ -4,9 +4,9 @@
 
 將直播、影片、遊戲或麥克風音訊轉為原文與翻譯字幕，透過桌面浮動視窗或區網字幕頁呈現。可依硬體與使用需求，選擇本機模型、雲端服務，或兩者搭配的處理方式。
 
-[下載最新版](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest) · [更新說明](app/docs/RELEASE_NOTES_v1.6.0_zh-TW.md) · [操作指南](USER_GUIDE.md) · [觀看示範](https://youtu.be/p1O2Ecu4js0) · [回報問題](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/issues)
+[下載最新版](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/releases/latest) · [更新說明](app/docs/RELEASE_NOTES_v1.6.1_zh-TW.md) · [操作指南](USER_GUIDE.md) · [觀看示範](https://youtu.be/p1O2Ecu4js0) · [回報問題](https://github.com/SakurajimaMai-1202/stream-translator-gpt-floatwindow-ui/issues)
 
-![Version](https://img.shields.io/badge/version-v1.6.0-blue)
+![Version](https://img.shields.io/badge/version-v1.6.1-blue)
 ![Windows](https://img.shields.io/badge/platform-Windows-lightgrey)
 ![CPU](https://img.shields.io/badge/ASR-CPU-blueviolet)
 ![CUDA](https://img.shields.io/badge/ASR-NVIDIA%20CUDA-green)
@@ -27,16 +27,14 @@
 
 適合直播字幕、遊戲與影音翻譯、麥克風轉錄，以及需要跨裝置觀看字幕的使用情境。完成模型與執行環境準備後，可使用本機音源搭配本機辨識及翻譯；使用雲端服務時則需要網路與對應 API 金鑰。
 
-## v1.6.0 更新亮點
+## v1.6.1 更新亮點
 
-- **術語表重新設計：** 翻譯詞條與 ASR 修正合併為一份清單，一筆詞條可同時填譯法與常見誤辨；分類可多選，內建「一般直播」常用詞。
-- **建議的常見誤辨：** 從辨識結果找出疑似聽錯的詞，一鍵加入；可選用讀音字典比對同音誤字。
-- **本地翻譯更容易上手：** 單一「本地翻譯」頁面，推薦模型可在程式內下載並啟動；新安裝預設使用本機模型翻譯。
-- **顯卡與 Vulkan：** 偵測到獨立顯卡時預設將翻譯模型載入顯卡，CPU 版也能透過 Vulkan 使用顯卡；修正 Vulkan 版 llama.cpp 被覆蓋層軟體弄到閃退的問題。
-- **字幕品質：** 大幅減少中文字幕殘留的日文假名，敬稱與繁體中文轉換更準確。
-- **安全性與穩定性：** 控制介面預設只接受本機連線；需要從區網或反向代理（如 NAS 上的 Lucky）使用時，可在「一般設定」開啟並設定登入密碼。直播重連、更新回復、設定檔保護等多項修正。
+- **推薦模型改為 Hy-MT3 7B：** 支援 Hy-MT3 系列，Index-Translate 前文改為一行提示，減少前文混入翻譯；繁體中文只轉字形，不改用詞。
+- **語音辨識：** CPU 版新增量化版 Haas 日文模型；修正 Qwen3-ASR 在背景音樂下重複上一句。
+- **直播來源：** 修正 YouTube 直播暫停後不會重連；X Space 支援新 ID；可單獨更新 yt-dlp。
+- **介面：** 主視窗改用 WebView2，操作更順暢；字幕預設字級改為 16；設定頁開啟與啟動更快。
 
-升級前請先備份 `config.yaml`，第一次啟動會自動轉換舊的術語表。完整內容請參閱 [v1.6.0 更新說明](app/docs/RELEASE_NOTES_v1.6.0_zh-TW.md)。
+CUDA／ROCm 版搭配 CPU 語音辨識的使用者，請一併安裝 v1.6.1 的 CPU ASR 元件。完整內容請參閱 [v1.6.1 更新說明](app/docs/RELEASE_NOTES_v1.6.1_zh-TW.md)。
 
 ## 下載與安裝
 
@@ -57,7 +55,7 @@
 ### 安裝步驟
 
 1. **下載完整包。** CPU／ROCm 下載對應 ZIP；CUDA 請下載全部 3 個分卷及 `merge-full-package.bat`，放在同一資料夾後執行合併。
-2. **確認檔案完整性。** 使用發布頁提供的 `SHA256SUMS-v1.6.0.txt` 核對下載檔案。
+2. **確認檔案完整性。** 使用發布頁提供的 `SHA256SUMS-v1.6.1.txt` 核對下載檔案。
 3. **解壓並啟動。** 解壓到可寫入的資料夾，例如 `D:\Apps\StreamTranslator`，執行 `Stream Translator.exe`。
 4. **完成首次設定。** 選擇音訊來源與辨識語言，依提示準備模型；需要翻譯時，再設定翻譯服務或本機模型。
 
@@ -78,11 +76,11 @@ CUDA 完整包須先合併為 ZIP 再解壓。請下載上述 Full 完整包；G
 1. 備份 `config.yaml`、Cookies、術語與自訂規則，停止正在執行的辨識與翻譯任務。
 2. 下載對應更新包與 SHA-256 清單。CUDA 更新包需下載全部 2 個分卷並放在同一資料夾。
 3. 使用程式提供的更新功能；手動更新器可直接選擇 ZIP 或 `.zip.part01`，依提示完成更新。
-4. 更新後確認版本為 **v1.6.0**，再啟動原本使用的音源、辨識模型與翻譯服務。
+4. 更新後確認版本為 **v1.6.1**，再啟動原本使用的音源、辨識模型與翻譯服務。
 
 更新包包含對應執行環境，並保留既有模型、設定與輸出檔案。切換 CPU／CUDA／ROCm 類型，或無法識別的舊版安裝，請使用完整包；v1.3.11 以下版本亦建議使用完整包。
 
-CUDA／ROCm 使用者若要改用 CPU 語音辨識，可匯入 `StreamTranslator-CPU-ASR-Sidecar-v1.6.0.zip`，再於模型管理頁準備對應的 CPU 模型。
+CUDA／ROCm 使用者若要改用 CPU 語音辨識，可匯入 `StreamTranslator-CPU-ASR-Sidecar-v1.6.1.zip`，再於模型管理頁準備對應的 CPU 模型。
 
 ## 開始使用
 
@@ -168,7 +166,7 @@ CPU 模式使用對應的 sherpa-onnx 模型，無法直接沿用 GPU 權重。�
 ## 文件與專案資訊
 
 - [操作與設定指南](USER_GUIDE.md)
-- [版本更新說明](app/docs/RELEASE_NOTES_v1.6.0_zh-TW.md)
+- [版本更新說明](app/docs/RELEASE_NOTES_v1.6.1_zh-TW.md)
 - [手動更新指南](app/docs/MANUAL_UPDATE_zh-TW.md)
 - [開發與打包文件](app/packaging/README.md)
 - [文件索引](app/docs/README.md)（含[環境變數清單](app/docs/README.md#環境變數)）

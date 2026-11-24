@@ -5,7 +5,7 @@
 - [操作指南](../../USER_GUIDE.md)：首次設定、音源、辨識模型、翻譯、字幕分享與匯出。
 - [免安裝使用說明](PORTABLE_GUIDE_zh-TW.txt)：可攜式套件的基本操作。
 - [更新摘要](UPDATE_NOTES_zh-TW.txt)：目前版本的主要更新。
-- [v1.6.0 更新說明](RELEASE_NOTES_v1.6.0_zh-TW.md)：功能亮點、套件選擇與更新方式。
+- [v1.6.1 更新說明](RELEASE_NOTES_v1.6.1_zh-TW.md)：功能亮點、套件選擇與更新方式。
 - [手動更新指南](MANUAL_UPDATE_zh-TW.md)：ZIP 與分割更新包的操作方式。
 - [術語預設](HY_MT2_GLOSSARY_PRESETS.md)：HY-MT2 詞庫預設的使用說明。
 
@@ -78,7 +78,7 @@
 | `ProgramFiles`、`LOCALAPPDATA` | 定位 Windows 安裝與使用者資料目錄。 | `ProgramFiles` 為 `C:\Program Files`；`LOCALAPPDATA` 未設定時略過 | 作業系統 |
 | `XDG_CACHE_HOME` | Whisper 套件快取目錄根路徑。 | 平台預設快取目錄 | 使用者／作業系統 |
 | `PROCESSOR_IDENTIFIER` | 補充 Windows CPU 型號偵測資訊。 | 未設定 | 作業系統 |
-| `VITE_APP_VERSION` | 傳入 Vite 的前端版本字串。 | 打包腳本 `-Version`，預設 `1.6.0` | build script |
+| `VITE_APP_VERSION` | 傳入 Vite 的前端版本字串。 | 打包腳本 `-Version`，預設 `1.6.1` | build script |
 | `PYTHONUTF8`、`PYTHONIOENCODING`、`PYTHONUNBUFFERED` | 翻譯子程序文字編碼與輸出緩衝設定。 | launcher 設為 `1`、`utf-8`、`1` | launcher |
 | `QTWEBENGINE_CHROMIUM_FLAGS`、`QT_OPENGL` | Qt WebEngine Chromium 旗標與 OpenGL 模式，由渲染初始化調整。 | 依啟動環境與渲染初始化決定 | launcher／使用者 |
 | `MPLCONFIGDIR` | Matplotlib 設定目錄。 | 暫存目錄下的 `stream-translator-matplotlib` | launcher／作業系統 |

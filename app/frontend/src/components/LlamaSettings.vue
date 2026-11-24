@@ -568,6 +568,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useStatusSync } from '../composables/useStatusSync';
 import UiSelect, { type UiSelectOption } from './UiSelect.vue';
 import { useLlamaStore } from '../stores/llama';
+import { hyMtMemoryOptionsAfterSwitch, isHyMtForcedModelPath } from '../utils/hyMtRules';
 import { llamaApi, type RuntimeInstallStatus, type RuntimeReleaseInfo, type RuntimeDevice, type ServerConfig } from '../services/llamaApi';
 
 const props = withDefaults(defineProps<{ initialized?: boolean; hideErrors?: boolean }>(), { initialized: false, hideErrors: false });
@@ -639,12 +640,7 @@ let runtimeCompletionNotifiedJobId = '';
 const runtimeInstallBusy = computed(() => ['resolving', 'downloading', 'verifying', 'staging', 'activating'].includes(runtimeInstallStatus.value?.state || ''));
 const selectedRuntimeOption = computed(() => runtimeRelease.value?.variants.find(item => item.id === selectedRuntimeVariant.value));
 
-function isHyMtModelPath(modelPath: string): boolean {
-  const compactName = (modelPath.split(/[\\/]/).pop() || '').toLowerCase().replace(/[-_]/g, '');
-  return compactName.includes('hymt') && !compactName.includes('hymt3');
-}
-
-const isHyMtModel = computed(() => isHyMtModelPath(llamaStore.selectedModelPath));
+const isHyMtModel = computed(() => isHyMtForcedModelPath(llamaStore.selectedModelPath));
 
 function formatRuntimeBytes(bytes: number) {
   if (!bytes) return '0 MB';
@@ -1102,13 +1098,10 @@ watch(() => llamaStore.serverConfig.allow_integrated_gpu, () => {
 watch(
   isHyMtModel,
   (hyMtSelected, wasHyMtSelected) => {
-    if (hyMtSelected) {
-      llamaStore.serverConfig.flash_attn = 'off';
-      llamaStore.serverConfig.no_mmap = true;
-    } else if (wasHyMtSelected) {
-      if (llamaStore.serverConfig.flash_attn === 'off') llamaStore.serverConfig.flash_attn = 'auto';
-      if (llamaStore.serverConfig.no_mmap === true) llamaStore.serverConfig.no_mmap = false;
-    }
+    const config = llamaStore.serverConfig;
+    const options = hyMtMemoryOptionsAfterSwitch(hyMtSelected, wasHyMtSelected, config);
+    if (config.flash_attn !== options.flash_attn) config.flash_attn = options.flash_attn;
+    if (config.no_mmap !== options.no_mmap) config.no_mmap = options.no_mmap;
   },
   { immediate: true }
 );

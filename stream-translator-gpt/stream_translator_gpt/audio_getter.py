@@ -135,10 +135,19 @@ def _build_ytdlp_command(url: str,
                          proxy: str,
                          *,
                          ffmpeg_dir: str | None = None,
-                         js_runtime_arg: str | None = None) -> list[str]:
+                         js_runtime_arg: str | None = None,
+                         metadata: bool = False) -> list[str]:
     """建構 yt-dlp 命令列，方便重用與測試。"""
-    cmd = _resolve_ytdlp_command() + [url, '-f', format, '-o', '-', '-q', '--downloader-args', 'ffmpeg:-loglevel error']
-    _append_site_specific_ytdlp_args(cmd, url)
+    if metadata:
+        cmd = _resolve_ytdlp_command() + [
+            url, '--skip-download', '--dump-single-json', '--no-playlist', '-q', '--no-warnings',
+        ]
+        if _is_twitter_url(url):
+            # Same X/Twitter API workaround as the download command; no download retry args.
+            cmd.extend(['--extractor-args', 'twitter:api=syndication'])
+    else:
+        cmd = _resolve_ytdlp_command() + [url, '-f', format, '-o', '-', '-q', '--downloader-args', 'ffmpeg:-loglevel error']
+        _append_site_specific_ytdlp_args(cmd, url)
 
     if ffmpeg_dir:
         cmd.extend(['--ffmpeg-location', ffmpeg_dir])
@@ -392,8 +401,8 @@ class StreamAudioGetter(LoopWorkerBase):
         try:
             cmd = _build_ytdlp_command(
                 self.url, self.format, self.cookies, self.proxy,
-                ffmpeg_dir=_resolve_ffmpeg_dir(), js_runtime_arg=_resolve_js_runtime_arg())
-            cmd.extend(['--skip-download', '--dump-single-json', '--no-playlist'])
+                ffmpeg_dir=_resolve_ffmpeg_dir(), js_runtime_arg=_resolve_js_runtime_arg(),
+                metadata=True)
             # Metadata is bounded and must not inherit infinite fragment retries.
             result = subprocess.run(cmd, capture_output=True, text=True,
                                     encoding='utf-8', timeout=15)

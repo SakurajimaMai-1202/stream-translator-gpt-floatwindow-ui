@@ -9,6 +9,59 @@ from stream_translator_gpt import audio_getter
 from stream_translator_gpt.common import AUDIO_STREAM_GAP
 
 
+def test_metadata_ytdlp_command_omits_download_options_and_keeps_shared_options(monkeypatch, tmp_path):
+    cookies = tmp_path / 'cookies.txt'
+    cookies.write_text('cookie data')
+    monkeypatch.setattr(audio_getter, '_resolve_ytdlp_command', lambda: ['yt-dlp'])
+
+    cmd = audio_getter._build_ytdlp_command(
+        'https://www.youtube.com/live/example', 'bestaudio', str(cookies), 'http://proxy:8080',
+        ffmpeg_dir='C:/ffmpeg/bin', js_runtime_arg='node:C:/node/node.exe', metadata=True)
+
+    for option in ('-o', '-f', '--downloader-args', '--fragment-retries'):
+        assert option not in cmd
+    assert '--dump-single-json' in cmd
+    assert '--skip-download' in cmd
+    assert '--cookies' in cmd
+    assert str(cookies) in cmd
+    assert '--proxy' in cmd
+    assert 'http://proxy:8080' in cmd
+    assert '--ffmpeg-location' in cmd
+    assert 'C:/ffmpeg/bin' in cmd
+    assert '--js-runtimes' in cmd
+    assert 'node:C:/node/node.exe' in cmd
+    assert '--remote-components' in cmd
+    assert 'ejs:github' in cmd
+
+
+def test_download_ytdlp_command_is_unchanged(monkeypatch):
+    monkeypatch.setattr(audio_getter, '_resolve_ytdlp_command', lambda: ['yt-dlp'])
+    assert audio_getter._build_ytdlp_command(
+        'https://example.com/live', 'bestaudio', '', '') == [
+            'yt-dlp', 'https://example.com/live', '-f', 'bestaudio', '-o', '-', '-q',
+            '--downloader-args', 'ffmpeg:-loglevel error',
+        ]
+
+def test_metadata_ytdlp_command_keeps_x_workaround_without_download_retries(monkeypatch):
+    monkeypatch.setattr(audio_getter, '_resolve_ytdlp_command', lambda: ['yt-dlp'])
+    x_cmd = audio_getter._build_ytdlp_command('https://x.com/i/spaces/1abcdefghijklm', 'ba', '', '', metadata=True)
+    assert 'twitter:api=syndication' in x_cmd
+    yt_cmd = audio_getter._build_ytdlp_command('https://www.youtube.com/live/example', 'ba', '', '', metadata=True)
+    assert '--fragment-retries' not in yt_cmd and '--retry-sleep' not in yt_cmd
+
+
+def test_source_status_reads_live_metadata_from_stdout_without_output_option(monkeypatch):
+    getter = audio_getter.StreamAudioGetter('https://www.youtube.com/live/example', 'ba', '', '')
+    monkeypatch.setattr(audio_getter, '_resolve_ytdlp_command', lambda: ['yt-dlp'])
+
+    def run(cmd, **kwargs):
+        assert '-o' not in cmd
+        return SimpleNamespace(returncode=0, stdout=json.dumps({'live_status': 'is_live'}), stderr='')
+
+    monkeypatch.setattr(audio_getter.subprocess, 'run', run)
+    assert getter._source_status() == 'live'
+
+
 @pytest.mark.parametrize('metadata,expected', [
     ({'live_status': 'is_live'}, 'live'),
     ({'live_status': 'not_live'}, 'finite'),

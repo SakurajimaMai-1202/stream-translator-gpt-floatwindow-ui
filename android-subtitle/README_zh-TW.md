@@ -13,7 +13,9 @@
 .\gradlew.bat testDebugUnitTest
 ```
 
-Unix 可用 `sh gradlew assembleDebug`（或賦予執行權限後 `./gradlew assembleDebug`）。APK 位於 `app/build/outputs/apk/debug/app-debug.apk`；debug 簽章由 Android 工具自動產生，不需自備 keystore。離線建置須事先快取版本目錄內的依賴、Gradle 分發檔及 SDK，再加上 `--offline`。
+Unix 可用 `sh gradlew assembleDebug`（或賦予執行權限後 `./gradlew assembleDebug`）。APK 位於 `app/build/outputs/apk/debug/app-debug.apk`；debug 簽章由 Android 工具自動產生，不需自備 keystore。
+
+正式版 APK 以 `assembleRelease` 建置。簽章資訊放在 repo 以外的 properties 檔（`storeFile`、`storePassword`、`keyAlias`、`keyPassword`），以 Gradle 屬性或環境變數 `STREAM_TRANSLATOR_SIGNING` 指定路徑；未指定時正式版 APK 不簽章。之後的版本必須使用同一把金鑰，使用者才能直接覆蓋安裝。離線建置須事先快取版本目錄內的依賴、Gradle 分發檔及 SDK，再加上 `--offline`。
 
 已在 Windows 上以上述版本建置成功，`testDebugUnitTest` 的 47 個測試通過（連續多次執行均通過），並於 Android 16 實機連線 v1.6.0 電腦端（經 HTTPS 反向代理）驗證主畫面、設定頁、懸浮字幕拖曳與鎖定。
 

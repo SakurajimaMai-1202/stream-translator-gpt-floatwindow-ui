@@ -6,6 +6,15 @@
 
 ## 主要更新
 
+### 新增：在其他裝置看字幕
+
+兩個獨立的字幕顯示程式，連到電腦的區網字幕分享（8765 埠）即可顯示同一份字幕，不需要權杖，也不能操作主程式。
+
+- **遠端字幕視窗（Windows）：** `StreamTranslatorRemoteSubtitle-v1.6.1.exe`，免安裝單一執行檔。外觀與主程式的浮動字幕相同，適合在另一台電腦疊在遊戲或影片上看字幕。可直接貼上分享頁網址，也支援反向代理網址。
+- **Android 字幕 app：** `StreamTranslatorSubtitle-Android-v1.6.1.apk`，Android 8.0 以上。可全螢幕顯示，也可開「懸浮字幕」疊在 YouTube 等其他 app 上；懸浮字幕可拖曳、雙指縮放字級，長按可鎖定成觸控穿透。安裝時需允許「安裝不明應用程式」。
+
+使用方式：電腦開啟「字幕分享」並開始翻譯，在手機或另一台電腦輸入電腦的區網 IP（例如 `192.168.1.10`）即可。連不上時，請確認 Windows 防火牆允許私人網路的 TCP 8765，以及路由器沒有開啟用戶端隔離。從外網連線需要反向代理到 8765 埠。
+
 ### 翻譯
 
 - **推薦模型改為 Hy-MT3 7B：** 支援 Hy-MT3 系列模型，選擇推薦模型時自動套用建議參數。Hy-MT3 可以使用 Flash Attention（Hy-MT2 仍會自動關閉）。
@@ -63,6 +72,8 @@
 - **新安裝或切換套件類型：** 下載對應的 Full 完整包。
 - **更新既有安裝：** 下載與原安裝類型相同的 App Update 更新包。
 - **CPU ASR Sidecar：** 供 CUDA／ROCm 版使用 CPU 語音辨識；CPU 完整包無須另外安裝。
+- **遠端字幕視窗：** `StreamTranslatorRemoteSubtitle-v1.6.1.exe`，在另一台 Windows 電腦顯示字幕。
+- **Android 字幕 app：** `StreamTranslatorSubtitle-Android-v1.6.1.apk`，在手機顯示字幕。
 
 分割成多個分卷的檔案，請下載同一套件的全部分卷並放在同一資料夾。完整包可使用 `merge-full-package.bat` 合併；更新包可在手動更新器直接選擇 `.zip.part01`。
 

@@ -1,12 +1,147 @@
 import io
 import json
 import queue
+import re
 from types import SimpleNamespace
 
 import pytest
 
 from stream_translator_gpt import audio_getter
 from stream_translator_gpt.common import AUDIO_STREAM_GAP
+
+
+@pytest.mark.parametrize('url,expected', [
+    ('https://tiktok.com/@creator/live', True),
+    ('https://www.tiktok.com/@creator/live', True),
+    ('https://m.tiktok.com/@creator/live', True),
+    ('https://vt.tiktok.com/example', True),
+    ('https://evil.com/tiktok.com/x', False),
+    ('https://tiktok.com.evil.com/', False),
+    ('not a URL', False),
+    ('https://[invalid', False),
+])
+def test_is_tiktok_url(url, expected):
+    assert audio_getter._is_tiktok_url(url) is expected
+
+
+def _run_unknown_source_reconnects(monkeypatch, url, attempts, audio_passes=()):
+    getter = audio_getter.StreamAudioGetter(url, 'ba', '', '')
+    getter.YOUTUBE_RECONNECT_DELAY_SECONDS = 0
+    monkeypatch.setattr(getter, '_source_status', lambda: 'unknown')
+    wait_calls = []
+    def wait(_delay):
+        wait_calls.append(True)
+        # Break the unknown-status poll, then allow the next outer attempt.
+        return len(wait_calls) % 2 == 1
+    monkeypatch.setattr(getter._stop_event, 'wait', wait)
+    open_calls = []
+    def open_stream(*_args):
+        open_calls.append(True)
+        if len(open_calls) > attempts:
+            getter.running = False
+            return None, None
+        if len(open_calls) not in audio_passes:
+            raise RuntimeError('connection reset')
+        return None, None
+    monkeypatch.setattr(audio_getter, '_open_stream', open_stream)
+    monkeypatch.setattr(getter, '_read_stream_frames',
+                        lambda: iter([b'\0' * getter.byte_size])
+                        if len(open_calls) in audio_passes else iter(()))
+    monkeypatch.setattr(getter, '_close_stream', lambda: None)
+    getter.loop(queue.SimpleQueue())
+    return open_calls
+
+
+_TIKTOK_HINT = ('[WARNING] TikTok 目前常擋自動連線，網址模式可能一直連不上。'
+                '建議改用「指定應用程式音訊」或「系統音訊」收瀏覽器播放的聲音。')
+_RECONNECT_TEXTS = ('串流連線失敗，稍後重試：', '無法確認來源狀態，等待後重新確認…',
+                    '來源尚未確認結束，正在重新連線…', '串流已連續 8 秒沒有音訊資料')
+
+
+def _output(capsys):
+    """(stdout lines, stderr lines) without the ANSI colour codes of the engine's prefixes."""
+    captured = capsys.readouterr()
+    plain = lambda text: [re.sub(r'\x1b\[[0-9;]*m', '', line) for line in text.splitlines()]
+    return plain(captured.out), plain(captured.err)
+
+
+def _notices(lines):
+    return [line for line in lines if any(text in line for text in _RECONNECT_TEXTS)]
+
+
+def _assert_hidden_notices_are_debug_on_stderr(out, err):
+    # The UI only sees stdout [WARNING] lines; the backend logs stderr [DEBUG]
+    # lines at debug level but drops [DEBUG] lines on stdout entirely.
+    assert all(line.startswith('[WARNING] ') for line in _notices(out))
+    hidden = _notices(err)
+    assert hidden and all(line.startswith('[DEBUG] ') for line in hidden)
+
+
+def test_tiktok_unknown_source_shows_hint_then_hides_reconnect_warnings(monkeypatch, capsys):
+    _run_unknown_source_reconnects(monkeypatch, 'https://www.tiktok.com/@creator/live', 5)
+    out, err = _output(capsys)
+    # The hint itself must stay a visible [WARNING] line.
+    assert out.count(_TIKTOK_HINT) == 1
+    # Pass 1: failed open (1), failed status check (2) and the uncounted
+    # reconnect notice are visible; pass 2's failed open is the 3rd attempt,
+    # prints the hint and is hidden.
+    assert len(_notices(out)) == 3
+    assert out.index(_TIKTOK_HINT) > out.index(_notices(out)[-1])
+    _assert_hidden_notices_are_debug_on_stderr(out, err)
+
+
+def test_tiktok_stall_counts_once_per_pass(monkeypatch, capsys):
+    getter = audio_getter.StreamAudioGetter('https://www.tiktok.com/@creator/live', 'ba', '', '')
+    monkeypatch.setattr(getter, '_source_status', lambda: 'unknown')
+    waits = []
+    monkeypatch.setattr(getter._stop_event, 'wait', lambda _d: waits.append(True) or len(waits) % 2 == 1)
+    opens = []
+
+    def open_stream(*_args):
+        opens.append(True)
+        if len(opens) > 4:
+            getter.running = False
+        return None, None
+
+    def stalled_read():
+        raise TimeoutError('串流已連續 8 秒沒有音訊資料')
+        yield  # pragma: no cover - makes this a generator
+
+    monkeypatch.setattr(audio_getter, '_open_stream', open_stream)
+    monkeypatch.setattr(getter, '_read_stream_frames', stalled_read)
+    monkeypatch.setattr(getter, '_close_stream', lambda: None)
+    getter.loop(queue.SimpleQueue())
+    out, err = _output(capsys)
+    # A stall must count once (not again after the try block): the stall and
+    # the status check of pass 1 stay visible, the hint comes in pass 2.
+    assert out.count(_TIKTOK_HINT) == 1
+    assert [line.split('] ', 1)[1] for line in _notices(out)] == [
+        '串流已連續 8 秒沒有音訊資料', '無法確認來源狀態，等待後重新確認…', '來源尚未確認結束，正在重新連線…']
+    _assert_hidden_notices_are_debug_on_stderr(out, err)
+
+
+def test_non_tiktok_unknown_source_keeps_reconnect_warnings(monkeypatch, capsys):
+    _run_unknown_source_reconnects(monkeypatch, 'https://www.youtube.com/live/example', 5)
+    out, err = _output(capsys)
+    assert not any('TikTok 目前常擋自動連線' in line for line in out + err)
+    assert len(_notices(out)) == 15  # 5 passes x (open failure, status check, reconnect)
+    assert all(line.startswith('[WARNING] ') for line in _notices(out))
+    assert not _notices(err)
+
+
+def test_tiktok_audio_rearms_hint_and_reconnect_warnings(monkeypatch, capsys):
+    _run_unknown_source_reconnects(
+        monkeypatch, 'https://www.tiktok.com/@creator/live', 7, audio_passes=(4,))
+    out, err = _output(capsys)
+    assert out.count(_TIKTOK_HINT) == 2
+    audio_pass = [i for i, line in enumerate(out) if 'Opening stream:' in line][3]
+    before, after = out[:audio_pass], out[audio_pass:]
+    assert before.count(_TIKTOK_HINT) == 1 and after.count(_TIKTOK_HINT) == 1
+    # After audio the count restarts: status check (1), reconnect, failed open
+    # (2) are visible; the next status check is the 3rd and brings the hint.
+    assert len(_notices(after)) == 3
+    assert after.index(_TIKTOK_HINT) > after.index(_notices(after)[-1])
+    _assert_hidden_notices_are_debug_on_stderr(out, err)
 
 
 def test_metadata_ytdlp_command_omits_download_options_and_keeps_shared_options(monkeypatch, tmp_path):

@@ -80,6 +80,14 @@ def _is_twitter_url(url: str) -> bool:
     } or hostname.endswith('.x.com') or hostname.endswith('.twitter.com')
 
 
+def _is_tiktok_url(url: str) -> bool:
+    try:
+        hostname = (urlparse(url).hostname or '').lower()
+    except ValueError:
+        return False
+    return hostname == 'tiktok.com' or hostname.endswith('.tiktok.com')
+
+
 def _is_youtube_url(url: str) -> bool:
     try:
         hostname = (urlparse(url).hostname or '').lower()
@@ -392,6 +400,7 @@ class StreamAudioGetter(LoopWorkerBase):
 
     STREAM_READ_TIMEOUT_SECONDS = 8.0
     YOUTUBE_RECONNECT_DELAY_SECONDS = 1.0
+    TIKTOK_HINT_AFTER_FAILURES = 3
     MAX_UNKNOWN_EOF_CHECKS = 3
     MAX_UNKNOWN_EOF_SECONDS = 10 * 60.0
 
@@ -443,6 +452,8 @@ class StreamAudioGetter(LoopWorkerBase):
         self.running = True
         self._received_audio = False
         self._metadata_answered = False
+        self._tiktok_failed_attempts = 0
+        self._tiktok_hint_active = False
         self._startup_error = None
         self._startup_failures = 0
 
@@ -506,6 +517,30 @@ class StreamAudioGetter(LoopWorkerBase):
         self.ytdlp_process = None
         self._reader_thread = None
 
+    def _reconnect_notice(self, text):
+        if getattr(self, '_tiktok_hint_active', False):
+            # The backend drops [DEBUG] lines on stdout entirely; on stderr they
+            # are logged at debug level, so the failure reason stays traceable.
+            # The stdout warning path masked URLs; keep that for this path too.
+            text = re.sub(r'https?://\S+', '<redacted-url>', str(text))
+            print(f'[DEBUG] {text}', file=sys.stderr, flush=True)
+        else:
+            print(f'{WARNING}{text}')
+
+    def _record_tiktok_attempt(self, received_audio):
+        if received_audio or not _is_tiktok_url(getattr(self, 'url', '')):
+            return
+        failed_attempts = getattr(self, '_tiktok_failed_attempts', 0) + 1
+        self._tiktok_failed_attempts = failed_attempts
+        if (failed_attempts >= self.TIKTOK_HINT_AFTER_FAILURES
+                and not getattr(self, '_tiktok_hint_active', False)
+                and getattr(self, 'running', True)):
+            print(
+                f'{WARNING}TikTok 目前常擋自動連線，網址模式可能一直連不上。'
+                '建議改用「指定應用程式音訊」或「系統音訊」收瀏覽器播放的聲音。',
+                flush=True)
+            self._tiktok_hint_active = True
+
     def _read_stream_frames(self):
         """Yield PCM frames without allowing a live pipe read to block forever."""
         process = self.ffmpeg_process
@@ -568,6 +603,8 @@ class StreamAudioGetter(LoopWorkerBase):
             print(f'{INFO}Opening stream: {self.url}')
             stalled = False
             stream_failed = False
+            pass_received_audio = False
+            pass_attempt_counted = False
             failure = None
             processes = ()
             try:
@@ -587,9 +624,12 @@ class StreamAudioGetter(LoopWorkerBase):
                         if sleep_time > 0:
                             time.sleep(sleep_time)
                     frame_count += 1
+                    pass_received_audio = True
                     self._received_audio = True
                     self._startup_error = None
                     self._startup_failures = 0
+                    self._tiktok_failed_attempts = 0
+                    self._tiktok_hint_active = False
                     missing = 0.0
                     if gap_started_at is not None:
                         if confirmed_live:
@@ -615,7 +655,9 @@ class StreamAudioGetter(LoopWorkerBase):
                 )
             except TimeoutError as exc:
                 stalled = True
-                print(f'{WARNING}{exc}')
+                self._record_tiktok_attempt(pass_received_audio)
+                pass_attempt_counted = True
+                self._reconnect_notice(str(exc))
                 # Flush speech collected before the transport gap now. Without
                 # this marker AudioSlicer can only discover the boundary when
                 # the first post-reconnect frame arrives.
@@ -637,10 +679,12 @@ class StreamAudioGetter(LoopWorkerBase):
                 stderr = '\n'.join(getattr(process, '_stderr_tail', b'').decode('utf-8', errors='replace')
                                    for process in processes)
                 self._check_stream_error((str(failure) if failure else '') + '\n' + stderr, failure)
+                if not pass_attempt_counted:
+                    self._record_tiktok_attempt(pass_received_audio)
                 if failure is not None:
                     if source_status in ('finite', 'ended'):
                         raise failure
-                    print(f'{WARNING}串流連線失敗，稍後重試：{failure}')
+                    self._reconnect_notice(f'串流連線失敗，稍後重試：{failure}')
 
             if self.running and source_status in ('finite', 'ended') and (stalled or stream_failed):
                 raise RuntimeError('有限音訊來源讀取失敗；未確認正常結束，無法安全從頭重播。')
@@ -679,14 +723,17 @@ class StreamAudioGetter(LoopWorkerBase):
                           'source was never confirmed live.', flush=True)
                     source_status = 'ended'
                     break
-                print(f'{WARNING}無法確認來源狀態，等待後重新確認…')
+                # Each failed TikTok status check is another failed attempt: the
+                # bot challenge keeps this inner loop spinning for minutes.
+                self._record_tiktok_attempt(False)
+                self._reconnect_notice('無法確認來源狀態，等待後重新確認…')
                 if self._stop_event.wait(self.YOUTUBE_RECONNECT_DELAY_SECONDS):
                     break
             if not self.running:
                 break
             if source_status in ('finite', 'ended'):
                 break
-            print(f'{WARNING}來源尚未確認結束，正在重新連線…')
+            self._reconnect_notice('來源尚未確認結束，正在重新連線…')
             if self._stop_event.wait(self.YOUTUBE_RECONNECT_DELAY_SECONDS):
                 break
 

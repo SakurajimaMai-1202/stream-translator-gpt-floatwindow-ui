@@ -647,6 +647,7 @@ class TranslationContext:
             'continuous_no_speech_threshold', 'disable_dynamic_no_speech_threshold',
             'prefix_retention_length', 'vad_threshold', 'disable_dynamic_vad_threshold',
             'disable_vad', 'vad_every_n_frames',
+            'audio_preprocess', 'disable_audio_agc', 'audio_agc_max_gain_db', 'audio_highpass',
             'model', 'language', 'use_faster_whisper', 'use_simul_streaming',
             'use_openai_transcription_api', 'use_qwen3_asr', 'openai_transcription_model', 'openai_transcription_api_key', 'whisper_filters',
             'transcription_initial_prompt', 'disable_transcription_context', 'qwen3_context',

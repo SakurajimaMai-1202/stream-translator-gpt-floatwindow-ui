@@ -456,3 +456,57 @@ def test_cpu_key_tracks_runtime_file_mtime(probe_runtime, name):
     stat = runtime_file.stat()
     os.utime(runtime_file, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1000000000))
     assert translator_module._probe_key(str(python)) != key
+
+
+def test_build_command_forwards_audio_preprocess_flags_when_supported(monkeypatch):
+    monkeypatch.setattr(
+        translator_module,
+        '_get_supported_cli_args',
+        lambda python_exe, cwd, **kwargs: frozenset({
+            'audio_preprocess',
+            'disable_audio_agc',
+            'audio_agc_max_gain_db',
+            'audio_highpass',
+        }),
+    )
+    context = TranslationContext(
+        {
+            'url': 'https://example.com/live',
+            'audio_preprocess': True,
+            'disable_audio_agc': True,
+            'audio_agc_max_gain_db': 24.0,
+            'audio_highpass': True,
+        },
+        'audio-preprocess-supported',
+    )
+    command = context._build_command()
+    assert '--audio_preprocess' in command
+    assert '--disable_audio_agc' in command
+    assert '--audio_agc_max_gain_db' in command
+    assert command[command.index('--audio_agc_max_gain_db') + 1] == '24.0'
+    assert '--audio_highpass' in command
+
+
+def test_build_command_skips_audio_preprocess_flags_on_old_runtime(monkeypatch):
+    monkeypatch.setattr(
+        translator_module,
+        '_get_supported_cli_args',
+        lambda python_exe, cwd, **kwargs: frozenset({'model', 'language'}),
+    )
+    context = TranslationContext(
+        {
+            'url': 'https://example.com/live',
+            'model': 'turbo',
+            'audio_preprocess': True,
+            'disable_audio_agc': True,
+            'audio_agc_max_gain_db': 24.0,
+            'audio_highpass': True,
+        },
+        'audio-preprocess-old-runtime',
+    )
+    command = context._build_command()
+    assert '--model' in command
+    assert '--audio_preprocess' not in command
+    assert '--disable_audio_agc' not in command
+    assert '--audio_agc_max_gain_db' not in command
+    assert '--audio_highpass' not in command

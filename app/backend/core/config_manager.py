@@ -187,7 +187,10 @@ class ConfigManager:
             'omnivad_pad_start_frame': 5,
             'omnivad_min_speech_frame': 8,
             'omnivad_max_speech_frame': 2000,
-            'omnivad_min_silence_frame': 20
+            'omnivad_min_silence_frame': 20,
+            'audio_preprocess_enabled': False,
+            'audio_agc_max_gain_db': 30.0,
+            'audio_highpass_enabled': False,
         },
         'transcription': {
             'openai_api_key': '',
@@ -1110,6 +1113,20 @@ class ConfigManager:
             transcription_model,
             config['transcription'].get('language', 'auto'),
         )
+        audio_slicing = config.get('audio_slicing_vad')
+        if not isinstance(audio_slicing, dict):
+            audio_slicing = {}
+        audio_preprocess = audio_slicing.get('audio_preprocess_enabled') is True
+        audio_highpass = audio_slicing.get('audio_highpass_enabled') is True
+        raw_agc_gain = audio_slicing.get('audio_agc_max_gain_db')
+        if (
+            not isinstance(raw_agc_gain, bool)
+            and isinstance(raw_agc_gain, (int, float))
+            and math.isfinite(raw_agc_gain)
+        ):
+            safe_agc_gain = float(min(max(raw_agc_gain, 6.0), 40.0))
+        else:
+            safe_agc_gain = 30.0
 
         args = {
             # 輸入
@@ -1153,6 +1170,9 @@ class ConfigManager:
             'omnivad_min_speech_frame': config.get('audio_slicing_vad', {}).get('omnivad_min_speech_frame', 8),
             'omnivad_max_speech_frame': config.get('audio_slicing_vad', {}).get('omnivad_max_speech_frame', 2000),
             'omnivad_min_silence_frame': config.get('audio_slicing_vad', {}).get('omnivad_min_silence_frame', 20),
+            'audio_preprocess': audio_preprocess,
+            'audio_agc_max_gain_db': safe_agc_gain if audio_preprocess else None,
+            'audio_highpass': audio_highpass,
             'preload_asr_model': transcription_backend in ['qwen3-asr', 'faster-whisper', 'whisper', 'sensevoice', 'fun-asr-nano', 'parakeet-ctc-ja'],
             'keep_asr_loaded': transcription_backend in ['qwen3-asr', 'faster-whisper', 'whisper', 'sensevoice', 'fun-asr-nano', 'parakeet-ctc-ja'],
             
@@ -1577,6 +1597,7 @@ class ConfigManager:
                    or isinstance(value, bool) != isinstance(stored_audio[key], bool)
                    for key, value in incoming_audio.items()):
                 self._validate_audio_lengths(updated['audio_slicing_vad'])
+                self._validate_audio_preprocess(updated['audio_slicing_vad'])
             return self._persist_locked(updated)
 
     @staticmethod
@@ -1606,6 +1627,21 @@ class ConfigManager:
                 f"目標音訊長度（{audio['target_audio_length']:g} 秒）必須介於"
                 f"最小音訊長度（{audio['min_audio_length']:g} 秒）與"
                 f"最大音訊長度（{audio['max_audio_length']:g} 秒）之間")
+
+    @staticmethod
+    def _validate_audio_preprocess(audio):
+        bool_labels = {
+            'audio_preprocess_enabled': '自動放大小聲音訊（AGC）',
+            'audio_highpass_enabled': '80 Hz 低頻濾除',
+        }
+        for key, label in bool_labels.items():
+            if key in audio and not isinstance(audio[key], bool):
+                raise ConfigValidationError(f"{label}必須是布林值")
+        if 'audio_agc_max_gain_db' in audio:
+            gain = audio['audio_agc_max_gain_db']
+            if (isinstance(gain, bool) or not isinstance(gain, (int, float))
+                    or not math.isfinite(gain) or not 6 <= gain <= 40):
+                raise ConfigValidationError("最大放大倍數（dB）必須介於 6 到 40 之間")
 
     def update_section(self, section: str, data: Dict[str, Any]):
         """更新配置區段，保留 UI 沒送回來的既有設定。"""

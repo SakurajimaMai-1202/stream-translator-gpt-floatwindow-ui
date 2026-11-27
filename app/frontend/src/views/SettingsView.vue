@@ -144,7 +144,10 @@ const localConfig = ref<any>({
     omnivad_pad_start_frame: 5,
     omnivad_min_speech_frame: 8,
     omnivad_max_speech_frame: 2000,
-    omnivad_min_silence_frame: 20
+    omnivad_min_silence_frame: 20,
+    audio_preprocess_enabled: false,
+    audio_agc_max_gain_db: 30.0,
+    audio_highpass_enabled: false
   },
   transcription: {
     openai_api_key: '',

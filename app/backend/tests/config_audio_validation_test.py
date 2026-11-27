@@ -173,3 +173,136 @@ def test_partial_update_validates_against_saved_max(config_client, mode, maximum
     assert response.status_code == 422
     assert "（5 秒）" in response.json()["detail"]
     assert path.read_bytes() == before
+
+
+def test_audio_preprocess_defaults_and_legacy_config_compat(tmp_path):
+    path = tmp_path / "config.yaml"
+    # Simulate an old config.yaml without the 4 audio_preprocess keys.
+    path.write_text(
+        yaml.safe_dump({"audio_slicing_vad": {"min_audio_length": 0.7}}, allow_unicode=True),
+        encoding="utf-8",
+    )
+    manager = ConfigManager(path)
+    audio = manager.get_config()["audio_slicing_vad"]
+    assert audio["audio_preprocess_enabled"] is False
+    assert "audio_agc_enabled" not in audio
+    assert audio["audio_agc_max_gain_db"] == pytest.approx(30.0)
+    assert audio["audio_highpass_enabled"] is False
+
+    args = manager.to_main_args()
+    assert args["audio_preprocess"] is False
+    assert "disable_audio_agc" not in args
+    assert args["audio_agc_max_gain_db"] is None
+    assert args["audio_highpass"] is False
+
+
+def test_audio_preprocess_hand_edited_config_tolerance(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        yaml.safe_dump({
+            "audio_slicing_vad": {
+                "audio_preprocess_enabled": "false",
+                "audio_highpass_enabled": "false",
+                "audio_agc_max_gain_db": None,
+            }
+        }, allow_unicode=True),
+        encoding="utf-8",
+    )
+    args = ConfigManager(path).to_main_args()
+    assert args["audio_preprocess"] is False
+    assert args["audio_highpass"] is False
+    assert args["audio_agc_max_gain_db"] is None
+
+    path.write_text(
+        yaml.safe_dump({
+            "audio_slicing_vad": {
+                "audio_preprocess_enabled": True,
+                "audio_agc_max_gain_db": "abc",
+                "audio_highpass_enabled": None,
+            }
+        }, allow_unicode=True),
+        encoding="utf-8",
+    )
+    args = ConfigManager(path).to_main_args()
+    assert args["audio_preprocess"] is True
+    assert args["audio_agc_max_gain_db"] == pytest.approx(30.0)
+    assert args["audio_highpass"] is False
+
+    path.write_text(
+        yaml.safe_dump({
+            "audio_slicing_vad": {
+                "audio_preprocess_enabled": True,
+                "audio_agc_max_gain_db": 99,
+            }
+        }, allow_unicode=True),
+        encoding="utf-8",
+    )
+    assert ConfigManager(path).to_main_args()["audio_agc_max_gain_db"] == pytest.approx(40.0)
+
+    path.write_text(
+        yaml.safe_dump({
+            "audio_slicing_vad": {
+                "audio_preprocess_enabled": True,
+                "audio_agc_max_gain_db": 2,
+            }
+        }, allow_unicode=True),
+        encoding="utf-8",
+    )
+    assert ConfigManager(path).to_main_args()["audio_agc_max_gain_db"] == pytest.approx(6.0)
+
+
+def test_audio_preprocess_enabled_maps_to_main_args(config_client):
+    _, manager, _ = config_client
+    manager.update_section("audio_slicing_vad", {
+        "audio_preprocess_enabled": True,
+        "audio_agc_max_gain_db": 24.0,
+        "audio_highpass_enabled": True,
+    })
+    args = manager.to_main_args()
+    assert args["audio_preprocess"] is True
+    assert args["audio_agc_max_gain_db"] == pytest.approx(24.0)
+    assert args["audio_highpass"] is True
+
+
+@pytest.mark.parametrize("method", ["put", "patch"])
+@pytest.mark.parametrize("value", [5, 5.9, 40.1, 41, 0, -10, True, False, None, "20", ""])
+def test_audio_agc_max_gain_db_rejects_invalid(config_client, method, value):
+    client, _, path = config_client
+    before = path.read_bytes()
+    response = save(client, method, {"audio_agc_max_gain_db": value})
+    assert response.status_code == 422
+    assert "最大放大倍數" in response.json()["detail"]
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("value", [math.inf, -math.inf, math.nan])
+def test_audio_agc_max_gain_db_rejects_nonfinite(config_client, value):
+    _, manager, path = config_client
+    before = path.read_bytes()
+    with pytest.raises(ConfigValidationError, match="最大放大倍數"):
+        manager.update_config({"audio_slicing_vad": {"audio_agc_max_gain_db": value}})
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("method", ["put", "patch"])
+@pytest.mark.parametrize("gain", [6, 30.0, 40])
+def test_audio_agc_max_gain_db_accepts_inclusive_bounds(config_client, method, gain):
+    client, _, path = config_client
+    response = save(client, method, {"audio_agc_max_gain_db": gain})
+    assert response.status_code == 200
+    assert yaml.safe_load(path.read_text(encoding="utf-8"))["audio_slicing_vad"]["audio_agc_max_gain_db"] == gain
+
+
+@pytest.mark.parametrize("method", ["put", "patch"])
+@pytest.mark.parametrize("field", [
+    "audio_preprocess_enabled",
+    "audio_highpass_enabled",
+])
+@pytest.mark.parametrize("value", [1, 0, "true", None])
+def test_audio_preprocess_booleans_reject_non_bool(config_client, method, field, value):
+    client, _, path = config_client
+    before = path.read_bytes()
+    response = save(client, method, {field: value})
+    assert response.status_code == 422
+    assert "布林值" in response.json()["detail"]
+    assert path.read_bytes() == before

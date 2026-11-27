@@ -164,7 +164,9 @@ class AudioSlicer(LoopWorkerBase):
                  omnivad_max_speech_frame: int = 2000, omnivad_min_silence_frame: int = 20,
                  omnivad_threshold: float = 0.35,
                  native_short_segment_target: float = 0.0,
-                 native_short_segment_wait: float = 0.35):
+                 native_short_segment_wait: float = 0.35,
+                 preprocessor=None):
+        self.preprocessor = preprocessor
         self.min_audio_length = min_audio_length
         self.max_audio_length = max_audio_length
         self.prefix_retention_count = max(0, round(prefix_retention_length / FRAME_DURATION))
@@ -417,6 +419,8 @@ class AudioSlicer(LoopWorkerBase):
                 break
             if audio is AUDIO_STREAM_GAP:
                 flush_buffer()
+                if self.preprocessor is not None:
+                    self.preprocessor.reset()
                 if not self.disable_vad:
                     self.vad.reset_states()
                     self._last_speech_prob = 0.0
@@ -424,6 +428,8 @@ class AudioSlicer(LoopWorkerBase):
                     self._native_end_pending = False
                     self.speech_count = 0
                 continue
+            if self.preprocessor is not None:
+                audio = self.preprocessor.process(audio)
             self.put(audio)
             if self.should_slice():
                 sliced_audio, time_range = self.slice()

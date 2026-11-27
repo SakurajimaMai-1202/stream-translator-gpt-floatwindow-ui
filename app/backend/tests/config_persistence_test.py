@@ -43,6 +43,9 @@ LIVE_AUDIO_KEYS = {
     "omnivad_min_speech_frame",
     "omnivad_max_speech_frame",
     "omnivad_min_silence_frame",
+    "audio_preprocess_enabled",
+    "audio_agc_max_gain_db",
+    "audio_highpass_enabled",
 }
 REMOVED_AUDIO_KEYS = {
     "chunk_gap_threshold",
@@ -229,6 +232,9 @@ def test_audio_vad_defaults_match_recommended_live_settings(tmp_path):
         "omnivad_min_speech_frame": 8,
         "omnivad_max_speech_frame": 2000,
         "omnivad_min_silence_frame": 20,
+        "audio_preprocess_enabled": False,
+        "audio_agc_max_gain_db": 30.0,
+        "audio_highpass_enabled": False,
     }
 
 

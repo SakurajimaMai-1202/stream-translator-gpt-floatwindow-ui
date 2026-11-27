@@ -182,6 +182,36 @@ const slicingModeOptions: UiSelectOption[] = [
                 </template>
               </div>
             </div>
+
+            <!-- 音量自動調整 -->
+            <div class="bg-white/5 rounded-xl p-4 border border-white/10">
+              <h3 class="commercial-section-title">音量自動調整</h3>
+              <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <label class="flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer md:col-span-2 lg:col-span-3">
+                  <input v-model="localConfig.audio_slicing_vad.audio_preprocess_enabled" type="checkbox"
+                    class="w-5 h-5 accent-blue-500 mt-0.5" />
+                  <span>
+                    <span class="block text-white font-medium">自動放大小聲音訊（AGC）</span>
+                    <span class="block text-xs text-white/40 mt-1">來源音量太小時自動放大，避免字幕整段消失；正常音量不受影響。實驗性，預設關閉。</span>
+                  </span>
+                </label>
+                <template v-if="localConfig.audio_slicing_vad.audio_preprocess_enabled">
+                  <div>
+                    <label class="block text-white/70 text-sm mb-1">最大放大倍數（dB）</label>
+                    <input v-model.number="localConfig.audio_slicing_vad.audio_agc_max_gain_db" type="number"
+                      @blur="restoreEmptyNumber('audio_agc_max_gain_db')" min="6" max="40" step="1"
+                      class="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:border-blue-400" />
+                  </div>
+                  <label class="flex items-start gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer md:col-span-1 lg:col-span-2">
+                    <input v-model="localConfig.audio_slicing_vad.audio_highpass_enabled" type="checkbox"
+                      class="w-5 h-5 accent-blue-500 mt-0.5" />
+                    <span>
+                      <span class="block text-white font-medium">同時濾除 80 Hz 以下低頻（實驗性）</span>
+                    </span>
+                  </label>
+                </template>
+              </div>
+            </div>
           </div>
 </template>
 

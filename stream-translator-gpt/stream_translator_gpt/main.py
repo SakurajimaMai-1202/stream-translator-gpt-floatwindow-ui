@@ -24,6 +24,7 @@ from .audio_getter import (
     _resolve_cookie_file,
 )
 from .audio_slicer import AudioSlicer
+from .audio_preprocessor import build_audio_preprocessor
 from .audio_transcriber import OpenaiWhisper, FasterWhisper, SimulStreaming, RemoteOpenaiTranscriber, Qwen3ASRTranscriber, HFTranscriber, NemoASRTranscriber, SenseVoiceTranscriber, FunASRNanoTranscriber
 from .llm_translator import LLMClient, ParallelTranslator
 from .translation_policy import get_capabilities, resolve_model_family
@@ -77,6 +78,10 @@ def main(url, **kwargs):
     omnivad_max_speech_frame = kwargs.get('omnivad_max_speech_frame', 2000)
     omnivad_min_silence_frame = kwargs.get('omnivad_min_silence_frame', 20)
     omnivad_threshold = kwargs.get('omnivad_threshold', 0.35)
+    audio_preprocess = kwargs.get('audio_preprocess', False)
+    disable_audio_agc = kwargs.get('disable_audio_agc', False)
+    audio_agc_max_gain_db = kwargs.get('audio_agc_max_gain_db', 30.0)
+    audio_highpass = kwargs.get('audio_highpass', False)
 
     whisper_filters = kwargs.get('whisper_filters', 'emoji_filter,repetition_filter')
     transcription_filters = kwargs.get('transcription_filters')
@@ -316,6 +321,12 @@ def main(url, **kwargs):
             omnivad_min_silence_frame=omnivad_min_silence_frame,
             omnivad_threshold=omnivad_threshold,
             native_short_segment_target=1.5 if use_qwen3_asr and language == 'ja' else 0.0,
+            preprocessor=build_audio_preprocessor(
+                enabled=bool(audio_preprocess),
+                agc_enabled=not bool(disable_audio_agc),
+                agc_max_gain_db=audio_agc_max_gain_db,
+                highpass_enabled=bool(audio_highpass),
+            ),
         )
 
         def init_transcriber():
@@ -878,6 +889,19 @@ def cli():
     parser.add_argument('--omnivad_max_speech_frame', type=int, default=2000)
     parser.add_argument('--omnivad_min_silence_frame', type=int, default=20)
     parser.add_argument('--omnivad_threshold', type=float, default=0.35)
+    parser.add_argument('--audio_preprocess',
+                        action='store_true',
+                        help='Enable engine-side audio preprocessing (boost-only AGC and/or 80 Hz high-pass).')
+    parser.add_argument('--disable_audio_agc',
+                        action='store_true',
+                        help='Disable boost-only AGC when --audio_preprocess is enabled.')
+    parser.add_argument('--audio_agc_max_gain_db',
+                        type=float,
+                        default=30.0,
+                        help='Maximum AGC boost gain in dB (default: 30.0).')
+    parser.add_argument('--audio_highpass',
+                        action='store_true',
+                        help='Enable 80 Hz one-pole high-pass filter when --audio_preprocess is enabled.')
     parser.add_argument(
         '--model',
         type=str,

@@ -6,6 +6,7 @@ import time
 from .audio_getter import StreamAudioGetter, LocalFileAudioGetter, DeviceAudioGetter
 from .process_audio_capture import ProcessAudioGetter
 from .audio_slicer import AudioSlicer
+from .audio_preprocessor import build_audio_preprocessor
 from .common import AudioSourceQueue, ClientPool, INFO, is_url, ObservableTaskQueue, PipelineWorkers, create_pipeline_backlog_monitors
 from .result_exporter import ResultExporter
 from .subtitle_segmenter import SubtitleSegmenter
@@ -81,6 +82,12 @@ def create_slicer(options: dict):
         omnivad_min_silence_frame=options.get("omnivad_min_silence_frame", 20),
         omnivad_threshold=options.get("omnivad_threshold", 0.35),
         native_short_segment_target=1.5 if options.get('use_qwen3_asr') and options.get('language') == 'ja' else 0.0,
+        preprocessor=build_audio_preprocessor(
+            enabled=bool(options.get("audio_preprocess")),
+            agc_enabled=not bool(options.get("disable_audio_agc")),
+            agc_max_gain_db=options.get("audio_agc_max_gain_db", 30.0),
+            highpass_enabled=bool(options.get("audio_highpass")),
+        ),
     )
 
 

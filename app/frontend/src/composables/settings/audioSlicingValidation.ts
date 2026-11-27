@@ -29,9 +29,9 @@ export function validateAudioSlicing(audio: Record<string, unknown>): string {
         'omnivad_min_speech_frame', 'omnivad_max_speech_frame', 'omnivad_min_silence_frame');
     }
   }
-  if (audio.audio_preprocess_enabled) {
-    numericKeys.push('audio_agc_max_gain_db');
-  }
+  // Validated even while AGC is off: the backend rejects a stored out-of-range
+  // value regardless of the switch, so a hidden bad value must not autosave.
+  numericKeys.push('audio_agc_max_gain_db');
   for (const key of numericKeys) {
     const value = audio[key];
     if (key in audio && (typeof value !== 'number' || !Number.isFinite(value))) {
@@ -54,7 +54,7 @@ export function validateAudioSlicing(audio: Record<string, unknown>): string {
   if (legacy && (target < min || target > max)) {
     return `目標音訊長度（${target} 秒）必須介於最小音訊長度（${min} 秒）與最大音訊長度（${max} 秒）之間`;
   }
-  if (audio.audio_preprocess_enabled && 'audio_agc_max_gain_db' in audio) {
+  if ('audio_agc_max_gain_db' in audio) {
     const gain = audio.audio_agc_max_gain_db;
     if (typeof gain !== 'number' || !Number.isFinite(gain) || gain < 6 || gain > 40) {
       return '最大放大倍數必須介於 6 到 40 dB 之間';

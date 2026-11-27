@@ -1172,7 +1172,7 @@ class ConfigManager:
             'omnivad_min_silence_frame': config.get('audio_slicing_vad', {}).get('omnivad_min_silence_frame', 20),
             'audio_preprocess': audio_preprocess,
             'audio_agc_max_gain_db': safe_agc_gain if audio_preprocess else None,
-            'audio_highpass': audio_highpass,
+            'audio_highpass': audio_highpass and audio_preprocess,
             'preload_asr_model': transcription_backend in ['qwen3-asr', 'faster-whisper', 'whisper', 'sensevoice', 'fun-asr-nano', 'parakeet-ctc-ja'],
             'keep_asr_loaded': transcription_backend in ['qwen3-asr', 'faster-whisper', 'whisper', 'sensevoice', 'fun-asr-nano', 'parakeet-ctc-ja'],
             

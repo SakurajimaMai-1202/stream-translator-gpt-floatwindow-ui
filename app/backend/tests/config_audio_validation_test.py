@@ -264,6 +264,18 @@ def test_audio_preprocess_enabled_maps_to_main_args(config_client):
     assert args["audio_highpass"] is True
 
 
+def test_highpass_flag_not_sent_while_preprocess_is_off(config_client):
+    _, manager, _ = config_client
+    manager.update_section("audio_slicing_vad", {
+        "audio_preprocess_enabled": False,
+        "audio_highpass_enabled": True,
+    })
+    args = manager.to_main_args()
+    assert args["audio_preprocess"] is False
+    assert args["audio_highpass"] is False
+    assert args["audio_agc_max_gain_db"] is None
+
+
 @pytest.mark.parametrize("method", ["put", "patch"])
 @pytest.mark.parametrize("value", [5, 5.9, 40.1, 41, 0, -10, True, False, None, "20", ""])
 def test_audio_agc_max_gain_db_rejects_invalid(config_client, method, value):
